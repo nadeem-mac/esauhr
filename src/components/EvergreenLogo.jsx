@@ -1,78 +1,79 @@
 import React from 'react';
 
-// Evergreen Line — the Leave Desk brand mark.
-// Use this consistently anywhere a logo is shown.
+// Evergreen brand mark — uses the real Evergreen logo PNG.
 //
-// variants:
-//   'full'  – icon + "Leave Desk" + EVERGREEN · LINE tagline (default)
-//   'mark'  – icon only
-//   'stack' – icon centred above wordmark (used on splash / hero centre)
+// Variants:
+//   'mark'  – the circular emblem only (compact, e.g. headers)
+//   'full'  – emblem + "Leave Desk" wordmark beside it (horizontal)
+//   'stack' – the full Evergreen logo (emblem + EVERGREEN wordmark) stacked above
+//             a "Leave Desk · HR Platform" subtitle. Used on splash + auth.
 //
 // sizes: sm | md | lg | xl
-// invert: render on light background (icon goes light → dark)
 
-const SIZE = {
-  sm: { box: 32, icon: 18, font: 'text-base',  tag: 'text-[9px]'  },
-  md: { box: 36, icon: 20, font: 'text-xl',    tag: 'text-[10px]' },
-  lg: { box: 56, icon: 32, font: 'text-2xl',   tag: 'text-[11px]' },
-  xl: { box: 80, icon: 48, font: 'text-4xl',   tag: 'text-xs'     },
-};
-
-function Mark({ size = 'md', invert = false }) {
-  const s = SIZE[size];
-  const stroke = invert ? '#1F4A2F' : '#8FB39A';
-  const bg     = invert ? '#F4EEDF' : 'var(--evergreen-800)';
-  return (
-    <div
-      className="rounded-lg flex items-center justify-center flex-shrink-0"
-      style={{ width: s.box, height: s.box, background: bg }}
-    >
-      <svg viewBox="0 0 32 32" width={s.icon} height={s.icon} aria-hidden="true">
-        <path d="M16 5 C 9 10, 9 20, 16 27 C 23 20, 23 10, 16 5 Z"
-              fill="none" stroke={stroke} strokeWidth="1.5" strokeLinejoin="round"/>
-        <line x1="16" y1="5" x2="16" y2="27" stroke={stroke} strokeWidth="1.3"/>
-      </svg>
-    </div>
-  );
-}
+const MARK_SIZE = { sm: 28, md: 36, lg: 56, xl: 88 };
+const STACK_W   = { sm: 180, md: 240, lg: 320, xl: 420 };
 
 export default function EvergreenLogo({
-  variant = 'full',
-  size    = 'md',
-  invert  = false,
-  tagline = 'EVERGREEN · LINE',
-  wordmark = 'Leave Desk',
+  variant   = 'full',
+  size      = 'md',
+  wordmark  = 'Leave Desk',
+  subtitle  = 'HR · LEAVE DESK',
   className = '',
+  light     = false,   // for dark backgrounds, set light=true to brighten subtitle
 }) {
   if (variant === 'mark') {
+    const px = MARK_SIZE[size];
     return (
-      <div className={className}>
-        <Mark size={size} invert={invert} />
-      </div>
+      <img
+        src="/evergreen-mark.png"
+        alt="Evergreen"
+        width={px}
+        height={px}
+        className={`block ${className}`}
+        style={{ width: px, height: px, objectFit: 'contain' }}
+      />
     );
   }
-
-  const s = SIZE[size];
 
   if (variant === 'stack') {
+    const w = STACK_W[size];
     return (
-      <div className={`flex flex-col items-center gap-3 ${className}`}>
-        <Mark size={size} invert={invert} />
-        <div className="text-center">
-          <div className={`serif ${s.font} leading-none`} style={{ fontWeight: 600 }}>{wordmark}</div>
-          <div className={`${s.tag} tracking-[0.25em] opacity-60 mt-1.5`}>{tagline}</div>
-        </div>
+      <div className={`flex flex-col items-center text-center gap-3 ${className}`}>
+        <img
+          src="/evergreen-full.png"
+          alt="Evergreen"
+          style={{ width: w, height: 'auto', objectFit: 'contain' }}
+          className="block"
+        />
+        {subtitle && (
+          <div className={`text-[11px] tracking-[0.35em] ${light ? 'opacity-70' : 'opacity-60'}`}
+               style={{ fontWeight: 500 }}>
+            {subtitle}
+          </div>
+        )}
       </div>
     );
   }
 
-  // 'full' – horizontal
+  // full — horizontal: mark + wordmark to the right
+  const px = MARK_SIZE[size];
   return (
     <div className={`flex items-center gap-3 ${className}`}>
-      <Mark size={size} invert={invert} />
-      <div>
-        <div className={`serif ${s.font} leading-none`} style={{ fontWeight: 600 }}>{wordmark}</div>
-        <div className={`${s.tag} tracking-[0.2em] opacity-60 mt-0.5`}>{tagline}</div>
+      <img
+        src="/evergreen-mark.png"
+        alt="Evergreen"
+        width={px}
+        height={px}
+        style={{ width: px, height: px, objectFit: 'contain' }}
+      />
+      <div className="leading-tight">
+        <div className="serif text-xl" style={{ fontWeight: 600, letterSpacing: '-0.01em' }}>
+          {wordmark}
+        </div>
+        <div className={`text-[10px] tracking-[0.25em] mt-0.5 ${light ? 'opacity-70' : 'opacity-55'}`}
+             style={{ fontWeight: 500 }}>
+          EVERGREEN
+        </div>
       </div>
     </div>
   );
