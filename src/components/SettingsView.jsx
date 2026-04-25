@@ -1,13 +1,19 @@
 import React from 'react';
 import { Card } from './Dashboard.jsx';
+import ReviewerPermissionsCard from './ReviewerPermissionsCard.jsx';
 
-export default function SettingsView({ leaveTypes, onUpdateType, employees, requests, holidays }) {
+export default function SettingsView({ leaveTypes, onUpdateType, employees, requests, holidays, me }) {
+  const isAdmin = Boolean(me?.is_admin);
   return (
     <div className="space-y-6">
       <div>
         <div className="text-[10px] tracking-[0.25em] opacity-50 mb-2">CONFIGURATION</div>
         <h1 className="serif text-4xl" style={{ fontWeight: 500, letterSpacing: '-0.02em' }}>Settings</h1>
       </div>
+
+      {isAdmin && (
+        <ReviewerPermissionsCard employees={employees} me={me} />
+      )}
 
       <Card title="Leave types" subtitle="Rename categories and adjust entitlements to match company policy">
         <div className="space-y-3">

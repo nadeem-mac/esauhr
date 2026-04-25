@@ -13,11 +13,13 @@ import ConnectivityTest from './ConnectivityTest.jsx';
 import NewRequestModal from './NewRequestModal.jsx';
 import EmployeeDetailModal from './EmployeeDetailModal.jsx';
 import AdminPanel from './AdminPanel.jsx';
+import PersonalDashboard from './PersonalDashboard.jsx';
+import ReviewerPanel from './ReviewerPanel.jsx';
 import EvergreenLogo from './EvergreenLogo.jsx';
 import { logAction } from '../lib/audit.js';
 import { fmtDate } from '../lib/leaveLogic.js';
 
-function buildTabs(isAdmin) {
+function buildTabs({ isAdmin, isReviewer }) {
   const base = [
     { id: 'dashboard',  label: 'Dashboard', icon: LayoutDashboard },
     { id: 'requests',   label: 'Requests',  icon: ClipboardList },
@@ -26,6 +28,9 @@ function buildTabs(isAdmin) {
     { id: 'settings',   label: 'Settings',  icon: Settings },
     { id: 'diagnostics',label: 'Diagnostics', icon: Activity },
   ];
+  if (isReviewer && !isAdmin) {
+    base.splice(2, 0, { id: 'reviews', label: 'Reviews',  icon: ShieldCheck });
+  }
   if (isAdmin) {
     base.splice(5, 0, { id: 'admin', label: 'Admin', icon: ShieldCheck });
   }
@@ -33,8 +38,9 @@ function buildTabs(isAdmin) {
 }
 
 export default function AppShell({ session, me, onRefreshMe }) {
-  const isAdmin = Boolean(me?.is_admin);
-  const TABS = useMemo(() => buildTabs(isAdmin), [isAdmin]);
+  const isAdmin    = Boolean(me?.is_admin);
+  const isReviewer = Boolean(me?.can_review_leave || me?.can_review_permissions);
+  const TABS = useMemo(() => buildTabs({ isAdmin, isReviewer }), [isAdmin, isReviewer]);
   const [pendingRegCount, setPendingRegCount] = useState(0);
   const [tab, setTab] = useState('dashboard');
   const [employees, setEmployees]       = useState([]);
@@ -273,13 +279,24 @@ export default function AppShell({ session, me, onRefreshMe }) {
 
       <main className="max-w-7xl mx-auto px-6 py-8 fade-in" key={tab}>
         {tab === 'dashboard' && (
-          <Dashboard
-            employees={employees} leaveTypes={leaveTypes} requests={requests}
-            balances={balances} holidays={holidays}
-            typeMap={typeMap} empMap={empMap}
-            onGoToRequests={() => setTab('requests')}
-            onNewRequest={() => setShowNewRequest(true)}
-          />
+          isAdmin ? (
+            <Dashboard
+              employees={employees} leaveTypes={leaveTypes} requests={requests}
+              balances={balances} holidays={holidays}
+              typeMap={typeMap} empMap={empMap}
+              onGoToRequests={() => setTab('requests')}
+              onNewRequest={() => setShowNewRequest(true)}
+            />
+          ) : (
+            <PersonalDashboard
+              me={me}
+              leaveTypes={leaveTypes}
+              onOpenNewRequest={() => setShowNewRequest(true)}
+            />
+          )
+        )}
+        {tab === 'reviews' && (
+          <ReviewerPanel me={me} />
         )}
         {tab === 'requests' && (
           <Requests
@@ -306,6 +323,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
             leaveTypes={leaveTypes}
             onUpdateType={updateLeaveType}
             employees={employees} requests={requests} holidays={holidays}
+            me={me}
           />
         )}
         {tab === 'diagnostics' && (
