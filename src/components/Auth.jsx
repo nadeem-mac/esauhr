@@ -1,14 +1,14 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabaseClient.js';
 import { psnToEmail } from '../lib/psnAuth.js';
-import { ArrowLeft, ArrowRight, User, Lock, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { ArrowRight, User, Lock, AlertCircle, CheckCircle2 } from 'lucide-react';
 import EvergreenLogo from './EvergreenLogo.jsx';
 
 // PSN-based auth.
 //   'signin'  : PSN + PIN  (returning users)
 //   'request' : PSN only   (first-time staff request access; admin issues PIN)
 
-export default function Auth({ onBack }) {
+export default function Auth() {
   const [mode, setMode] = useState('signin');
   const [psn, setPsn] = useState('');
   const [pin, setPin] = useState('');
@@ -67,12 +67,7 @@ export default function Auth({ onBack }) {
           <EvergreenLogo variant="full" size="sm" />
         </div>
 
-        <button onClick={onBack}
-          className="inline-flex items-center gap-2 text-sm opacity-60 hover:opacity-100 mb-10">
-          <ArrowLeft className="w-4 h-4" /> Back
-        </button>
-
-        <div className="mb-8">
+        <div className="mb-8 mt-10">
           <div className="flex items-center gap-2 mb-4 text-xs tracking-[0.25em] opacity-60">
             <div className="w-8 h-px" style={{ background: '#8FB39A' }} />
             {mode === 'request' ? 'REQUEST ACCESS' : 'WELCOME BACK'}
