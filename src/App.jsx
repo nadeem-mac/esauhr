@@ -46,14 +46,19 @@ export default function App() {
 
   useEffect(() => {
     if (!supabaseConfigured) { setReady(true); return; }
-    // Resolve the session quickly and unblock the splash.
-    // The me lookup runs in the background and fills in once it's done.
+
+    // Hard guard — never let the splash hang for more than 3 seconds, even if the
+    // Supabase auth lock can't resolve. Session/me will fill in once they resolve.
+    const splashGuard = setTimeout(() => setReady(true), 3000);
+
     supabase.auth.getSession().then(({ data }) => {
+      clearTimeout(splashGuard);
       setSession(data.session);
       if (data.session) setView('app');
       setReady(true);
       resolveMe(data.session);
-    });
+    }).catch(() => { clearTimeout(splashGuard); setReady(true); });
+
     const { data: sub } = supabase.auth.onAuthStateChange(async (event, s) => {
       setSession(s);
       const meRow = await resolveMe(s);
@@ -71,7 +76,7 @@ export default function App() {
         setView('landing');
       }
     });
-    return () => sub.subscription.unsubscribe();
+    return () => { clearTimeout(splashGuard); sub.subscription.unsubscribe(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolveMe]);
 
