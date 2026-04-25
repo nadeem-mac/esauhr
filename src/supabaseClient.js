@@ -13,6 +13,9 @@ export const supabase = supabaseConfigured
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
+        // Skip the Web Lock — Leave Desk is a single-tab app and the lock just
+        // adds 5+ second delays on parallel queries when it gets orphaned.
+        lock: (name, acquireTimeout, fn) => fn(),
       },
     })
   : null;
