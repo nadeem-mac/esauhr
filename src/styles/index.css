@@ -1,0 +1,91 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --paper: #FAF7F0;
+  --paper-2: #F4EEDF;
+  --ink: #0F1F1A;
+  --ink-soft: #2A3B34;
+  --border: #D9D0BA;
+  --border-soft: #E8E0D1;
+  --evergreen-50: #F2F6F2;
+  --evergreen-100: #E3EDE5;
+  --evergreen-200: #BFD5C4;
+  --evergreen-300: #8FB39A;
+  --evergreen-500: #2D5F3F;
+  --evergreen-600: #1F4A2F;
+  --evergreen-700: #173826;
+  --evergreen-800: #0F2818;
+  --evergreen-900: #081810;
+  --copper: #C49B61;
+  --clay: #B84A3E;
+}
+
+html, body, #root {
+  min-height: 100%;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: 'Outfit', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  background-image:
+    radial-gradient(rgba(15, 40, 24, 0.025) 1px, transparent 1px);
+  background-size: 3px 3px;
+}
+
+.serif { font-family: 'Fraunces', Georgia, serif; font-optical-sizing: auto; }
+.mono  { font-family: 'SF Mono', 'Menlo', monospace; }
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #c9beaa; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #b5a993; }
+
+/* Animations */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-in { animation: fade-in 0.5s cubic-bezier(0.2, 0.7, 0.2, 1); }
+
+@keyframes draw-line {
+  from { stroke-dashoffset: 1200; }
+  to   { stroke-dashoffset: 0; }
+}
+.draw-line {
+  stroke-dasharray: 1200;
+  stroke-dashoffset: 1200;
+  animation: draw-line 3s ease-out forwards;
+}
+.draw-line-2 { animation-delay: 0.3s; }
+.draw-line-3 { animation-delay: 0.6s; }
+
+@keyframes sway {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  50%      { transform: translateY(-4px) rotate(0.5deg); }
+}
+.sway { animation: sway 6s ease-in-out infinite; }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50%      { opacity: 1;   transform: scale(1.3); }
+}
+.pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+
+/* Form element base (Tailwind can't easily style native calendars) */
+input, select, textarea {
+  font-family: inherit;
+}
+input[type="date"] { color-scheme: light; }
+
+/* Focus ring */
+*:focus-visible {
+  outline: 2px solid var(--evergreen-500);
+  outline-offset: 2px;
+  border-radius: 4px;
+}

@@ -1,0 +1,321 @@
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import {
+  LayoutDashboard, ClipboardList, Users, Calendar as CalIcon, Settings,
+  Plus, LogOut, Activity, ShieldCheck
+} from 'lucide-react';
+import { supabase } from '../supabaseClient.js';
+import Dashboard from './Dashboard.jsx';
+import Requests from './Requests.jsx';
+import Employees from './Employees.jsx';
+import CalendarView from './CalendarView.jsx';
+import SettingsView from './SettingsView.jsx';
+import ConnectivityTest from './ConnectivityTest.jsx';
+import NewRequestModal from './NewRequestModal.jsx';
+import EmployeeDetailModal from './EmployeeDetailModal.jsx';
+import AdminPanel from './AdminPanel.jsx';
+import { fmtDate } from '../lib/leaveLogic.js';
+
+function buildTabs(isAdmin) {
+  const base = [
+    { id: 'dashboard',  label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'requests',   label: 'Requests',  icon: ClipboardList },
+    { id: 'employees',  label: 'Employees', icon: Users },
+    { id: 'calendar',   label: 'Calendar',  icon: CalIcon },
+    { id: 'settings',   label: 'Settings',  icon: Settings },
+    { id: 'diagnostics',label: 'Diagnostics', icon: Activity },
+  ];
+  if (isAdmin) {
+    base.splice(5, 0, { id: 'admin', label: 'Admin', icon: ShieldCheck });
+  }
+  return base;
+}
+
+export default function AppShell({ session, me, onRefreshMe }) {
+  const isAdmin = Boolean(me?.is_admin);
+  const TABS = useMemo(() => buildTabs(isAdmin), [isAdmin]);
+  const [pendingRegCount, setPendingRegCount] = useState(0);
+  const [tab, setTab] = useState('dashboard');
+  const [employees, setEmployees]       = useState([]);
+  const [leaveTypes, setLeaveTypes]     = useState([]);
+  const [requests, setRequests]         = useState([]);
+  const [balances, setBalances]         = useState([]);
+  const [holidays, setHolidays]         = useState([]);
+  const [loading, setLoading]           = useState(true);
+  const [error, setError]               = useState('');
+  const [showNewRequest, setShowNewRequest] = useState(false);
+  const [selectedEmployee, setSelectedEmployee] = useState(null);
+
+  const loadAll = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const [e, t, r, b, h] = await Promise.all([
+        supabase.from('employees').select('*').order('name'),
+        supabase.from('leave_types').select('*').order('sort_order'),
+        supabase.from('leave_requests').select('*').order('requested_at', { ascending: false }),
+        supabase.from('leave_balances').select('*'),
+        supabase.from('public_holidays').select('*').order('date'),
+      ]);
+
+      if (e.error) throw e.error;
+      if (t.error) throw t.error;
+      if (r.error) throw r.error;
+      if (b.error) throw b.error;
+      if (h.error) throw h.error;
+
+      setEmployees(e.data || []);
+      setLeaveTypes(t.data || []);
+      setRequests(r.data || []);
+      setBalances(b.data || []);
+      setHolidays(h.data || []);
+    } catch (err) {
+      setError(err.message || 'Failed to load data');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Pending registration count (admin badge)
+  useEffect(() => {
+    if (!isAdmin) { setPendingRegCount(0); return; }
+    let mounted = true;
+    const refresh = async () => {
+      const { count } = await supabase.from('registration_requests')
+        .select('id', { count: 'exact', head: true }).eq('status', 'pending');
+      if (mounted) setPendingRegCount(count || 0);
+    };
+    refresh();
+    const ch = supabase.channel('reg-req-count')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'registration_requests' }, refresh)
+      .subscribe();
+    return () => { mounted = false; supabase.removeChannel(ch); };
+  }, [isAdmin]);
+
+  // Realtime subscription — updates when anyone in the team changes data
+  useEffect(() => {
+    const channel = supabase.channel('leave-desk-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_requests' }, loadAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'employees' }, loadAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_types' }, loadAll)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [loadAll]);
+
+  const typeMap = useMemo(() => Object.fromEntries(leaveTypes.map(t => [t.id, t])), [leaveTypes]);
+  const empMap  = useMemo(() => Object.fromEntries(employees.map(e => [e.id, e])), [employees]);
+
+  const pendingCount = useMemo(() => requests.filter(r => r.status === 'pending').length, [requests]);
+
+  const signOut = async () => { await supabase.auth.signOut(); };
+
+  const createRequest = async (payload) => {
+    const { error } = await supabase.from('leave_requests').insert({
+      ...payload,
+      requested_by: session.user.email,
+    });
+    if (error) throw error;
+    await loadAll();
+  };
+
+  const decideRequest = async (id, status, note) => {
+    const { error } = await supabase.from('leave_requests').update({
+      status,
+      decided_at: new Date().toISOString(),
+      decided_by: session.user.email,
+      decision_note: note || null,
+    }).eq('id', id);
+    if (error) throw error;
+    await loadAll();
+  };
+
+  const deleteRequest = async (id) => {
+    const { error } = await supabase.from('leave_requests').delete().eq('id', id);
+    if (error) throw error;
+    await loadAll();
+  };
+
+  const updateLeaveType = async (id, patch) => {
+    const { error } = await supabase.from('leave_types').update(patch).eq('id', id);
+    if (error) throw error;
+    await loadAll();
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 rounded-full animate-spin mx-auto mb-3"
+            style={{ borderColor: 'var(--evergreen-200)', borderTopColor: 'var(--evergreen-500)' }}/>
+          <div className="text-xs tracking-widest opacity-60">LOADING</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen">
+      {/* Header */}
+      <header className="border-b" style={{ borderColor: 'var(--border-soft)', background: 'var(--paper)' }}>
+        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: 'var(--evergreen-800)' }}>
+              <LeafMark />
+            </div>
+            <div>
+              <div className="serif text-xl leading-none" style={{ fontWeight: 600 }}>Leave Desk</div>
+              <div className="text-[10px] tracking-[0.2em] opacity-60 mt-0.5">VACATION · ABSENCE</div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <div className="text-right hidden md:block">
+              <div className="text-[10px] tracking-wider opacity-50">TODAY</div>
+              <div className="serif text-sm">{fmtDate(new Date())}</div>
+            </div>
+            <div className="hidden sm:block w-px h-8" style={{ background: 'var(--border-soft)' }}/>
+            <div className="text-right hidden sm:block">
+              <div className="text-[10px] tracking-wider opacity-50">SIGNED IN</div>
+              <div className="text-sm truncate max-w-[200px]">
+                {me ? (
+                  <>
+                    <span className="opacity-60 mr-1.5">{me.id}</span>
+                    {me.name}
+                    {isAdmin && <span className="ml-1.5 text-[9px] tracking-widest px-1.5 py-0.5 rounded-full" style={{ background: 'var(--evergreen-800)', color: 'var(--paper)' }}>ADMIN</span>}
+                  </>
+                ) : session.user.email}
+              </div>
+            </div>
+            <button onClick={() => setShowNewRequest(true)}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm"
+              style={{ background: 'var(--ink)', color: 'var(--paper)' }}>
+              <Plus className="w-4 h-4" /><span className="hidden sm:inline">New request</span>
+            </button>
+            <button onClick={signOut}
+              className="p-2.5 rounded-full border"
+              title="Sign out"
+              style={{ borderColor: 'var(--border-soft)' }}>
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div className="max-w-7xl mx-auto px-6 flex gap-1 overflow-x-auto">
+          {TABS.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)}
+              className="relative flex items-center gap-2 px-4 py-3 text-sm whitespace-nowrap transition-colors"
+              style={{
+                color: tab === t.id ? 'var(--ink)' : 'var(--ink-soft)',
+                opacity: tab === t.id ? 1 : 0.65,
+                borderBottom: tab === t.id ? '2px solid var(--evergreen-500)' : '2px solid transparent',
+                marginBottom: '-1px',
+              }}>
+              <t.icon className="w-4 h-4" />
+              {t.label}
+              {t.id === 'requests' && pendingCount > 0 && (
+                <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full"
+                  style={{ background: 'var(--clay)', color: 'var(--paper)' }}>
+                  {pendingCount}
+                </span>
+              )}
+              {t.id === 'admin' && pendingRegCount > 0 && (
+                <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full"
+                  style={{ background: 'var(--clay)', color: 'var(--paper)' }}>
+                  {pendingRegCount}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      </header>
+
+      {error && (
+        <div className="max-w-7xl mx-auto px-6 mt-4">
+          <div className="p-3 rounded-lg text-sm" style={{ background: 'rgba(184,74,62,0.1)', color: 'var(--clay)' }}>
+            {error}
+          </div>
+        </div>
+      )}
+
+      <main className="max-w-7xl mx-auto px-6 py-8 fade-in" key={tab}>
+        {tab === 'dashboard' && (
+          <Dashboard
+            employees={employees} leaveTypes={leaveTypes} requests={requests}
+            balances={balances} holidays={holidays}
+            typeMap={typeMap} empMap={empMap}
+            onGoToRequests={() => setTab('requests')}
+            onNewRequest={() => setShowNewRequest(true)}
+          />
+        )}
+        {tab === 'requests' && (
+          <Requests
+            requests={requests} leaveTypes={leaveTypes}
+            typeMap={typeMap} empMap={empMap}
+            onDecide={decideRequest} onDelete={deleteRequest}
+            onNewRequest={() => setShowNewRequest(true)}
+          />
+        )}
+        {tab === 'employees' && (
+          <Employees
+            employees={employees} leaveTypes={leaveTypes}
+            requests={requests} balances={balances}
+            onSelect={setSelectedEmployee}
+          />
+        )}
+        {tab === 'calendar' && (
+          <CalendarView
+            requests={requests} empMap={empMap} typeMap={typeMap} holidays={holidays}
+          />
+        )}
+        {tab === 'settings' && (
+          <SettingsView
+            leaveTypes={leaveTypes}
+            onUpdateType={updateLeaveType}
+            employees={employees} requests={requests} holidays={holidays}
+          />
+        )}
+        {tab === 'diagnostics' && (
+          <ConnectivityTest />
+        )}
+        {tab === 'admin' && isAdmin && (
+          <AdminPanel session={session} me={me} onRefreshMe={onRefreshMe} />
+        )}
+      </main>
+
+      {showNewRequest && (
+        <NewRequestModal
+          employees={employees} leaveTypes={leaveTypes}
+          requests={requests} balances={balances} holidays={holidays}
+          onClose={() => setShowNewRequest(false)}
+          onSubmit={async (payload) => {
+            await createRequest(payload);
+            setShowNewRequest(false);
+          }}
+        />
+      )}
+
+      {selectedEmployee && (
+        <EmployeeDetailModal
+          employee={selectedEmployee}
+          leaveTypes={leaveTypes}
+          requests={requests.filter(r => r.employee_id === selectedEmployee.id)}
+          balances={balances.filter(b => b.employee_id === selectedEmployee.id)}
+          typeMap={typeMap}
+          onClose={() => setSelectedEmployee(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function LeafMark() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 32 32">
+      <path d="M16 5 C 9 10, 9 20, 16 27 C 23 20, 23 10, 16 5 Z"
+            fill="none" stroke="#8FB39A" strokeWidth="1.5" strokeLinejoin="round"/>
+      <line x1="16" y1="5" x2="16" y2="27" stroke="#8FB39A" strokeWidth="1.3"/>
+    </svg>
+  );
+}
