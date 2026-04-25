@@ -3,14 +3,14 @@ import { supabase } from '../supabaseClient.js';
 import {
   Calendar, Clock, Plus, AlertTriangle, ArrowRight, Sun, Sunrise, Sunset, CheckCircle2, XCircle, Loader2
 } from 'lucide-react';
-import { fmtDate } from '../lib/leaveLogic.js';
+import { fmtDate, calculateBalance } from '../lib/leaveLogic.js';
 import { summariseMonth, PERMISSION_QUOTA, PERMISSION_TYPES } from '../lib/permissionLogic.js';
 import PermissionRequestModal from './PermissionRequestModal.jsx';
 
 // Shown to non-admin staff.  Six tiles + quick actions.
 //
 // Tiles:
-//   1.  My balance (annual leave entitlement vs used)
+//   1.  My balance (annual leave entitlement vs used) — computed via calculateBalance
 //   2.  My next vacation (next approved leave)
 //   3.  My recent requests (last 5)
 //   4.  Late-arrival permissions (this month, X / 3 hrs)
@@ -18,30 +18,32 @@ import PermissionRequestModal from './PermissionRequestModal.jsx';
 //   6.  Combined evaluation flag if total > 3hrs
 
 export default function PersonalDashboard({ me, leaveTypes, onOpenNewRequest }) {
-  const [balance,     setBalance]     = useState(null);
+  const [adjustments, setAdjustments] = useState({});
   const [requests,    setRequests]    = useState([]);
   const [permissions, setPermissions] = useState([]);
   const [loading,     setLoading]     = useState(true);
-  const [permModal,   setPermModal]   = useState(null); // null | 'late_arrival' | 'early_leave'
+  const [permModal,   setPermModal]   = useState(null);
 
   const load = useCallback(async () => {
     if (!me?.id) return;
     setLoading(true);
     try {
       const year = new Date().getFullYear();
-      const month = new Date().toISOString().slice(0, 7); // 'YYYY-MM'
+      const month = new Date().toISOString().slice(0, 7);
 
       const [bal, reqs, perms] = await Promise.all([
+        // leave_balances stores ONLY carryover + adjustments — entitlement is
+        // computed in JS via calculateBalance.
         supabase.from('leave_balances').select('*')
-          .eq('employee_id', me.id).eq('year', year).maybeSingle(),
+          .eq('employee_id', me.id).eq('year', year).eq('leave_type_id', 'annual').maybeSingle(),
         supabase.from('leave_requests').select('*')
-          .eq('employee_id', me.id).order('start_date', { ascending: false }).limit(8),
+          .eq('employee_id', me.id).order('start_date', { ascending: false }).limit(20),
         supabase.from('permission_requests').select('*')
           .eq('employee_id', me.id)
           .gte('permission_date', `${month}-01`)
           .order('permission_date', { ascending: false }),
       ]);
-      setBalance(bal.data || null);
+      setAdjustments(bal.data || {});
       setRequests(reqs.data || []);
       setPermissions(perms.data || []);
     } catch (err) {
@@ -88,9 +90,20 @@ export default function PersonalDashboard({ me, leaveTypes, onOpenNewRequest }) 
   const nextLeave = requests.find(r => r.status === 'approved' && new Date(r.start_date) >= startOfDay(new Date()));
   const recent    = requests.slice(0, 5);
 
-  const totalEntitlement = balance?.entitlement || 21;
-  const used             = balance?.used || 0;
-  const remaining        = Math.max(0, totalEntitlement - used);
+  // Compute annual-leave balance via the shared logic (handles 21 vs 30 + pro-rata)
+  const annualType = (leaveTypes || []).find(t => t.id === 'annual');
+  const bal = annualType
+    ? calculateBalance({
+        employee:    me,
+        leaveType:   annualType,
+        year:        new Date().getFullYear(),
+        requests,
+        adjustments,
+      })
+    : { entitlement: 0, used: 0, available: 0, total: 0 };
+  const totalEntitlement = bal.total      || bal.entitlement || 21;
+  const used             = bal.used       || 0;
+  const remaining        = bal.available  != null ? Math.max(0, bal.available) : Math.max(0, totalEntitlement - used);
 
   return (
     <div className="space-y-8">
