@@ -46,18 +46,19 @@ export default function App() {
 
   useEffect(() => {
     if (!supabaseConfigured) { setReady(true); return; }
-    supabase.auth.getSession().then(async ({ data }) => {
+    // Resolve the session quickly and unblock the splash.
+    // The me lookup runs in the background and fills in once it's done.
+    supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
-      await resolveMe(data.session);
       if (data.session) setView('app');
       setReady(true);
+      resolveMe(data.session);
     });
     const { data: sub } = supabase.auth.onAuthStateChange(async (event, s) => {
       setSession(s);
       const meRow = await resolveMe(s);
       if (s) {
         setView('app');
-        // Log fresh sign-ins only (not token refreshes or initial session load).
         if (event === 'SIGNED_IN' && meRow && lastSignInUser.current !== s.user.id) {
           lastSignInUser.current = s.user.id;
           logAction(meRow, 'sign_in', { details: { email: s.user.email } });
