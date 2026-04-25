@@ -1,5 +1,6 @@
 import React from 'react';
 import { ArrowRight, Check, Leaf, Compass, ShieldCheck, Clock, CalendarDays, Users } from 'lucide-react';
+import EvergreenLogo from './EvergreenLogo.jsx';
 
 export default function Landing({ onEnter }) {
   return (
@@ -11,15 +12,7 @@ export default function Landing({ onEnter }) {
 
         {/* Nav */}
         <nav className="relative z-10 max-w-7xl mx-auto px-6 py-6 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg flex items-center justify-center border" style={{ borderColor: 'rgba(244,238,223,0.2)' }}>
-              <LeafMark />
-            </div>
-            <div>
-              <div className="serif text-xl leading-none" style={{ fontWeight: 600 }}>Leave Desk</div>
-              <div className="text-[10px] tracking-[0.2em] opacity-60 mt-0.5">KSA · HR PLATFORM</div>
-            </div>
-          </div>
+          <EvergreenLogo variant="full" size="md" light />
           <div className="flex items-center gap-2">
             <a href="#features" className="text-sm opacity-70 hover:opacity-100 px-3 py-2 hidden sm:inline">Features</a>
             <a href="#law" className="text-sm opacity-70 hover:opacity-100 px-3 py-2 hidden sm:inline">Saudi Law</a>
@@ -181,8 +174,8 @@ export default function Landing({ onEnter }) {
       {/* ───────────── FOOTER ───────────── */}
       <footer className="border-t py-10" style={{ borderColor: 'var(--border-soft)', background: 'var(--paper-2)' }}>
         <div className="max-w-7xl mx-auto px-6 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3 opacity-60">
-            <LeafMark small />
+          <div className="flex items-center gap-3 opacity-70">
+            <EvergreenLogo variant="mark" size="sm" />
             <span className="text-sm">Leave Desk · HR Platform</span>
           </div>
           <div className="text-xs opacity-50 tracking-wide">
