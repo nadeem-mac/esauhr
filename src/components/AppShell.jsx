@@ -13,6 +13,8 @@ import ConnectivityTest from './ConnectivityTest.jsx';
 import NewRequestModal from './NewRequestModal.jsx';
 import EmployeeDetailModal from './EmployeeDetailModal.jsx';
 import AdminPanel from './AdminPanel.jsx';
+import EvergreenLogo from './EvergreenLogo.jsx';
+import { logAction } from '../lib/audit.js';
 import { fmtDate } from '../lib/leaveLogic.js';
 
 function buildTabs(isAdmin) {
@@ -111,11 +113,19 @@ export default function AppShell({ session, me, onRefreshMe }) {
   const signOut = async () => { await supabase.auth.signOut(); };
 
   const createRequest = async (payload) => {
-    const { error } = await supabase.from('leave_requests').insert({
+    const { data, error } = await supabase.from('leave_requests').insert({
       ...payload,
       requested_by: session.user.email,
-    });
+    }).select().single();
     if (error) throw error;
+    const empName = empMap[payload.employee_id]?.name || payload.employee_id;
+    const typeName = typeMap[payload.leave_type_id]?.name || payload.leave_type_id;
+    logAction(me, 'leave_request_create', {
+      targetType: 'leave_request',
+      targetId: data?.id,
+      targetLabel: `${empName} · ${typeName} · ${payload.start_date} → ${payload.end_date}`,
+      details: { employee_id: payload.employee_id, leave_type_id: payload.leave_type_id, days: payload.days },
+    });
     await loadAll();
   };
 
@@ -127,18 +137,39 @@ export default function AppShell({ session, me, onRefreshMe }) {
       decision_note: note || null,
     }).eq('id', id);
     if (error) throw error;
+    const req = requests.find(r => r.id === id);
+    const empName = req ? (empMap[req.employee_id]?.name || req.employee_id) : '';
+    logAction(me, 'leave_request_decide', {
+      targetType: 'leave_request',
+      targetId: id,
+      targetLabel: `${empName} · ${status}`,
+      details: { status, note: note || null },
+    });
     await loadAll();
   };
 
   const deleteRequest = async (id) => {
+    const req = requests.find(r => r.id === id);
+    const empName = req ? (empMap[req.employee_id]?.name || req.employee_id) : '';
     const { error } = await supabase.from('leave_requests').delete().eq('id', id);
     if (error) throw error;
+    logAction(me, 'leave_request_delete', {
+      targetType: 'leave_request',
+      targetId: id,
+      targetLabel: empName,
+    });
     await loadAll();
   };
 
   const updateLeaveType = async (id, patch) => {
     const { error } = await supabase.from('leave_types').update(patch).eq('id', id);
     if (error) throw error;
+    logAction(me, 'leave_type_update', {
+      targetType: 'leave_type',
+      targetId: id,
+      targetLabel: typeMap[id]?.name || id,
+      details: patch,
+    });
     await loadAll();
   };
 
@@ -160,13 +191,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
       <header className="border-b" style={{ borderColor: 'var(--border-soft)', background: 'var(--paper)' }}>
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: 'var(--evergreen-800)' }}>
-              <LeafMark />
-            </div>
-            <div>
-              <div className="serif text-xl leading-none" style={{ fontWeight: 600 }}>Leave Desk</div>
-              <div className="text-[10px] tracking-[0.2em] opacity-60 mt-0.5">VACATION · ABSENCE</div>
-            </div>
+            <EvergreenLogo variant="full" size="md" />
           </div>
 
           <div className="flex items-center gap-4">
@@ -177,15 +202,22 @@ export default function AppShell({ session, me, onRefreshMe }) {
             <div className="hidden sm:block w-px h-8" style={{ background: 'var(--border-soft)' }}/>
             <div className="text-right hidden sm:block">
               <div className="text-[10px] tracking-wider opacity-50">SIGNED IN</div>
-              <div className="text-sm truncate max-w-[200px]">
-                {me ? (
-                  <>
-                    <span className="opacity-60 mr-1.5">{me.id}</span>
+              {me ? (
+                <>
+                  <div className="text-sm font-medium leading-tight" style={{ color: 'var(--ink)' }}>
                     {me.name}
-                    {isAdmin && <span className="ml-1.5 text-[9px] tracking-widest px-1.5 py-0.5 rounded-full" style={{ background: 'var(--evergreen-800)', color: 'var(--paper)' }}>ADMIN</span>}
-                  </>
-                ) : session.user.email}
-              </div>
+                  </div>
+                  <div className="text-[10px] tracking-wider opacity-60 mt-0.5 flex items-center gap-1.5 justify-end">
+                    <span className="font-mono">{me.id}</span>
+                    {isAdmin && (
+                      <span className="text-[9px] tracking-widest px-1.5 py-0.5 rounded-full font-medium"
+                        style={{ background: 'var(--evergreen-800)', color: 'var(--paper)' }}>ADMIN</span>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="text-sm truncate max-w-[180px]">{session.user.email}</div>
+              )}
             </div>
             <button onClick={() => setShowNewRequest(true)}
               className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm"

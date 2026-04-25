@@ -4,6 +4,7 @@ import {
   ShieldCheck, Clock, CheckCircle2, XCircle, Copy, RefreshCw, Mail, Loader2, AlertCircle, KeyRound, UserCheck
 } from 'lucide-react';
 import { psnToEmail, generatePin, getAdminParallelClient } from '../lib/psnAuth.js';
+import { logAction, formatAction } from '../lib/audit.js';
 
 // Admin panel: review pending PSN registration requests, generate PIN, create auth user,
 // link to employee, mark request approved. Surfaces PIN to admin so they can share it
@@ -12,7 +13,10 @@ import { psnToEmail, generatePin, getAdminParallelClient } from '../lib/psnAuth.
 export default function AdminPanel({ session, me, onRefreshMe }) {
   const [pending, setPending] = useState([]);
   const [recent, setRecent]   = useState([]);
+  const [auditLog, setAuditLog] = useState([]);
+  const [auditFilter, setAuditFilter] = useState('all'); // 'all' | psn
   const [loading, setLoading] = useState(true);
+  const [auditLoading, setAuditLoading] = useState(true);
   const [error, setError]     = useState('');
   const [busyId, setBusyId]   = useState(null);
   const [issuedPins, setIssuedPins] = useState({}); // { request_id: { pin, name, psn, email } }
@@ -47,13 +51,35 @@ export default function AdminPanel({ session, me, onRefreshMe }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Load recent audit log entries (admin-only RLS)
+  const loadAudit = useCallback(async () => {
+    setAuditLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('audit_log')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      setAuditLog(data || []);
+    } catch (err) {
+      // RLS-denied means migration hasn't run yet — fail silently for v1.
+      setAuditLog([]);
+    } finally {
+      setAuditLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadAudit(); }, [loadAudit]);
+
   // Realtime updates
   useEffect(() => {
     const ch = supabase.channel('admin-reg-requests')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'registration_requests' }, load)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'audit_log' }, loadAudit)
       .subscribe();
     return () => { supabase.removeChannel(ch); };
-  }, [load]);
+  }, [load, loadAudit]);
 
   async function approve(req) {
     setBusyId(req.id);
@@ -109,6 +135,13 @@ export default function AdminPanel({ session, me, onRefreshMe }) {
         [req.id]: { pin, name: req.employee.name, psn: req.psn, email: req.employee.email },
       }));
 
+      // Audit
+      logAction(me, 'request_approve', {
+        targetType: 'registration_request',
+        targetId: req.id,
+        targetLabel: `${req.employee.name} (${req.psn})`,
+      });
+
       // Sign out the parallel client (so it doesn't keep that session in memory)
       try { await adminClient.auth.signOut(); } catch {}
 
@@ -128,6 +161,11 @@ export default function AdminPanel({ session, me, onRefreshMe }) {
         .update({ status: 'rejected', approved_at: new Date().toISOString(), approved_by: session.user.id })
         .eq('id', req.id);
       if (e) throw e;
+      logAction(me, 'request_reject', {
+        targetType: 'registration_request',
+        targetId: req.id,
+        targetLabel: `${req.employee?.name || ''} (${req.psn})`,
+      });
       await load();
     } catch (err) {
       setError(err.message);
@@ -261,6 +299,74 @@ export default function AdminPanel({ session, me, onRefreshMe }) {
           </ul>
         </section>
       )}
+
+      {/* ─────────── ACTIVITY LOG (admin-only) ─────────── */}
+      <section className="pt-8 border-t" style={{ borderColor: 'rgba(244,238,223,0.08)' }}>
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <div>
+            <h3 className="text-xs tracking-[0.25em] opacity-60">ACTIVITY LOG</h3>
+            <p className="text-xs opacity-50 mt-1">
+              Every meaningful action across the platform. Visible only to admins.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={auditFilter}
+              onChange={e => setAuditFilter(e.target.value)}
+              className="text-xs px-3 py-1.5 rounded-full border bg-transparent"
+              style={{ borderColor: 'rgba(244,238,223,0.2)', color: 'inherit' }}>
+              <option value="all" style={{ background: 'var(--evergreen-900)' }}>All users</option>
+              {[...new Set(auditLog.map(l => l.actor_psn).filter(Boolean))].map(psn => (
+                <option key={psn} value={psn} style={{ background: 'var(--evergreen-900)' }}>{psn}</option>
+              ))}
+            </select>
+            <button onClick={loadAudit}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs border opacity-70 hover:opacity-100"
+              style={{ borderColor: 'rgba(244,238,223,0.2)' }}>
+              <RefreshCw className="w-3 h-3" /> Refresh
+            </button>
+          </div>
+        </div>
+
+        {auditLoading ? (
+          <div className="opacity-60 text-sm flex items-center gap-2">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading activity…
+          </div>
+        ) : auditLog.length === 0 ? (
+          <div className="rounded-xl p-6 text-center text-sm opacity-60"
+            style={{ background: 'rgba(244,238,223,0.03)', border: '1px solid rgba(244,238,223,0.08)' }}>
+            No activity recorded yet. Run <code className="font-mono opacity-80">migration_audit_log.sql</code> in Supabase to enable logging.
+          </div>
+        ) : (
+          <ul className="space-y-1.5">
+            {auditLog
+              .filter(l => auditFilter === 'all' || l.actor_psn === auditFilter)
+              .slice(0, 60)
+              .map(log => (
+                <li key={log.id}
+                  className="flex items-start justify-between gap-3 px-4 py-2.5 rounded-lg text-xs"
+                  style={{ background: 'rgba(244,238,223,0.03)', border: '1px solid rgba(244,238,223,0.06)' }}>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="font-mono opacity-60 text-[10px]">{log.actor_psn || '—'}</span>
+                      <span className="opacity-90 truncate">{log.actor_name || 'unknown'}</span>
+                      <span className="text-[10px] tracking-widest px-1.5 py-0.5 rounded-full opacity-80"
+                        style={{ background: 'rgba(143,179,154,0.15)', color: '#BFD5C4' }}>
+                        {formatAction(log.action)}
+                      </span>
+                    </div>
+                    {log.target_label && (
+                      <div className="opacity-70 truncate">{log.target_label}</div>
+                    )}
+                  </div>
+                  <div className="text-[10px] opacity-40 whitespace-nowrap text-right">
+                    {new Date(log.created_at).toLocaleString()}
+                  </div>
+                </li>
+              ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }

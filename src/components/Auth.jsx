@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { supabase } from '../supabaseClient.js';
 import { psnToEmail } from '../lib/psnAuth.js';
 import { ArrowLeft, ArrowRight, User, Lock, AlertCircle, CheckCircle2 } from 'lucide-react';
+import EvergreenLogo from './EvergreenLogo.jsx';
 
 // PSN-based auth.
 //   'signin'  : PSN + PIN  (returning users)
@@ -62,6 +63,10 @@ export default function Auth({ onBack }) {
       </svg>
 
       <div className="relative z-10 max-w-md w-full mx-auto flex-1 flex flex-col justify-center px-6 py-12">
+        <div className="absolute top-6 left-6">
+          <EvergreenLogo variant="full" size="sm" />
+        </div>
+
         <button onClick={onBack}
           className="inline-flex items-center gap-2 text-sm opacity-60 hover:opacity-100 mb-10">
           <ArrowLeft className="w-4 h-4" /> Back

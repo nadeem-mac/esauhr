@@ -1,40 +1,46 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { supabase, supabaseConfigured } from './supabaseClient.js';
 import { emailToPsn } from './lib/psnAuth.js';
+import { logAction } from './lib/audit.js';
 import Landing from './components/Landing.jsx';
 import Auth from './components/Auth.jsx';
 import AppShell from './components/AppShell.jsx';
 import ConfigMissing from './components/ConfigMissing.jsx';
+import EvergreenLogo from './components/EvergreenLogo.jsx';
 
 export default function App() {
   const [session, setSession] = useState(null);
   const [me, setMe]           = useState(null);
   const [view, setView]       = useState('landing');
   const [ready, setReady]     = useState(false);
+  const lastSignInUser = useRef(null);  // de-dupe SIGNED_IN events (mount + actual login)
 
   const resolveMe = useCallback(async (s) => {
-    if (!s?.user) { setMe(null); return; }
+    if (!s?.user) { setMe(null); return null; }
     try {
       let { data: byAuth } = await supabase
         .from('employees').select('*')
         .eq('auth_user_id', s.user.id).maybeSingle();
-      if (byAuth) { setMe(byAuth); return; }
+      if (byAuth) { setMe(byAuth); return byAuth; }
 
       const psn = emailToPsn(s.user.email);
-      if (!psn) { setMe(null); return; }
+      if (!psn) { setMe(null); return null; }
 
       const { data: byPsn } = await supabase
         .from('employees').select('*')
         .eq('id', psn).maybeSingle();
-      if (!byPsn) { setMe(null); return; }
+      if (!byPsn) { setMe(null); return null; }
 
       await supabase.from('employees')
         .update({ auth_user_id: s.user.id }).eq('id', psn).is('auth_user_id', null);
 
-      setMe({ ...byPsn, auth_user_id: s.user.id });
+      const linked = { ...byPsn, auth_user_id: s.user.id };
+      setMe(linked);
+      return linked;
     } catch (err) {
       console.error('Could not resolve employee:', err);
       setMe(null);
+      return null;
     }
   }, []);
 
@@ -46,13 +52,26 @@ export default function App() {
       if (data.session) setView('app');
       setReady(true);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, s) => {
+    const { data: sub } = supabase.auth.onAuthStateChange(async (event, s) => {
       setSession(s);
-      await resolveMe(s);
-      if (s) setView('app');
-      else setView('landing');
+      const meRow = await resolveMe(s);
+      if (s) {
+        setView('app');
+        // Log fresh sign-ins only (not token refreshes or initial session load).
+        if (event === 'SIGNED_IN' && meRow && lastSignInUser.current !== s.user.id) {
+          lastSignInUser.current = s.user.id;
+          logAction(meRow, 'sign_in', { details: { email: s.user.email } });
+        }
+      } else {
+        if (event === 'SIGNED_OUT' && me) {
+          logAction(me, 'sign_out');
+        }
+        lastSignInUser.current = null;
+        setView('landing');
+      }
     });
     return () => sub.subscription.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolveMe]);
 
   if (!supabaseConfigured) return <ConfigMissing />;
@@ -67,17 +86,11 @@ export default function App() {
 
 function SplashLoader() {
   return (
-    <div className="min-h-screen flex items-center justify-center">
+    <div className="min-h-screen flex items-center justify-center"
+         style={{ background: 'var(--evergreen-900)', color: '#F4EEDF' }}>
       <div className="text-center">
-        <div className="w-10 h-10 rounded-xl mx-auto mb-3 flex items-center justify-center"
-             style={{ background: 'var(--evergreen-800)' }}>
-          <svg viewBox="0 0 32 32" className="w-6 h-6">
-            <path d="M16 6 C 10 10, 10 18, 16 26 C 22 18, 22 10, 16 6 Z"
-                  fill="none" stroke="#8FB39A" strokeWidth="1.5"/>
-            <line x1="16" y1="6" x2="16" y2="26" stroke="#8FB39A" strokeWidth="1.5"/>
-          </svg>
-        </div>
-        <div className="text-xs tracking-widest opacity-50">LOADING</div>
+        <EvergreenLogo variant="stack" size="lg" />
+        <div className="text-[10px] tracking-[0.3em] opacity-50 mt-6">LOADING</div>
       </div>
     </div>
   );
