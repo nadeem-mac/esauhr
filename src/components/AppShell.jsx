@@ -44,9 +44,7 @@ function buildTabs({ isAdmin, isReviewer, isManager }) {
 }
 
 export default function AppShell({ session, me, onRefreshMe }) {
-  const isAdmin    = Boolean(me?.is_admin);
-  const isReviewer = Boolean(me?.can_review_leave || me?.can_review_permissions);
-  const TABS = useMemo(() => buildTabs({ isAdmin, isReviewer, isManager: (employees || []).some(e => e.manager_id === me?.id) }), [isAdmin, isReviewer]);
+  // State declarations come FIRST so derived flags can read 'employees'.
   const [pendingRegCount, setPendingRegCount] = useState(0);
   const [tab, setTab] = useState('dashboard');
   const [employees, setEmployees]       = useState([]);
@@ -58,6 +56,18 @@ export default function AppShell({ session, me, onRefreshMe }) {
   const [error, setError]               = useState('');
   const [showNewRequest, setShowNewRequest] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
+
+  // Derived flags — must be AFTER all useState() so employees is in scope.
+  const isAdmin    = Boolean(me?.is_admin);
+  const isReviewer = Boolean(me?.can_review_leave || me?.can_review_permissions);
+  const isManager  = useMemo(
+    () => (employees || []).some(e => e.manager_id === me?.id),
+    [employees, me?.id]
+  );
+  const TABS = useMemo(
+    () => buildTabs({ isAdmin, isReviewer, isManager }),
+    [isAdmin, isReviewer, isManager]
+  );
 
   const loadAll = useCallback(async () => {
     setLoading(true);
