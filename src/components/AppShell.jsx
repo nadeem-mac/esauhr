@@ -51,6 +51,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
   const [employees, setEmployees]       = useState([]);
   const [leaveTypes, setLeaveTypes]     = useState([]);
   const [requests, setRequests]         = useState([]);
+  const [permissions, setPermissions]   = useState([]);
   const [balances, setBalances]         = useState([]);
   const [holidays, setHolidays]         = useState([]);
   const [loading, setLoading]           = useState(true);
@@ -74,12 +75,13 @@ export default function AppShell({ session, me, onRefreshMe }) {
     setLoading(true);
     setError('');
     try {
-      const [e, t, r, b, h] = await Promise.all([
+      const [e, t, r, b, h, p] = await Promise.all([
         supabase.from('employees').select('*').order('name'),
         supabase.from('leave_types').select('*').order('sort_order'),
         supabase.from('leave_requests').select('*').order('requested_at', { ascending: false }),
         supabase.from('leave_balances').select('*'),
         supabase.from('public_holidays').select('*').order('date'),
+        supabase.from('permission_requests').select('*').order('permission_date', { ascending: false }),
       ]);
 
       if (e.error) throw e.error;
@@ -87,12 +89,14 @@ export default function AppShell({ session, me, onRefreshMe }) {
       if (r.error) throw r.error;
       if (b.error) throw b.error;
       if (h.error) throw h.error;
+      // permissions are optional — don't fail the whole load if the table is missing.
 
       setEmployees(e.data || []);
       setLeaveTypes(t.data || []);
       setRequests(r.data || []);
       setBalances(b.data || []);
       setHolidays(h.data || []);
+      setPermissions(p?.data || []);
     } catch (err) {
       setError(err.message || 'Failed to load data');
     } finally {
@@ -310,6 +314,8 @@ export default function AppShell({ session, me, onRefreshMe }) {
               me={me}
               employees={employees}
               leaveTypes={leaveTypes}
+              requests={requests}
+              permissions={permissions}
               onOpenNewRequest={() => setShowNewRequest(true)}
             />
           ) : (

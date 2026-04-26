@@ -1,7 +1,6 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { supabase } from '../supabaseClient.js';
+import React, { useState, useMemo } from 'react';
 import {
-  Clock, CheckCircle2, XCircle, AlertTriangle, Loader2,
+  Clock, CheckCircle2, XCircle, AlertTriangle,
   Sunrise, Sunset, Calendar
 } from 'lucide-react';
 import { fmtDate } from '../lib/leaveLogic.js';
@@ -24,37 +23,8 @@ const RANGES = [
   { id: 'month', label: 'This month', days: 30 },
 ];
 
-export default function BashaierDashboard({ me, employees, leaveTypes, onOpenNewRequest }) {
-  const [range, setRange]             = useState('week');
-  const [requests, setRequests]       = useState([]);
-  const [permissions, setPermissions] = useState([]);
-  const [loading, setLoading]         = useState(true);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [reqs, perms] = await Promise.all([
-        supabase.from('leave_requests').select('*').order('requested_at', { ascending: false }),
-        supabase.from('permission_requests').select('*').order('permission_date', { ascending: false }),
-      ]);
-      setRequests(reqs.data || []);
-      setPermissions(perms.data || []);
-    } catch (err) {
-      console.warn('BashaierDashboard load failed:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  useEffect(() => {
-    const ch = supabase.channel('bashaier-feed')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_requests' }, load)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'permission_requests' }, load)
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [load]);
+export default function BashaierDashboard({ me, employees, leaveTypes, requests = [], permissions = [], onOpenNewRequest }) {
+  const [range, setRange] = useState('week');
 
   const cutoffISO = useMemo(() => {
     const days = RANGES.find(r => r.id === range)?.days || 7;
@@ -101,17 +71,6 @@ export default function BashaierDashboard({ me, employees, leaveTypes, onOpenNew
       return tb.localeCompare(ta);
     })
     .slice(0, 8);
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-32">
-        <div className="text-center opacity-60">
-          <Loader2 className="w-6 h-6 mx-auto animate-spin mb-3" />
-          <div className="text-xs tracking-widest">LOADING OVERSIGHT</div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6">
