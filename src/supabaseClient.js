@@ -3,17 +3,17 @@ import { createClient } from '@supabase/supabase-js';
 const url = import.meta.env.VITE_SUPABASE_URL;
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-// Informative flag the app can read — so it can show a helpful screen
+// Informative flag the app can read â so it can show a helpful screen
 // instead of just crashing when env vars are missing.
 export const supabaseConfigured = Boolean(url && key);
 
 export const supabase = supabaseConfigured
   ? createClient(url, key, {
       auth: {
-        persistSession: true,
+        persistSession: false,
         autoRefreshToken: true,
         detectSessionInUrl: true,
-        // Skip the Web Lock — Leave Desk is a single-tab app and the lock just
+        // Skip the Web Lock â Leave Desk is a single-tab app and the lock just
         // adds 5+ second delays on parallel queries when it gets orphaned.
         lock: (name, acquireTimeout, fn) => fn(),
       },
