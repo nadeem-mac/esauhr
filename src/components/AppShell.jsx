@@ -101,7 +101,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
     return () => { mounted = false; supabase.removeChannel(ch); };
   }, [isAdmin]);
 
-  // Realtime subscription — updates when anyone in the team changes data
+  // Realtime subscription â updates when anyone in the team changes data
   useEffect(() => {
     const channel = supabase.channel('leave-desk-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_requests' }, loadAll)
@@ -129,7 +129,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
     logAction(me, 'leave_request_create', {
       targetType: 'leave_request',
       targetId: data?.id,
-      targetLabel: `${empName} · ${typeName} · ${payload.start_date} → ${payload.end_date}`,
+      targetLabel: `${empName} Â· ${typeName} Â· ${payload.start_date} â ${payload.end_date}`,
       details: { employee_id: payload.employee_id, leave_type_id: payload.leave_type_id, days: payload.days },
     });
     await loadAll();
@@ -148,7 +148,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
     logAction(me, 'leave_request_decide', {
       targetType: 'leave_request',
       targetId: id,
-      targetLabel: `${empName} · ${status}`,
+      targetLabel: `${empName} Â· ${status}`,
       details: { status, note: note || null },
     });
     await loadAll();
@@ -202,18 +202,18 @@ export default function AppShell({ session, me, onRefreshMe }) {
 
           <div className="flex items-center gap-4">
             <div className="text-right hidden md:block">
-              <div className="text-[10px] tracking-wider opacity-50">TODAY</div>
-              <div className="serif text-sm">{fmtDate(new Date())}</div>
+              <div className="text-[11px] tracking-[0.2em] opacity-70 font-bold">TODAY</div>
+              <div className="serif text-base font-semibold">{fmtDate(new Date())}</div>
             </div>
             <div className="hidden sm:block w-px h-8" style={{ background: 'var(--border-soft)' }}/>
             <div className="text-right hidden sm:block">
-              <div className="text-[10px] tracking-wider opacity-50">SIGNED IN</div>
+              <div className="text-[11px] tracking-[0.2em] opacity-70 font-bold">SIGNED IN</div>
               {me ? (
                 <>
-                  <div className="text-sm font-medium leading-tight" style={{ color: 'var(--ink)' }}>
+                  <div className="text-base font-bold leading-tight" style={{ color: 'var(--ink)' }}>
                     {me.name}
                   </div>
-                  <div className="text-[10px] tracking-wider opacity-60 mt-0.5 flex items-center gap-1.5 justify-end">
+                  <div className="text-xs tracking-wider opacity-80 mt-1 flex items-center gap-1.5 justify-end font-semibold">
                     <span className="font-mono">{me.id}</span>
                     {isAdmin && (
                       <span className="text-[9px] tracking-widest px-1.5 py-0.5 rounded-full font-medium"
@@ -222,7 +222,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
                   </div>
                 </>
               ) : (
-                <div className="text-sm truncate max-w-[180px]">{session.user.email}</div>
+                <div className="text-base font-semibold truncate max-w-[180px]">{session.user.email}</div>
               )}
             </div>
             <button onClick={() => setShowNewRequest(true)}
