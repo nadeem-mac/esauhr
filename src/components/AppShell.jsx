@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   LayoutDashboard, ClipboardList, Users, Calendar as CalIcon, Settings,
   Plus, LogOut, Activity, ShieldCheck
-} from 'lucide-react';
+, Clock } from 'lucide-react';
 import { supabase } from '../supabaseClient.js';
 import Dashboard from './Dashboard.jsx';
 import Requests from './Requests.jsx';
@@ -16,6 +16,7 @@ import AdminPanel from './AdminPanel.jsx';
 import PersonalDashboard from './PersonalDashboard.jsx';
 import ReviewerPanel from './ReviewerPanel.jsx';
 import EvergreenLogo from './EvergreenLogo.jsx';
+import AttendanceView from './AttendanceView.jsx';
 import { logAction } from '../lib/audit.js';
 import { fmtDate } from '../lib/leaveLogic.js';
 
@@ -30,6 +31,11 @@ function buildTabs({ isAdmin, isReviewer }) {
   ];
   if (isReviewer && !isAdmin) {
     base.splice(2, 0, { id: 'reviews', label: 'Reviews',  icon: ShieldCheck });
+  }
+  // Attendance tab: visible to admins + reviewers (Bashaier and friends)
+  if (isAdmin || isReviewer) {
+    const insertIdx = base.findIndex(t => t.id === 'calendar');
+    base.splice(insertIdx >= 0 ? insertIdx + 1 : 4, 0, { id: 'attendance', label: 'Attendance', icon: Clock });
   }
   if (isAdmin) {
     base.splice(5, 0, { id: 'admin', label: 'Admin', icon: ShieldCheck });
@@ -298,6 +304,9 @@ export default function AppShell({ session, me, onRefreshMe }) {
         )}
         {tab === 'reviews' && (
           <ReviewerPanel me={me} />
+        )}
+        {tab === 'attendance' && (
+          <AttendanceView me={me} employees={employees} />
         )}
         {tab === 'requests' && (
           <Requests
