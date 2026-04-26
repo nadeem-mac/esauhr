@@ -46,8 +46,7 @@ function buildTabs({ isAdmin, isReviewer, isManager }) {
 export default function AppShell({ session, me, onRefreshMe }) {
   const isAdmin    = Boolean(me?.is_admin);
   const isReviewer = Boolean(me?.can_review_leave || me?.can_review_permissions);
-  const isManager  = (employees || []).some(e => e.manager_id === me?.id);
-  const TABS = useMemo(() => buildTabs({ isAdmin, isReviewer }), [isAdmin, isReviewer]);
+  const TABS = useMemo(() => buildTabs({ isAdmin, isReviewer, isManager: (employees || []).some(e => e.manager_id === me?.id) }), [isAdmin, isReviewer]);
   const [pendingRegCount, setPendingRegCount] = useState(0);
   const [tab, setTab] = useState('dashboard');
   const [employees, setEmployees]       = useState([]);
