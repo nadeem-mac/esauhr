@@ -1,11 +1,12 @@
-import React, { useMemo } from 'react';
-import { X, Building2, MapPin, Calendar, Briefcase } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { X, Building2, MapPin, Calendar, Briefcase, KeyRound, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { Avatar, Pill } from './Dashboard.jsx';
+import { supabase } from '../supabaseClient.js';
 import {
   calculateBalance, fmtDate, fmtDateShort, yearsOfService, monthsOfService, LOCATION_LABELS,
 } from '../lib/leaveLogic.js';
 
-export default function EmployeeDetailModal({ employee, leaveTypes, requests, balances, typeMap, onClose }) {
+export default function EmployeeDetailModal({ employee, leaveTypes, requests, balances, typeMap, me, onClose }) {
   const year = new Date().getFullYear();
 
   const balByType = useMemo(() => {
@@ -121,8 +122,108 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
               </ul>
             )}
           </div>
+
+          {me?.is_admin && employee?.id && (
+            <ResetPinSection employee={employee} />
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────
+   ADMIN-ONLY: reset any staff member's PIN.
+   Calls the admin_reset_pin RPC which itself
+   verifies the caller is_admin server-side.
+   ───────────────────────────────────────────── */
+function ResetPinSection({ employee }) {
+  const [open, setOpen]       = useState(false);
+  const [pin, setPin]         = useState('202600');
+  const [busy, setBusy]       = useState(false);
+  const [done, setDone]       = useState('');
+  const [err,  setErr]        = useState('');
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true); setErr(''); setDone('');
+    try {
+      if (!pin || pin.length < 6) throw new Error('PIN must be at least 6 characters.');
+      const { data, error } = await supabase.rpc('admin_reset_pin', {
+        target_psn: employee.id, new_pin: pin
+      });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'Unknown error');
+      setDone(`PIN ${data.action === 'created' ? 'issued' : 'reset'} to ${pin}`);
+    } catch (ex) {
+      setErr(ex.message || String(ex));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border p-4" style={{ borderColor:'var(--border-soft)', background:'#FFFDF7' }}>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <KeyRound className="w-4 h-4 opacity-60" />
+          <div className="text-xs tracking-widest opacity-60 font-bold">ADMIN · RESET PIN</div>
+        </div>
+        {!open && (
+          <button onClick={() => { setOpen(true); setDone(''); setErr(''); }}
+            className="px-3 py-1.5 rounded-full text-xs font-semibold"
+            style={{ background:'var(--ink)', color:'var(--paper)' }}>
+            Reset PIN
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <form onSubmit={submit} className="mt-3 space-y-3">
+          <div>
+            <label className="block text-[10px] tracking-[0.2em] opacity-70 font-bold mb-1.5">NEW PIN</label>
+            <input type="text" value={pin} onChange={e => setPin(e.target.value)}
+              autoFocus disabled={busy} placeholder="At least 6 characters"
+              className="w-full px-3 py-2.5 rounded-xl border text-sm font-mono bg-transparent"
+              style={{ borderColor:'var(--border)' }} />
+            <div className="flex gap-1.5 mt-2">
+              {['202600','260026','123456'].map(p => (
+                <button key={p} type="button" onClick={() => setPin(p)} disabled={busy}
+                  className="text-[10px] tracking-wider px-2 py-1 rounded-md font-mono"
+                  style={{ background:'rgba(15,40,24,0.06)' }}>
+                  use {p}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {err && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs"
+              style={{ background:'rgba(184,74,62,0.10)', color:'var(--clay)' }}>
+              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> {err}
+            </div>
+          )}
+          {done && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs"
+              style={{ background:'rgba(45,95,63,0.10)', color:'var(--evergreen-500)' }}>
+              <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" /> {done} — share this with {employee.name.split(' ')[0]}.
+            </div>
+          )}
+
+          <div className="flex gap-2 justify-end">
+            <button type="button" onClick={() => { setOpen(false); setErr(''); setDone(''); }} disabled={busy}
+              className="px-3 py-1.5 rounded-full text-xs">
+              Cancel
+            </button>
+            <button type="submit" disabled={busy}
+              className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold"
+              style={{ background: 'linear-gradient(135deg, #FF8A4D 0%, #FF4E6A 100%)', color:'#fff' }}>
+              {busy && <Loader2 className="w-3 h-3 animate-spin" />}
+              {busy ? 'Resetting…' : (done ? 'Done' : `Reset PIN for ${employee.id}`)}
+            </button>
+          </div>
+        </form>
+      )}
     </div>
   );
 }

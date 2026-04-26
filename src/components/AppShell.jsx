@@ -14,6 +14,7 @@ import NewRequestModal from './NewRequestModal.jsx';
 import EmployeeDetailModal from './EmployeeDetailModal.jsx';
 import AdminPanel from './AdminPanel.jsx';
 import PersonalDashboard from './PersonalDashboard.jsx';
+import BashaierDashboard from './BashaierDashboard.jsx';
 import ReviewerPanel from './ReviewerPanel.jsx';
 import EvergreenLogo from './EvergreenLogo.jsx';
 import AttendanceView from './AttendanceView.jsx';
@@ -304,6 +305,13 @@ export default function AppShell({ session, me, onRefreshMe }) {
               onGoToRequests={() => setTab('requests')}
               onNewRequest={() => setShowNewRequest(true)}
             />
+          ) : isReviewer ? (
+            <BashaierDashboard
+              me={me}
+              employees={employees}
+              leaveTypes={leaveTypes}
+              onOpenNewRequest={() => setShowNewRequest(true)}
+            />
           ) : (
             <PersonalDashboard
               me={me}
@@ -373,6 +381,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
           requests={requests.filter(r => r.employee_id === selectedEmployee.id)}
           balances={balances.filter(b => b.employee_id === selectedEmployee.id)}
           typeMap={typeMap}
+          me={me}
           onClose={() => setSelectedEmployee(null)}
         />
       )}
