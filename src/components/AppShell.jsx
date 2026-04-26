@@ -101,7 +101,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
     return () => { mounted = false; supabase.removeChannel(ch); };
   }, [isAdmin]);
 
-  // Realtime subscription — updates when anyone in the team changes data
+  // Realtime subscription â updates when anyone in the team changes data
   useEffect(() => {
     const channel = supabase.channel('leave-desk-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_requests' }, loadAll)
@@ -129,7 +129,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
     logAction(me, 'leave_request_create', {
       targetType: 'leave_request',
       targetId: data?.id,
-      targetLabel: `${empName} Ã· ${typeName} Ã· ${payload.start_date} Ã¢ÂÂ ${payload.end_date}`,
+      targetLabel: `${empName} ÃÂÂ· ${typeName} ÃÂÂ· ${payload.start_date} ÃÂ¢ÃÂÃÂ ${payload.end_date}`,
       details: { employee_id: payload.employee_id, leave_type_id: payload.leave_type_id, days: payload.days },
     });
     await loadAll();
@@ -148,7 +148,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
     logAction(me, 'leave_request_decide', {
       targetType: 'leave_request',
       targetId: id,
-      targetLabel: `${empName} Ã· ${status}`,
+      targetLabel: `${empName} ÃÂÂ· ${status}`,
       details: { status, note: note || null },
     });
     await loadAll();
@@ -281,6 +281,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
         {tab === 'dashboard' && (
           isAdmin ? (
             <Dashboard
+              me={me}
               employees={employees} leaveTypes={leaveTypes} requests={requests}
               balances={balances} holidays={holidays}
               typeMap={typeMap} empMap={empMap}
