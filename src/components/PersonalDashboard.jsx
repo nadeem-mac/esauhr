@@ -94,12 +94,12 @@ export default function PersonalDashboard({ me, leaveTypes, onOpenNewRequest }) 
         </h1>
         <p className="text-sm opacity-70 mt-2">
           {nextLeave
-            ? `You're off on ${fmtDate(new Date(nextLeave.start_date))} — that's in ${daysFromNow(nextLeave.start_date)}.`
+            ? `You're off on ${fmtDate(new Date(nextLeave.start_date))} â that's in ${daysFromNow(nextLeave.start_date)}.`
             : 'No upcoming approved leave on the books.'}
         </p>
       </section>
 
-      {/* COLORFUL TILE GRID — 3 cols */}
+      {/* COLORFUL TILE GRID â 3 cols */}
       <section className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
         <ColorTile
           gradient="linear-gradient(135deg, #00D4C0 0%, #008C9E 100%)"
@@ -121,8 +121,8 @@ export default function PersonalDashboard({ me, leaveTypes, onOpenNewRequest }) 
           label="NEXT VACATION" icon={Plane}
           stat={nextLeave ? labelForType(nextLeave.leave_type_id, leaveTypes).split(' ')[0] : 'None'}
           desc={nextLeave
-            ? `${fmtDate(new Date(nextLeave.start_date))} — ${fmtDate(new Date(nextLeave.end_date))}`
-            : 'Plan your next break — request anytime.'}
+            ? `${fmtDate(new Date(nextLeave.start_date))} â ${fmtDate(new Date(nextLeave.end_date))}`
+            : 'Plan your next break â request anytime.'}
           smallStat
         />
         <ColorTile
@@ -162,7 +162,7 @@ export default function PersonalDashboard({ me, leaveTypes, onOpenNewRequest }) 
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium">{labelForType(r.leave_type_id, leaveTypes)}</div>
                   <div className="text-xs opacity-60">
-                    {fmtDate(new Date(r.start_date))} — {fmtDate(new Date(r.end_date))} · {r.days} day{r.days !== 1 ? 's' : ''}
+                    {fmtDate(new Date(r.start_date))} â {fmtDate(new Date(r.end_date))} · {r.days} day{r.days !== 1 ? 's' : ''}
                   </div>
                 </div>
                 <StatusPill status={r.status} />
@@ -233,7 +233,7 @@ function FlagTile({ monthSummary }) {
         </div>
         <div className="text-[11px] opacity-90 mt-1 leading-snug">
           {flagged
-            ? `${monthSummary.hoursUsed}h used in ${monthSummary.occurrences} occurrence${monthSummary.occurrences !== 1 ? 's' : ''} — exceeds 3hr cap.`
+            ? `${monthSummary.hoursUsed}h used in ${monthSummary.occurrences} occurrence${monthSummary.occurrences !== 1 ? 's' : ''} â exceeds 3hr cap.`
             : `Combined cap: 3hr / 3 times per month. ${monthSummary.hoursRemaining}h left.`}
         </div>
       </div>

@@ -68,7 +68,7 @@ export default function Dashboard({ employees, requests, typeMap, empMap, onGoTo
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Total Staff" value={employees.length}
-                  sub={`${byLocation.DMM || 0} DMM Â· ${byLocation.JED || 0} JED Â· ${byLocation.RYD || 0} RYD`}/>
+                  sub={`${byLocation.DMM || 0} DMM Ã· ${byLocation.JED || 0} JED Ã· ${byLocation.RYD || 0} RYD`}/>
         <StatCard label="On Leave Today" value={onLeaveToday.length}
                   sub="Currently out of office" accent="var(--evergreen-500)"/>
         <StatCard label="Pending Approval" value={pending.length}
@@ -81,7 +81,7 @@ export default function Dashboard({ employees, requests, typeMap, empMap, onGoTo
       <div className="grid lg:grid-cols-3 gap-5">
         <Card title="Out of office today" subtitle={`${onLeaveToday.length} ${onLeaveToday.length === 1 ? 'person' : 'people'}`}>
           {onLeaveToday.length === 0 ? (
-            <Empty icon={Palmtree} message="Full house â nobody on leave today."/>
+            <Empty icon={Palmtree} message="Full house — nobody on leave today."/>
           ) : (
             <ul className="space-y-3">
               {onLeaveToday.map(r => {
@@ -92,7 +92,7 @@ export default function Dashboard({ employees, requests, typeMap, empMap, onGoTo
                     <Avatar id={emp.id} name={emp.name}/>
                     <div className="min-w-0 flex-1">
                       <div className="text-sm truncate" style={{ fontWeight: 500 }}>{emp.name}</div>
-                      <div className="text-xs opacity-60">{emp.department} Â· {emp.location}</div>
+                      <div className="text-xs opacity-60">{emp.department} Ã· {emp.location}</div>
                     </div>
                     <div className="text-right">
                       <Pill color={tp?.color}>{tp?.name || r.leave_type_id}</Pill>
@@ -107,7 +107,7 @@ export default function Dashboard({ employees, requests, typeMap, empMap, onGoTo
 
         <Card title="Pending requests" subtitle={pending.length > 0 ? 'Needs action' : 'Queue is empty'} accent="var(--clay)">
           {pending.length === 0 ? (
-            <Empty icon={Check} message="Nothing to approve â nice."/>
+            <Empty icon={Check} message="Nothing to approve — nice."/>
           ) : (
             <ul className="space-y-3">
               {pending.slice(0, 5).map(r => {
@@ -118,7 +118,7 @@ export default function Dashboard({ employees, requests, typeMap, empMap, onGoTo
                     <Avatar id={emp.id} name={emp.name}/>
                     <div className="min-w-0 flex-1">
                       <div className="text-sm truncate" style={{ fontWeight: 500 }}>{emp.name}</div>
-                      <div className="text-xs opacity-60">{tp?.name} Â· {r.days} {Number(r.days) === 1 ? 'day' : 'days'}</div>
+                      <div className="text-xs opacity-60">{tp?.name} Ã· {r.days} {Number(r.days) === 1 ? 'day' : 'days'}</div>
                     </div>
                     <div className="text-xs opacity-60">{fmtDateShort(r.start_date)}</div>
                   </li>
@@ -155,7 +155,7 @@ export default function Dashboard({ employees, requests, typeMap, empMap, onGoTo
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="text-sm truncate" style={{ fontWeight: 500 }}>{emp.name}</div>
-                      <div className="text-xs opacity-60">{tp?.name} Â· {r.days}d</div>
+                      <div className="text-xs opacity-60">{tp?.name} Ã· {r.days}d</div>
                     </div>
                   </li>
                 );
@@ -181,7 +181,7 @@ export default function Dashboard({ employees, requests, typeMap, empMap, onGoTo
   );
 }
 
-/* ââââ small UI primitives shared across pages ââââ */
+/* Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ small UI primitives shared across pages Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ */
 export function Card({ title, subtitle, children, accent }) {
   return (
     <div className="rounded-xl border p-5" style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}>
@@ -200,11 +200,11 @@ export function Card({ title, subtitle, children, accent }) {
 }
 
 export function StatCard({ label, value, sub, accent = 'var(--ink)', onClick }) {
-  // Colorful gradient variant — each label gets its own brand colour.
+  // Colorful gradient variant â each label gets its own brand colour.
   const GRADIENTS = {
     'Total Staff':         'linear-gradient(135deg, #34D399 0%, #059669 100%)', // emerald
     'On Leave Today':      'linear-gradient(135deg, #00D4C0 0%, #008C9E 100%)', // teal
-    'Pending Approval':    'linear-gradient(135deg, #FBBF24 0%, #F97316 100%)', // amber→orange
+    'Pending Approval':    'linear-gradient(135deg, #FBBF24 0%, #F97316 100%)', // amberâorange
     'Approved This Month': 'linear-gradient(135deg, #8B5CF6 0%, #4F46E5 100%)', // purple
   };
   const gradient = GRADIENTS[label] || 'linear-gradient(135deg, #FF8A4D 0%, #FF4E6A 100%)';
