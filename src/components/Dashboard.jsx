@@ -3,8 +3,15 @@ import { Check, ArrowRight, Palmtree, Calendar } from 'lucide-react';
 import { todayISO, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 
 export default function Dashboard({ me, employees, requests, typeMap, empMap, onGoToRequests, onNewRequest }) {
-  // Personalised greeting (logic in module-scope helper to avoid minifier TDZ).
-  const greeting = formatGreeting(me?.name);
+  // Personalised greeting — fully inline to eliminate any minifier scope issues.
+  const _hr = new Date().getHours();
+  const _period = _hr < 12 ? 'morning' : _hr < 17 ? 'afternoon' : 'evening';
+  const _parts = String(me?.name || '').trim().split(/\s+/).filter(Boolean);
+  const _skip = ['MOHAMMED','MOHAMMAD','MUHAMMAD','MOHD','ABDULLAH','ABDUL','ABDULRAHMAN','AHMED','AHMAD'];
+  const _pickIdx = (_parts.length >= 2 && _skip.includes(_parts[0].toUpperCase())) ? 1 : 0;
+  const _pick = _parts[_pickIdx] || '';
+  const _display = _pick ? _pick.charAt(0).toUpperCase() + _pick.slice(1).toLowerCase() : '';
+  const greeting = _display ? `Good ${_period}, ${_display}.` : `Good ${_period}.`;
   const today = todayISO();
 
   const onLeaveToday = useMemo(
@@ -255,30 +262,4 @@ export function Empty({ icon: Icon, message }) {
       <div className="text-sm">{message}</div>
     </div>
   );
-}
-
-
-// ─────────────────────────────────────────────────────────────
-// Helper: time-of-day greeting + smart display name
-//   "MOHAMMED NADEEM NISAR SHAIKH" → "Good morning, Nadeem."
-// Lives at module scope so it's fully hoisted and isolated from
-// the component body's useMemo calls.
-// ─────────────────────────────────────────────────────────────
-const PREFIX_NAMES = ['MOHAMMED','MOHAMMAD','MUHAMMAD','MOHD','ABDULLAH','ABDUL','ABDULRAHMAN','AHMED','AHMAD'];
-
-function titleCase(w) {
-  return w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : '';
-}
-
-function formatGreeting(rawName) {
-  const hr = new Date().getHours();
-  const period = hr < 12 ? 'morning' : hr < 17 ? 'afternoon' : 'evening';
-  const parts = (rawName || '').trim().split(/\s+/).filter(Boolean);
-  let display = '';
-  if (parts.length >= 2 && PREFIX_NAMES.includes(parts[0].toUpperCase())) {
-    display = titleCase(parts[1]);
-  } else if (parts.length > 0) {
-    display = titleCase(parts[0]);
-  }
-  return display ? `Good ${period}, ${display}.` : `Good ${period}.`;
 }
