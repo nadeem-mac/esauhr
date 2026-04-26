@@ -21,20 +21,33 @@ export default function ReviewerPanel({ me }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [lr, pr, emps] = await Promise.all([
-        canLeave
-          ? supabase.from('leave_requests').select('*')
-              .eq('status', 'pending').order('requested_at', { ascending: false })
-          : Promise.resolve({ data: [] }),
-        canPerm
-          ? supabase.from('permission_requests').select('*')
-              .eq('status', 'pending').order('requested_at', { ascending: false })
-          : Promise.resolve({ data: [] }),
-        supabase.from('employees').select('id, name, location, department'),
-      ]);
+      // First fetch all employees so we can derive direct reports
+      const { data: emps } = await supabase
+        .from('employees')
+        .select('id, name, location, department, manager_id');
       const map = {};
-      (emps.data || []).forEach(e => { map[e.id] = e; });
+      (emps || []).forEach(e => { map[e.id] = e; });
       setEmpMap(map);
+
+      // Direct reports: staff whose manager_id === me.id
+      const reportIds = (emps || [])
+        .filter(e => e.manager_id === me?.id)
+        .map(e => e.id);
+      const showAll      = canLeave || canPerm;        // Bashaier / admin / any reviewer
+      const showAsMgrOnly = !showAll && reportIds.length > 0;
+
+      const buildQuery = (table, allowed) => {
+        if (!allowed && !showAsMgrOnly) return Promise.resolve({ data: [] });
+        let q = supabase.from(table).select('*').eq('status', 'pending').order('requested_at', { ascending: false });
+        if (!showAll) q = q.in('employee_id', reportIds);
+        return q;
+      };
+
+      const [lr, pr] = await Promise.all([
+        buildQuery('leave_requests',      canLeave),
+        buildQuery('permission_requests', canPerm),
+      ]);
+
       setLeave(lr.data || []);
       setPerms(pr.data || []);
     } catch (err) {
@@ -42,7 +55,7 @@ export default function ReviewerPanel({ me }) {
     } finally {
       setLoading(false);
     }
-  }, [canLeave, canPerm]);
+  }, [me?.id, canLeave, canPerm]);
 
   useEffect(() => { load(); }, [load]);
 

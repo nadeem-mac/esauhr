@@ -20,7 +20,7 @@ import AttendanceView from './AttendanceView.jsx';
 import { logAction } from '../lib/audit.js';
 import { fmtDate } from '../lib/leaveLogic.js';
 
-function buildTabs({ isAdmin, isReviewer }) {
+function buildTabs({ isAdmin, isReviewer, isManager }) {
   const base = [
     { id: 'dashboard',  label: 'Dashboard', icon: LayoutDashboard },
     { id: 'requests',   label: 'Requests',  icon: ClipboardList },
@@ -29,7 +29,7 @@ function buildTabs({ isAdmin, isReviewer }) {
     { id: 'settings',   label: 'Settings',  icon: Settings },
     { id: 'diagnostics',label: 'Diagnostics', icon: Activity },
   ];
-  if (isReviewer && !isAdmin) {
+  if ((isReviewer || isManager) && !isAdmin) {
     base.splice(2, 0, { id: 'reviews', label: 'Reviews',  icon: ShieldCheck });
   }
   // Attendance tab: visible to admins + reviewers (Bashaier and friends)
@@ -46,6 +46,7 @@ function buildTabs({ isAdmin, isReviewer }) {
 export default function AppShell({ session, me, onRefreshMe }) {
   const isAdmin    = Boolean(me?.is_admin);
   const isReviewer = Boolean(me?.can_review_leave || me?.can_review_permissions);
+  const isManager  = (employees || []).some(e => e.manager_id === me?.id);
   const TABS = useMemo(() => buildTabs({ isAdmin, isReviewer }), [isAdmin, isReviewer]);
   const [pendingRegCount, setPendingRegCount] = useState(0);
   const [tab, setTab] = useState('dashboard');
