@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   Clock, CheckCircle2, XCircle, AlertTriangle,
   Sunrise, Sunset, Calendar
