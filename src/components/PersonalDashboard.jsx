@@ -1,22 +1,14 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../supabaseClient.js';
 import {
-  Calendar, Clock, Plus, AlertTriangle, ArrowRight, Sun, Sunrise, Sunset, CheckCircle2, XCircle, Loader2
+  Calendar, Clock, Plus, AlertTriangle, Sun, Sunrise, Sunset,
+  CheckCircle2, XCircle, Loader2, Users, Plane
 } from 'lucide-react';
 import { fmtDate, calculateBalance } from '../lib/leaveLogic.js';
-import { summariseMonth, PERMISSION_QUOTA, PERMISSION_TYPES } from '../lib/permissionLogic.js';
+import { summariseMonth, PERMISSION_QUOTA } from '../lib/permissionLogic.js';
 import PermissionRequestModal from './PermissionRequestModal.jsx';
 
-// Shown to non-admin staff.  Six tiles + quick actions.
-//
-// Tiles:
-//   1.  My balance (annual leave entitlement vs used) — computed via calculateBalance
-//   2.  My next vacation (next approved leave)
-//   3.  My recent requests (last 5)
-//   4.  Late-arrival permissions (this month, X / 3 hrs)
-//   5.  Early-leaving permissions (this month, X / 3 hrs)
-//   6.  Combined evaluation flag if total > 3hrs
-
+// Staff personal dashboard. Compact colorful gradient tiles.
 export default function PersonalDashboard({ me, leaveTypes, onOpenNewRequest }) {
   const [adjustments, setAdjustments] = useState({});
   const [requests,    setRequests]    = useState([]);
@@ -28,12 +20,9 @@ export default function PersonalDashboard({ me, leaveTypes, onOpenNewRequest }) 
     if (!me?.id) return;
     setLoading(true);
     try {
-      const year = new Date().getFullYear();
+      const year  = new Date().getFullYear();
       const month = new Date().toISOString().slice(0, 7);
-
       const [bal, reqs, perms] = await Promise.all([
-        // leave_balances stores ONLY carryover + adjustments — entitlement is
-        // computed in JS via calculateBalance.
         supabase.from('leave_balances').select('*')
           .eq('employee_id', me.id).eq('year', year).eq('leave_type_id', 'annual').maybeSingle(),
         supabase.from('leave_requests').select('*')
@@ -48,23 +37,18 @@ export default function PersonalDashboard({ me, leaveTypes, onOpenNewRequest }) 
       setPermissions(perms.data || []);
     } catch (err) {
       console.warn('PersonalDashboard load failed:', err);
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }, [me?.id]);
 
   useEffect(() => { load(); }, [load]);
 
-  // Realtime — refresh when my own rows change
   useEffect(() => {
     if (!me?.id) return;
     const ch = supabase.channel(`me-${me.id}`)
       .on('postgres_changes',
-          { event: '*', schema: 'public', table: 'leave_requests', filter: `employee_id=eq.${me.id}` },
-          load)
+          { event: '*', schema: 'public', table: 'leave_requests', filter: `employee_id=eq.${me.id}` }, load)
       .on('postgres_changes',
-          { event: '*', schema: 'public', table: 'permission_requests', filter: `employee_id=eq.${me.id}` },
-          load)
+          { event: '*', schema: 'public', table: 'permission_requests', filter: `employee_id=eq.${me.id}` }, load)
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, [me?.id, load]);
@@ -82,151 +66,101 @@ export default function PersonalDashboard({ me, leaveTypes, onOpenNewRequest }) 
 
   const lateRows  = permissions.filter(p => p.type === 'late_arrival');
   const earlyRows = permissions.filter(p => p.type === 'early_leave');
-  // Combined monthly bucket — covers BOTH late + early
   const monthSummary = summariseMonth(permissions);
-  const lateUsed  = lateRows .filter(r => r.status === 'pending' || r.status === 'approved').reduce((s, r) => s + Number(r.hours || 0), 0);
-  const earlyUsed = earlyRows.filter(r => r.status === 'pending' || r.status === 'approved').reduce((s, r) => s + Number(r.hours || 0), 0);
-
+  const lateUsed  = lateRows .filter(r => r.status === 'pending' || r.status === 'approved').reduce((s,r) => s + Number(r.hours||0), 0);
+  const earlyUsed = earlyRows.filter(r => r.status === 'pending' || r.status === 'approved').reduce((s,r) => s + Number(r.hours||0), 0);
   const nextLeave = requests.find(r => r.status === 'approved' && new Date(r.start_date) >= startOfDay(new Date()));
   const recent    = requests.slice(0, 5);
+  const pendingCount = requests.filter(r => r.status === 'pending').length;
 
-  // Compute annual-leave balance via the shared logic (handles 21 vs 30 + pro-rata)
   const annualType = (leaveTypes || []).find(t => t.id === 'annual');
   const bal = annualType
-    ? calculateBalance({
-        employee:    me,
-        leaveType:   annualType,
-        year:        new Date().getFullYear(),
-        requests,
-        adjustments,
-      })
+    ? calculateBalance({ employee: me, leaveType: annualType, year: new Date().getFullYear(), requests, adjustments })
     : { entitlement: 0, used: 0, available: 0, total: 0 };
-  const totalEntitlement = bal.total      || bal.entitlement || 21;
-  const used             = bal.used       || 0;
-  const remaining        = bal.available  != null ? Math.max(0, bal.available) : Math.max(0, totalEntitlement - used);
+  const totalEntitlement = bal.total || bal.entitlement || 21;
+  const used = bal.used || 0;
+  const remaining = bal.available != null ? Math.max(0, bal.available) : Math.max(0, totalEntitlement - used);
+  const usedPct = Math.min(100, (used / Math.max(1,totalEntitlement)) * 100);
 
   return (
-    <div className="space-y-8">
-      {/* ─────────── HERO ─────────── */}
+    <div className="space-y-6">
+      {/* HERO */}
       <section>
-        <div className="text-xs tracking-[0.25em] opacity-50 mb-2">— OVERVIEW</div>
-        <h1 className="serif text-5xl md:text-6xl leading-[1.02]" style={{ fontWeight: 500, letterSpacing: '-0.02em' }}>
-          Hello, <span className="italic" style={{ color: 'var(--evergreen-500)' }}>{firstName(me?.name)}.</span>
+        <div className="text-[10px] tracking-[0.3em] opacity-50 mb-2 flex items-center gap-2">
+          <span className="inline-block w-7 h-px bg-current" />OVERVIEW
+        </div>
+        <h1 className="serif text-5xl leading-none" style={{ fontWeight: 600, letterSpacing:'-0.025em' }}>
+          Hello, <span className="italic" style={{ color:'var(--evergreen-500)', fontWeight: 400 }}>{firstName(me?.name)}.</span>
         </h1>
-        <p className="text-base opacity-70 mt-3">
+        <p className="text-sm opacity-70 mt-2">
           {nextLeave
             ? `You're off on ${fmtDate(new Date(nextLeave.start_date))} — that's in ${daysFromNow(nextLeave.start_date)}.`
             : 'No upcoming approved leave on the books.'}
         </p>
       </section>
 
-      {/* ─────────── PRIMARY TILES ─────────── */}
-      <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-
-        {/* Balance card */}
-        <div className="rounded-2xl p-6 border" style={{ borderColor: 'var(--border-soft)', background: 'var(--paper-2)' }}>
-          <div className="flex items-center justify-between">
-            <div className="text-[10px] tracking-[0.25em] opacity-60">ANNUAL LEAVE</div>
-            <Calendar className="w-4 h-4 opacity-50" />
-          </div>
-          <div className="serif text-6xl mt-3" style={{ fontWeight: 500, letterSpacing: '-0.02em' }}>
-            {remaining}
-          </div>
-          <div className="text-xs opacity-60 mt-1">of {totalEntitlement} days remaining</div>
-          <div className="h-1.5 mt-4 rounded-full overflow-hidden" style={{ background: 'rgba(15,40,24,0.08)' }}>
-            <div className="h-full rounded-full" style={{
-              width: `${Math.min(100, (used / totalEntitlement) * 100)}%`,
-              background: 'var(--evergreen-500)'
-            }}/>
-          </div>
-          <div className="text-[10px] opacity-50 mt-2">{used} used · resets Jan 1</div>
-        </div>
-
-        {/* Next vacation */}
-        <div className="rounded-2xl p-6 border" style={{ borderColor: 'var(--border-soft)', background: 'var(--paper-2)' }}>
-          <div className="flex items-center justify-between">
-            <div className="text-[10px] tracking-[0.25em] opacity-60">NEXT VACATION</div>
-            <Sun className="w-4 h-4 opacity-50" />
-          </div>
-          {nextLeave ? (
-            <>
-              <div className="serif text-2xl mt-3 leading-tight" style={{ fontWeight: 500 }}>
-                {labelForType(nextLeave.leave_type_id, leaveTypes)}
-              </div>
-              <div className="text-sm opacity-70 mt-1">
-                {fmtDate(new Date(nextLeave.start_date))} — {fmtDate(new Date(nextLeave.end_date))}
-              </div>
-              <div className="text-xs mt-3 inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
-                style={{ background: 'rgba(45,95,63,0.15)', color: 'var(--evergreen-500)' }}>
-                <CheckCircle2 className="w-3 h-3" /> Approved
-              </div>
-            </>
-          ) : (
-            <div className="opacity-60 text-sm mt-6">Nothing scheduled. Plan a break?</div>
-          )}
-        </div>
-
-        {/* My requests count */}
-        <div className="rounded-2xl p-6 border" style={{ borderColor: 'var(--border-soft)', background: 'var(--paper-2)' }}>
-          <div className="flex items-center justify-between">
-            <div className="text-[10px] tracking-[0.25em] opacity-60">MY REQUESTS</div>
-            <Clock className="w-4 h-4 opacity-50" />
-          </div>
-          <div className="serif text-6xl mt-3" style={{ fontWeight: 500, letterSpacing: '-0.02em' }}>
-            {requests.filter(r => r.status === 'pending').length}
-          </div>
-          <div className="text-xs opacity-60 mt-1">awaiting decision</div>
-          <div className="text-[10px] opacity-50 mt-3">
-            {requests.filter(r => r.status === 'approved').length} approved · {requests.filter(r => r.status === 'rejected').length} rejected (lifetime)
-          </div>
-        </div>
-      </section>
-
-      {/* ─────────── PERMISSIONS ROW ─────────── */}
-      <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <PermissionTile
-          icon={Sunrise}
-          title="LATE ARRIVAL"
-          hint="3hr / mo · 8:15 cutoff"
-          hoursUsed={lateUsed}
-          rows={lateRows}
-          monthSummary={monthSummary}
-          onRequest={() => setPermModal('late_arrival')}
+      {/* COLORFUL TILE GRID — 3 cols */}
+      <section className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+        <ColorTile
+          gradient="linear-gradient(135deg, #00D4C0 0%, #008C9E 100%)"
+          label="ANNUAL LEAVE" icon={Calendar}
+          stat={remaining} unit=" days"
+          desc={`Of your ${totalEntitlement}-day yearly entitlement.`}
+          progress={100 - usedPct}
         />
-        <PermissionTile
-          icon={Sunset}
-          title="EARLY LEAVING"
-          hint="3hr / mo · combined cap"
-          hoursUsed={earlyUsed}
-          rows={earlyRows}
-          monthSummary={monthSummary}
-          onRequest={() => setPermModal('early_leave')}
+        <ColorTile
+          gradient="linear-gradient(135deg, #FF8A4D 0%, #FF4E6A 100%)"
+          label="LATE ARRIVAL" icon={Sunrise}
+          stat={lateUsed} unit={`h / ${PERMISSION_QUOTA.monthlyHours}h`}
+          desc="Combined cap: late + early. 3 occurrences."
+          progress={Math.min(100, (lateUsed/PERMISSION_QUOTA.monthlyHours)*100)}
+          onClick={() => setPermModal('late_arrival')}
+        />
+        <ColorTile
+          gradient="linear-gradient(135deg, #8B5CF6 0%, #4F46E5 100%)"
+          label="NEXT VACATION" icon={Plane}
+          stat={nextLeave ? labelForType(nextLeave.leave_type_id, leaveTypes).split(' ')[0] : 'None'}
+          desc={nextLeave
+            ? `${fmtDate(new Date(nextLeave.start_date))} — ${fmtDate(new Date(nextLeave.end_date))}`
+            : 'Plan your next break — request anytime.'}
+          smallStat
+        />
+        <ColorTile
+          gradient="linear-gradient(135deg, #F472B6 0%, #DB2777 100%)"
+          label="EARLY LEAVING" icon={Sunset}
+          stat={earlyUsed} unit="h used"
+          desc="Shared bucket with late arrivals this month."
+          progress={Math.min(100, (earlyUsed/PERMISSION_QUOTA.monthlyHours)*100)}
+          onClick={() => setPermModal('early_leave')}
+        />
+        <ColorTile
+          gradient="linear-gradient(135deg, #FBBF24 0%, #F97316 100%)"
+          label="PENDING REQUESTS" icon={Clock}
+          stat={pendingCount} unit=""
+          desc={pendingCount === 0 ? 'Queue is clear.' : 'Awaiting decision.'}
         />
         <FlagTile monthSummary={monthSummary} />
       </section>
 
-      {/* ─────────── RECENT LEAVE REQUESTS ─────────── */}
-      <section>
+      {/* RECENT */}
+      <section className="rounded-2xl border bg-white p-5" style={{ borderColor:'var(--border-soft)' }}>
         <div className="flex items-center justify-between mb-3">
-          <div className="text-[10px] tracking-[0.25em] opacity-60">RECENT LEAVE REQUESTS</div>
+          <div className="text-[10px] tracking-[0.3em] opacity-60">RECENT LEAVE REQUESTS</div>
           <button onClick={onOpenNewRequest}
             className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs"
-            style={{ background: 'var(--ink)', color: 'var(--paper)' }}>
+            style={{ background:'var(--ink)', color:'var(--paper)' }}>
             <Plus className="w-3 h-3" /> Request leave
           </button>
         </div>
         {recent.length === 0 ? (
-          <div className="rounded-xl p-6 text-center text-sm opacity-60 border"
-            style={{ borderColor: 'var(--border-soft)' }}>
-            No leave requests yet. Tap "Request leave" above to start.
-          </div>
+          <div className="text-sm opacity-60 py-3 text-center">No leave requests yet.</div>
         ) : (
-          <ul className="rounded-xl border overflow-hidden divide-y" style={{ borderColor: 'var(--border-soft)' }}>
+          <ul className="divide-y" style={{ borderColor:'var(--border-soft)' }}>
             {recent.map(r => (
-              <li key={r.id} className="flex items-center justify-between gap-3 px-4 py-3"
-                  style={{ background: 'var(--paper-2)' }}>
+              <li key={r.id} className="flex items-center justify-between gap-3 py-2.5"
+                  style={{ borderColor:'var(--border-soft)' }}>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm">{labelForType(r.leave_type_id, leaveTypes)}</div>
+                  <div className="text-sm font-medium">{labelForType(r.leave_type_id, leaveTypes)}</div>
                   <div className="text-xs opacity-60">
                     {fmtDate(new Date(r.start_date))} — {fmtDate(new Date(r.end_date))} · {r.days} day{r.days !== 1 ? 's' : ''}
                   </div>
@@ -251,66 +185,57 @@ export default function PersonalDashboard({ me, leaveTypes, onOpenNewRequest }) 
   );
 }
 
-/* ─────────── small components ─────────── */
-
-function PermissionTile({ icon: Icon, title, hint, hoursUsed, rows, monthSummary, onRequest }) {
-  const flagged = monthSummary.overQuota;
-  const pct = Math.min(100, (hoursUsed / PERMISSION_QUOTA.monthlyHours) * 100);
-  const color = flagged ? 'var(--clay)' : 'var(--evergreen-500)';
+/* === Colorful gradient tile === */
+function ColorTile({ gradient, label, icon: Icon, stat, unit = '', desc, progress, onClick, smallStat = false }) {
   return (
-    <div className="rounded-2xl p-6 border flex flex-col" style={{ borderColor: 'var(--border-soft)', background: 'var(--paper-2)' }}>
-      <div className="flex items-center justify-between">
-        <div className="text-[10px] tracking-[0.25em] opacity-60">{title}</div>
-        <Icon className="w-4 h-4 opacity-50" />
+    <div onClick={onClick}
+      className={`relative rounded-2xl p-4 text-white overflow-hidden flex flex-col justify-between transition-transform hover:-translate-y-1 ${onClick ? 'cursor-pointer' : ''}`}
+      style={{ background: gradient, minHeight: '140px', boxShadow:'0 8px 22px rgba(15,40,24,0.10)' }}>
+      <div className="absolute rounded-full pointer-events-none"
+        style={{ top:'-36px', right:'-36px', width:'120px', height:'120px', background:'rgba(255,255,255,0.13)' }} />
+      <div className="relative flex items-center justify-between">
+        <span className="text-[9px] tracking-[0.25em] font-semibold opacity-90">{label}</span>
+        {Icon && <Icon className="w-4 h-4 opacity-90" />}
       </div>
-      <div className="serif text-5xl mt-3 leading-none" style={{ fontWeight: 500, letterSpacing: '-0.02em', color }}>
-        {hoursUsed}<span className="text-xl opacity-50">h</span>
+      <div className="relative">
+        <div className={smallStat ? "text-2xl font-bold leading-tight mt-2" : "font-bold leading-none mt-2"}
+             style={{ fontSize: smallStat ? undefined : '40px', letterSpacing:'-0.03em' }}>
+          {stat}{unit && <span className="font-medium opacity-70" style={{ fontSize:'15px', marginLeft:'2px' }}>{unit}</span>}
+        </div>
+        <div className="text-[11px] opacity-90 mt-1 leading-snug">{desc}</div>
+        {progress !== undefined && (
+          <div className="h-1 rounded-full overflow-hidden mt-2" style={{ background:'rgba(255,255,255,0.25)' }}>
+            <div className="h-full rounded-full" style={{ width: progress + '%', background:'rgba(255,255,255,0.95)' }} />
+          </div>
+        )}
       </div>
-      <div className="text-xs opacity-60 mt-1">
-        of {PERMISSION_QUOTA.monthlyHours}h this month · {hint}
-      </div>
-      <div className="h-1.5 mt-4 rounded-full overflow-hidden" style={{ background: 'rgba(15,40,24,0.08)' }}>
-        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: color }}/>
-      </div>
-      <div className="text-[10px] opacity-50 mt-2">
-        {rows.length} request{rows.length !== 1 ? 's' : ''} this month
-      </div>
-      <button onClick={onRequest}
-        className="mt-4 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-full text-xs border self-start"
-        style={{ borderColor: 'var(--border)', color: 'var(--ink)' }}>
-        <Plus className="w-3 h-3" /> Request {title.toLowerCase()}
-      </button>
     </div>
   );
 }
 
 function FlagTile({ monthSummary }) {
   const flagged = monthSummary.overQuota;
+  const gradient = flagged
+    ? 'linear-gradient(135deg, #EF4444 0%, #B91C1C 100%)'
+    : 'linear-gradient(135deg, #34D399 0%, #059669 100%)';
   return (
-    <div className="rounded-2xl p-6 border flex flex-col"
-      style={{
-        borderColor: flagged ? 'var(--clay)' : 'var(--border-soft)',
-        background: flagged ? 'rgba(184,74,62,0.06)' : 'var(--paper-2)',
-      }}>
-      <div className="flex items-center justify-between">
-        <div className="text-[10px] tracking-[0.25em] opacity-60">EVALUATION FLAG</div>
-        <AlertTriangle className="w-4 h-4 opacity-50" />
+    <div className="relative rounded-2xl p-4 text-white overflow-hidden flex flex-col justify-between"
+      style={{ background: gradient, minHeight: '140px', boxShadow:'0 8px 22px rgba(15,40,24,0.10)' }}>
+      <div className="absolute rounded-full pointer-events-none"
+        style={{ top:'-36px', right:'-36px', width:'120px', height:'120px', background:'rgba(255,255,255,0.13)' }} />
+      <div className="relative flex items-center justify-between">
+        <span className="text-[9px] tracking-[0.25em] font-semibold opacity-90">EVALUATION FLAG</span>
+        <AlertTriangle className="w-4 h-4 opacity-90" />
       </div>
-      <div className="serif text-2xl mt-3 leading-tight" style={{ fontWeight: 500, color: flagged ? 'var(--clay)' : 'inherit' }}>
-        {flagged ? 'Flagged this month' : 'Within quota'}
-      </div>
-      <div className="text-xs opacity-70 mt-2 leading-relaxed">
-        {flagged ? (
-          <>You exceeded the combined 3-hour permission cap this month
-            ({monthSummary.hoursUsed}h, {monthSummary.occurrences} occurrence{monthSummary.occurrences !== 1 ? 's' : ''}).
-            This is recorded for your personal evaluation.</>
-        ) : (
-          <>Combined late + early cap is 3 hours / 3 occurrences per month.
-            Going over flags you in personal evaluation.</>
-        )}
-      </div>
-      <div className="text-[10px] opacity-50 mt-3">
-        {monthSummary.hoursUsed}h used · {monthSummary.occurrences} times · {monthSummary.hoursRemaining}h left
+      <div className="relative">
+        <div className="text-xl font-bold leading-tight mt-2">
+          {flagged ? 'Flagged' : 'Within quota'}
+        </div>
+        <div className="text-[11px] opacity-90 mt-1 leading-snug">
+          {flagged
+            ? `${monthSummary.hoursUsed}h used in ${monthSummary.occurrences} occurrence${monthSummary.occurrences !== 1 ? 's' : ''} — exceeds 3hr cap.`
+            : `Combined cap: 3hr / 3 times per month. ${monthSummary.hoursRemaining}h left.`}
+        </div>
       </div>
     </div>
   );
@@ -318,21 +243,20 @@ function FlagTile({ monthSummary }) {
 
 function StatusPill({ status }) {
   const cfg = {
-    pending:   { bg: 'rgba(196,155,97,0.15)', fg: 'var(--copper)',         label: 'Pending',   Icon: Clock },
-    approved:  { bg: 'rgba(45,95,63,0.15)',   fg: 'var(--evergreen-500)',  label: 'Approved',  Icon: CheckCircle2 },
-    rejected:  { bg: 'rgba(184,74,62,0.15)',  fg: 'var(--clay)',           label: 'Rejected',  Icon: XCircle },
-    cancelled: { bg: 'rgba(15,40,24,0.08)',   fg: 'var(--ink-soft)',       label: 'Cancelled', Icon: XCircle },
-  }[status] || { bg: '#eee', fg: '#000', label: status, Icon: Clock };
+    pending:   { bg:'rgba(196,155,97,0.18)',  fg:'#B07F2F', label:'Pending',   Icon:Clock },
+    approved:  { bg:'rgba(45,95,63,0.15)',    fg:'#2D5F3F', label:'Approved',  Icon:CheckCircle2 },
+    rejected:  { bg:'rgba(184,74,62,0.15)',   fg:'#B84A3E', label:'Rejected',  Icon:XCircle },
+    cancelled: { bg:'rgba(15,40,24,0.08)',    fg:'#5a6d5e', label:'Cancelled', Icon:XCircle },
+  }[status] || { bg:'#eee', fg:'#000', label:status, Icon:Clock };
   const { Icon } = cfg;
   return (
-    <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full whitespace-nowrap"
+    <span className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full whitespace-nowrap font-medium"
       style={{ background: cfg.bg, color: cfg.fg }}>
       <Icon className="w-3 h-3" /> {cfg.label}
     </span>
   );
 }
 
-/* ─────────── helpers ─────────── */
 function firstName(name) {
   if (!name) return 'there';
   return name.split(' ')[0].replace(/[^a-zA-Z]/g, '') || name;
