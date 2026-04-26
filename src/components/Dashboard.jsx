@@ -3,11 +3,21 @@ import { Check, ArrowRight, Palmtree, Calendar } from 'lucide-react';
 import { todayISO, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 
 export default function Dashboard({ me, employees, requests, typeMap, empMap, onGoToRequests, onNewRequest }) {
-  // Personalised greeting: time-of-day + first name
+  // Personalised greeting: time-of-day + best display name.
+  // For KSA names like "MOHAMMED NADEEM NISAR SHAIKH", "Mohammed" is a generic
+  // prefix — the person prefers to be called by the second name.
   const hour = new Date().getHours();
   const period = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
-  const firstName = (me?.name || '').trim().split(/\s+/)[0] || '';
-  const greeting = firstName ? `Good ${period}, ${firstName}.` : `Good ${period}.`;
+  const PREFIX_NAMES = ['MOHAMMED','MOHAMMAD','MUHAMMAD','MOHD','ABDULLAH','ABDUL','ABDULRAHMAN','AHMED','AHMAD'];
+  const titleCase = (w) => w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : '';
+  const parts = (me?.name || '').trim().split(/\s+/).filter(Boolean);
+  let displayName = '';
+  if (parts.length >= 2 && PREFIX_NAMES.includes(parts[0].toUpperCase())) {
+    displayName = titleCase(parts[1]);
+  } else if (parts.length > 0) {
+    displayName = titleCase(parts[0]);
+  }
+  const greeting = displayName ? `Good ${period}, ${displayName}.` : `Good ${period}.`;
   const today = todayISO();
 
   const onLeaveToday = useMemo(
@@ -73,7 +83,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, on
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Total Staff" value={employees.length}
-                  sub={`${byLocation.DMM || 0} DMM ÃÂÂ· ${byLocation.JED || 0} JED ÃÂÂ· ${byLocation.RYD || 0} RYD`}/>
+                  sub={`${byLocation.DMM || 0} DMM · ${byLocation.JED || 0} JED · ${byLocation.RYD || 0} RYD`}/>
         <StatCard label="On Leave Today" value={onLeaveToday.length}
                   sub="Currently out of office" accent="var(--evergreen-500)"/>
         <StatCard label="Pending Approval" value={pending.length}
@@ -86,7 +96,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, on
       <div className="grid lg:grid-cols-3 gap-5">
         <Card title="Out of office today" subtitle={`${onLeaveToday.length} ${onLeaveToday.length === 1 ? 'person' : 'people'}`}>
           {onLeaveToday.length === 0 ? (
-            <Empty icon={Palmtree} message="Full house â nobody on leave today."/>
+            <Empty icon={Palmtree} message="Full house — nobody on leave today."/>
           ) : (
             <ul className="space-y-3">
               {onLeaveToday.map(r => {
@@ -97,7 +107,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, on
                     <Avatar id={emp.id} name={emp.name}/>
                     <div className="min-w-0 flex-1">
                       <div className="text-sm truncate" style={{ fontWeight: 500 }}>{emp.name}</div>
-                      <div className="text-xs opacity-60">{emp.department} ÃÂÂ· {emp.location}</div>
+                      <div className="text-xs opacity-60">{emp.department} · {emp.location}</div>
                     </div>
                     <div className="text-right">
                       <Pill color={tp?.color}>{tp?.name || r.leave_type_id}</Pill>
@@ -112,7 +122,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, on
 
         <Card title="Pending requests" subtitle={pending.length > 0 ? 'Needs action' : 'Queue is empty'} accent="var(--clay)">
           {pending.length === 0 ? (
-            <Empty icon={Check} message="Nothing to approve â nice."/>
+            <Empty icon={Check} message="Nothing to approve — nice."/>
           ) : (
             <ul className="space-y-3">
               {pending.slice(0, 5).map(r => {
@@ -123,7 +133,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, on
                     <Avatar id={emp.id} name={emp.name}/>
                     <div className="min-w-0 flex-1">
                       <div className="text-sm truncate" style={{ fontWeight: 500 }}>{emp.name}</div>
-                      <div className="text-xs opacity-60">{tp?.name} ÃÂÂ· {r.days} {Number(r.days) === 1 ? 'day' : 'days'}</div>
+                      <div className="text-xs opacity-60">{tp?.name} · {r.days} {Number(r.days) === 1 ? 'day' : 'days'}</div>
                     </div>
                     <div className="text-xs opacity-60">{fmtDateShort(r.start_date)}</div>
                   </li>
@@ -160,7 +170,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, on
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="text-sm truncate" style={{ fontWeight: 500 }}>{emp.name}</div>
-                      <div className="text-xs opacity-60">{tp?.name} ÃÂÂ· {r.days}d</div>
+                      <div className="text-xs opacity-60">{tp?.name} · {r.days}d</div>
                     </div>
                   </li>
                 );
@@ -205,7 +215,7 @@ export function Card({ title, subtitle, children, accent }) {
 }
 
 export function StatCard({ label, value, sub, accent = 'var(--ink)', onClick }) {
-  // Colorful gradient variant Ã¢ÂÂ each label gets its own brand colour.
+  // Colorful gradient variant — each label gets its own brand colour.
   const GRADIENTS = {
     'Total Staff':         'linear-gradient(135deg, #34D399 0%, #059669 100%)', // emerald
     'On Leave Today':      'linear-gradient(135deg, #00D4C0 0%, #008C9E 100%)', // teal
