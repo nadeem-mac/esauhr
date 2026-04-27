@@ -1,5 +1,6 @@
-import React, { useMemo } from 'react';
-import { Check, ArrowRight, Palmtree, Calendar } from 'lucide-react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import { Check, ArrowRight, Palmtree, Calendar, KeyRound, Mail, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
+import { supabase } from '../supabaseClient.js';
 import { todayISO, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 
 export default function Dashboard({ me, employees, requests, typeMap, empMap, onGoToRequests, onNewRequest }) {
@@ -174,6 +175,9 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, on
         </Card>
       </div>
 
+      {/* PIN Requests — pending requests from staff who clicked Request access */}
+      <PinRequestsCard me={me} employees={employees} />
+
       {/* Headcount by department */}
       <Card title="Headcount by department" subtitle={`${employees.length} active employees`}>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 pt-2">
@@ -261,5 +265,180 @@ export function Empty({ icon: Icon, message }) {
       <Icon className="w-6 h-6 mx-auto mb-2"/>
       <div className="text-sm">{message}</div>
     </div>
+  );
+}
+
+
+/* ─────────────────────────────────────────────────────────────────
+   PinRequestsCard
+   ─────────────────────────────────────────────────────────────────
+   Shows pending registration_requests rows joined to the employees
+   directory. Admin (Nadeem) AND reviewers (Bashaier) can issue PINs.
+
+   Click "Generate & Email" → generates random 6-digit PIN →
+   calls admin_reset_pin RPC → marks request fulfilled →
+   opens user's mail client with PIN pre-filled.
+
+   If the staff already has a PIN (auth_user_id is not null), the
+   button is disabled and shows "Already has PIN — use Reset PIN".
+   ───────────────────────────────────────────────────────────────── */
+function PinRequestsCard({ me, employees }) {
+  const [requests, setRequests] = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [busyId,   setBusyId]   = useState(null);
+  const [error,    setError]    = useState('');
+  const [info,     setInfo]     = useState('');
+
+  const empById = useMemo(
+    () => Object.fromEntries(employees.map(e => [e.id, e])),
+    [employees]
+  );
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('registration_requests')
+        .select('*')
+        .eq('status', 'pending')
+        .order('requested_at', { ascending: true });
+      if (error) throw error;
+      setRequests(data || []);
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Realtime: refresh when a new request comes in
+  useEffect(() => {
+    const ch = supabase.channel('pin-requests-feed')
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'registration_requests' },
+        load)
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [load]);
+
+  const generateAndEmail = async (req) => {
+    setError(''); setInfo(''); setBusyId(req.id);
+    try {
+      const emp = empById[req.psn];
+      if (!emp) throw new Error('Employee record not found for ' + req.psn);
+
+      // Block if already has a PIN — admin/reviewer should use Reset PIN instead
+      if (emp.auth_user_id) {
+        setError(`${emp.name} already has a PIN. Use the Reset PIN button on their employee card instead.`);
+        return;
+      }
+
+      // Random 6-digit PIN
+      const pin = String(Math.floor(100000 + Math.random() * 900000));
+
+      // Issue via admin_reset_pin RPC (creates auth user using employees.email)
+      const { data, error: rpcErr } = await supabase.rpc('admin_reset_pin', {
+        target_psn: req.psn, new_pin: pin
+      });
+      if (rpcErr) throw rpcErr;
+      if (!data?.ok) throw new Error(data?.error || 'PIN issue failed');
+
+      // Mark request fulfilled
+      await supabase.from('registration_requests')
+        .update({ status: 'fulfilled', fulfilled_at: new Date().toISOString(), fulfilled_by: me?.auth_user_id || null })
+        .eq('id', req.id);
+
+      // Open mail client with pre-filled message
+      const subject = encodeURIComponent('Your Evergreen HR PIN');
+      const body = encodeURIComponent(
+        `Dear ${emp.name.split(' ').slice(0, 2).join(' ')},\n\n` +
+        `Your Evergreen HR PIN has been generated.\n\n` +
+        `PSN ID: ${emp.id}\n` +
+        `PIN: ${pin}\n\n` +
+        `Please sign in at https://esauhr.netlify.app and keep this PIN confidential.\n\n` +
+        `Best regards,\n${me?.name?.split(' ').slice(0, 2).join(' ') || 'HR'}\n` +
+        `Evergreen Shipping Agency Saudi Co. (LLC)`
+      );
+      const to = emp.email || '';
+      window.location.href = `mailto:${encodeURIComponent(to)}?subject=${subject}&body=${body}`;
+
+      setInfo(`PIN ${pin} issued to ${emp.name}. Mail draft opened.`);
+      await load();
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const reject = async (req) => {
+    setBusyId(req.id);
+    try {
+      await supabase.from('registration_requests')
+        .update({ status: 'rejected', fulfilled_at: new Date().toISOString(), fulfilled_by: me?.auth_user_id || null })
+        .eq('id', req.id);
+      await load();
+    } finally { setBusyId(null); }
+  };
+
+  return (
+    <Card title="PIN requests" subtitle={loading ? 'Loading…' : (requests.length === 0 ? 'No pending requests.' : `${requests.length} pending`)}>
+      {error && (
+        <div className="mb-3 flex items-center gap-2 px-3 py-2 rounded-lg text-xs"
+          style={{ background: 'rgba(184,74,62,0.10)', color: 'var(--clay)' }}>
+          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> {error}
+        </div>
+      )}
+      {info && (
+        <div className="mb-3 flex items-center gap-2 px-3 py-2 rounded-lg text-xs"
+          style={{ background: 'rgba(45,95,63,0.10)', color: 'var(--evergreen-500)' }}>
+          <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" /> {info}
+        </div>
+      )}
+      {!loading && requests.length === 0 ? (
+        <div className="py-6 text-center opacity-50 text-sm">
+          <KeyRound className="w-5 h-5 mx-auto mb-2" />
+          Queue is clear.
+        </div>
+      ) : (
+        <ul className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
+          {requests.map(req => {
+            const emp = empById[req.psn];
+            const hasPin = emp?.auth_user_id;
+            return (
+              <li key={req.id} className="py-3 flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 text-white text-xs font-bold"
+                  style={{ background: emp ? avatarColor(req.psn) : '#999' }}>
+                  {emp ? getInitials(emp.name) : '?'}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm truncate" style={{ fontWeight: 500 }}>
+                    {emp?.name || `Unknown PSN ${req.psn}`}
+                  </div>
+                  <div className="text-xs opacity-60">
+                    {req.psn}{emp?.department ? ' · ' + emp.department : ''}
+                    {hasPin ? ' · already has PIN' : ''}
+                  </div>
+                </div>
+                <button onClick={() => reject(req)} disabled={busyId === req.id}
+                  className="text-[10px] tracking-wider px-2.5 py-1 rounded-md opacity-60 hover:opacity-100">
+                  Reject
+                </button>
+                <button onClick={() => generateAndEmail(req)} disabled={busyId === req.id || hasPin}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full"
+                  style={hasPin
+                    ? { background: '#ddd', color: '#888' }
+                    : { background: 'linear-gradient(135deg, #FF8A4D 0%, #FF4E6A 100%)', color: '#fff' }}>
+                  {busyId === req.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Mail className="w-3 h-3" />}
+                  {hasPin ? 'Reset PIN instead' : (busyId === req.id ? 'Issuing…' : 'Generate & Email')}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Card>
   );
 }
