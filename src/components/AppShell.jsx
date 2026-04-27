@@ -21,21 +21,43 @@ import { logAction } from '../lib/audit.js';
 import { fmtDate } from '../lib/leaveLogic.js';
 
 function buildTabs({ isAdmin, isReviewer, isManager }) {
+  // Tab visibility rules:
+  //   Regular staff   → Dashboard, Requests, Calendar (no Employees, Settings, Diagnostics)
+  //   Reviewer/Manager → adds Reviews + Attendance, hides Diagnostics
+  //   Admin            → everything including Employees, Settings, Admin, Diagnostics
   const base = [
     { id: 'dashboard',  label: 'Dashboard', icon: LayoutDashboard },
     { id: 'requests',   label: 'Requests',  icon: ClipboardList },
-    { id: 'employees',  label: 'Employees', icon: Users },
-    { id: 'calendar',   label: 'Calendar',  icon: CalIcon },
-    { id: 'settings',   label: 'Settings',  icon: Settings },
-    { id: 'diagnostics',label: 'Diagnostics', icon: Activity },
   ];
+
+  // Employees tab — admin and reviewers only (Bashaier needs to see the directory).
+  // Regular staff don't get this tab.
+  if (isAdmin || isReviewer || isManager) {
+    base.push({ id: 'employees', label: 'Employees', icon: Users });
+  }
+
+  // Calendar — everyone
+  base.push({ id: 'calendar', label: 'Calendar', icon: CalIcon });
+
+  // Settings — admin only
+  if (isAdmin) {
+    base.push({ id: 'settings', label: 'Settings', icon: Settings });
+  }
+
+  // Diagnostics — admin only (Bashaier and staff don't see it)
+  if (isAdmin) {
+    base.push({ id: 'diagnostics', label: 'Diagnostics', icon: Activity });
+  }
+
+  // Reviews — for reviewers/managers who aren't admin
   if ((isReviewer || isManager) && !isAdmin) {
     base.splice(2, 0, { id: 'reviews', label: 'Reviews',  icon: ShieldCheck });
   }
-  // Attendance tab: visible to admins + reviewers (Bashaier and friends)
+
+  // Attendance — admin + reviewers
   if (isAdmin || isReviewer) {
     const insertIdx = base.findIndex(t => t.id === 'calendar');
-    base.splice(insertIdx >= 0 ? insertIdx + 1 : 4, 0, { id: 'attendance', label: 'Attendance', icon: Clock });
+    base.splice(insertIdx >= 0 ? insertIdx + 1 : base.length, 0, { id: 'attendance', label: 'Attendance', icon: Clock });
   }
   if (isAdmin) {
     base.splice(5, 0, { id: 'admin', label: 'Admin', icon: ShieldCheck });
@@ -333,7 +355,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
             onNewRequest={() => setShowNewRequest(true)}
           />
         )}
-        {tab === 'employees' && (
+        {tab === 'employees' && (isAdmin || isReviewer || isManager) && (
           <Employees
             employees={employees} leaveTypes={leaveTypes}
             requests={requests} balances={balances}
@@ -345,7 +367,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
             requests={requests} empMap={empMap} typeMap={typeMap} holidays={holidays}
           />
         )}
-        {tab === 'settings' && (
+        {tab === 'settings' && isAdmin && (
           <SettingsView
             leaveTypes={leaveTypes}
             onUpdateType={updateLeaveType}
@@ -353,7 +375,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
             me={me}
           />
         )}
-        {tab === 'diagnostics' && (
+        {tab === 'diagnostics' && isAdmin && (
           <ConnectivityTest />
         )}
         {tab === 'admin' && isAdmin && (
