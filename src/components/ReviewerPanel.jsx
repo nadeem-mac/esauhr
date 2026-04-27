@@ -26,13 +26,20 @@ export default function ReviewerPanel({ me }) {
   const canLeave      = isAdmin || isHrReviewer || isDeptManager;
   const canPerm       = isAdmin || me?.can_review_permissions;
 
+  // Helper: race a Supabase query against a timeout so the UI doesn't hang forever
+  const withTimeout = (p, ms = 10000, label = 'query') => Promise.race([
+    Promise.resolve(p).then(r => r),
+    new Promise((_, rej) => setTimeout(() => rej(new Error(label + ' timed out after ' + ms + 'ms')), ms)),
+  ]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
       // Fetch all employees so we can build the directory + filter by department
-      const { data: emps } = await supabase
-        .from('employees')
-        .select('id, name, location, department, manager_id');
+      const { data: emps } = await withTimeout(
+        supabase.from('employees').select('id, name, location, department, manager_id'),
+        10000, 'employees'
+      );
       const map = {};
       (emps || []).forEach(e => { map[e.id] = e; });
       setEmpMap(map);
@@ -74,10 +81,12 @@ export default function ReviewerPanel({ me }) {
         return q;
       };
 
-      const [lr, pr] = await Promise.all([
-        leaveQuery || Promise.resolve({ data: [] }),
-        buildPermQuery(),
-      ]);
+      // Run leave + permission queries sequentially with timeouts so a hang in one
+      // doesn't spin the UI forever.
+      const lr = leaveQuery
+        ? await withTimeout(leaveQuery, 10000, 'leave_requests')
+        : { data: [] };
+      const pr = await withTimeout(buildPermQuery(), 10000, 'permission_requests');
 
       setLeave(lr.data || []);
       setPerms(pr.data || []);
@@ -90,14 +99,9 @@ export default function ReviewerPanel({ me }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // Realtime
-  useEffect(() => {
-    const ch = supabase.channel('reviewer-feed')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_requests' }, load)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'permission_requests' }, load)
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [load]);
+  // No realtime channel. The websocket subscription was causing the supabase-js
+  // client to wedge after the first load. Reviewers click the Refresh button, or
+  // the queue auto-refreshes when they re-enter the tab (handled by load() rerun).
 
   // Stage-aware decision: figures out the next stage from the current one and the action.
   // The status<->stage trigger keeps the legacy status column synced automatically.
@@ -122,7 +126,10 @@ export default function ReviewerPanel({ me }) {
     patch.stage = nextStage;
 
     try {
-      const { error } = await supabase.from('leave_requests').update(patch).eq('id', req.id);
+      const { error } = await withTimeout(
+        supabase.from('leave_requests').update(patch).eq('id', req.id),
+        15000, 'leave decide'
+      );
       if (error) throw error;
       logAction(me, 'leave_request_decide', {
         targetType: 'leave_request',

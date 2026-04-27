@@ -58,37 +58,37 @@ export default function PersonalDashboard({ me, leaveTypes, onOpenNewRequest }) 
 
   useEffect(() => { load(); }, [load]);
 
-  useEffect(() => {
-    if (!me?.id) return;
-    const ch = supabase.channel(`me-${me.id}`)
-      .on('postgres_changes',
-          { event: '*', schema: 'public', table: 'leave_requests', filter: `employee_id=eq.${me.id}` }, load)
-      .on('postgres_changes',
-          { event: '*', schema: 'public', table: 'permission_requests', filter: `employee_id=eq.${me.id}` }, load)
-      .subscribe();
-    // Substitute response handler — updates this user's decision in the JSONB.
+  // Substitute response handler at COMPONENT scope (was previously trapped inside
+  // a useEffect by a bad earlier patch).
   // The Postgres trigger advance_stage_on_substitute_decision will auto-advance
   // the request stage to 'pending_manager' (if all accepted) or
   // 'rejected_by_substitute' (if anyone declined).
-  const respondToSubstitution = async (request, decision) => {
+  const respondToSubstitution = useCallback(async (request, decision) => {
+    if (!me?.id) return;
     const merged = {
       ...(request.substitute_decisions || {}),
       [me.id]: { decision, at: new Date().toISOString() }
     };
-    const { error } = await supabase
-      .from('leave_requests')
-      .update({ substitute_decisions: merged })
-      .eq('id', request.id);
-    if (error) {
-      console.warn('substitute decision failed:', error);
-      alert('Could not record your decision: ' + error.message);
-      return;
+    try {
+      const updatePromise = supabase
+        .from('leave_requests')
+        .update({ substitute_decisions: merged })
+        .eq('id', request.id);
+      // 10s timeout so a hung supabase-js client doesn't lock the UI
+      const { error } = await Promise.race([
+        Promise.resolve(updatePromise),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('decision update timed out')), 10000)),
+      ]);
+      if (error) throw error;
+      await load();
+    } catch (err) {
+      console.warn('substitute decision failed:', err);
+      alert('Could not record your decision: ' + (err.message || err));
     }
-    await load();
-  };
-
-  return () => { supabase.removeChannel(ch); };
   }, [me?.id, load]);
+
+  // Realtime subscription removed — it was wedging the supabase-js client. Users
+  // can refresh the page or it will reload when they navigate back to the dashboard.
 
   if (loading) {
     return (
