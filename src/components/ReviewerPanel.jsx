@@ -39,7 +39,7 @@ export default function ReviewerPanel({ me }) {
     try {
       // Fetch all employees so we can build the directory + filter by department
       const { data: emps } = await withTimeout(
-        supabase.from('employees').select('id, name, location, department, manager_id'),
+        supabase.from('employees').select('id, name, location, department, manager_id, email, join_date'),
         10000, 'employees'
       );
       const map = {};

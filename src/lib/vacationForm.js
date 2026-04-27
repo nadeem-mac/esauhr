@@ -108,7 +108,9 @@ const sectionHeading = (en, ar) => new Paragraph({
 
 // ─── main API ─────────────────────────────────────────────────────────────────
 export async function generateVacationFormBlob({ request, employee, manager, hrApprover, substitutes }) {
-  const designation = `${employee.department || ''} - ${employee.location || ''}`.replace(/^- | -$/g, '');
+  // Designation: use the employee.designation column if present (not yet in schema),
+  // otherwise fall back to "Department Member" so HR can hand-fill on print.
+  const designation = employee.designation || 'Department Member';
   const dept = DEPT_NAMES[employee.department] || employee.department || '';
   const loc  = LOCATION_NAMES[employee.location] || employee.location || '';
   const leaveTypeLabel = LEAVE_TYPE_NAMES[request.leave_type_id] || request.leave_type_id || 'Leave';
