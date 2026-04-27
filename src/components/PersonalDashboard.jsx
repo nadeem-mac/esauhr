@@ -4,7 +4,8 @@ import {
   Calendar, Clock, Plus, AlertTriangle, Sun, Sunrise, Sunset,
   CheckCircle2, XCircle, Loader2, Users, Plane
 } from 'lucide-react';
-import { fmtDate, calculateBalance } from '../lib/leaveLogic.js';
+import { UserCheck, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { fmtDate, calculateBalance, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 import { summariseMonth, PERMISSION_QUOTA } from '../lib/permissionLogic.js';
 import PermissionRequestModal from './PermissionRequestModal.jsx';
 
@@ -13,6 +14,9 @@ export default function PersonalDashboard({ me, leaveTypes, onOpenNewRequest }) 
   const [adjustments, setAdjustments] = useState({});
   const [requests,    setRequests]    = useState([]);
   const [permissions, setPermissions] = useState([]);
+  // Substitution requests where THIS user is one of the proposed substitutes
+  // and the request is still waiting on substitute decisions.
+  const [subRequests, setSubRequests] = useState([]);
   const [loading,     setLoading]     = useState(true);
   const [permModal,   setPermModal]   = useState(null);
 
@@ -22,7 +26,7 @@ export default function PersonalDashboard({ me, leaveTypes, onOpenNewRequest }) 
     try {
       const year  = new Date().getFullYear();
       const month = new Date().toISOString().slice(0, 7);
-      const [bal, reqs, perms] = await Promise.all([
+      const [bal, reqs, perms, subs] = await Promise.all([
         supabase.from('leave_balances').select('*')
           .eq('employee_id', me.id).eq('year', year).eq('leave_type_id', 'annual').maybeSingle(),
         supabase.from('leave_requests').select('*')
@@ -31,10 +35,22 @@ export default function PersonalDashboard({ me, leaveTypes, onOpenNewRequest }) 
           .eq('employee_id', me.id)
           .gte('permission_date', `${month}-01`)
           .order('permission_date', { ascending: false }),
+        // Requests where I'm a proposed substitute and the request is still pending substitutes
+        supabase.from('leave_requests').select('*')
+          .contains('substitute_ids', [me.id])
+          .eq('stage', 'pending_substitutes')
+          .order('start_date', { ascending: true }),
       ]);
       setAdjustments(bal.data || {});
       setRequests(reqs.data || []);
       setPermissions(perms.data || []);
+      // Filter to only requests where MY decision is still 'pending'
+      setSubRequests((subs.data || []).filter(r => {
+        const d = r.substitute_decisions?.[me.id];
+        if (!d) return true;
+        const dec = typeof d === 'string' ? d : d.decision;
+        return dec !== 'accepted' && dec !== 'declined';
+      }));
     } catch (err) {
       console.warn('PersonalDashboard load failed:', err);
     } finally { setLoading(false); }
@@ -50,7 +66,28 @@ export default function PersonalDashboard({ me, leaveTypes, onOpenNewRequest }) 
       .on('postgres_changes',
           { event: '*', schema: 'public', table: 'permission_requests', filter: `employee_id=eq.${me.id}` }, load)
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    // Substitute response handler — updates this user's decision in the JSONB.
+  // The Postgres trigger advance_stage_on_substitute_decision will auto-advance
+  // the request stage to 'pending_manager' (if all accepted) or
+  // 'rejected_by_substitute' (if anyone declined).
+  const respondToSubstitution = async (request, decision) => {
+    const merged = {
+      ...(request.substitute_decisions || {}),
+      [me.id]: { decision, at: new Date().toISOString() }
+    };
+    const { error } = await supabase
+      .from('leave_requests')
+      .update({ substitute_decisions: merged })
+      .eq('id', request.id);
+    if (error) {
+      console.warn('substitute decision failed:', error);
+      alert('Could not record your decision: ' + error.message);
+      return;
+    }
+    await load();
+  };
+
+  return () => { supabase.removeChannel(ch); };
   }, [me?.id, load]);
 
   if (loading) {
@@ -141,6 +178,52 @@ export default function PersonalDashboard({ me, leaveTypes, onOpenNewRequest }) 
         />
         <FlagTile monthSummary={monthSummary} />
       </section>
+
+      {/* SUBSTITUTION REQUESTS — colleagues asking ME to cover for them */}
+      {subRequests.length > 0 && (
+        <section className="rounded-2xl overflow-hidden"
+                 style={{ background: 'linear-gradient(135deg, #FFF8E7 0%, #FFE8B8 100%)', border: '1px solid #E8C97A' }}>
+          <div className="px-5 py-4 flex items-center gap-2"
+               style={{ borderBottom: '1px solid #E8C97A' }}>
+            <UserCheck className="w-4 h-4" style={{ color: '#8B6914' }} />
+            <div className="font-semibold text-sm" style={{ color: '#5C4406' }}>
+              {subRequests.length === 1 ? 'A colleague needs you to cover' : `${subRequests.length} colleagues need you to cover`}
+            </div>
+          </div>
+          <ul className="divide-y" style={{ borderColor: 'rgba(139,105,20,0.2)' }}>
+            {subRequests.map(req => {
+              const initials = getInitials(req.employee_id);
+              return (
+                <li key={req.id} className="px-5 py-3 flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                       style={{ background: avatarColor(req.employee_id) }}>
+                    {initials}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold truncate" style={{ color: '#5C4406' }}>
+                      {req.employee_id}
+                    </div>
+                    <div className="text-xs opacity-80" style={{ color: '#5C4406' }}>
+                      {fmtDateShort(req.start_date)} → {fmtDateShort(req.end_date)} · {req.days} day{req.days !== 1 ? 's' : ''}
+                      {req.reason ? ' · ' + req.reason : ''}
+                    </div>
+                  </div>
+                  <button onClick={() => respondToSubstitution(req, 'declined')}
+                    className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-full"
+                    style={{ background: '#fff', color: '#B83A2E', border: '1px solid #B83A2E' }}>
+                    <ThumbsDown className="w-3 h-3" /> Decline
+                  </button>
+                  <button onClick={() => respondToSubstitution(req, 'accepted')}
+                    className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-full"
+                    style={{ background: 'linear-gradient(135deg, #2D5F3F 0%, #1F4530 100%)', color: '#fff' }}>
+                    <ThumbsUp className="w-3 h-3" /> Accept
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
 
       {/* RECENT */}
       <section className="rounded-2xl border bg-white p-5" style={{ borderColor:'var(--border-soft)' }}>
