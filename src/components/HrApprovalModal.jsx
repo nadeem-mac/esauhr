@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { X, Check, Loader2, Download, Mail, Calendar, Users, FileText, AlertTriangle } from 'lucide-react';
-import { supabase } from '../supabaseClient.js';
+import { supabase, directPatch } from '../supabaseClient.js';
 import { fmtDate } from '../lib/leaveLogic.js';
 import { logAction } from '../lib/audit.js';
 import { generateVacationFormBlob, buildEmailDraft, downloadBlob } from '../lib/vacationForm.js';
@@ -23,17 +23,13 @@ export default function HrApprovalModal({ request, employee, manager, substitute
     setError('');
     try {
       const now = new Date().toISOString();
-      const updatePromise = supabase.from('leave_requests').update({
+      // Use directPatch (raw fetch) instead of supabase-js to avoid the wedge
+      // pattern where the lazy query builder never executes the network call.
+      await directPatch('leave_requests', 'id', request.id, {
         stage: 'approved',
         hr_decided_at: now,
         hr_decided_by: me?.auth_user_id || null,
-      }).eq('id', request.id);
-
-      const { error } = await Promise.race([
-        Promise.resolve(updatePromise),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('Approval timed out — please try again')), 15000)),
-      ]);
-      if (error) throw error;
+      }, { timeoutMs: 15000 });
 
       try {
         logAction(me, 'leave_request_decide', {

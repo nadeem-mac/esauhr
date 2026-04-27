@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { supabase } from '../supabaseClient.js';
+import { supabase, directPatch } from '../supabaseClient.js';
 import { CheckCircle2, XCircle, Clock, Loader2, AlertTriangle, Sunrise, Sunset, Calendar, RefreshCw } from 'lucide-react';
 import { logAction } from '../lib/audit.js';
 import HrApprovalModal from './HrApprovalModal.jsx';
@@ -128,11 +128,9 @@ export default function ReviewerPanel({ me }) {
     patch.stage = nextStage;
 
     try {
-      const { error } = await withTimeout(
-        supabase.from('leave_requests').update(patch).eq('id', req.id),
-        15000, 'leave decide'
-      );
-      if (error) throw error;
+      // Use directPatch (raw fetch) instead of supabase-js — the JS client
+      // builder occasionally wedges and never sends the request.
+      await directPatch('leave_requests', 'id', req.id, patch, { timeoutMs: 15000 });
       logAction(me, 'leave_request_decide', {
         targetType: 'leave_request',
         targetId: req.id,
