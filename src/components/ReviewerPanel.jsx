@@ -15,13 +15,21 @@ export default function ReviewerPanel({ me }) {
   const [loading, setLoading]         = useState(true);
   const [busyId, setBusyId]           = useState(null);
 
-  const canLeave = me?.is_admin || me?.can_review_leave;
-  const canPerm  = me?.is_admin || me?.can_review_permissions;
+  // Role flags for stage-based routing
+  // - is_admin (Nadeem): sees both pending_manager and pending_hr
+  // - is_hr_reviewer (Bashaier, Nadeem): sees pending_hr only (final HR approval)
+  // - can_review_leave but NOT is_hr_reviewer (5 dept heads): sees pending_manager
+  //   filtered to requests from staff in their own department
+  const isAdmin       = !!me?.is_admin;
+  const isHrReviewer  = !!me?.is_hr_reviewer;
+  const isDeptManager = !!me?.can_review_leave && !isHrReviewer;
+  const canLeave      = isAdmin || isHrReviewer || isDeptManager;
+  const canPerm       = isAdmin || me?.can_review_permissions;
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // First fetch all employees so we can derive direct reports
+      // Fetch all employees so we can build the directory + filter by department
       const { data: emps } = await supabase
         .from('employees')
         .select('id, name, location, department, manager_id');
@@ -29,23 +37,46 @@ export default function ReviewerPanel({ me }) {
       (emps || []).forEach(e => { map[e.id] = e; });
       setEmpMap(map);
 
-      // Direct reports: staff whose manager_id === me.id
-      const reportIds = (emps || [])
-        .filter(e => e.manager_id === me?.id)
+      // For dept managers we need the IDs of staff in their department
+      const myDept = me?.department;
+      const deptStaffIds = (emps || [])
+        .filter(e => e.department === myDept && e.id !== me?.id)
         .map(e => e.id);
-      const showAll      = canLeave || canPerm;        // Bashaier / admin / any reviewer
-      const showAsMgrOnly = !showAll && reportIds.length > 0;
 
-      const buildQuery = (table, allowed) => {
-        if (!allowed && !showAsMgrOnly) return Promise.resolve({ data: [] });
-        let q = supabase.from(table).select('*').eq('status', 'pending').order('requested_at', { ascending: false });
-        if (!showAll) q = q.in('employee_id', reportIds);
+      // Build the leave queue query based on role.
+      // Admin sees everything in pending_manager + pending_hr.
+      // HR reviewer sees pending_hr only.
+      // Dept manager sees pending_manager filtered by department.
+      let leaveQuery = null;
+      if (isAdmin) {
+        leaveQuery = supabase.from('leave_requests')
+          .select('*')
+          .in('stage', ['pending_manager', 'pending_hr'])
+          .order('requested_at', { ascending: false });
+      } else if (isHrReviewer) {
+        leaveQuery = supabase.from('leave_requests')
+          .select('*')
+          .eq('stage', 'pending_hr')
+          .order('requested_at', { ascending: false });
+      } else if (isDeptManager && deptStaffIds.length > 0) {
+        leaveQuery = supabase.from('leave_requests')
+          .select('*')
+          .eq('stage', 'pending_manager')
+          .in('employee_id', deptStaffIds)
+          .order('requested_at', { ascending: false });
+      }
+
+      // Permission requests still use the simpler status='pending' model for now
+      const buildPermQuery = () => {
+        if (!canPerm && !isDeptManager) return Promise.resolve({ data: [] });
+        let q = supabase.from('permission_requests').select('*').eq('status', 'pending').order('requested_at', { ascending: false });
+        if (!canPerm && isDeptManager) q = q.in('employee_id', deptStaffIds);
         return q;
       };
 
       const [lr, pr] = await Promise.all([
-        buildQuery('leave_requests',      canLeave),
-        buildQuery('permission_requests', canPerm),
+        leaveQuery || Promise.resolve({ data: [] }),
+        buildPermQuery(),
       ]);
 
       setLeave(lr.data || []);
@@ -55,7 +86,7 @@ export default function ReviewerPanel({ me }) {
     } finally {
       setLoading(false);
     }
-  }, [me?.id, canLeave, canPerm]);
+  }, [me?.id, me?.department, isAdmin, isHrReviewer, isDeptManager, canPerm]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -68,20 +99,36 @@ export default function ReviewerPanel({ me }) {
     return () => { supabase.removeChannel(ch); };
   }, [load]);
 
-  async function decideLeave(req, status) {
+  // Stage-aware decision: figures out the next stage from the current one and the action.
+  // The status<->stage trigger keeps the legacy status column synced automatically.
+  async function decideLeave(req, action) {
     setBusyId(`leave-${req.id}`);
+    const now = new Date().toISOString();
+    let nextStage, patch = {};
+
+    if (req.stage === 'pending_manager') {
+      nextStage = action === 'approved' ? 'pending_hr' : 'rejected_by_manager';
+      patch.manager_decided_at = now;
+      patch.manager_decided_by = me.auth_user_id || null;
+    } else if (req.stage === 'pending_hr') {
+      nextStage = action === 'approved' ? 'approved' : 'rejected_by_hr';
+      patch.hr_decided_at = now;
+      patch.hr_decided_by = me.auth_user_id || null;
+    } else {
+      alert('Unexpected request stage: ' + req.stage);
+      setBusyId(null);
+      return;
+    }
+    patch.stage = nextStage;
+
     try {
-      const { error } = await supabase.from('leave_requests').update({
-        status,
-        decided_at: new Date().toISOString(),
-        decided_by: me.id,
-      }).eq('id', req.id);
+      const { error } = await supabase.from('leave_requests').update(patch).eq('id', req.id);
       if (error) throw error;
       logAction(me, 'leave_request_decide', {
         targetType: 'leave_request',
         targetId: req.id,
-        targetLabel: `${empMap[req.employee_id]?.name || req.employee_id} · ${status}`,
-        details: { status },
+        targetLabel: `${empMap[req.employee_id]?.name || req.employee_id} · ${nextStage}`,
+        details: { stage: nextStage, action },
       });
       await load();
     } catch (err) { alert(err.message); }
@@ -195,7 +242,10 @@ export default function ReviewerPanel({ me }) {
 
           {canLeave && (
             <section>
-              <h3 className="text-[10px] tracking-[0.25em] opacity-60 mb-3">LEAVE REQUESTS · {leave.length}</h3>
+              <h3 className="text-[10px] tracking-[0.25em] opacity-60 mb-3">
+                {isHrReviewer && !isAdmin ? 'HR FINAL APPROVAL · ' : isDeptManager ? 'DEPARTMENT APPROVAL · ' : 'LEAVE REQUESTS · '}
+                {leave.length}
+              </h3>
               {leave.length === 0 ? (
                 <EmptyState text="No pending leave requests." />
               ) : (
@@ -208,13 +258,31 @@ export default function ReviewerPanel({ me }) {
                         <div className="flex items-center gap-3 flex-1 min-w-0">
                           <Calendar className="w-4 h-4 flex-shrink-0 opacity-70" />
                           <div className="flex-1 min-w-0">
-                            <div className="text-sm">
-                              <span className="opacity-50 font-mono mr-2">{req.employee_id}</span>
-                              {emp?.name || '(unknown)'}
+                            <div className="text-sm flex items-center gap-2 flex-wrap">
+                              <span className="opacity-50 font-mono">{req.employee_id}</span>
+                              <span>{emp?.name || '(unknown)'}</span>
+                              {req.stage === 'pending_manager' && (
+                                <span className="text-[10px] tracking-wider px-2 py-0.5 rounded-full"
+                                      style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}>
+                                  AWAITING MANAGER
+                                </span>
+                              )}
+                              {req.stage === 'pending_hr' && (
+                                <span className="text-[10px] tracking-wider px-2 py-0.5 rounded-full"
+                                      style={{ background: '#DBEAFE', color: '#1E40AF', border: '1px solid #93C5FD' }}>
+                                  HR FINAL APPROVAL
+                                </span>
+                              )}
                             </div>
                             <div className="text-xs opacity-70 mt-0.5">
                               {fmtDate(new Date(req.start_date))} → {fmtDate(new Date(req.end_date))} · {req.days} day{req.days !== 1 ? 's' : ''}
+                              {req.reason ? ' · ' + req.reason : ''}
                             </div>
+                            {req.substitute_ids && req.substitute_ids.length > 0 && (
+                              <div className="text-xs opacity-60 mt-1">
+                                Cover: {req.substitute_ids.map(sid => empMap[sid]?.name || sid).join(', ')}
+                              </div>
+                            )}
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
