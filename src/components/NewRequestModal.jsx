@@ -15,6 +15,8 @@ export default function NewRequestModal({ employees, leaveTypes, requests, balan
   const [reason, setReason] = useState('');
   const [attachmentUrl, setAttachmentUrl] = useState('');
   const [empSearch, setEmpSearch] = useState('');
+  const [substituteIds, setSubstituteIds] = useState([]);
+  const [substituteSearch, setSubstituteSearch] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -56,8 +58,19 @@ export default function NewRequestModal({ employees, leaveTypes, requests, balan
   const submit = async (e) => {
     e.preventDefault();
     if (!canSubmit) return;
-    setError(''); setSubmitting(true);
+    setError('');
+    if (substituteIds.length === 0) {
+      setError('Please pick at least one substitute who can cover for you.');
+      return;
+    }
+    if (substituteIds.length > 3) {
+      setError('You can pick at most 3 substitutes.');
+      return;
+    }
+    setSubmitting(true);
     try {
+      const decisions = {};
+      substituteIds.forEach(psn => { decisions[psn] = { decision: 'pending' }; });
       await onSubmit({
         employee_id: employeeId,
         leave_type_id: leaveTypeId,
@@ -68,7 +81,9 @@ export default function NewRequestModal({ employees, leaveTypes, requests, balan
         half_day_period: isHalfDay ? halfDayPeriod : null,
         reason: reason || null,
         attachment_url: attachmentUrl || null,
-        status: 'pending',
+        substitute_ids: substituteIds,
+        substitute_decisions: decisions,
+        stage: 'pending_substitutes',
       });
     } catch (err) {
       setError(err.message || 'Failed to submit');
@@ -253,6 +268,82 @@ export default function NewRequestModal({ employees, leaveTypes, requests, balan
               className="w-full px-3 py-2.5 rounded-lg border bg-transparent text-sm focus:outline-none resize-none"
               style={{ borderColor: 'var(--border-soft)' }}/>
           </div>
+
+          {/* SUBSTITUTE PICKER — required for staff to nominate 1-3 colleagues to cover */}
+          {employee && (
+            <div>
+              <Label>
+                Substitutes <span className="opacity-60">(pick 1–3 colleagues from {employee.department} · {LOCATION_LABELS?.[employee.location] || employee.location})</span>
+              </Label>
+              <div className="text-xs opacity-60 mb-2">
+                Each colleague you select will be asked to confirm they can cover for you. Your manager only sees this request after they all accept.
+              </div>
+
+              {/* Selected substitutes pills */}
+              {substituteIds.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {substituteIds.map(id => {
+                    const sub = employees.find(e => e.id === id);
+                    return (
+                      <button key={id} type="button"
+                        onClick={() => setSubstituteIds(substituteIds.filter(x => x !== id))}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs"
+                        style={{ background: 'var(--evergreen-50)', color: 'var(--evergreen-700)', border: '1px solid var(--evergreen-100)' }}>
+                        <span style={{ fontWeight: 500 }}>{sub?.name?.split(' ').slice(0,2).join(' ') || id}</span>
+                        <X className="w-3 h-3 opacity-60" />
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Search/picker — only show if room for more */}
+              {substituteIds.length < 3 && (
+                <>
+                  <input type="text" value={substituteSearch}
+                    onChange={e => setSubstituteSearch(e.target.value)}
+                    placeholder="Search by name or PSN…"
+                    className="w-full px-3 py-2 rounded-lg border bg-transparent text-sm focus:outline-none mb-2"
+                    style={{ borderColor: 'var(--border-soft)' }}/>
+                  <div className="max-h-40 overflow-y-auto rounded-lg border" style={{ borderColor: 'var(--border-soft)' }}>
+                    {employees
+                      .filter(e =>
+                        e.id !== employee.id &&
+                        e.department === employee.department &&
+                        e.location === employee.location &&
+                        !substituteIds.includes(e.id) &&
+                        (!substituteSearch ||
+                          e.name.toLowerCase().includes(substituteSearch.toLowerCase()) ||
+                          e.id.toLowerCase().includes(substituteSearch.toLowerCase()))
+                      )
+                      .slice(0, 8)
+                      .map(e => (
+                        <button key={e.id} type="button"
+                          onClick={() => { setSubstituteIds([...substituteIds, e.id]); setSubstituteSearch(''); }}
+                          className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-black/5 transition-colors text-left">
+                          <span style={{ fontWeight: 500 }}>{e.name}</span>
+                          <span className="text-xs opacity-50">{e.id}</span>
+                        </button>
+                      ))}
+                    {employees.filter(e =>
+                      e.id !== employee.id &&
+                      e.department === employee.department &&
+                      e.location === employee.location &&
+                      !substituteIds.includes(e.id)
+                    ).length === 0 && (
+                      <div className="px-3 py-3 text-xs opacity-50 text-center">
+                        No colleagues left to add from {employee.department} · {employee.location}.
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {substituteIds.length >= 3 && (
+                <div className="text-xs opacity-60">Maximum of 3 substitutes reached. Remove one above to swap.</div>
+              )}
+            </div>
+          )}
 
           {error && <Warning kind="error">{error}</Warning>}
 

@@ -161,6 +161,9 @@ export default function AppShell({ session, me, onRefreshMe }) {
   const signOut = async () => { await supabase.auth.signOut(); };
 
   const createRequest = async (payload) => {
+    // The payload now carries: substitute_ids, substitute_decisions, stage='pending_substitutes'.
+    // The DB trigger sync_leave_status_with_stage auto-derives status from stage,
+    // so we don't pass status here.
     const { data, error } = await supabase.from('leave_requests').insert({
       ...payload,
       requested_by: session.user.email,
