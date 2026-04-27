@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { supabase, directPatch } from '../supabaseClient.js';
+import { supabase, directPatch, directGet } from '../supabaseClient.js';
 import { CheckCircle2, XCircle, Clock, Loader2, AlertTriangle, Sunrise, Sunset, Calendar, RefreshCw } from 'lucide-react';
 import { logAction } from '../lib/audit.js';
 import HrApprovalModal from './HrApprovalModal.jsx';
@@ -37,11 +37,11 @@ export default function ReviewerPanel({ me }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // Fetch all employees so we can build the directory + filter by department
-      const { data: emps } = await withTimeout(
-        supabase.from('employees').select('id, name, location, department, manager_id, email, join_date'),
-        10000, 'employees'
-      );
+      // Use directGet (raw fetch) instead of supabase-js for all reads — the
+      // JS client lazy builder occasionally wedges and never sends the query.
+      const emps = await directGet('employees',
+        'select=id,name,location,department,manager_id,email,join_date',
+        { timeoutMs: 10000 });
       const map = {};
       (emps || []).forEach(e => { map[e.id] = e; });
       setEmpMap(map);
@@ -52,46 +52,29 @@ export default function ReviewerPanel({ me }) {
         .filter(e => e.department === myDept && e.id !== me?.id)
         .map(e => e.id);
 
-      // Build the leave queue query based on role.
-      // Admin sees everything in pending_manager + pending_hr.
-      // HR reviewer sees pending_hr only.
-      // Dept manager sees pending_manager filtered by department.
-      let leaveQuery = null;
+      // Build the leave queue query string based on role.
+      let leaveQs = null;
       if (isAdmin) {
-        leaveQuery = supabase.from('leave_requests')
-          .select('*')
-          .in('stage', ['pending_manager', 'pending_hr'])
-          .order('requested_at', { ascending: false });
+        leaveQs = 'select=*&stage=in.(pending_manager,pending_hr)&order=requested_at.desc';
       } else if (isHrReviewer) {
-        leaveQuery = supabase.from('leave_requests')
-          .select('*')
-          .eq('stage', 'pending_hr')
-          .order('requested_at', { ascending: false });
+        leaveQs = 'select=*&stage=eq.pending_hr&order=requested_at.desc';
       } else if (isDeptManager && deptStaffIds.length > 0) {
-        leaveQuery = supabase.from('leave_requests')
-          .select('*')
-          .eq('stage', 'pending_manager')
-          .in('employee_id', deptStaffIds)
-          .order('requested_at', { ascending: false });
+        leaveQs = `select=*&stage=eq.pending_manager&employee_id=in.(${deptStaffIds.join(',')})&order=requested_at.desc`;
       }
 
-      // Permission requests still use the simpler status='pending' model for now
-      const buildPermQuery = () => {
-        if (!canPerm && !isDeptManager) return Promise.resolve({ data: [] });
-        let q = supabase.from('permission_requests').select('*').eq('status', 'pending').order('requested_at', { ascending: false });
-        if (!canPerm && isDeptManager) q = q.in('employee_id', deptStaffIds);
-        return q;
-      };
+      // Permission requests still use status='pending'
+      let permQs = null;
+      if (canPerm) {
+        permQs = 'select=*&status=eq.pending&order=requested_at.desc';
+      } else if (isDeptManager && deptStaffIds.length > 0) {
+        permQs = `select=*&status=eq.pending&employee_id=in.(${deptStaffIds.join(',')})&order=requested_at.desc`;
+      }
 
-      // Run leave + permission queries sequentially with timeouts so a hang in one
-      // doesn't spin the UI forever.
-      const lr = leaveQuery
-        ? await withTimeout(leaveQuery, 10000, 'leave_requests')
-        : { data: [] };
-      const pr = await withTimeout(buildPermQuery(), 10000, 'permission_requests');
+      const lr = leaveQs ? await directGet('leave_requests', leaveQs, { timeoutMs: 10000 }) : [];
+      const pr = permQs  ? await directGet('permission_requests', permQs, { timeoutMs: 10000 }) : [];
 
-      setLeave(lr.data || []);
-      setPerms(pr.data || []);
+      setLeave(lr || []);
+      setPerms(pr || []);
     } catch (err) {
       console.warn('ReviewerPanel load failed:', err);
     } finally {

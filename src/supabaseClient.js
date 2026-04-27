@@ -61,6 +61,42 @@ export async function directPatch(table, idColumn, idValue, patch, options = {})
   } finally { clearTimeout(timer); }
 }
 
+// Read counterpart of directPatch — performs a direct GET to PostgREST with the
+// active session token, falling back to anon key. Filters/ordering passed via
+// the queryString param (PostgREST syntax). Returns parsed JSON array.
+export async function directGet(table, queryString, options = {}) {
+  if (!supabase) throw new Error('Supabase not configured');
+  const timeoutMs = options.timeoutMs || 10000;
+  let accessToken = key;
+  try {
+    const { data: { session } } = await Promise.race([
+      supabase.auth.getSession(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('getSession timed out')), 3000)),
+    ]);
+    if (session?.access_token) accessToken = session.access_token;
+  } catch { /* fall back to anon key */ }
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const url2 = `${url}/rest/v1/${table}${queryString ? '?' + queryString : ''}`;
+    const r = await fetch(url2, {
+      method: 'GET',
+      headers: {
+        'apikey': key,
+        'Authorization': `Bearer ${accessToken}`,
+        'Accept': 'application/json',
+      },
+      signal: ctrl.signal,
+    });
+    if (!r.ok) {
+      const errText = await r.text().catch(() => '');
+      throw new Error(`HTTP ${r.status}: ${errText || r.statusText}`);
+    }
+    return await r.json();
+  } finally { clearTimeout(timer); }
+}
+
 // Quick connectivity probe used by the Diagnostics screen
 export async function probeSupabase() {
   if (!supabase) {
