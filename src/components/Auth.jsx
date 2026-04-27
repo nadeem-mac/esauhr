@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabaseClient.js';
-import { psnToEmail } from '../lib/psnAuth.js';
+import { psnToEmail, resolvePsnSigninEmail } from '../lib/psnAuth.js';
 import { ArrowRight, User, Lock, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 
 // Splash-animated PSN sign-in.
@@ -40,7 +40,11 @@ export default function Auth() {
       }
 
       if (!pin) throw new Error('Enter your PIN');
-      const email = psnToEmail(cleanPsn);
+      // Look up the real sign-in email by PSN. Falls back to .invalid for
+      // staff who don't have an auth user yet (which will then fail with
+      // "PSN or PIN is incorrect" — they need an admin to issue a PIN).
+      const resolved = await resolvePsnSigninEmail(cleanPsn);
+      const email = resolved || psnToEmail(cleanPsn);
       const { error: authErr } = await supabase.auth.signInWithPassword({ email, password: pin });
       if (authErr) {
         if (authErr.message?.toLowerCase().includes('invalid'))

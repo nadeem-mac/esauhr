@@ -1,14 +1,36 @@
 // PSN-based auth helpers
-// We store users in Supabase auth.users with a synthetic email:
-//   {PSN}@leavedesk.invalid
-// .invalid is an RFC-reserved TLD so this can never collide with real emails.
+// Each staff has a Supabase auth user. The auth email mirrors the staff's
+// real evergreen-shipping address when we have one; otherwise we fall back
+// to a synthetic {PSN}@leavedesk.invalid placeholder so they can still sign
+// in. The login flow asks the database for the right email by PSN.
 
 import { createClient } from '@supabase/supabase-js';
+import { supabase } from '../supabaseClient.js';
 
 export const PSN_EMAIL_DOMAIN = 'leavedesk.invalid';
 
+// Synthetic fallback only — used when the DB lookup fails (offline,
+// transient error, or staff that genuinely have no auth user yet).
 export function psnToEmail(psn) {
-  return `${String(psn).trim().toUpperCase()}@${PSN_EMAIL_DOMAIN}`;
+  return `${String(psn).trim().toLowerCase()}@${PSN_EMAIL_DOMAIN}`;
+}
+
+// Look up the real sign-in email for this PSN. Returns null if not found.
+// Backed by the public psn_signin_email RPC (security definer, no auth needed).
+export async function resolvePsnSigninEmail(psn) {
+  const cleaned = String(psn).trim().toUpperCase();
+  if (!cleaned) return null;
+  try {
+    const { data, error } = await supabase.rpc('psn_signin_email', { target_psn: cleaned });
+    if (error) {
+      console.warn('psn_signin_email lookup failed:', error.message);
+      return null;
+    }
+    return data || null;
+  } catch (e) {
+    console.warn('psn_signin_email threw:', e?.message);
+    return null;
+  }
 }
 
 export function emailToPsn(email) {

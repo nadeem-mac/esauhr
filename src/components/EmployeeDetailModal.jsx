@@ -123,7 +123,7 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
             )}
           </div>
 
-          {me?.is_admin && employee?.id && (
+          {(me?.is_admin || me?.can_reset_pins) && employee?.id && (
             <ResetPinSection employee={employee} />
           )}
         </div>
