@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../supabaseClient.js';
 import { CheckCircle2, XCircle, Clock, Loader2, AlertTriangle, Sunrise, Sunset, Calendar, RefreshCw } from 'lucide-react';
 import { logAction } from '../lib/audit.js';
+import HrApprovalModal from './HrApprovalModal.jsx';
 import { fmtDate } from '../lib/leaveLogic.js';
 import { PERMISSION_TYPES, summariseMonth } from '../lib/permissionLogic.js';
 
@@ -14,6 +15,7 @@ export default function ReviewerPanel({ me }) {
   const [empMap, setEmpMap]           = useState({});
   const [loading, setLoading]         = useState(true);
   const [busyId, setBusyId]           = useState(null);
+  const [hrModalReq, setHrModalReq]   = useState(null);
 
   // Role flags for stage-based routing
   // - is_admin (Nadeem): sees both pending_manager and pending_hr
@@ -293,7 +295,13 @@ export default function ReviewerPanel({ me }) {
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <button onClick={() => decideLeave(req, 'approved')}
+                          <button onClick={() => {
+                              if (req.stage === 'pending_hr') {
+                                setHrModalReq(req);
+                              } else {
+                                decideLeave(req, 'approved');
+                              }
+                            }}
                             disabled={busyId === `leave-${req.id}`}
                             className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs disabled:opacity-50"
                             style={{ background: 'var(--evergreen-500)', color: 'var(--paper)' }}>
@@ -314,6 +322,17 @@ export default function ReviewerPanel({ me }) {
             </section>
           )}
         </>
+      )}
+          {hrModalReq && (
+        <HrApprovalModal
+          request={hrModalReq}
+          employee={empMap[hrModalReq.employee_id]}
+          manager={empMap[empMap[hrModalReq.employee_id]?.manager_id]}
+          substitutes={(hrModalReq.substitute_ids || []).map(sid => empMap[sid]).filter(Boolean)}
+          me={me}
+          onClose={() => setHrModalReq(null)}
+          onApproved={() => { setHrModalReq(null); load(); }}
+        />
       )}
     </div>
   );
