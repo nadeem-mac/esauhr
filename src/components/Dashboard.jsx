@@ -102,6 +102,72 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
 
   const bashaierMode = !!(me?.is_hr_reviewer && !me?.is_admin);
 
+  // PIN requests modal — badge in the stat row opens this; always-mounted
+  // card fetches its own data so the count stays live.
+  const [pinModalOpen, setPinModalOpen] = useState(false);
+  const [pinReqCount,  setPinReqCount]  = useState(0);
+  const canSeePinReqs = !!(me?.is_admin || me?.is_hr_reviewer);
+
+  // Report reminder popup — fires once per page load if today is the day a
+  // Mr John report is due (or it's overdue) and Bashaier has not yet marked it
+  // as sent for this month. "Mark sent" persists in localStorage; "Remind me
+  // later" snoozes for the rest of today only.
+  const [reminderTask, setReminderTask] = useState(null);
+
+  useEffect(() => {
+    if (!bashaierMode) return;
+    const today = new Date();
+    const day = today.getDate();
+    const year = today.getFullYear();
+    const month = today.getMonth() + 1;
+    const lastDay = new Date(year, month, 0).getDate();
+    const monthKey = year + '-' + String(month).padStart(2, '0');
+    const dayKey = monthKey + '-' + String(day).padStart(2, '0');
+
+    // Each task has a { isDueOrLate } predicate based on today's date.
+    const tasks = [
+      {
+        key: 'mid_month_perms',
+        title: 'Mid-month permissions report',
+        subtitle: 'a 1–15 update for Mr John',
+        isDueOrLate: day >= 15,            // due 15th, overdue after
+      },
+      {
+        key: 'end_of_month_perms',
+        title: 'End-of-month permissions report',
+        subtitle: 'this month\'s full permissions report',
+        isDueOrLate: day >= lastDay,        // due last day of month
+      },
+      {
+        key: 'last_month_vacation',
+        title: 'Vacation summary',
+        subtitle: 'last month\'s staff vacations report',
+        isDueOrLate: day >= 1 && day <= 7,  // due 1st, available through 7th
+      },
+    ];
+
+    for (const task of tasks) {
+      if (!task.isDueOrLate) continue;
+      const sent    = localStorage.getItem('esau_taskdone_'    + task.key + '_' + monthKey);
+      const snoozed = localStorage.getItem('esau_tasksnooze_'  + task.key + '_' + dayKey);
+      if (sent || snoozed) continue;
+      setReminderTask({ ...task, monthKey, dayKey });
+      break; // one reminder at a time; close it and the next one (if any) shows on next reload
+    }
+  }, [bashaierMode]);
+
+  const handleReminderSent = useCallback(() => {
+    if (!reminderTask) return;
+    localStorage.setItem('esau_taskdone_' + reminderTask.key + '_' + reminderTask.monthKey, new Date().toISOString());
+    setReminderTask(null);
+  }, [reminderTask]);
+
+  const handleReminderSnooze = useCallback(() => {
+    if (!reminderTask) return;
+    localStorage.setItem('esau_tasksnooze_' + reminderTask.key + '_' + reminderTask.dayKey, '1');
+    setReminderTask(null);
+  }, [reminderTask]);
+
   // Rotating bilingual hero message — picks a random one on every login. Each
   // entry is { lang, text }; the JSX below handles RTL direction + signature.
   const heroMessage = useMemo(() => {
@@ -209,7 +275,11 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
            an emoji icon, and a small description. The Total Staff card additionally
            shows a 3-segment location breakdown (DMM / JED / RYD) with a mini split bar.
            The Your Tasks card is HR-only and scrolls to the Bashaier tasks anchor on click. */}
-      <div className={`grid grid-cols-1 sm:grid-cols-2 ${bashaierMode ? 'lg:grid-cols-5' : 'lg:grid-cols-4'} gap-4`}
+      <div className={`grid grid-cols-1 sm:grid-cols-2 ${
+            (bashaierMode && canSeePinReqs) ? 'lg:grid-cols-6' :
+            (bashaierMode || canSeePinReqs) ? 'lg:grid-cols-5' :
+            'lg:grid-cols-4'
+          } gap-4`}
            style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
 
         {/* TOTAL STAFF — with location split */}
@@ -311,6 +381,29 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
             <div className="text-[20px] mt-2">✅</div>
           </div>
         </div>
+
+        {/* PIN REQUESTS — admin/HR only; opens modal with the queue */}
+        {canSeePinReqs && (
+          <button
+             onClick={() => setPinModalOpen(true)}
+             className="text-left rounded-xl bg-white relative overflow-hidden cursor-pointer esau-badge"
+             style={{ border: '1px solid #E5E0D5', boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
+            <div aria-hidden style={{ position:'absolute', top:0, left:0, bottom:0, width:'5px', background:'linear-gradient(180deg, #94A3B8 0%, #334155 100%)' }}/>
+            <div className="p-4 pl-6">
+              <div className="flex items-start justify-between mb-2">
+                <div>
+                  <div className="text-[10px]" style={{ color: '#334155', letterSpacing: '0.18em', fontWeight: 700 }}>PIN REQUESTS</div>
+                  <div className="text-[11px]" style={{ color: '#1F1B16', marginTop: '2px' }}>Click to review</div>
+                </div>
+                <div className="rounded-full px-3 py-1"
+                     style={{ background: '#F1F5F9', color: '#334155', fontSize: '20px', fontWeight: 700, lineHeight: 1 }}>
+                  {pinReqCount}
+                </div>
+              </div>
+              <div className="text-[20px] mt-2">🔑</div>
+            </div>
+          </button>
+        )}
 
         {/* YOUR TASKS — HR reviewer only */}
         {bashaierMode && (
@@ -540,8 +633,107 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
         </div>
       )}
 
-      {/* PIN Requests — pending requests from staff who clicked Request access */}
-      <PinRequestsCard me={me} employees={employees} />
+      {/* PIN Requests — moved to modal triggered by the PIN REQUESTS badge.
+           Card is always mounted (so its data fetch keeps the badge count
+           live) but visually hidden until pinModalOpen flips to true. */}
+      {canSeePinReqs && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) setPinModalOpen(false); }}
+          style={{
+            display: pinModalOpen ? 'flex' : 'none',
+            position: 'fixed', inset: 0, zIndex: 90,
+            background: 'rgba(15, 23, 42, 0.55)',
+            backdropFilter: 'blur(2px)',
+            alignItems: 'flex-start', justifyContent: 'center',
+            padding: '40px 16px', overflowY: 'auto',
+          }}>
+          <div style={{ width: '100%', maxWidth: '720px', position: 'relative' }}>
+            <button onClick={() => setPinModalOpen(false)}
+                    aria-label="Close"
+                    style={{
+                      position: 'absolute', top: '-44px', right: 0,
+                      background: 'rgba(255,255,255,0.95)', border: 'none',
+                      borderRadius: '50%', width: '36px', height: '36px',
+                      fontSize: '18px', cursor: 'pointer', color: '#1F1B16',
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                    }}>✕</button>
+            <PinRequestsCard me={me} employees={employees} onCountChange={setPinReqCount} />
+          </div>
+        </div>
+      )}
+      {/* Mount once even when modal is closed so the count fetch runs on load.
+          Hidden visually with display:none — React keeps it in the tree. */}
+      {canSeePinReqs && !pinModalOpen && (
+        <div style={{ display: 'none' }} aria-hidden="true">
+          <PinRequestsCard me={me} employees={employees} onCountChange={setPinReqCount} />
+        </div>
+      )}
+
+      {/* Report reminder popup — fires when a Mr John report is due and Bashaier
+          hasn't marked it sent for the current month. Shown once per page load. */}
+      {bashaierMode && reminderTask && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) handleReminderSnooze(); }}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 100,
+            background: 'rgba(15, 23, 42, 0.6)',
+            backdropFilter: 'blur(3px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '20px',
+            fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
+          }}>
+          <div style={{
+            width: '100%', maxWidth: '440px',
+            background: 'linear-gradient(180deg, #FFFDF8 0%, #FFF5E8 100%)',
+            borderRadius: '20px', padding: '32px',
+            boxShadow: '0 20px 50px rgba(0,0,0,0.3)',
+            border: '1px solid #F5E6D3',
+            position: 'relative',
+          }}>
+            <div style={{ fontSize: '64px', textAlign: 'center', marginBottom: '12px' }}>🧚</div>
+            <div style={{
+              fontSize: '11px', letterSpacing: '0.3em', color: '#9D6B53',
+              textAlign: 'center', marginBottom: '6px',
+            }}>
+              — A GENTLE REMINDER
+            </div>
+            <h2 style={{
+              fontFamily: 'Georgia, "Times New Roman", serif',
+              fontSize: '24px', fontWeight: 500, color: '#1F1B16',
+              textAlign: 'center', margin: '0 0 12px', letterSpacing: '-0.01em',
+            }}>
+              Don't forget your {reminderTask.title}
+            </h2>
+            <p style={{
+              fontSize: '14px', color: '#1F1B16',
+              textAlign: 'center', margin: '0 0 24px', lineHeight: 1.5,
+            }}>
+              Today's the day to send {reminderTask.subtitle}.
+              You've got this — take a breath, then ship it. 🌸
+            </p>
+            <div style={{ display: 'flex', gap: '10px', flexDirection: 'column' }}>
+              <button onClick={handleReminderSent}
+                      style={{
+                        padding: '12px 18px', borderRadius: '12px',
+                        background: 'linear-gradient(135deg, #047857 0%, #065F46 100%)',
+                        color: '#fff', border: 'none', fontSize: '14px', fontWeight: 600,
+                        cursor: 'pointer', letterSpacing: '0.02em',
+                      }}>
+                ✓ I've sent it
+              </button>
+              <button onClick={handleReminderSnooze}
+                      style={{
+                        padding: '12px 18px', borderRadius: '12px',
+                        background: 'transparent', color: '#1F1B16',
+                        border: '1px solid #E5E0D5', fontSize: '13px',
+                        cursor: 'pointer', letterSpacing: '0.02em',
+                      }}>
+                Remind me later today
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* (Headcount block has moved up — see new colored block right after Stat cards.) */}
     </div>
@@ -636,7 +828,7 @@ export function Empty({ icon: Icon, message }) {
    If the staff already has a PIN (auth_user_id is not null), the
    button is disabled and shows "Already has PIN — use Reset PIN".
    ───────────────────────────────────────────────────────────────── */
-function PinRequestsCard({ me, employees }) {
+function PinRequestsCard({ me, employees, onCountChange }) {
   const [requests, setRequests] = useState([]);
   const [loading,  setLoading]  = useState(true);
   const [busyId,   setBusyId]   = useState(null);
@@ -657,7 +849,9 @@ function PinRequestsCard({ me, employees }) {
         .eq('status', 'pending')
         .order('requested_at', { ascending: true });
       if (error) throw error;
-      setRequests(data || []);
+      const list = data || [];
+      setRequests(list);
+      if (typeof onCountChange === 'function') onCountChange(list.length);
     } catch (e) {
       setError(e.message || String(e));
     } finally {
