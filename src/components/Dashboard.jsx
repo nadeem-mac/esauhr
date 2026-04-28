@@ -105,28 +105,42 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
   // Rotating bilingual hero message — picks a random one on every login. Each
   // entry is { lang, text }; the JSX below handles RTL direction + signature.
   const heroMessage = useMemo(() => {
+    // Warm, self-affirming messages chosen to support self-confidence and
+    // counter inner self-criticism. Each one is short enough to fit on one
+    // line alongside the trailing fairy emoji. A random pick runs once per
+    // page load (one per login).
     const messages = [
-      // English
-      { lang: 'en', text: 'Small acts of care add up to a culture of trust' },
-      { lang: 'en', text: 'Your steady hand keeps the whole team in motion' },
-      { lang: 'en', text: 'Quiet excellence shapes the company more than loud effort' },
-      { lang: 'en', text: 'Every signature you finish is one less worry for someone' },
-      { lang: 'en', text: 'You bring grace to numbers and warmth to policy' },
-      { lang: 'en', text: 'A calm HR desk is a gift to every department' },
-      { lang: 'en', text: 'Your patience is a quiet superpower' },
-      { lang: 'en', text: 'You make complicated processes feel simple — that is rare' },
-      { lang: 'en', text: 'The files may be quiet, but your impact is loud' },
-      { lang: 'en', text: 'You are exactly where the team needs you to be' },
-      { lang: 'en', text: 'Today is a good day to lead with kindness' },
-      // Arabic — RTL, Arabic-friendly font applied in JSX
-      { lang: 'ar', text: 'كل يوم تأتين فيه إلى العمل، تصنعين الفرق' },
-      { lang: 'ar', text: 'صبرك ينير دروب الآخرين' },
-      { lang: 'ar', text: 'في تفاصيلك الصغيرة، تكمن العظمة' },
-      { lang: 'ar', text: 'هدوؤك في العمل قوة، وأثرك جميل' },
-      { lang: 'ar', text: 'بصمتك في الفريق واضحة، وأثرك يدوم' },
-      { lang: 'ar', text: 'أنتِ مصدر إلهام لمن حولك' },
-      { lang: 'ar', text: 'لطفك في العمل أجمل ما يميّز يومنا' },
-      { lang: 'ar', text: 'كل ابتسامة منكِ تترك أثراً طيباً' },
+      // English — focused on inherent worth, gentleness, validation
+      { lang: 'en', text: 'You are enough, exactly as you are right now' },
+      { lang: 'en', text: 'Your sensitivity is a strength, not a flaw' },
+      { lang: 'en', text: 'You don\'t have to be perfect to be valued' },
+      { lang: 'en', text: 'Be gentle with yourself today — you deserve it' },
+      { lang: 'en', text: 'Your worth isn\'t measured by what you achieve' },
+      { lang: 'en', text: 'You belong here, just as you are' },
+      { lang: 'en', text: 'Every feeling you have is valid' },
+      { lang: 'en', text: 'You are stronger than you think you are' },
+      { lang: 'en', text: 'Your light is real, even on the dim days' },
+      { lang: 'en', text: 'You don\'t need to earn your place — it is already yours' },
+      { lang: 'en', text: 'The world is softer because you are in it' },
+      { lang: 'en', text: 'You are doing better than you give yourself credit for' },
+      { lang: 'en', text: 'Your kindness leaves a mark wherever you go' },
+      { lang: 'en', text: 'Today, choose softness over self-criticism' },
+      { lang: 'en', text: 'You are loved, even on the days you doubt it' },
+      { lang: 'en', text: 'Rest is not weakness — it is wisdom' },
+      { lang: 'en', text: 'You are allowed to take up space and be heard' },
+      // Arabic — same warm, anchoring tone in the user\'s language
+      { lang: 'ar', text: 'أنتِ كافية، تماماً كما أنتِ' },
+      { lang: 'ar', text: 'حساسيتك قوة، وليست ضعفاً' },
+      { lang: 'ar', text: 'كوني لطيفة مع نفسك، أنتِ تستحقين ذلك' },
+      { lang: 'ar', text: 'قيمتك لا تقاس بإنجازاتك' },
+      { lang: 'ar', text: 'أنتِ تنتمين هنا، تماماً كما أنتِ' },
+      { lang: 'ar', text: 'كل مشاعرك صحيحة ومستحقة' },
+      { lang: 'ar', text: 'أنتِ أقوى مما تظنين' },
+      { lang: 'ar', text: 'نورك حقيقي حتى في الأيام الباهتة' },
+      { lang: 'ar', text: 'أنتِ تقومين بعمل أفضل مما تدركين' },
+      { lang: 'ar', text: 'العالم أجمل لأنكِ فيه' },
+      { lang: 'ar', text: 'اختاري اللطف مع نفسك اليوم' },
+      { lang: 'ar', text: 'أنتِ محبوبة، حتى في الأيام التي تشككين فيها' },
     ];
     return messages[Math.floor(Math.random() * messages.length)];
   }, []);
@@ -164,10 +178,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
               direction: heroMessage.lang === 'ar' ? 'rtl' : 'ltr',
               textAlign:  heroMessage.lang === 'ar' ? 'right' : 'left',
             }}>
-            "{heroMessage.text}"{' '}
-            <span style={{ fontStyle: 'normal', fontSize: '0.9em', color: '#1F1B16', opacity: 0.7, letterSpacing: '0.01em' }}>
-              — {heroMessage.lang === 'ar' ? 'من عبقري متواضع' : 'From a Humble Genius'} 🧠
-            </span>
+            "{heroMessage.text}" 🧚
           </p>
           <p className="text-sm" style={{ color: '#1F1B16', margin: 0 }}>
             {pending.length > 0
