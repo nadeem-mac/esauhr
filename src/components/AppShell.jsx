@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   LayoutDashboard, ClipboardList, Users, Calendar as CalIcon, Settings,
   Plus, LogOut, Activity, ShieldCheck
-, Clock } from 'lucide-react';
+, Clock , BarChart3 } from 'lucide-react';
 import { supabase } from '../supabaseClient.js';
 import Dashboard from './Dashboard.jsx';
 import Requests from './Requests.jsx';
@@ -12,6 +12,7 @@ import SettingsView from './SettingsView.jsx';
 import ConnectivityTest from './ConnectivityTest.jsx';
 import NewRequestModal from './NewRequestModal.jsx';
 import EmployeeDetailModal from './EmployeeDetailModal.jsx';
+import InsightsView from './InsightsView.jsx';
 import AdminPanel from './AdminPanel.jsx';
 import PersonalDashboard from './PersonalDashboard.jsx';
 import ReviewerPanel from './ReviewerPanel.jsx';
@@ -20,7 +21,7 @@ import AttendanceView from './AttendanceView.jsx';
 import { logAction } from '../lib/audit.js';
 import { fmtDate } from '../lib/leaveLogic.js';
 
-function buildTabs({ isAdmin, isReviewer, isManager }) {
+function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer }) {
   // Tab visibility rules:
   //   Regular staff   → Dashboard, Requests, Calendar (no Employees, Settings, Diagnostics)
   //   Reviewer/Manager → adds Reviews + Attendance, hides Diagnostics
@@ -42,6 +43,11 @@ function buildTabs({ isAdmin, isReviewer, isManager }) {
   // Settings — admin only
   if (isAdmin) {
     base.push({ id: 'settings', label: 'Settings', icon: Settings });
+  }
+
+  // Insights — admin and HR reviewer (Bashaier) only — full reports + exports
+  if (isAdmin || isHrReviewer) {
+    base.push({ id: 'insights', label: 'Insights', icon: BarChart3 });
   }
 
   // Diagnostics — admin only (Bashaier and staff don't see it)
@@ -83,13 +89,14 @@ export default function AppShell({ session, me, onRefreshMe }) {
   // Derived flags — must be AFTER all useState() so employees is in scope.
   const isAdmin    = Boolean(me?.is_admin);
   const isReviewer = Boolean(me?.can_review_leave || me?.can_review_permissions);
+  const isHrReviewer = Boolean(me?.is_hr_reviewer);
   const isManager  = useMemo(
     () => (employees || []).some(e => e.manager_id === me?.id),
     [employees, me?.id]
   );
   const TABS = useMemo(
-    () => buildTabs({ isAdmin, isReviewer, isManager }),
-    [isAdmin, isReviewer, isManager]
+    () => buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer }),
+    [isAdmin, isReviewer, isManager, isHrReviewer]
   );
 
   const loadAll = useCallback(async () => {
@@ -376,6 +383,17 @@ export default function AppShell({ session, me, onRefreshMe }) {
             onUpdateType={updateLeaveType}
             employees={employees} requests={requests} holidays={holidays}
             me={me}
+          />
+        )}
+        {tab === 'insights' && (isAdmin || isHrReviewer) && (
+          <InsightsView
+            me={me}
+            employees={employees}
+            leaveTypes={leaveTypes}
+            requests={requests}
+            balances={balances}
+            permissions={permissions}
+            empMap={empMap}
           />
         )}
         {tab === 'diagnostics' && isAdmin && (
