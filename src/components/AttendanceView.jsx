@@ -42,7 +42,7 @@ const FIXED_CC = [
   'fahad.alhussain@evergreen-shipping.com.sa',       // Fahad — SUP team manager
 ];
 
-const HR_SIGNATURE = 'Bashaier Ali Alsubaie\\nHR Department\\nEvergreen Shipping Agency Saudi';
+const HR_SIGNATURE = 'Bashaier Ali Alsubaie\nHR Department\nEvergreen Shipping Agency Saudi';
 
 // ────────────────────────────────────────────────────────────────────────
 // CSV parsing — handles quoted fields, returns array of row-objects keyed
@@ -51,7 +51,7 @@ const HR_SIGNATURE = 'Bashaier Ali Alsubaie\\nHR Department\\nEvergreen Shipping
 function parseCsv(text) {
   // Strip BOM if present
   if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-  const lines = text.split(/\\r\\n|\\n|\\r/).filter(l => l.trim().length > 0);
+  const lines = text.split(/\r\n|\n|\r/).filter(l => l.trim().length > 0);
   if (lines.length < 2) return { headers: [], rows: [], err: 'CSV is empty or has no data rows.' };
 
   function splitLine(line) {
@@ -87,7 +87,7 @@ function timeToMinutes(s) {
   if (!s || typeof s !== 'string') return null;
   const trimmed = s.trim();
   if (!trimmed) return null;
-  const m = trimmed.match(/^(\\d{1,2}):(\\d{2})(?::\\d{2})?\\s*(AM|PM|am|pm)?$/);
+  const m = trimmed.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM|am|pm)?$/);
   if (!m) return null;
   let h = parseInt(m[1], 10);
   const min = parseInt(m[2], 10);
@@ -138,12 +138,12 @@ function normaliseDate(s) {
   if (!s) return null;
   s = s.trim();
   // Already ISO?
-  if (/^\\d{4}-\\d{2}-\\d{2}$/.test(s)) return s;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
   // DD/MM/YYYY or DD-MM-YYYY
-  let m = s.match(/^(\\d{1,2})[\\/\\-](\\d{1,2})[\\/\\-](\\d{4})$/);
+  let m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
   if (m) return m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
   // YYYY/MM/DD
-  m = s.match(/^(\\d{4})[\\/\\-](\\d{1,2})[\\/\\-](\\d{1,2})$/);
+  m = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
   if (m) return m[1] + '-' + m[2].padStart(2, '0') + '-' + m[3].padStart(2, '0');
   // Try Date parse fallback
   const d = new Date(s);
@@ -176,29 +176,29 @@ function formatDateLong(yyyymmdd) {
 function lateEmailContent({ employee, dateLong, punchInStr, minutesLate }) {
   const subject = 'Late Arrival Notice — ' + dateLong + ' — ' + (employee.name || '');
   const body =
-    'Dear ' + (employee.first_name || employee.name?.split(' ')[0] || '') + ',\\n\\n' +
-    'This is a formal notice regarding your late arrival on ' + dateLong + '.\\n\\n' +
+    'Dear ' + (employee.first_name || employee.name?.split(' ')[0] || '') + ',\n\n' +
+    'This is a formal notice regarding your late arrival on ' + dateLong + '.\n\n' +
     'Per ESAU policy, the official clock-in time is 08:00 with a grace period until 08:15. ' +
-    'Our records show that you punched in at ' + punchInStr + ' — ' + minutesLate + ' minutes after the grace period.\\n\\n' +
+    'Our records show that you punched in at ' + punchInStr + ' — ' + minutesLate + ' minutes after the grace period.\n\n' +
     'Please ensure timely attendance going forward. Repeated lateness without prior approval ' +
-    'may be reflected in your performance evaluation.\\n\\n' +
-    'If there were extenuating circumstances on this day, please reply with an explanation so we can update our records.\\n\\n' +
-    'Best regards,\\n' + HR_SIGNATURE;
+    'may be reflected in your performance evaluation.\n\n' +
+    'If there were extenuating circumstances on this day, please reply with an explanation so we can update our records.\n\n' +
+    'Best regards,\n' + HR_SIGNATURE;
   return { subject, body };
 }
 
 function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd, minutesEarly }) {
   const subject = 'Early Departure Notice — ' + dateLong + ' — ' + (employee.name || '');
   const body =
-    'Dear ' + (employee.first_name || employee.name?.split(' ')[0] || '') + ',\\n\\n' +
-    'This is a formal notice regarding your early departure on ' + dateLong + '.\\n\\n' +
+    'Dear ' + (employee.first_name || employee.name?.split(' ')[0] || '') + ',\n\n' +
+    'This is a formal notice regarding your early departure on ' + dateLong + '.\n\n' +
     'Per your scheduled working hours (08:00 to ' + scheduledEnd + '), employees are expected ' +
     'to remain at work until the end of the day unless prior approval has been obtained. ' +
-    'Our records show that you punched out at ' + punchOutStr + ', which is ' + minutesEarly + ' minutes earlier than your scheduled end time.\\n\\n' +
+    'Our records show that you punched out at ' + punchOutStr + ', which is ' + minutesEarly + ' minutes earlier than your scheduled end time.\n\n' +
     'Please ensure that any early departure is approved in advance by your direct manager and ' +
-    'recorded as a permission request in the HR system.\\n\\n' +
-    'If this departure was approved or there were extenuating circumstances, please reply with the relevant context.\\n\\n' +
-    'Best regards,\\n' + HR_SIGNATURE;
+    'recorded as a permission request in the HR system.\n\n' +
+    'If this departure was approved or there were extenuating circumstances, please reply with the relevant context.\n\n' +
+    'Best regards,\n' + HR_SIGNATURE;
   return { subject, body };
 }
 
@@ -209,16 +209,16 @@ function missedPunchEmailContent({ employee, dateLong, missingType }) {
             : 'both punch-in and punch-out entries';
   const subject = 'Reminder: Time Card Punch Missing — ' + dateLong + ' — ' + (employee.name || '');
   const body =
-    'Dear ' + (employee.first_name || employee.name?.split(' ')[0] || '') + ',\\n\\n' +
-    'We noticed that your time card for ' + dateLong + ' is missing ' + what + '.\\n\\n' +
+    'Dear ' + (employee.first_name || employee.name?.split(' ')[0] || '') + ',\n\n' +
+    'We noticed that your time card for ' + dateLong + ' is missing ' + what + '.\n\n' +
     'A reminder from HR: timely punch-in and punch-out are required for accurate attendance ' +
     'records, payroll, and overtime tracking. We rely on these records as part of our compliance ' +
-    'with company policy and Saudi labor regulations.\\n\\n' +
+    'with company policy and Saudi labor regulations.\n\n' +
     'Please make sure to punch in and out every working day. If your card or terminal had issues ' +
-    'on ' + dateLong + ', please reply with the actual times so we can correct the record.\\n\\n' +
-    'If missed punches continue, this may be escalated to a formal evaluation warning per HR procedure.\\n\\n' +
-    'We are here to help — please reach out if you need any support.\\n\\n' +
-    'Best regards,\\n' + HR_SIGNATURE;
+    'on ' + dateLong + ', please reply with the actual times so we can correct the record.\n\n' +
+    'If missed punches continue, this may be escalated to a formal evaluation warning per HR procedure.\n\n' +
+    'We are here to help — please reach out if you need any support.\n\n' +
+    'Best regards,\n' + HR_SIGNATURE;
   return { subject, body };
 }
 
@@ -378,7 +378,7 @@ export default function AttendanceView({ me, employees }) {
   const handleFile = useCallback((file) => {
     setParseError(null);
     if (!file) return;
-    if (!/\\.csv$/i.test(file.name) && !/\\.cvs$/i.test(file.name)) {
+    if (!/\.csv$/i.test(file.name) && !/\.cvs$/i.test(file.name)) {
       setParseError('Please upload a CSV file.');
       return;
     }
