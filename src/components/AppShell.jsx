@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   LayoutDashboard, ClipboardList, Users, Calendar as CalIcon, Settings,
-  Plus, LogOut, Activity, ShieldCheck
+  Plus, LogOut, Activity, ShieldCheck, RefreshCw
 , Clock , BarChart3 } from 'lucide-react';
 import { supabase, directGet } from '../supabaseClient.js';
 import Dashboard from './Dashboard.jsx';
@@ -302,9 +302,23 @@ export default function AppShell({ session, me, onRefreshMe }) {
               style={{ background: 'var(--ink)', color: 'var(--paper)' }}>
               <Plus className="w-4 h-4" /><span className="hidden sm:inline">New request</span>
             </button>
+            <button
+              onClick={() => {
+                // Hard refresh — bust HTTP cache + bump query string so the
+                // browser re-fetches the JS bundle and re-runs all data loads.
+                const sep = window.location.search.includes('nc=') ? '' : (window.location.search ? '&' : '?');
+                window.location.href = window.location.pathname + window.location.search + sep + 'nc=' + Date.now();
+              }}
+              className="p-2.5 rounded-full border esau-refresh-btn"
+              title="Refresh — fetch the latest data"
+              aria-label="Refresh"
+              style={{ borderColor: 'var(--border-soft)' }}>
+              <RefreshCw className="w-4 h-4" />
+            </button>
             <button onClick={signOut}
               className="p-2.5 rounded-full border"
               title="Sign out"
+              aria-label="Sign out"
               style={{ borderColor: 'var(--border-soft)' }}>
               <LogOut className="w-4 h-4" />
             </button>
