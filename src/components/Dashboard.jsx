@@ -104,47 +104,41 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
 
   return (
     <div className="space-y-8">
-      {/* Hero — pink-themed for Bashaier, regular for everyone else */}
+      {/* Hero — Editorial Minimal (Option 1): cream background, serif typography, italic quote.
+          Bashaier sees her name + heroMessage as the italic quote; everyone else sees the
+          plain greeting. No tiles, no gradients. */}
       {bashaierMode ? (
-        <div className="rounded-3xl p-6 sm:p-8 relative overflow-hidden"
-             style={{ background: 'linear-gradient(135deg, #FFE4EC 0%, #FFD1DC 35%, #FFC0CB 70%, #FFB6C1 100%)' }}>
-          <div aria-hidden className="absolute -right-12 -top-12 w-56 h-56 rounded-full" style={{ background: 'radial-gradient(circle, rgba(236,72,153,0.18), transparent 70%)' }}/>
-          <div aria-hidden className="absolute -left-16 -bottom-16 w-64 h-64 rounded-full" style={{ background: 'radial-gradient(circle, rgba(244,114,182,0.16), transparent 70%)' }}/>
-          <div className="relative">
-            <div className="flex items-center gap-2 mb-3 text-xs tracking-[0.25em]" style={{ color: '#9D174D' }}>
-              <div className="w-6 h-px" style={{ background: '#DB2777' }}/>
-              GOOD {(_period || 'day').toUpperCase()}, BASHAIER
-            </div>
-            <h1 className="serif text-[clamp(1.8rem,4vw,2.8rem)] leading-[1.05] max-w-3xl"
-                style={{ fontWeight: 500, letterSpacing: '-0.015em', color: '#831843' }}>
-              {heroMessage}
-            </h1>
-            <p className="text-sm mt-4 max-w-xl" style={{ color: '#9D174D' }}>
-              {pending.length > 0
-                ? <>You have <span style={{ fontWeight: 600 }}>{pending.length} pending {pending.length === 1 ? 'request' : 'requests'}</span> waiting on your decision, and <span style={{ fontWeight: 600 }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
-                : <>Your queue is clear. <span style={{ fontWeight: 600 }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
-              }
-            </p>
+        <div className="pb-8" style={{ borderBottom: '1px solid #E5E0D5' }}>
+          <div className="text-xs mb-3.5" style={{ color: '#9D6B53', letterSpacing: '0.3em' }}>
+            — {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase()}
           </div>
-        </div>
-      ) : (
-      <div className="flex items-end justify-between flex-wrap gap-4">
-        <div>
-          <div className="flex items-center gap-2 mb-3 text-xs tracking-[0.25em] opacity-50">
-            <div className="w-6 h-px" style={{ background: 'var(--evergreen-500)' }}/>
-            OVERVIEW
-          </div>
-          <h1 className="serif text-[clamp(2.5rem,5vw,4rem)] leading-[0.98]"
-              style={{ fontWeight: 500, letterSpacing: '-0.025em' }}>
-            {greeting}
+          <h1 className="leading-[1] mb-4" style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 'clamp(2.2rem, 5vw, 3.5rem)', color: '#1F1B16', fontWeight: 400, letterSpacing: '-0.02em' }}>
+            Good {_period}, Bashaier.
           </h1>
-          <p className="text-base opacity-70 mt-4 max-w-xl">
+          <p className="mb-3" style={{ fontFamily: 'Georgia, serif', fontStyle: 'italic', color: '#6B5A4A', fontSize: '1.15rem', maxWidth: '38rem', lineHeight: 1.4 }}>
+            "{heroMessage}"
+          </p>
+          <p className="text-sm" style={{ color: '#6B5A4A', margin: 0 }}>
             {pending.length > 0
-              ? <>You have <span style={{ color: 'var(--clay)', fontWeight: 500 }}>{pending.length} pending {pending.length === 1 ? 'request' : 'requests'}</span> waiting on your decision, and <span style={{ fontWeight: 500 }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
-              : <>Your queue is clear. <span style={{ fontWeight: 500 }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
+              ? <>You have <span style={{ fontWeight: 600, color: '#1F1B16' }}>{pending.length} pending {pending.length === 1 ? 'request' : 'requests'}</span> waiting on your decision, and <span style={{ fontWeight: 600, color: '#1F1B16' }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
+              : <>Your queue is clear. <span style={{ fontWeight: 600, color: '#1F1B16' }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
             }
           </p>
         </div>
+      ) : (
+      <div className="pb-8" style={{ borderBottom: '1px solid #E5E0D5' }}>
+        <div className="text-xs mb-3.5" style={{ color: '#9D6B53', letterSpacing: '0.3em' }}>
+          — {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase()}
+        </div>
+        <h1 className="leading-[1]" style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 'clamp(2.5rem, 5vw, 3.8rem)', color: '#1F1B16', fontWeight: 400, letterSpacing: '-0.02em' }}>
+          {greeting}
+        </h1>
+        <p className="text-base mt-4 max-w-xl" style={{ color: '#6B5A4A' }}>
+          {pending.length > 0
+            ? <>You have <span style={{ color: '#C97A4F', fontWeight: 600 }}>{pending.length} pending {pending.length === 1 ? 'request' : 'requests'}</span> waiting on your decision, and <span style={{ fontWeight: 600, color: '#1F1B16' }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
+            : <>Your queue is clear. <span style={{ fontWeight: 600, color: '#1F1B16' }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
+          }
+        </p>
       </div>
       )}
 
@@ -168,79 +162,34 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
         )}
       </div>
 
-      {/* Headcount — colorful department gradients + Saudi/Expat + Male/Female mini-tiles */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between flex-wrap gap-2">
+      {/* Headcount — Editorial Minimal (Option 1): bordered grid, serif numbers,
+           inline demographic summary in the subtitle. */}
+      <div className="pt-7" style={{ borderTop: '1px solid #E5E0D5' }}>
+        <div className="flex items-baseline justify-between flex-wrap gap-3 mb-5">
           <div>
-            <div className="text-[10px] tracking-[0.25em] opacity-60">HEADCOUNT</div>
-            <h2 className="serif text-2xl mt-1" style={{ fontWeight: 500 }}>People at ESAU</h2>
+            <div className="text-[10px]" style={{ color: '#9D6B53', letterSpacing: '0.3em' }}>PEOPLE AT ESAU</div>
+            <h2 style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontSize: '26px', color: '#1F1B16', marginTop: '4px', fontWeight: 400 }}>
+              Headcount by department
+            </h2>
           </div>
-          <div className="text-xs opacity-60">{employees.length} active employees</div>
+          <div className="text-xs" style={{ color: '#9C9385' }}>
+            {employees.length} active · {byNationality.saudi} Saudi · {byNationality.expat} Expat · {byGender.male} Male · <span style={{ color: '#C97A4F', fontWeight: 600 }}>{byGender.female} Female</span>
+          </div>
         </div>
-
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-          {byDept.map(([dept, count]) => {
-            const DEPT_GRADIENTS = {
-              'CSD':        'linear-gradient(135deg, #60A5FA 0%, #2563EB 100%)',
-              'LOG':        'linear-gradient(135deg, #34D399 0%, #059669 100%)',
-              'BIZ':        'linear-gradient(135deg, #FBBF24 0%, #F59E0B 100%)',
-              'RYD OFFICE': 'linear-gradient(135deg, #F472B6 0%, #DB2777 100%)',
-              'FIN':        'linear-gradient(135deg, #A78BFA 0%, #7C3AED 100%)',
-              'SUP':        'linear-gradient(135deg, #FB923C 0%, #EA580C 100%)',
-            };
-            const gradient = DEPT_GRADIENTS[dept] || 'linear-gradient(135deg, #94A3B8 0%, #475569 100%)';
-            return (
-              <div key={dept}
-                   className="rounded-2xl p-4 text-white relative overflow-hidden"
-                   style={{ background: gradient, minHeight: '110px', boxShadow: '0 8px 20px rgba(15,23,42,0.10)' }}>
-                <div aria-hidden className="absolute -right-4 -top-4 w-20 h-20 rounded-full" style={{ background: 'rgba(255,255,255,0.15)' }}/>
-                <div className="relative">
-                  <div className="text-[10px] tracking-[0.25em] opacity-90">{dept}</div>
-                  <div className="serif text-4xl mt-1" style={{ fontWeight: 500 }}>{count}</div>
-                  <div className="text-xs opacity-90 mt-1">{Math.round((count / employees.length) * 100)}% of staff</div>
-                </div>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6"
+             style={{ borderTop: '1px solid #E5E0D5', borderLeft: '1px solid #E5E0D5' }}>
+          {byDept.map(([dept, count]) => (
+            <div key={dept}
+                 style={{ borderRight: '1px solid #E5E0D5', borderBottom: '1px solid #E5E0D5', padding: '18px' }}>
+              <div className="text-[10px]" style={{ color: '#9D6B53', letterSpacing: '0.2em', fontWeight: 500 }}>{dept}</div>
+              <div style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontSize: '36px', color: '#1F1B16', lineHeight: 1, margin: '8px 0 4px', fontWeight: 400 }}>
+                {count}
               </div>
-            );
-          })}
-        </div>
-
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <div className="rounded-2xl p-4 text-white relative overflow-hidden"
-               style={{ background: 'linear-gradient(135deg, #10B981 0%, #047857 100%)', minHeight: '110px', boxShadow: '0 8px 20px rgba(15,23,42,0.10)' }}>
-            <div aria-hidden className="absolute -right-3 -top-3 w-16 h-16 rounded-full" style={{ background: 'rgba(255,255,255,0.18)' }}/>
-            <div className="relative">
-              <div className="text-[10px] tracking-[0.25em] opacity-90">SAUDI NATIONAL</div>
-              <div className="serif text-4xl mt-1" style={{ fontWeight: 500 }}>{byNationality.saudi}</div>
-              <div className="text-xs opacity-90 mt-1">{employees.length > 0 ? Math.round((byNationality.saudi / employees.length) * 100) : 0}% of staff</div>
+              <div className="text-[11px]" style={{ color: '#9C9385' }}>
+                {Math.round((count / employees.length) * 100)}%
+              </div>
             </div>
-          </div>
-          <div className="rounded-2xl p-4 text-white relative overflow-hidden"
-               style={{ background: 'linear-gradient(135deg, #06B6D4 0%, #0E7490 100%)', minHeight: '110px', boxShadow: '0 8px 20px rgba(15,23,42,0.10)' }}>
-            <div aria-hidden className="absolute -right-3 -top-3 w-16 h-16 rounded-full" style={{ background: 'rgba(255,255,255,0.18)' }}/>
-            <div className="relative">
-              <div className="text-[10px] tracking-[0.25em] opacity-90">EXPATRIATE</div>
-              <div className="serif text-4xl mt-1" style={{ fontWeight: 500 }}>{byNationality.expat}</div>
-              <div className="text-xs opacity-90 mt-1">{employees.length > 0 ? Math.round((byNationality.expat / employees.length) * 100) : 0}% of staff</div>
-            </div>
-          </div>
-          <div className="rounded-2xl p-4 text-white relative overflow-hidden"
-               style={{ background: 'linear-gradient(135deg, #6366F1 0%, #4338CA 100%)', minHeight: '110px', boxShadow: '0 8px 20px rgba(15,23,42,0.10)' }}>
-            <div aria-hidden className="absolute -right-3 -top-3 w-16 h-16 rounded-full" style={{ background: 'rgba(255,255,255,0.18)' }}/>
-            <div className="relative">
-              <div className="text-[10px] tracking-[0.25em] opacity-90">MALE</div>
-              <div className="serif text-4xl mt-1" style={{ fontWeight: 500 }}>{byGender.male}</div>
-              <div className="text-xs opacity-90 mt-1">{employees.length > 0 ? Math.round((byGender.male / employees.length) * 100) : 0}% of staff</div>
-            </div>
-          </div>
-          <div className="rounded-2xl p-4 text-white relative overflow-hidden"
-               style={{ background: 'linear-gradient(135deg, #EC4899 0%, #BE185D 100%)', minHeight: '110px', boxShadow: '0 8px 20px rgba(15,23,42,0.10)' }}>
-            <div aria-hidden className="absolute -right-3 -top-3 w-16 h-16 rounded-full" style={{ background: 'rgba(255,255,255,0.18)' }}/>
-            <div className="relative">
-              <div className="text-[10px] tracking-[0.25em] opacity-90">FEMALE</div>
-              <div className="serif text-4xl mt-1" style={{ fontWeight: 500 }}>{byGender.female}</div>
-              <div className="text-xs opacity-90 mt-1">{employees.length > 0 ? Math.round((byGender.female / employees.length) * 100) : 0}% of staff</div>
-            </div>
-          </div>
+          ))}
         </div>
       </div>
 
@@ -366,30 +315,29 @@ export function Card({ title, subtitle, children, accent }) {
 }
 
 export function StatCard({ label, value, sub, accent = 'var(--ink)', onClick }) {
-  // Colorful gradient variant — each label gets its own brand colour.
-  const GRADIENTS = {
-    'Total Staff':         'linear-gradient(135deg, #34D399 0%, #059669 100%)', // emerald
-    'On Leave Today':      'linear-gradient(135deg, #00D4C0 0%, #008C9E 100%)', // teal
-    'Pending Approval':    'linear-gradient(135deg, #FBBF24 0%, #F97316 100%)', // amberÃ¢ÂÂorange
-    'Approved This Month': 'linear-gradient(135deg, #8B5CF6 0%, #4F46E5 100%)', // purple
-    'Your Tasks':          'linear-gradient(135deg, #F472B6 0%, #DB2777 100%)', // pink
-  };
-  const gradient = GRADIENTS[label] || 'linear-gradient(135deg, #FF8A4D 0%, #FF4E6A 100%)';
+  // Editorial Minimal (Option 1): plain typography, no tiles, no gradients.
+  // The "Your Tasks" tile gets a single warm-orange left rule + matching label
+  // colour so it stands out for HR reviewers without breaking the calm.
+  const isYourTasks = label === 'Your Tasks';
   const Tag = onClick ? 'button' : 'div';
+  const labelColor = isYourTasks ? '#C97A4F' : '#9D6B53';
   return (
     <Tag onClick={onClick}
-      className={`relative text-left rounded-2xl p-4 block w-full text-white overflow-hidden transition-transform hover:-translate-y-1 ${onClick ? 'cursor-pointer' : ''}`}
-      style={{ background: gradient, minHeight: '140px', boxShadow: '0 8px 22px rgba(15,40,24,0.10)' }}>
-      <div aria-hidden="true" style={{
-        position:'absolute', top:'-36px', right:'-36px',
-        width:'120px', height:'120px', borderRadius:'50%',
-        background:'rgba(255,255,255,0.13)', pointerEvents:'none'
-      }}/>
-      <div className="relative" style={{ zIndex: 1 }}>
-        <div className="text-[10px] tracking-[0.25em] opacity-90 font-semibold">{label.toUpperCase()}</div>
-        <div className="font-bold mt-2 leading-none" style={{ fontSize: '40px', letterSpacing: '-0.03em' }}>{value}</div>
-        <div className="text-[11px] opacity-90 mt-1.5 leading-snug">{sub}</div>
+      className={`text-left block w-full transition-opacity hover:opacity-80 ${onClick ? 'cursor-pointer' : ''}`}
+      style={{
+        paddingLeft:  isYourTasks ? '16px' : '0',
+        borderLeft:   isYourTasks ? '2px solid #C97A4F' : 'none',
+        background:   'transparent',
+        border:       isYourTasks ? '' : 'none',
+        minHeight:    '88px',
+      }}>
+      <div className="text-[10px]" style={{ color: labelColor, letterSpacing: '0.2em', fontWeight: 500 }}>
+        {label.toUpperCase()}
       </div>
+      <div style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontSize: '42px', color: '#1F1B16', lineHeight: 1, margin: '8px 0 4px', fontWeight: 400 }}>
+        {value}
+      </div>
+      {sub && <div className="text-[11px]" style={{ color: '#9C9385' }}>{sub}</div>}
     </Tag>
   );
 }
