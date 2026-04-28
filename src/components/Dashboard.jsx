@@ -634,8 +634,9 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
       )}
 
       {/* PIN Requests — moved to modal triggered by the PIN REQUESTS badge.
-           Card is always mounted (so its data fetch keeps the badge count
-           live) but visually hidden until pinModalOpen flips to true. */}
+           Card is always mounted (display:none on the modal wrapper hides it
+           visually but keeps React's tree intact, so the realtime channel
+           subscription runs and the badge count stays live). */}
       {canSeePinReqs && (
         <div
           onClick={(e) => { if (e.target === e.currentTarget) setPinModalOpen(false); }}
@@ -661,14 +662,6 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           </div>
         </div>
       )}
-      {/* Mount once even when modal is closed so the count fetch runs on load.
-          Hidden visually with display:none — React keeps it in the tree. */}
-      {canSeePinReqs && !pinModalOpen && (
-        <div style={{ display: 'none' }} aria-hidden="true">
-          <PinRequestsCard me={me} employees={employees} onCountChange={setPinReqCount} />
-        </div>
-      )}
-
       {/* Report reminder popup — fires when a Mr John report is due and Bashaier
           hasn't marked it sent for the current month. Shown once per page load. */}
       {bashaierMode && reminderTask && (
