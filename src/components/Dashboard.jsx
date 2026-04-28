@@ -54,9 +54,80 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
     return Object.entries(m).sort((a,b) => b[1] - a[1]);
   }, [employees]);
 
+  const byNationality = useMemo(() => {
+    let saudi = 0, expat = 0;
+    employees.forEach(e => {
+      if (e.nationality === 'saudi') saudi++;
+      else if (e.nationality === 'expat') expat++;
+    });
+    return { saudi, expat };
+  }, [employees]);
+
+  const byGender = useMemo(() => {
+    const FEM_FIRST = new Set(['BASHAIER','BADRIA','SHAHAD','AMNA','AMINAH','NORA','NORAH','NOURA','LAYLA','SARA','SARAH','MARIA','JOAN','JOY','GRACE','AISHA','AMINA','FATIMA','KHADIJA','MARIAM','MARYAM','ZAINAB','HAYA','REEM','REEMA','RANA','DANA','LINA','NADA','WAFA','AYESHA','PRINCESS','JESSICA','JENNIFER','ANNA','HANNAH','LISA','EMMA','OLIVIA','SOPHIA','PRIYA','NEHA','SAFIA','SAFIYA']);
+    let male = 0, female = 0;
+    employees.forEach(e => {
+      const g = (e.gender || '').toLowerCase();
+      if (g === 'female' || g === 'f') female++;
+      else if (g === 'male' || g === 'm') male++;
+      else {
+        const first = (e.name || '').split(/\s+/)[0].toUpperCase();
+        if (FEM_FIRST.has(first)) female++;
+        else male++;
+      }
+    });
+    return { male, female };
+  }, [employees]);
+
+  const bashaierMode = !!(me?.is_hr_reviewer && !me?.is_admin);
+
+  const heroMessage = useMemo(() => {
+    const messages = [
+      'Today is a good day to lead with kindness.',
+      'Your steady hand keeps the whole team in motion.',
+      'Quiet excellence shapes the company more than loud effort.',
+      'Every signature you finish is one less worry for someone.',
+      'You are the reason the inbox feels less heavy on Mondays.',
+      'Small acts of care add up to a culture of trust.',
+      'You make complicated processes feel simple. That is rare.',
+      'A calm HR desk is a gift to every department.',
+      'Today, your work touches more lives than you will ever know.',
+      'You bring grace to numbers and warmth to policy.',
+      'The files may be quiet, but your impact is loud.',
+      'Your patience is a quiet superpower.',
+      'You are exactly where the team needs you to be.',
+    ];
+    const dayIndex = Math.floor(Date.now() / 86400000) % messages.length;
+    return messages[dayIndex];
+  }, []);
+
+
   return (
     <div className="space-y-8">
-      {/* Hero */}
+      {/* Hero — pink-themed for Bashaier, regular for everyone else */}
+      {bashaierMode ? (
+        <div className="rounded-3xl p-6 sm:p-8 relative overflow-hidden"
+             style={{ background: 'linear-gradient(135deg, #FFE4EC 0%, #FFD1DC 35%, #FFC0CB 70%, #FFB6C1 100%)' }}>
+          <div aria-hidden className="absolute -right-12 -top-12 w-56 h-56 rounded-full" style={{ background: 'radial-gradient(circle, rgba(236,72,153,0.18), transparent 70%)' }}/>
+          <div aria-hidden className="absolute -left-16 -bottom-16 w-64 h-64 rounded-full" style={{ background: 'radial-gradient(circle, rgba(244,114,182,0.16), transparent 70%)' }}/>
+          <div className="relative">
+            <div className="flex items-center gap-2 mb-3 text-xs tracking-[0.25em]" style={{ color: '#9D174D' }}>
+              <div className="w-6 h-px" style={{ background: '#DB2777' }}/>
+              GOOD {(_period || 'day').toUpperCase()}, BASHAIER
+            </div>
+            <h1 className="serif text-[clamp(1.8rem,4vw,2.8rem)] leading-[1.05] max-w-3xl"
+                style={{ fontWeight: 500, letterSpacing: '-0.015em', color: '#831843' }}>
+              {heroMessage}
+            </h1>
+            <p className="text-sm mt-4 max-w-xl" style={{ color: '#9D174D' }}>
+              {pending.length > 0
+                ? <>You have <span style={{ fontWeight: 600 }}>{pending.length} pending {pending.length === 1 ? 'request' : 'requests'}</span> waiting on your decision, and <span style={{ fontWeight: 600 }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
+                : <>Your queue is clear. <span style={{ fontWeight: 600 }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
+              }
+            </p>
+          </div>
+        </div>
+      ) : (
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
           <div className="flex items-center gap-2 mb-3 text-xs tracking-[0.25em] opacity-50">
@@ -75,9 +146,10 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           </p>
         </div>
       </div>
+      )}
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Stat cards — 5-up when HR reviewer (extra Your Tasks tile), 4-up otherwise */}
+      <div className={`grid grid-cols-2 ${bashaierMode ? 'lg:grid-cols-5' : 'lg:grid-cols-4'} gap-4`}>
         <StatCard label="Total Staff" value={employees.length}
                   sub={`${byLocation.DMM || 0} DMM · ${byLocation.JED || 0} JED · ${byLocation.RYD || 0} RYD`}/>
         <StatCard label="On Leave Today" value={onLeaveToday.length}
@@ -86,6 +158,90 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
                   sub="Awaiting your decision" accent="var(--clay)" onClick={onGoToRequests}/>
         <StatCard label="Approved This Month" value={approvedThisMonth}
                   sub={new Date().toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}/>
+        {bashaierMode && (
+          <StatCard label="Your Tasks" value={3}
+                    sub="Reports for Mr John"
+                    onClick={() => {
+                      const el = document.getElementById('bashaier-tasks-anchor');
+                      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }}/>
+        )}
+      </div>
+
+      {/* Headcount — colorful department gradients + Saudi/Expat + Male/Female mini-tiles */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <div className="text-[10px] tracking-[0.25em] opacity-60">HEADCOUNT</div>
+            <h2 className="serif text-2xl mt-1" style={{ fontWeight: 500 }}>People at ESAU</h2>
+          </div>
+          <div className="text-xs opacity-60">{employees.length} active employees</div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          {byDept.map(([dept, count]) => {
+            const DEPT_GRADIENTS = {
+              'CSD':        'linear-gradient(135deg, #60A5FA 0%, #2563EB 100%)',
+              'LOG':        'linear-gradient(135deg, #34D399 0%, #059669 100%)',
+              'BIZ':        'linear-gradient(135deg, #FBBF24 0%, #F59E0B 100%)',
+              'RYD OFFICE': 'linear-gradient(135deg, #F472B6 0%, #DB2777 100%)',
+              'FIN':        'linear-gradient(135deg, #A78BFA 0%, #7C3AED 100%)',
+              'SUP':        'linear-gradient(135deg, #FB923C 0%, #EA580C 100%)',
+            };
+            const gradient = DEPT_GRADIENTS[dept] || 'linear-gradient(135deg, #94A3B8 0%, #475569 100%)';
+            return (
+              <div key={dept}
+                   className="rounded-2xl p-4 text-white relative overflow-hidden"
+                   style={{ background: gradient, minHeight: '110px', boxShadow: '0 8px 20px rgba(15,23,42,0.10)' }}>
+                <div aria-hidden className="absolute -right-4 -top-4 w-20 h-20 rounded-full" style={{ background: 'rgba(255,255,255,0.15)' }}/>
+                <div className="relative">
+                  <div className="text-[10px] tracking-[0.25em] opacity-90">{dept}</div>
+                  <div className="serif text-4xl mt-1" style={{ fontWeight: 500 }}>{count}</div>
+                  <div className="text-xs opacity-90 mt-1">{Math.round((count / employees.length) * 100)}% of staff</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="rounded-2xl p-4 text-white relative overflow-hidden"
+               style={{ background: 'linear-gradient(135deg, #10B981 0%, #047857 100%)', minHeight: '110px', boxShadow: '0 8px 20px rgba(15,23,42,0.10)' }}>
+            <div aria-hidden className="absolute -right-3 -top-3 w-16 h-16 rounded-full" style={{ background: 'rgba(255,255,255,0.18)' }}/>
+            <div className="relative">
+              <div className="text-[10px] tracking-[0.25em] opacity-90">SAUDI NATIONAL</div>
+              <div className="serif text-4xl mt-1" style={{ fontWeight: 500 }}>{byNationality.saudi}</div>
+              <div className="text-xs opacity-90 mt-1">{employees.length > 0 ? Math.round((byNationality.saudi / employees.length) * 100) : 0}% of staff</div>
+            </div>
+          </div>
+          <div className="rounded-2xl p-4 text-white relative overflow-hidden"
+               style={{ background: 'linear-gradient(135deg, #06B6D4 0%, #0E7490 100%)', minHeight: '110px', boxShadow: '0 8px 20px rgba(15,23,42,0.10)' }}>
+            <div aria-hidden className="absolute -right-3 -top-3 w-16 h-16 rounded-full" style={{ background: 'rgba(255,255,255,0.18)' }}/>
+            <div className="relative">
+              <div className="text-[10px] tracking-[0.25em] opacity-90">EXPATRIATE</div>
+              <div className="serif text-4xl mt-1" style={{ fontWeight: 500 }}>{byNationality.expat}</div>
+              <div className="text-xs opacity-90 mt-1">{employees.length > 0 ? Math.round((byNationality.expat / employees.length) * 100) : 0}% of staff</div>
+            </div>
+          </div>
+          <div className="rounded-2xl p-4 text-white relative overflow-hidden"
+               style={{ background: 'linear-gradient(135deg, #6366F1 0%, #4338CA 100%)', minHeight: '110px', boxShadow: '0 8px 20px rgba(15,23,42,0.10)' }}>
+            <div aria-hidden className="absolute -right-3 -top-3 w-16 h-16 rounded-full" style={{ background: 'rgba(255,255,255,0.18)' }}/>
+            <div className="relative">
+              <div className="text-[10px] tracking-[0.25em] opacity-90">MALE</div>
+              <div className="serif text-4xl mt-1" style={{ fontWeight: 500 }}>{byGender.male}</div>
+              <div className="text-xs opacity-90 mt-1">{employees.length > 0 ? Math.round((byGender.male / employees.length) * 100) : 0}% of staff</div>
+            </div>
+          </div>
+          <div className="rounded-2xl p-4 text-white relative overflow-hidden"
+               style={{ background: 'linear-gradient(135deg, #EC4899 0%, #BE185D 100%)', minHeight: '110px', boxShadow: '0 8px 20px rgba(15,23,42,0.10)' }}>
+            <div aria-hidden className="absolute -right-3 -top-3 w-16 h-16 rounded-full" style={{ background: 'rgba(255,255,255,0.18)' }}/>
+            <div className="relative">
+              <div className="text-[10px] tracking-[0.25em] opacity-90">FEMALE</div>
+              <div className="serif text-4xl mt-1" style={{ fontWeight: 500 }}>{byGender.female}</div>
+              <div className="text-xs opacity-90 mt-1">{employees.length > 0 ? Math.round((byGender.female / employees.length) * 100) : 0}% of staff</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Three column summary */}
@@ -178,24 +334,15 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
 
       {/* Bashaier's tasks — only for HR reviewer who isn't admin */}
       {me?.is_hr_reviewer && !me?.is_admin && (
-        <BashaierTasksCard employees={employees} requests={requests} permissions={permissions} />
+        <div id="bashaier-tasks-anchor" style={{ scrollMarginTop: '80px' }}>
+          <BashaierTasksCard employees={employees} requests={requests} permissions={permissions} />
+        </div>
       )}
 
       {/* PIN Requests — pending requests from staff who clicked Request access */}
       <PinRequestsCard me={me} employees={employees} />
 
-      {/* Headcount by department */}
-      <Card title="Headcount by department" subtitle={`${employees.length} active employees`}>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 pt-2">
-          {byDept.map(([dept, count]) => (
-            <div key={dept} className="p-4 rounded-lg border" style={{ borderColor: 'var(--border-soft)', background: 'var(--paper)' }}>
-              <div className="text-[10px] tracking-widest opacity-60">{dept}</div>
-              <div className="serif text-3xl mt-1" style={{ fontWeight: 500 }}>{count}</div>
-              <div className="text-xs opacity-50 mt-1">{Math.round((count / employees.length) * 100)}%</div>
-            </div>
-          ))}
-        </div>
-      </Card>
+      {/* (Headcount block has moved up — see new colored block right after Stat cards.) */}
     </div>
   );
 }
@@ -225,6 +372,7 @@ export function StatCard({ label, value, sub, accent = 'var(--ink)', onClick }) 
     'On Leave Today':      'linear-gradient(135deg, #00D4C0 0%, #008C9E 100%)', // teal
     'Pending Approval':    'linear-gradient(135deg, #FBBF24 0%, #F97316 100%)', // amberÃ¢ÂÂorange
     'Approved This Month': 'linear-gradient(135deg, #8B5CF6 0%, #4F46E5 100%)', // purple
+    'Your Tasks':          'linear-gradient(135deg, #F472B6 0%, #DB2777 100%)', // pink
   };
   const gradient = GRADIENTS[label] || 'linear-gradient(135deg, #FF8A4D 0%, #FF4E6A 100%)';
   const Tag = onClick ? 'button' : 'div';
