@@ -136,10 +136,10 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           <h1 className="leading-[1] mb-4" style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 'clamp(2.2rem, 5vw, 3.5rem)', color: '#1F1B16', fontWeight: 400, letterSpacing: '-0.02em' }}>
             Good {_period}, Bashaier.
           </h1>
-          <p className="mb-3" style={{ fontFamily: 'Georgia, serif', fontStyle: 'italic', color: '#6B5A4A', fontSize: '1.15rem', maxWidth: '38rem', lineHeight: 1.4 }}>
+          <p className="mb-3" style={{ fontFamily: 'Georgia, serif', fontStyle: 'italic', color: '#1F1B16', fontSize: '1.15rem', maxWidth: '38rem', lineHeight: 1.4 }}>
             "{heroMessage}"
           </p>
-          <p className="text-sm" style={{ color: '#6B5A4A', margin: 0 }}>
+          <p className="text-sm" style={{ color: '#1F1B16', margin: 0 }}>
             {pending.length > 0
               ? <>You have <span style={{ fontWeight: 600, color: '#1F1B16' }}>{pending.length} pending {pending.length === 1 ? 'request' : 'requests'}</span> waiting on your decision, and <span style={{ fontWeight: 600, color: '#1F1B16' }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
               : <>Your queue is clear. <span style={{ fontWeight: 600, color: '#1F1B16' }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
@@ -154,7 +154,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
         <h1 className="leading-[1]" style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 'clamp(2.5rem, 5vw, 3.8rem)', color: '#1F1B16', fontWeight: 400, letterSpacing: '-0.02em' }}>
           {greeting}
         </h1>
-        <p className="text-base mt-4 max-w-xl" style={{ color: '#6B5A4A' }}>
+        <p className="text-base mt-4 max-w-xl" style={{ color: '#1F1B16' }}>
           {pending.length > 0
             ? <>You have <span style={{ color: '#C97A4F', fontWeight: 600 }}>{pending.length} pending {pending.length === 1 ? 'request' : 'requests'}</span> waiting on your decision, and <span style={{ fontWeight: 600, color: '#1F1B16' }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
             : <>Your queue is clear. <span style={{ fontWeight: 600, color: '#1F1B16' }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
@@ -163,24 +163,140 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
       </div>
       )}
 
-      {/* Stat cards — 5-up when HR reviewer (extra Your Tasks tile), 4-up otherwise */}
-      <div className={`grid grid-cols-2 ${bashaierMode ? 'lg:grid-cols-5' : 'lg:grid-cols-4'} gap-4`}>
-        <StatCard label="Total Staff" value={employees.length}
-                  sub={`${byLocation.DMM || 0} DMM · ${byLocation.JED || 0} JED · ${byLocation.RYD || 0} RYD`}/>
-        <StatCard label="On Leave Today" value={onLeaveToday.length}
-                  sub="Currently out of office" accent="var(--evergreen-500)"/>
-        <StatCard label="Pending Approval" value={pending.length}
-                  sub="Awaiting your decision" accent="var(--clay)" onClick={onGoToRequests}/>
-        <StatCard label="Approved This Month" value={approvedThisMonth}
-                  sub={new Date().toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}/>
+      {/* Stat cards — Professional Badge style (matches headcount badges below).
+           Each card has a colored gradient side rail, a count pill in the top-right,
+           an emoji icon, and a small description. The Total Staff card additionally
+           shows a 3-segment location breakdown (DMM / JED / RYD) with a mini split bar.
+           The Your Tasks card is HR-only and scrolls to the Bashaier tasks anchor on click. */}
+      <div className={`grid grid-cols-1 sm:grid-cols-2 ${bashaierMode ? 'lg:grid-cols-5' : 'lg:grid-cols-4'} gap-4`}
+           style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
+
+        {/* TOTAL STAFF — with location split */}
+        <div className="rounded-xl bg-white relative overflow-hidden"
+             style={{ border: '1px solid #E5E0D5', boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
+          <div aria-hidden style={{ position:'absolute', top:0, left:0, bottom:0, width:'5px', background:'linear-gradient(180deg, #34D399 0%, #047857 100%)' }}/>
+          <div className="p-4 pl-6">
+            <div className="flex items-start justify-between mb-2">
+              <div>
+                <div className="text-[10px]" style={{ color: '#047857', letterSpacing: '0.18em', fontWeight: 700 }}>TOTAL STAFF</div>
+                <div className="text-[11px]" style={{ color: '#1F1B16', marginTop: '2px' }}>Active employees</div>
+              </div>
+              <div className="rounded-full px-3 py-1"
+                   style={{ background: '#ECFDF5', color: '#047857', fontSize: '20px', fontWeight: 700, lineHeight: 1 }}>
+                {employees.length}
+              </div>
+            </div>
+            <div className="flex items-center gap-3 mt-3 flex-wrap">
+              <div className="flex items-center gap-1.5">
+                <span style={{ fontSize: '14px', lineHeight: 1 }}>📍</span>
+                <span style={{ fontSize: '14px', fontWeight: 600, color: '#1F1B16' }}>{byLocation.DMM || 0}</span>
+                <span className="text-[11px]" style={{ color: '#1F1B16' }}>DMM</span>
+              </div>
+              <div style={{ width: '1px', height: '14px', background: '#E5E0D5' }}/>
+              <div className="flex items-center gap-1.5">
+                <span style={{ fontSize: '14px', lineHeight: 1 }}>📍</span>
+                <span style={{ fontSize: '14px', fontWeight: 600, color: '#1F1B16' }}>{byLocation.JED || 0}</span>
+                <span className="text-[11px]" style={{ color: '#1F1B16' }}>JED</span>
+              </div>
+              <div style={{ width: '1px', height: '14px', background: '#E5E0D5' }}/>
+              <div className="flex items-center gap-1.5">
+                <span style={{ fontSize: '14px', lineHeight: 1 }}>📍</span>
+                <span style={{ fontSize: '14px', fontWeight: 600, color: '#1F1B16' }}>{byLocation.RYD || 0}</span>
+                <span className="text-[11px]" style={{ color: '#1F1B16' }}>RYD</span>
+              </div>
+            </div>
+            <div className="mt-3 rounded-full overflow-hidden flex" style={{ height: '6px', background: '#F1ECE0' }}>
+              {(byLocation.DMM || 0) > 0 && <div title={`${byLocation.DMM} DMM`} style={{ width: `${Math.round(((byLocation.DMM || 0) / Math.max(employees.length, 1)) * 100)}%`, background: 'linear-gradient(90deg, #6EE7B7 0%, #10B981 100%)' }}/>}
+              {(byLocation.JED || 0) > 0 && <div title={`${byLocation.JED} JED`} style={{ width: `${Math.round(((byLocation.JED || 0) / Math.max(employees.length, 1)) * 100)}%`, background: 'linear-gradient(90deg, #67E8F9 0%, #06B6D4 100%)' }}/>}
+              {(byLocation.RYD || 0) > 0 && <div title={`${byLocation.RYD} RYD`} style={{ width: `${Math.round(((byLocation.RYD || 0) / Math.max(employees.length, 1)) * 100)}%`, background: 'linear-gradient(90deg, #FCD34D 0%, #F59E0B 100%)' }}/>}
+            </div>
+          </div>
+        </div>
+
+        {/* ON LEAVE TODAY */}
+        <div className="rounded-xl bg-white relative overflow-hidden"
+             style={{ border: '1px solid #E5E0D5', boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
+          <div aria-hidden style={{ position:'absolute', top:0, left:0, bottom:0, width:'5px', background:'linear-gradient(180deg, #67E8F9 0%, #0E7490 100%)' }}/>
+          <div className="p-4 pl-6">
+            <div className="flex items-start justify-between mb-2">
+              <div>
+                <div className="text-[10px]" style={{ color: '#0E7490', letterSpacing: '0.18em', fontWeight: 700 }}>ON LEAVE TODAY</div>
+                <div className="text-[11px]" style={{ color: '#1F1B16', marginTop: '2px' }}>Currently out of office</div>
+              </div>
+              <div className="rounded-full px-3 py-1"
+                   style={{ background: '#ECFEFF', color: '#0E7490', fontSize: '20px', fontWeight: 700, lineHeight: 1 }}>
+                {onLeaveToday.length}
+              </div>
+            </div>
+            <div className="text-[20px] mt-2">🏖️</div>
+          </div>
+        </div>
+
+        {/* PENDING APPROVAL */}
+        <button onClick={onGoToRequests}
+             className="text-left rounded-xl bg-white relative overflow-hidden cursor-pointer transition-shadow hover:shadow-md"
+             style={{ border: '1px solid #E5E0D5', boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
+          <div aria-hidden style={{ position:'absolute', top:0, left:0, bottom:0, width:'5px', background:'linear-gradient(180deg, #FBBF24 0%, #C2410C 100%)' }}/>
+          <div className="p-4 pl-6">
+            <div className="flex items-start justify-between mb-2">
+              <div>
+                <div className="text-[10px]" style={{ color: '#C2410C', letterSpacing: '0.18em', fontWeight: 700 }}>PENDING APPROVAL</div>
+                <div className="text-[11px]" style={{ color: '#1F1B16', marginTop: '2px' }}>Awaiting your decision</div>
+              </div>
+              <div className="rounded-full px-3 py-1"
+                   style={{ background: '#FFFBEB', color: '#C2410C', fontSize: '20px', fontWeight: 700, lineHeight: 1 }}>
+                {pending.length}
+              </div>
+            </div>
+            <div className="text-[20px] mt-2">⏳</div>
+          </div>
+        </button>
+
+        {/* APPROVED THIS MONTH */}
+        <div className="rounded-xl bg-white relative overflow-hidden"
+             style={{ border: '1px solid #E5E0D5', boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
+          <div aria-hidden style={{ position:'absolute', top:0, left:0, bottom:0, width:'5px', background:'linear-gradient(180deg, #A78BFA 0%, #6D28D9 100%)' }}/>
+          <div className="p-4 pl-6">
+            <div className="flex items-start justify-between mb-2">
+              <div>
+                <div className="text-[10px]" style={{ color: '#6D28D9', letterSpacing: '0.18em', fontWeight: 700 }}>APPROVED THIS MONTH</div>
+                <div className="text-[11px]" style={{ color: '#1F1B16', marginTop: '2px' }}>{new Date().toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</div>
+              </div>
+              <div className="rounded-full px-3 py-1"
+                   style={{ background: '#F5F3FF', color: '#6D28D9', fontSize: '20px', fontWeight: 700, lineHeight: 1 }}>
+                {approvedThisMonth}
+              </div>
+            </div>
+            <div className="text-[20px] mt-2">✅</div>
+          </div>
+        </div>
+
+        {/* YOUR TASKS — HR reviewer only */}
         {bashaierMode && (
-          <StatCard label="Your Tasks" value={3}
-                    sub="Reports for Mr John"
-                    onClick={() => {
-                      const el = document.getElementById('bashaier-tasks-anchor');
-                      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    }}/>
+          <button
+             onClick={() => {
+               const el = document.getElementById('bashaier-tasks-anchor');
+               if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+             }}
+             className="text-left rounded-xl bg-white relative overflow-hidden cursor-pointer transition-shadow hover:shadow-md"
+             style={{ border: '1px solid #E5E0D5', boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
+            <div aria-hidden style={{ position:'absolute', top:0, left:0, bottom:0, width:'5px', background:'linear-gradient(180deg, #F472B6 0%, #BE185D 100%)' }}/>
+            <div className="p-4 pl-6">
+              <div className="flex items-start justify-between mb-2">
+                <div>
+                  <div className="text-[10px]" style={{ color: '#BE185D', letterSpacing: '0.18em', fontWeight: 700 }}>YOUR TASKS</div>
+                  <div className="text-[11px]" style={{ color: '#1F1B16', marginTop: '2px' }}>Reports for Mr John</div>
+                </div>
+                <div className="rounded-full px-3 py-1"
+                     style={{ background: '#FDF2F8', color: '#BE185D', fontSize: '20px', fontWeight: 700, lineHeight: 1 }}>
+                  3
+                </div>
+              </div>
+              <div className="text-[20px] mt-2">📋</div>
+            </div>
+          </button>
         )}
+
       </div>
 
       {/* Headcount — Professional Badge style. Each department renders as a
@@ -196,7 +312,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
               Headcount by department
             </h2>
           </div>
-          <div className="text-xs" style={{ color: '#9C9385', fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
+          <div className="text-xs" style={{ color: '#1F1B16', fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
             {employees.length} active · 🇸🇦 {byNationality.saudi} Saudi · 🌍 {byNationality.expat} Expat · 👨 {byGender.male} Men · 👩 {byGender.female} Women
           </div>
         </div>
@@ -237,7 +353,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
                            style={{ color: palette.to, letterSpacing: '0.18em', fontWeight: 700 }}>
                         {dept}
                       </div>
-                      <div className="text-[11px]" style={{ color: '#9C9385', marginTop: '2px' }}>
+                      <div className="text-[11px]" style={{ color: '#1F1B16', marginTop: '2px' }}>
                         {Math.round((count / employees.length) * 100)}% of staff
                       </div>
                     </div>
@@ -259,13 +375,13 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
                     <div className="flex items-center gap-1.5">
                       <span style={{ fontSize: '16px', lineHeight: 1 }}>👨</span>
                       <span style={{ fontSize: '15px', fontWeight: 600, color: '#1F1B16' }}>{g.male}</span>
-                      <span className="text-[11px]" style={{ color: '#9C9385' }}>men</span>
+                      <span className="text-[11px]" style={{ color: '#1F1B16' }}>men</span>
                     </div>
                     <div style={{ width: '1px', height: '14px', background: '#E5E0D5' }}/>
                     <div className="flex items-center gap-1.5">
                       <span style={{ fontSize: '16px', lineHeight: 1 }}>👩</span>
-                      <span style={{ fontSize: '15px', fontWeight: 600, color: g.female > 0 ? '#BE185D' : '#9C9385' }}>{g.female}</span>
-                      <span className="text-[11px]" style={{ color: '#9C9385' }}>women</span>
+                      <span style={{ fontSize: '15px', fontWeight: 600, color: g.female > 0 ? '#BE185D' : '#1F1B16' }}>{g.female}</span>
+                      <span className="text-[11px]" style={{ color: '#1F1B16' }}>women</span>
                     </div>
                   </div>
 
@@ -432,7 +548,7 @@ export function StatCard({ label, value, sub, accent = 'var(--ink)', onClick }) 
       <div style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontSize: '42px', color: '#1F1B16', lineHeight: 1, margin: '8px 0 4px', fontWeight: 400 }}>
         {value}
       </div>
-      {sub && <div className="text-[11px]" style={{ color: '#9C9385' }}>{sub}</div>}
+      {sub && <div className="text-[11px]" style={{ color: '#1F1B16' }}>{sub}</div>}
     </Tag>
   );
 }
