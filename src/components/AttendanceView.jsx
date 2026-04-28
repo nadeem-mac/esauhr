@@ -42,7 +42,16 @@ const FIXED_CC = [
   'fahad.alhussain@evergreen-shipping.com.sa',       // Fahad — SUP team manager
 ];
 
-const HR_SIGNATURE = 'Bashaier Ali Alsubaie\nHR Department\nEvergreen Shipping Agency Saudi';
+// Bashaier's full corporate sign-off — provided verbatim by Nadeem.
+// Multi-line so the recipient's mail client renders it as a proper signature.
+const HR_SIGNATURE =
+  'Thanks and regards,\n\n' +
+  'BASHAIER ALI\n' +
+  'Evergreen Shipping Agency Saudi Co.,(L.L.C)\n' +
+  'ESAU - SADMN SUP/ HR DEPT\n' +
+  'Whatsapp: 966-54 320 9694\n' +
+  'Tel: 966-013 813 8563 – Ext 8543\n' +
+  'Email:bashaier.alsubaie@evergreen-shipping.com.sa';
 
 // ────────────────────────────────────────────────────────────────────────
 // CSV parsing — handles quoted fields, returns array of row-objects keyed
@@ -106,16 +115,22 @@ function minutesToHHMM(min) {
 }
 
 // Department check — SUP team has 8-4 hours.
-function isSupDept(dept) {
-  return /^sup/i.test((dept || '').trim());
+// SUP team for the working-hours policy is a fixed set of 4 PSNs, NOT the
+// SUP department. These four work 08:00 → 16:00 with a 15:45 early-leave
+// cutoff. Everyone else (including SUP-dept members like Aminah, Norah,
+// Shahad) follows the standard 08:00 → 17:00 schedule with a 16:45 cutoff.
+const SUP_TEAM_PSNS = new Set(['H94830', 'H94458', 'H94330', 'H94712']);
+
+function isSupTeam(psn) {
+  return SUP_TEAM_PSNS.has(String(psn || '').trim().toUpperCase());
 }
 
 // Lookup the schedule for an employee based on their department.
-function scheduleFor(dept) {
-  if (isSupDept(dept)) {
-    return { startStr: OFFICIAL_START, endStr: SUP_END, lateCutoffStr: LATE_CUTOFF, earlyCutoffStr: SUP_EARLY_CUTOFF };
+function scheduleFor(psn) {
+  if (isSupTeam(psn)) {
+    return { startStr: OFFICIAL_START, endStr: SUP_END, lateCutoffStr: LATE_CUTOFF, earlyCutoffStr: SUP_EARLY_CUTOFF, label: 'SUP team (08:00–16:00)' };
   }
-  return { startStr: OFFICIAL_START, endStr: STD_END, lateCutoffStr: LATE_CUTOFF, earlyCutoffStr: STD_EARLY_CUTOFF };
+  return { startStr: OFFICIAL_START, endStr: STD_END, lateCutoffStr: LATE_CUTOFF, earlyCutoffStr: STD_EARLY_CUTOFF, label: 'Standard (08:00–17:00)' };
 }
 
 // Detect the date represented by the CSV. Looks for the most-common Date value
@@ -174,7 +189,11 @@ function formatDateLong(yyyymmdd) {
 // Email body builders. Each returns { subject, body }.
 // ────────────────────────────────────────────────────────────────────────
 function lateEmailContent({ employee, dateLong, punchInStr, minutesLate }) {
-  const subject = 'Late Arrival Notice — ' + dateLong + ' — ' + (employee.name || '');
+  // Subject format: "<Notice Type> — <PSN> <FULL NAME UPPERCASE> — <date>"
+  // PSN + name first makes the email instantly identifiable in the recipient's inbox.
+  const psn = String(employee.id || employee.psn || '').toUpperCase();
+  const fullName = String(employee.name || '').toUpperCase();
+  const subject = 'Late Arrival Notice — ' + psn + ' ' + fullName + ' — ' + dateLong;
   const body =
     'Dear ' + (employee.first_name || employee.name?.split(' ')[0] || '') + ',\n\n' +
     'This is a formal notice regarding your late arrival on ' + dateLong + '.\n\n' +
@@ -183,12 +202,14 @@ function lateEmailContent({ employee, dateLong, punchInStr, minutesLate }) {
     'Please ensure timely attendance going forward. Repeated lateness without prior approval ' +
     'may be reflected in your performance evaluation.\n\n' +
     'If there were extenuating circumstances on this day, please reply with an explanation so we can update our records.\n\n' +
-    'Best regards,\n' + HR_SIGNATURE;
+    HR_SIGNATURE;
   return { subject, body };
 }
 
 function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd, minutesEarly }) {
-  const subject = 'Early Departure Notice — ' + dateLong + ' — ' + (employee.name || '');
+  const psn = String(employee.id || employee.psn || '').toUpperCase();
+  const fullName = String(employee.name || '').toUpperCase();
+  const subject = 'Early Departure Notice — ' + psn + ' ' + fullName + ' — ' + dateLong;
   const body =
     'Dear ' + (employee.first_name || employee.name?.split(' ')[0] || '') + ',\n\n' +
     'This is a formal notice regarding your early departure on ' + dateLong + '.\n\n' +
@@ -198,7 +219,7 @@ function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd,
     'Please ensure that any early departure is approved in advance by your direct manager and ' +
     'recorded as a permission request in the HR system.\n\n' +
     'If this departure was approved or there were extenuating circumstances, please reply with the relevant context.\n\n' +
-    'Best regards,\n' + HR_SIGNATURE;
+    HR_SIGNATURE;
   return { subject, body };
 }
 
@@ -207,7 +228,9 @@ function missedPunchEmailContent({ employee, dateLong, missingType }) {
   const what = missingType === 'in'   ? 'a punch-in entry'
             : missingType === 'out'  ? 'a punch-out entry'
             : 'both punch-in and punch-out entries';
-  const subject = 'Reminder: Time Card Punch Missing — ' + dateLong + ' — ' + (employee.name || '');
+  const psn = String(employee.id || employee.psn || '').toUpperCase();
+  const fullName = String(employee.name || '').toUpperCase();
+  const subject = 'Reminder: Time Card Punch Missing — ' + psn + ' ' + fullName + ' — ' + dateLong;
   const body =
     'Dear ' + (employee.first_name || employee.name?.split(' ')[0] || '') + ',\n\n' +
     'We noticed that your time card for ' + dateLong + ' is missing ' + what + '.\n\n' +
@@ -218,7 +241,7 @@ function missedPunchEmailContent({ employee, dateLong, missingType }) {
     'on ' + dateLong + ', please reply with the actual times so we can correct the record.\n\n' +
     'If missed punches continue, this may be escalated to a formal evaluation warning per HR procedure.\n\n' +
     'We are here to help — please reach out if you need any support.\n\n' +
-    'Best regards,\n' + HR_SIGNATURE;
+    HR_SIGNATURE;
   return { subject, body };
 }
 
@@ -318,7 +341,8 @@ export default function AttendanceView({ me, employees }) {
         return;
       }
       const dept = (row['Department'] || emp.department || '').trim();
-      const sched = scheduleFor(dept);
+      // SUP team is identified by PSN (Bashaier H94830, Badria H94458, Jaffar H94330, Fahad H94712), not by dept code.
+      const sched = scheduleFor(emp.id);
       const punchInStr = (row['First Punch'] || '').trim();
       const punchOutStr = (row['Last Punch'] || '').trim();
       const punchInMin = timeToMinutes(punchInStr);
@@ -363,7 +387,7 @@ export default function AttendanceView({ me, employees }) {
           punchOutMin,
           scheduledEnd: sched.endStr,
           minutesEarly: scheduledEndMin - punchOutMin,
-          isSup: isSupDept(dept),
+          isSup: isSupTeam(emp.id),
         });
         flagged = true;
       }
