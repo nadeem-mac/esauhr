@@ -304,10 +304,17 @@ export default function AppShell({ session, me, onRefreshMe }) {
             </button>
             <button
               onClick={() => {
-                // Hard refresh — bust HTTP cache + bump query string so the
-                // browser re-fetches the JS bundle and re-runs all data loads.
-                const sep = window.location.search.includes('nc=') ? '' : (window.location.search ? '&' : '?');
-                window.location.href = window.location.pathname + window.location.search + sep + 'nc=' + Date.now();
+                // Hard refresh — bust HTTP cache so the browser re-fetches the
+                // JS bundle and the app re-runs all data loads. Use the URL
+                // constructor so the nc= param is replaced (not duplicated)
+                // when it's already present in the search string.
+                try {
+                  const url = new URL(window.location.href);
+                  url.searchParams.set('nc', Date.now().toString());
+                  window.location.replace(url.toString());
+                } catch {
+                  window.location.reload();
+                }
               }}
               className="p-2.5 rounded-full border esau-refresh-btn"
               title="Refresh — fetch the latest data"
