@@ -104,47 +104,47 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
 
   return (
     <div className="space-y-8">
-      {/* Hero — pink-themed for Bashaier, regular for everyone else */}
+      {/* Hero — Modern Monochrome (Option 4): clean white card with avatar + date.
+          Bashaier gets a pink avatar + pink Tasks count later. Everyone else
+          shares the same clean monochrome hero. */}
       {bashaierMode ? (
-        <div className="rounded-3xl p-6 sm:p-8 relative overflow-hidden"
-             style={{ background: 'linear-gradient(135deg, #FFE4EC 0%, #FFD1DC 35%, #FFC0CB 70%, #FFB6C1 100%)' }}>
-          <div aria-hidden className="absolute -right-12 -top-12 w-56 h-56 rounded-full" style={{ background: 'radial-gradient(circle, rgba(236,72,153,0.18), transparent 70%)' }}/>
-          <div aria-hidden className="absolute -left-16 -bottom-16 w-64 h-64 rounded-full" style={{ background: 'radial-gradient(circle, rgba(244,114,182,0.16), transparent 70%)' }}/>
-          <div className="relative">
-            <div className="flex items-center gap-2 mb-3 text-xs tracking-[0.25em]" style={{ color: '#9D174D' }}>
-              <div className="w-6 h-px" style={{ background: '#DB2777' }}/>
-              GOOD {(_period || 'day').toUpperCase()}, BASHAIER
+        <div className="rounded-2xl bg-white border p-6 sm:p-8 flex items-start gap-5"
+             style={{ borderColor: '#E5E5E5' }}>
+          <div className="w-16 h-16 rounded-full flex-shrink-0 flex items-center justify-center text-white font-semibold text-2xl"
+               style={{ background: 'linear-gradient(135deg, #E879F9 0%, #DB2777 100%)' }}>
+            B
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-xs mb-1.5" style={{ color: '#737373' }}>
+              {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} · Good {_period}
             </div>
-            <h1 className="serif text-[clamp(1.8rem,4vw,2.8rem)] leading-[1.05] max-w-3xl"
-                style={{ fontWeight: 500, letterSpacing: '-0.015em', color: '#831843' }}>
-              {heroMessage}
+            <h1 className="text-2xl leading-tight" style={{ color: '#0A0A0A', fontWeight: 600, letterSpacing: '-0.01em' }}>
+              Welcome back, Bashaier
             </h1>
-            <p className="text-sm mt-4 max-w-xl" style={{ color: '#9D174D' }}>
+            <p className="text-sm mt-2 max-w-2xl" style={{ color: '#525252' }}>
+              <span style={{ fontStyle: 'italic' }}>"{heroMessage}"</span>
+              {' '}
               {pending.length > 0
-                ? <>You have <span style={{ fontWeight: 600 }}>{pending.length} pending {pending.length === 1 ? 'request' : 'requests'}</span> waiting on your decision, and <span style={{ fontWeight: 600 }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
-                : <>Your queue is clear. <span style={{ fontWeight: 600 }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
+                ? <>You have <span style={{ fontWeight: 600, color: '#0A0A0A' }}>{pending.length} pending {pending.length === 1 ? 'request' : 'requests'}</span> waiting on your decision.</>
+                : <>Your queue is clear today.</>
               }
             </p>
           </div>
         </div>
       ) : (
-      <div className="flex items-end justify-between flex-wrap gap-4">
-        <div>
-          <div className="flex items-center gap-2 mb-3 text-xs tracking-[0.25em] opacity-50">
-            <div className="w-6 h-px" style={{ background: 'var(--evergreen-500)' }}/>
-            OVERVIEW
-          </div>
-          <h1 className="serif text-[clamp(2.5rem,5vw,4rem)] leading-[0.98]"
-              style={{ fontWeight: 500, letterSpacing: '-0.025em' }}>
-            {greeting}
-          </h1>
-          <p className="text-base opacity-70 mt-4 max-w-xl">
-            {pending.length > 0
-              ? <>You have <span style={{ color: 'var(--clay)', fontWeight: 500 }}>{pending.length} pending {pending.length === 1 ? 'request' : 'requests'}</span> waiting on your decision, and <span style={{ fontWeight: 500 }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
-              : <>Your queue is clear. <span style={{ fontWeight: 500 }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
-            }
-          </p>
+      <div className="rounded-2xl bg-white border p-6 sm:p-8" style={{ borderColor: '#E5E5E5' }}>
+        <div className="text-xs mb-1.5" style={{ color: '#737373' }}>
+          {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} · Good {_period}
         </div>
+        <h1 className="text-2xl leading-tight" style={{ color: '#0A0A0A', fontWeight: 600, letterSpacing: '-0.01em' }}>
+          {greeting}
+        </h1>
+        <p className="text-sm mt-2 max-w-2xl" style={{ color: '#525252' }}>
+          {pending.length > 0
+            ? <>You have <span style={{ fontWeight: 600, color: '#0A0A0A' }}>{pending.length} pending {pending.length === 1 ? 'request' : 'requests'}</span> waiting on your decision, and <span style={{ fontWeight: 600, color: '#0A0A0A' }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
+            : <>Your queue is clear. <span style={{ fontWeight: 600, color: '#0A0A0A' }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
+          }
+        </p>
       </div>
       )}
 
@@ -168,78 +168,54 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
         )}
       </div>
 
-      {/* Headcount — colorful department gradients + Saudi/Expat + Male/Female mini-tiles */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div>
-            <div className="text-[10px] tracking-[0.25em] opacity-60">HEADCOUNT</div>
-            <h2 className="serif text-2xl mt-1" style={{ fontWeight: 500 }}>People at ESAU</h2>
-          </div>
-          <div className="text-xs opacity-60">{employees.length} active employees</div>
+      {/* Headcount — Modern Monochrome (Option 4): white card, small dotted department
+           tiles, inline demographic strip. */}
+      <div className="rounded-xl bg-white border p-5" style={{ borderColor: '#E5E5E5' }}>
+        <div className="flex items-center justify-between mb-4">
+          <div style={{ fontSize: '15px', fontWeight: 600, color: '#0A0A0A' }}>Headcount</div>
+          <div className="text-xs" style={{ color: '#737373' }}>{employees.length} active employees</div>
         </div>
-
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
           {byDept.map(([dept, count]) => {
-            const DEPT_GRADIENTS = {
-              'CSD':        'linear-gradient(135deg, #60A5FA 0%, #2563EB 100%)',
-              'LOG':        'linear-gradient(135deg, #34D399 0%, #059669 100%)',
-              'BIZ':        'linear-gradient(135deg, #FBBF24 0%, #F59E0B 100%)',
-              'RYD OFFICE': 'linear-gradient(135deg, #F472B6 0%, #DB2777 100%)',
-              'FIN':        'linear-gradient(135deg, #A78BFA 0%, #7C3AED 100%)',
-              'SUP':        'linear-gradient(135deg, #FB923C 0%, #EA580C 100%)',
+            const DEPT_DOTS = {
+              'CSD':        '#3B82F6',  // blue
+              'LOG':        '#10B981',  // green
+              'BIZ':        '#F59E0B',  // amber
+              'RYD OFFICE': '#EC4899',  // pink
+              'FIN':        '#8B5CF6',  // purple
+              'SUP':        '#F97316',  // orange
             };
-            const gradient = DEPT_GRADIENTS[dept] || 'linear-gradient(135deg, #94A3B8 0%, #475569 100%)';
+            const dotColor = DEPT_DOTS[dept] || '#737373';
             return (
               <div key={dept}
-                   className="rounded-2xl p-4 text-white relative overflow-hidden"
-                   style={{ background: gradient, minHeight: '110px', boxShadow: '0 8px 20px rgba(15,23,42,0.10)' }}>
-                <div aria-hidden className="absolute -right-4 -top-4 w-20 h-20 rounded-full" style={{ background: 'rgba(255,255,255,0.15)' }}/>
-                <div className="relative">
-                  <div className="text-[10px] tracking-[0.25em] opacity-90">{dept}</div>
-                  <div className="serif text-4xl mt-1" style={{ fontWeight: 500 }}>{count}</div>
-                  <div className="text-xs opacity-90 mt-1">{Math.round((count / employees.length) * 100)}% of staff</div>
+                   className="rounded-lg border p-3"
+                   style={{ borderColor: '#E5E5E5', background: '#FAFAFA' }}>
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <div className="w-2 h-2 rounded-sm flex-shrink-0" style={{ background: dotColor }}/>
+                  <div className="text-[11px]" style={{ color: '#737373', fontWeight: 500 }}>{dept}</div>
                 </div>
+                <div style={{ fontSize: '24px', fontWeight: 600, color: '#0A0A0A', lineHeight: 1, letterSpacing: '-0.02em' }}>{count}</div>
               </div>
             );
           })}
         </div>
-
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <div className="rounded-2xl p-4 text-white relative overflow-hidden"
-               style={{ background: 'linear-gradient(135deg, #10B981 0%, #047857 100%)', minHeight: '110px', boxShadow: '0 8px 20px rgba(15,23,42,0.10)' }}>
-            <div aria-hidden className="absolute -right-3 -top-3 w-16 h-16 rounded-full" style={{ background: 'rgba(255,255,255,0.18)' }}/>
-            <div className="relative">
-              <div className="text-[10px] tracking-[0.25em] opacity-90">SAUDI NATIONAL</div>
-              <div className="serif text-4xl mt-1" style={{ fontWeight: 500 }}>{byNationality.saudi}</div>
-              <div className="text-xs opacity-90 mt-1">{employees.length > 0 ? Math.round((byNationality.saudi / employees.length) * 100) : 0}% of staff</div>
-            </div>
+        {/* Demographic strip — inline, no tiles */}
+        <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2 mt-4 pt-4 border-t" style={{ borderColor: '#F5F5F5' }}>
+          <div className="flex items-baseline gap-2">
+            <span style={{ fontSize: '22px', fontWeight: 600, color: '#0A0A0A', letterSpacing: '-0.02em' }}>{byNationality.saudi}</span>
+            <span className="text-xs" style={{ color: '#737373' }}>Saudi</span>
           </div>
-          <div className="rounded-2xl p-4 text-white relative overflow-hidden"
-               style={{ background: 'linear-gradient(135deg, #06B6D4 0%, #0E7490 100%)', minHeight: '110px', boxShadow: '0 8px 20px rgba(15,23,42,0.10)' }}>
-            <div aria-hidden className="absolute -right-3 -top-3 w-16 h-16 rounded-full" style={{ background: 'rgba(255,255,255,0.18)' }}/>
-            <div className="relative">
-              <div className="text-[10px] tracking-[0.25em] opacity-90">EXPATRIATE</div>
-              <div className="serif text-4xl mt-1" style={{ fontWeight: 500 }}>{byNationality.expat}</div>
-              <div className="text-xs opacity-90 mt-1">{employees.length > 0 ? Math.round((byNationality.expat / employees.length) * 100) : 0}% of staff</div>
-            </div>
+          <div className="flex items-baseline gap-2">
+            <span style={{ fontSize: '22px', fontWeight: 600, color: '#0A0A0A', letterSpacing: '-0.02em' }}>{byNationality.expat}</span>
+            <span className="text-xs" style={{ color: '#737373' }}>Expat</span>
           </div>
-          <div className="rounded-2xl p-4 text-white relative overflow-hidden"
-               style={{ background: 'linear-gradient(135deg, #6366F1 0%, #4338CA 100%)', minHeight: '110px', boxShadow: '0 8px 20px rgba(15,23,42,0.10)' }}>
-            <div aria-hidden className="absolute -right-3 -top-3 w-16 h-16 rounded-full" style={{ background: 'rgba(255,255,255,0.18)' }}/>
-            <div className="relative">
-              <div className="text-[10px] tracking-[0.25em] opacity-90">MALE</div>
-              <div className="serif text-4xl mt-1" style={{ fontWeight: 500 }}>{byGender.male}</div>
-              <div className="text-xs opacity-90 mt-1">{employees.length > 0 ? Math.round((byGender.male / employees.length) * 100) : 0}% of staff</div>
-            </div>
+          <div className="flex items-baseline gap-2">
+            <span style={{ fontSize: '22px', fontWeight: 600, color: '#0A0A0A', letterSpacing: '-0.02em' }}>{byGender.male}</span>
+            <span className="text-xs" style={{ color: '#737373' }}>Male</span>
           </div>
-          <div className="rounded-2xl p-4 text-white relative overflow-hidden"
-               style={{ background: 'linear-gradient(135deg, #EC4899 0%, #BE185D 100%)', minHeight: '110px', boxShadow: '0 8px 20px rgba(15,23,42,0.10)' }}>
-            <div aria-hidden className="absolute -right-3 -top-3 w-16 h-16 rounded-full" style={{ background: 'rgba(255,255,255,0.18)' }}/>
-            <div className="relative">
-              <div className="text-[10px] tracking-[0.25em] opacity-90">FEMALE</div>
-              <div className="serif text-4xl mt-1" style={{ fontWeight: 500 }}>{byGender.female}</div>
-              <div className="text-xs opacity-90 mt-1">{employees.length > 0 ? Math.round((byGender.female / employees.length) * 100) : 0}% of staff</div>
-            </div>
+          <div className="flex items-baseline gap-2">
+            <span style={{ fontSize: '22px', fontWeight: 600, color: '#DB2777', letterSpacing: '-0.02em' }}>{byGender.female}</span>
+            <span className="text-xs" style={{ color: '#DB2777', fontWeight: 500 }}>Female</span>
           </div>
         </div>
       </div>
@@ -366,30 +342,22 @@ export function Card({ title, subtitle, children, accent }) {
 }
 
 export function StatCard({ label, value, sub, accent = 'var(--ink)', onClick }) {
-  // Colorful gradient variant — each label gets its own brand colour.
-  const GRADIENTS = {
-    'Total Staff':         'linear-gradient(135deg, #34D399 0%, #059669 100%)', // emerald
-    'On Leave Today':      'linear-gradient(135deg, #00D4C0 0%, #008C9E 100%)', // teal
-    'Pending Approval':    'linear-gradient(135deg, #FBBF24 0%, #F97316 100%)', // amberÃ¢ÂÂorange
-    'Approved This Month': 'linear-gradient(135deg, #8B5CF6 0%, #4F46E5 100%)', // purple
-    'Your Tasks':          'linear-gradient(135deg, #F472B6 0%, #DB2777 100%)', // pink
-  };
-  const gradient = GRADIENTS[label] || 'linear-gradient(135deg, #FF8A4D 0%, #FF4E6A 100%)';
+  // Modern Monochrome (Option 4): white card, thin border, dark numbers.
+  // Only the "Your Tasks" tile shows its number in pink so it stands out for
+  // HR reviewers — every other tile renders the value in dark ink.
+  const isYourTasks = label === 'Your Tasks';
   const Tag = onClick ? 'button' : 'div';
   return (
     <Tag onClick={onClick}
-      className={`relative text-left rounded-2xl p-4 block w-full text-white overflow-hidden transition-transform hover:-translate-y-1 ${onClick ? 'cursor-pointer' : ''}`}
-      style={{ background: gradient, minHeight: '140px', boxShadow: '0 8px 22px rgba(15,40,24,0.10)' }}>
-      <div aria-hidden="true" style={{
-        position:'absolute', top:'-36px', right:'-36px',
-        width:'120px', height:'120px', borderRadius:'50%',
-        background:'rgba(255,255,255,0.13)', pointerEvents:'none'
-      }}/>
-      <div className="relative" style={{ zIndex: 1 }}>
-        <div className="text-[10px] tracking-[0.25em] opacity-90 font-semibold">{label.toUpperCase()}</div>
-        <div className="font-bold mt-2 leading-none" style={{ fontSize: '40px', letterSpacing: '-0.03em' }}>{value}</div>
-        <div className="text-[11px] opacity-90 mt-1.5 leading-snug">{sub}</div>
+      className={`relative text-left rounded-xl bg-white border block w-full p-4 transition-shadow hover:shadow-sm ${onClick ? 'cursor-pointer' : ''}`}
+      style={{ borderColor: '#E5E5E5', minHeight: '110px' }}>
+      <div className="text-xs" style={{ color: '#737373', fontWeight: 500 }}>{label}</div>
+      <div className="mt-1.5 leading-none"
+           style={{ fontSize: '36px', fontWeight: 600, letterSpacing: '-0.02em',
+                    color: isYourTasks ? '#DB2777' : '#0A0A0A' }}>
+        {value}
       </div>
+      {sub && <div className="text-xs mt-2" style={{ color: '#737373' }}>{sub}</div>}
     </Tag>
   );
 }
