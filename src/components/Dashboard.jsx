@@ -79,6 +79,27 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
     return { male, female };
   }, [employees]);
 
+  // Per-department gender breakdown — used to render badges showing how many
+  // men and women are in each department.
+  const byDeptGender = useMemo(() => {
+    const FEM_FIRST = new Set(['BASHAIER','BADRIA','SHAHAD','AMNA','AMINAH','NORA','NORAH','NOURA','LAYLA','SARA','SARAH','MARIA','JOAN','JOY','GRACE','AISHA','AMINA','FATIMA','KHADIJA','MARIAM','MARYAM','ZAINAB','HAYA','REEM','REEMA','RANA','DANA','LINA','NADA','WAFA','AYESHA','PRINCESS','JESSICA','JENNIFER','ANNA','HANNAH','LISA','EMMA','OLIVIA','SOPHIA','PRIYA','NEHA','SAFIA','SAFIYA']);
+    const isFemale = (e) => {
+      const g = (e.gender || '').toLowerCase();
+      if (g === 'female' || g === 'f') return true;
+      if (g === 'male' || g === 'm') return false;
+      const first = (e.name || '').split(/\s+/)[0].toUpperCase();
+      return FEM_FIRST.has(first);
+    };
+    const m = {};
+    employees.forEach(e => {
+      const dept = e.department || 'OTHER';
+      if (!m[dept]) m[dept] = { male: 0, female: 0 };
+      if (isFemale(e)) m[dept].female++;
+      else m[dept].male++;
+    });
+    return m;
+  }, [employees]);
+
   const bashaierMode = !!(me?.is_hr_reviewer && !me?.is_admin);
 
   const heroMessage = useMemo(() => {
@@ -162,8 +183,11 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
         )}
       </div>
 
-      {/* Headcount — Editorial Minimal (Option 1): bordered grid, serif numbers,
-           inline demographic summary in the subtitle. */}
+      {/* Headcount — Professional Badge style. Each department renders as a
+           badge with a subtle gradient strip on the side, the total count, and
+           a per-department male/female breakdown using emoji icons. Badge text
+           uses Calibri so it stays clean and modern alongside the editorial
+           serif on the rest of the page. */}
       <div className="pt-7" style={{ borderTop: '1px solid #E5E0D5' }}>
         <div className="flex items-baseline justify-between flex-wrap gap-3 mb-5">
           <div>
@@ -172,24 +196,95 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
               Headcount by department
             </h2>
           </div>
-          <div className="text-xs" style={{ color: '#9C9385' }}>
-            {employees.length} active · {byNationality.saudi} Saudi · {byNationality.expat} Expat · {byGender.male} Male · <span style={{ color: '#C97A4F', fontWeight: 600 }}>{byGender.female} Female</span>
+          <div className="text-xs" style={{ color: '#9C9385', fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
+            {employees.length} active · 🇸🇦 {byNationality.saudi} Saudi · 🌍 {byNationality.expat} Expat · 👨 {byGender.male} Men · 👩 {byGender.female} Women
           </div>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6"
-             style={{ borderTop: '1px solid #E5E0D5', borderLeft: '1px solid #E5E0D5' }}>
-          {byDept.map(([dept, count]) => (
-            <div key={dept}
-                 style={{ borderRight: '1px solid #E5E0D5', borderBottom: '1px solid #E5E0D5', padding: '18px' }}>
-              <div className="text-[10px]" style={{ color: '#9D6B53', letterSpacing: '0.2em', fontWeight: 500 }}>{dept}</div>
-              <div style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontSize: '36px', color: '#1F1B16', lineHeight: 1, margin: '8px 0 4px', fontWeight: 400 }}>
-                {count}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-4"
+             style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
+          {byDept.map(([dept, count]) => {
+            const DEPT_COLORS = {
+              'CSD':        { from: '#3B82F6', to: '#1D4ED8', tint: '#EFF6FF' },
+              'LOG':        { from: '#10B981', to: '#047857', tint: '#ECFDF5' },
+              'BIZ':        { from: '#F59E0B', to: '#D97706', tint: '#FFFBEB' },
+              'RYD OFFICE': { from: '#EC4899', to: '#BE185D', tint: '#FDF2F8' },
+              'FIN':        { from: '#8B5CF6', to: '#6D28D9', tint: '#F5F3FF' },
+              'SUP':        { from: '#F97316', to: '#C2410C', tint: '#FFF7ED' },
+            };
+            const palette = DEPT_COLORS[dept] || { from: '#94A3B8', to: '#475569', tint: '#F8FAFC' };
+            const g = byDeptGender[dept] || { male: 0, female: 0 };
+            const total = count || 1;
+            const malePct  = Math.round((g.male / total) * 100);
+            const femalePct = 100 - malePct;
+            return (
+              <div key={dept}
+                   className="rounded-xl bg-white relative overflow-hidden"
+                   style={{
+                     border: '1px solid #E5E0D5',
+                     boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)',
+                   }}>
+                {/* Colored side rail */}
+                <div aria-hidden style={{
+                  position: 'absolute', top: 0, left: 0, bottom: 0, width: '5px',
+                  background: `linear-gradient(180deg, ${palette.from} 0%, ${palette.to} 100%)`,
+                }}/>
+                <div className="p-4 pl-6">
+                  {/* Header row: dept code + total */}
+                  <div className="flex items-start justify-between mb-3">
+                    <div>
+                      <div className="text-[10px]"
+                           style={{ color: palette.to, letterSpacing: '0.18em', fontWeight: 700 }}>
+                        {dept}
+                      </div>
+                      <div className="text-[11px]" style={{ color: '#9C9385', marginTop: '2px' }}>
+                        {Math.round((count / employees.length) * 100)}% of staff
+                      </div>
+                    </div>
+                    <div className="rounded-full px-3 py-1"
+                         style={{
+                           background: palette.tint,
+                           color: palette.to,
+                           fontSize: '20px',
+                           fontWeight: 700,
+                           letterSpacing: '-0.01em',
+                           lineHeight: 1,
+                         }}>
+                      {count}
+                    </div>
+                  </div>
+
+                  {/* Gender breakdown row */}
+                  <div className="flex items-center gap-3 mt-3">
+                    <div className="flex items-center gap-1.5">
+                      <span style={{ fontSize: '16px', lineHeight: 1 }}>👨</span>
+                      <span style={{ fontSize: '15px', fontWeight: 600, color: '#1F1B16' }}>{g.male}</span>
+                      <span className="text-[11px]" style={{ color: '#9C9385' }}>men</span>
+                    </div>
+                    <div style={{ width: '1px', height: '14px', background: '#E5E0D5' }}/>
+                    <div className="flex items-center gap-1.5">
+                      <span style={{ fontSize: '16px', lineHeight: 1 }}>👩</span>
+                      <span style={{ fontSize: '15px', fontWeight: 600, color: g.female > 0 ? '#BE185D' : '#9C9385' }}>{g.female}</span>
+                      <span className="text-[11px]" style={{ color: '#9C9385' }}>women</span>
+                    </div>
+                  </div>
+
+                  {/* Mini split bar */}
+                  <div className="mt-3 rounded-full overflow-hidden flex"
+                       style={{ height: '6px', background: '#F1ECE0' }}>
+                    {g.male > 0 && (
+                      <div title={`${g.male} men (${malePct}%)`}
+                           style={{ width: `${malePct}%`, background: 'linear-gradient(90deg, #93C5FD 0%, #3B82F6 100%)' }}/>
+                    )}
+                    {g.female > 0 && (
+                      <div title={`${g.female} women (${femalePct}%)`}
+                           style={{ width: `${femalePct}%`, background: 'linear-gradient(90deg, #F9A8D4 0%, #DB2777 100%)' }}/>
+                    )}
+                  </div>
+                </div>
               </div>
-              <div className="text-[11px]" style={{ color: '#9C9385' }}>
-                {Math.round((count / employees.length) * 100)}%
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
