@@ -102,29 +102,47 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
 
   const bashaierMode = !!(me?.is_hr_reviewer && !me?.is_admin);
 
+  // Rotating bilingual hero message — picks a random one on every login. Each
+  // entry is { lang, text }; the JSX below handles RTL direction + signature.
   const heroMessage = useMemo(() => {
     const messages = [
-      'Today is a good day to lead with kindness.',
-      'Your steady hand keeps the whole team in motion.',
-      'Quiet excellence shapes the company more than loud effort.',
-      'Every signature you finish is one less worry for someone.',
-      'You are the reason the inbox feels less heavy on Mondays.',
-      'Small acts of care add up to a culture of trust.',
-      'You make complicated processes feel simple. That is rare.',
-      'A calm HR desk is a gift to every department.',
-      'Today, your work touches more lives than you will ever know.',
-      'You bring grace to numbers and warmth to policy.',
-      'The files may be quiet, but your impact is loud.',
-      'Your patience is a quiet superpower.',
-      'You are exactly where the team needs you to be.',
+      // English
+      { lang: 'en', text: 'Small acts of care add up to a culture of trust' },
+      { lang: 'en', text: 'Your steady hand keeps the whole team in motion' },
+      { lang: 'en', text: 'Quiet excellence shapes the company more than loud effort' },
+      { lang: 'en', text: 'Every signature you finish is one less worry for someone' },
+      { lang: 'en', text: 'You bring grace to numbers and warmth to policy' },
+      { lang: 'en', text: 'A calm HR desk is a gift to every department' },
+      { lang: 'en', text: 'Your patience is a quiet superpower' },
+      { lang: 'en', text: 'You make complicated processes feel simple — that is rare' },
+      { lang: 'en', text: 'The files may be quiet, but your impact is loud' },
+      { lang: 'en', text: 'You are exactly where the team needs you to be' },
+      { lang: 'en', text: 'Today is a good day to lead with kindness' },
+      // Arabic — RTL, Arabic-friendly font applied in JSX
+      { lang: 'ar', text: 'كل يوم تأتين فيه إلى العمل، تصنعين الفرق' },
+      { lang: 'ar', text: 'صبرك ينير دروب الآخرين' },
+      { lang: 'ar', text: 'في تفاصيلك الصغيرة، تكمن العظمة' },
+      { lang: 'ar', text: 'هدوؤك في العمل قوة، وأثرك جميل' },
+      { lang: 'ar', text: 'بصمتك في الفريق واضحة، وأثرك يدوم' },
+      { lang: 'ar', text: 'أنتِ مصدر إلهام لمن حولك' },
+      { lang: 'ar', text: 'لطفك في العمل أجمل ما يميّز يومنا' },
+      { lang: 'ar', text: 'كل ابتسامة منكِ تترك أثراً طيباً' },
     ];
-    const dayIndex = Math.floor(Date.now() / 86400000) % messages.length;
-    return messages[dayIndex];
+    return messages[Math.floor(Math.random() * messages.length)];
   }, []);
 
 
   return (
     <div className="space-y-8">
+      {/* Hover-lift styles for badges across the dashboard. Inline boxShadow on
+          each badge is overridden on :hover with !important so the lift looks
+          consistent. Added gentle transition + tiny scale on the colored rail. */}
+      <style>{`
+        .esau-badge { transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 220ms ease, border-color 220ms ease; }
+        .esau-badge:hover { transform: translateY(-3px); box-shadow: 0 6px 16px rgba(31,27,22,0.08), 0 20px 38px rgba(31,27,22,0.14) !important; border-color: #D4C7AB !important; }
+        .esau-badge:active { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(31,27,22,0.06), 0 8px 18px rgba(31,27,22,0.10) !important; }
+      `}</style>
+
       {/* Hero — Editorial Minimal (Option 1): cream background, serif typography, italic quote.
           Bashaier sees her name + heroMessage as the italic quote; everyone else sees the
           plain greeting. No tiles, no gradients. */}
@@ -136,8 +154,20 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           <h1 className="leading-[1] mb-4" style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 'clamp(2.2rem, 5vw, 3.5rem)', color: '#1F1B16', fontWeight: 400, letterSpacing: '-0.02em' }}>
             Good {_period}, Bashaier.
           </h1>
-          <p className="mb-3" style={{ fontFamily: 'Georgia, serif', fontStyle: 'italic', color: '#1F1B16', fontSize: '1.15rem', maxWidth: '38rem', lineHeight: 1.4 }}>
-            "{heroMessage}"
+          <p className="mb-3" style={{
+              fontFamily: heroMessage.lang === 'ar' ? '"Segoe UI", "Tahoma", Georgia, serif' : 'Georgia, serif',
+              fontStyle: 'italic',
+              color: '#1F1B16',
+              fontSize: '1.15rem',
+              maxWidth: '40rem',
+              lineHeight: 1.5,
+              direction: heroMessage.lang === 'ar' ? 'rtl' : 'ltr',
+              textAlign:  heroMessage.lang === 'ar' ? 'right' : 'left',
+            }}>
+            "{heroMessage.text}"{' '}
+            <span style={{ fontStyle: 'normal', fontSize: '0.9em', color: '#1F1B16', opacity: 0.7, letterSpacing: '0.01em' }}>
+              — {heroMessage.lang === 'ar' ? 'من عبقري متواضع' : 'From a Humble Genius'} 🧠
+            </span>
           </p>
           <p className="text-sm" style={{ color: '#1F1B16', margin: 0 }}>
             {pending.length > 0
@@ -172,7 +202,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
            style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
 
         {/* TOTAL STAFF — with location split */}
-        <div className="rounded-xl bg-white relative overflow-hidden"
+        <div className="rounded-xl bg-white relative overflow-hidden esau-badge"
              style={{ border: '1px solid #E5E0D5', boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
           <div aria-hidden style={{ position:'absolute', top:0, left:0, bottom:0, width:'5px', background:'linear-gradient(180deg, #34D399 0%, #047857 100%)' }}/>
           <div className="p-4 pl-6">
@@ -214,7 +244,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
         </div>
 
         {/* ON LEAVE TODAY */}
-        <div className="rounded-xl bg-white relative overflow-hidden"
+        <div className="rounded-xl bg-white relative overflow-hidden esau-badge"
              style={{ border: '1px solid #E5E0D5', boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
           <div aria-hidden style={{ position:'absolute', top:0, left:0, bottom:0, width:'5px', background:'linear-gradient(180deg, #67E8F9 0%, #0E7490 100%)' }}/>
           <div className="p-4 pl-6">
@@ -234,7 +264,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
 
         {/* PENDING APPROVAL */}
         <button onClick={onGoToRequests}
-             className="text-left rounded-xl bg-white relative overflow-hidden cursor-pointer transition-shadow hover:shadow-md"
+             className="text-left rounded-xl bg-white relative overflow-hidden cursor-pointer esau-badge"
              style={{ border: '1px solid #E5E0D5', boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
           <div aria-hidden style={{ position:'absolute', top:0, left:0, bottom:0, width:'5px', background:'linear-gradient(180deg, #FBBF24 0%, #C2410C 100%)' }}/>
           <div className="p-4 pl-6">
@@ -253,7 +283,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
         </button>
 
         {/* APPROVED THIS MONTH */}
-        <div className="rounded-xl bg-white relative overflow-hidden"
+        <div className="rounded-xl bg-white relative overflow-hidden esau-badge"
              style={{ border: '1px solid #E5E0D5', boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
           <div aria-hidden style={{ position:'absolute', top:0, left:0, bottom:0, width:'5px', background:'linear-gradient(180deg, #A78BFA 0%, #6D28D9 100%)' }}/>
           <div className="p-4 pl-6">
@@ -278,7 +308,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
                const el = document.getElementById('bashaier-tasks-anchor');
                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
              }}
-             className="text-left rounded-xl bg-white relative overflow-hidden cursor-pointer transition-shadow hover:shadow-md"
+             className="text-left rounded-xl bg-white relative overflow-hidden cursor-pointer esau-badge"
              style={{ border: '1px solid #E5E0D5', boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
             <div aria-hidden style={{ position:'absolute', top:0, left:0, bottom:0, width:'5px', background:'linear-gradient(180deg, #F472B6 0%, #BE185D 100%)' }}/>
             <div className="p-4 pl-6">
@@ -335,7 +365,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
             const femalePct = 100 - malePct;
             return (
               <div key={dept}
-                   className="rounded-xl bg-white relative overflow-hidden"
+                   className="rounded-xl bg-white relative overflow-hidden esau-badge"
                    style={{
                      border: '1px solid #E5E0D5',
                      boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)',
