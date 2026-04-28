@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { supabase } from '../supabaseClient.js';
+import { supabase, directGet } from '../supabaseClient.js';
 import {
   Calendar, Clock, Plus, AlertTriangle, Sun, Sunrise, Sunset,
   CheckCircle2, XCircle, Loader2, Users, Plane
@@ -8,9 +8,11 @@ import { UserCheck, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { fmtDate, calculateBalance, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 import { summariseMonth, PERMISSION_QUOTA } from '../lib/permissionLogic.js';
 import PermissionRequestModal from './PermissionRequestModal.jsx';
+import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
+import { Download } from 'lucide-react';
 
 // Staff personal dashboard. Compact colorful gradient tiles.
-export default function PersonalDashboard({ me, leaveTypes, onOpenNewRequest }) {
+export default function PersonalDashboard({ me, leaveTypes, empMap, onOpenNewRequest }) {
   const [adjustments, setAdjustments] = useState({});
   const [requests,    setRequests]    = useState([]);
   const [permissions, setPermissions] = useState([]);
@@ -26,26 +28,19 @@ export default function PersonalDashboard({ me, leaveTypes, onOpenNewRequest }) 
     try {
       const year  = new Date().getFullYear();
       const month = new Date().toISOString().slice(0, 7);
+      // directGet (raw fetch + timeout) avoids supabase-js wedge after sign-in.
+      const safe = (p) => p.catch((err) => { console.warn('PD load failed:', err); return null; });
       const [bal, reqs, perms, subs] = await Promise.all([
-        supabase.from('leave_balances').select('*')
-          .eq('employee_id', me.id).eq('year', year).eq('leave_type_id', 'annual').maybeSingle(),
-        supabase.from('leave_requests').select('*')
-          .eq('employee_id', me.id).order('start_date', { ascending: false }).limit(20),
-        supabase.from('permission_requests').select('*')
-          .eq('employee_id', me.id)
-          .gte('permission_date', `${month}-01`)
-          .order('permission_date', { ascending: false }),
-        // Requests where I'm a proposed substitute and the request is still pending substitutes
-        supabase.from('leave_requests').select('*')
-          .contains('substitute_ids', [me.id])
-          .eq('stage', 'pending_substitutes')
-          .order('start_date', { ascending: true }),
+        safe(directGet('leave_balances',     `select=*&employee_id=eq.${me.id}&year=eq.${year}&leave_type_id=eq.annual&limit=1`, { timeoutMs: 10000 })),
+        safe(directGet('leave_requests',     `select=*&employee_id=eq.${me.id}&order=start_date.desc&limit=20`,                    { timeoutMs: 10000 })),
+        safe(directGet('permission_requests',`select=*&employee_id=eq.${me.id}&permission_date=gte.${month}-01&order=permission_date.desc`, { timeoutMs: 10000 })),
+        safe(directGet('leave_requests',     `select=*&substitute_ids=cs.{${me.id}}&stage=eq.pending_substitutes&order=start_date.asc`, { timeoutMs: 10000 })),
       ]);
-      setAdjustments(bal.data || {});
-      setRequests(reqs.data || []);
-      setPermissions(perms.data || []);
+      setAdjustments(Array.isArray(bal) && bal.length > 0 ? bal[0] : {});
+      setRequests(Array.isArray(reqs) ? reqs : []);
+      setPermissions(Array.isArray(perms) ? perms : []);
       // Filter to only requests where MY decision is still 'pending'
-      setSubRequests((subs.data || []).filter(r => {
+      setSubRequests((Array.isArray(subs) ? subs : []).filter(r => {
         const d = r.substitute_decisions?.[me.id];
         if (!d) return true;
         const dec = typeof d === 'string' ? d : d.decision;
@@ -239,7 +234,10 @@ export default function PersonalDashboard({ me, leaveTypes, onOpenNewRequest }) 
           <div className="text-sm opacity-60 py-3 text-center">No leave requests yet.</div>
         ) : (
           <ul className="divide-y" style={{ borderColor:'var(--border-soft)' }}>
-            {recent.map(r => (
+            {recent.map(r => {
+              const isApproved = r.status === 'approved' || r.stage === 'approved';
+              const canDownload = isApproved && empMap;
+              return (
               <li key={r.id} className="flex items-center justify-between gap-3 py-2.5"
                   style={{ borderColor:'var(--border-soft)' }}>
                 <div className="flex-1 min-w-0">
@@ -248,9 +246,26 @@ export default function PersonalDashboard({ me, leaveTypes, onOpenNewRequest }) 
                     {fmtDate(new Date(r.start_date))} — {fmtDate(new Date(r.end_date))} · {r.days} day{r.days !== 1 ? 's' : ''}
                   </div>
                 </div>
-                <StatusPill status={r.status} />
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <StatusPill status={r.status} />
+                  {canDownload && (
+                    <button
+                      onClick={async () => {
+                        try {
+                          await downloadVacationFormForRequest(r, empMap);
+                        } catch (err) {
+                          alert('Could not generate the form: ' + (err?.message || err));
+                        }
+                      }}
+                      title="Download approved vacation form"
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg"
+                      style={{ background: 'rgba(45,95,63,0.08)', color: '#2D5F3F', border: '1px solid rgba(45,95,63,0.25)' }}>
+                      <Download className="w-3 h-3" /> Form
+                    </button>
+                  )}
+                </div>
               </li>
-            ))}
+            );})}
           </ul>
         )}
       </section>

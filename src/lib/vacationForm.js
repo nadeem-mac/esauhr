@@ -1,11 +1,12 @@
 // Generates the bilingual EN/AR Vacation Form as a single-page A4 .docx Blob,
 // plus the matching approval email draft. Uses the 'docx' npm library.
-// Layout is compressed to fit on ONE A4 page when printed.
+// Layout fits ONE A4 page when printed. Arabic text uses Arial (cs/complex-script
+// font set explicitly) so it renders consistently across Word/LibreOffice/Pages.
 
 import {
   Document, Packer, Paragraph, TextRun,
   Table, TableRow, TableCell,
-  AlignmentType, WidthType, BorderStyle, HeightRule,
+  AlignmentType, WidthType, BorderStyle,
 } from 'docx';
 
 // ─── lookups ──────────────────────────────────────────────────────────────────
@@ -32,13 +33,24 @@ const LEAVE_TYPE_NAMES = {
   other:       'Other',
 };
 
+// CEO / Country Head — fixed signatories on every approved form
+const CEO_NAME = 'JOHN HO';
+const CEO_TITLE_EN = 'Country Head / CEO';
+const CEO_TITLE_AR = 'الرئيس التنفيذي';
+
 // ─── colour palette ───────────────────────────────────────────────────────────
 const C_DARK   = '2D5F3F';
 const C_TEXT   = '1F2937';
 const C_MUTED  = '6B7280';
 const C_BORDER = 'D1D5DB';
 const C_ACCENT = '15803D';
-const C_BG     = 'F8F8F2';
+
+// ─── font configuration — fixes Arabic rendering ──────────────────────────────
+// English: Calibri ascii/hAnsi. Arabic (complex-script): Arial cs.
+// Setting font.cs explicitly is what stops Word/LibreOffice from substituting
+// random fonts for Arabic glyphs at print time.
+const FONT_EN = { ascii: 'Calibri', hAnsi: 'Calibri', cs: 'Arial' };
+const FONT_AR = { ascii: 'Arial',   hAnsi: 'Arial',   cs: 'Arial' };
 
 const fmtDate = (iso) => {
   if (!iso) return '';
@@ -56,7 +68,6 @@ const yearsOfService = (joinDate) => {
   return `${y} year${y === 1 ? '' : 's'} ${m} month${m === 1 ? '' : 's'}`;
 };
 
-// Cell border styles
 const thinAll = (color = C_BORDER) => ({
   top:    { style: BorderStyle.SINGLE, size: 4, color },
   bottom: { style: BorderStyle.SINGLE, size: 4, color },
@@ -70,7 +81,7 @@ const noBorders = {
   right:  { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
 };
 
-// Compact label cell for the info tables (key/value pairs)
+// Compact key/value cells used in the info tables
 const lbl = (en, ar) => new TableCell({
   width: { size: 18, type: WidthType.PERCENTAGE },
   borders: thinAll(),
@@ -78,8 +89,8 @@ const lbl = (en, ar) => new TableCell({
   children: [new Paragraph({
     spacing: { before: 0, after: 0 },
     children: [
-      new TextRun({ text: en, bold: true, color: C_DARK, size: 16 }),
-      new TextRun({ text: '  ' + ar, color: C_DARK, size: 14, rightToLeft: true }),
+      new TextRun({ text: en, bold: true, color: C_DARK, size: 16, font: FONT_EN }),
+      new TextRun({ text: '  ' + ar, color: C_DARK, size: 14, rightToLeft: true, font: FONT_AR }),
     ],
   })],
 });
@@ -92,19 +103,18 @@ const val = (text) => new TableCell({
     spacing: { before: 0, after: 0 },
     children: [new TextRun({
       text: String(text == null || text === '' ? '—' : text),
-      size: 18, color: C_TEXT,
+      size: 18, color: C_TEXT, font: FONT_EN,
     })],
   })],
 });
 
-// Tight section heading (single bottom rule, minimal spacing)
 const hd = (en, ar) => new Paragraph({
   spacing: { before: 140, after: 60 },
   border: { bottom: { color: C_DARK, space: 1, style: BorderStyle.SINGLE, size: 6 } },
   children: [
-    new TextRun({ text: en, bold: true, color: C_DARK, size: 18 }),
-    new TextRun({ text: '   ', size: 14 }),
-    new TextRun({ text: ar, color: C_DARK, size: 16, rightToLeft: true }),
+    new TextRun({ text: en, bold: true, color: C_DARK, size: 18, font: FONT_EN }),
+    new TextRun({ text: '   ', size: 14, font: FONT_EN }),
+    new TextRun({ text: ar, color: C_DARK, size: 16, rightToLeft: true, font: FONT_AR }),
   ],
 });
 
@@ -124,23 +134,23 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
       alignment: AlignmentType.CENTER,
       spacing: { before: 0, after: 40 },
       children: [
-        new TextRun({ text: 'EVERGREEN SHIPPING AGENCY SAUDI', bold: true, size: 24, color: C_DARK }),
-        new TextRun({ text: '   ', size: 18 }),
-        new TextRun({ text: 'وكالة إيفرغرين للملاحة السعودية', size: 18, color: C_DARK, rightToLeft: true }),
+        new TextRun({ text: 'EVERGREEN SHIPPING AGENCY SAUDI', bold: true, size: 24, color: C_DARK, font: FONT_EN }),
+        new TextRun({ text: '   ', size: 18, font: FONT_EN }),
+        new TextRun({ text: 'وكالة إيفرغرين للملاحة السعودية', size: 18, color: C_DARK, rightToLeft: true, font: FONT_AR }),
       ],
     }),
     new Paragraph({
       alignment: AlignmentType.CENTER,
       spacing: { before: 0, after: 100 },
       children: [
-        new TextRun({ text: 'EMPLOYEE LEAVE APPLICATION', bold: true, size: 22, color: C_TEXT }),
-        new TextRun({ text: '   ', size: 18 }),
-        new TextRun({ text: 'طلب إجازة موظف', bold: true, size: 18, color: C_TEXT, rightToLeft: true }),
+        new TextRun({ text: 'EMPLOYEE LEAVE APPLICATION', bold: true, size: 22, color: C_TEXT, font: FONT_EN }),
+        new TextRun({ text: '   ', size: 18, font: FONT_EN }),
+        new TextRun({ text: 'طلب إجازة موظف', bold: true, size: 18, color: C_TEXT, rightToLeft: true, font: FONT_AR }),
       ],
     }),
   ];
 
-  // ── Date / Reference row (no borders, single line) ──
+  // ── Date / Reference row ──
   const dateRefRow = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [new TableRow({
@@ -150,8 +160,10 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
           children: [new Paragraph({
             spacing: { before: 0, after: 0 },
             children: [
-              new TextRun({ text: 'Date / التاريخ: ', bold: true, size: 14, color: C_MUTED }),
-              new TextRun({ text: fmtDate(today), size: 16, color: C_TEXT }),
+              new TextRun({ text: 'Date / ', bold: true, size: 14, color: C_MUTED, font: FONT_EN }),
+              new TextRun({ text: 'التاريخ', bold: true, size: 14, color: C_MUTED, rightToLeft: true, font: FONT_AR }),
+              new TextRun({ text: ': ', bold: true, size: 14, color: C_MUTED, font: FONT_EN }),
+              new TextRun({ text: fmtDate(today), size: 16, color: C_TEXT, font: FONT_EN }),
             ],
           })],
         }),
@@ -161,8 +173,10 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
             alignment: AlignmentType.RIGHT,
             spacing: { before: 0, after: 0 },
             children: [
-              new TextRun({ text: 'Reference / المرجع: ', bold: true, size: 14, color: C_MUTED }),
-              new TextRun({ text: refNum, size: 16, color: C_TEXT }),
+              new TextRun({ text: 'Reference / ', bold: true, size: 14, color: C_MUTED, font: FONT_EN }),
+              new TextRun({ text: 'المرجع', bold: true, size: 14, color: C_MUTED, rightToLeft: true, font: FONT_AR }),
+              new TextRun({ text: ': ', bold: true, size: 14, color: C_MUTED, font: FONT_EN }),
+              new TextRun({ text: refNum, size: 16, color: C_TEXT, font: FONT_EN }),
             ],
           })],
         }),
@@ -171,7 +185,6 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
   });
 
   // ── Applicant table — 2-column compact layout ──
-  // Three rows of four cells: Name|PSN, Dept|Location, Joining|YOS
   const applicantTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [
@@ -191,7 +204,6 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
   });
 
   // ── Leave details table ──
-  // Type|Days, Start|End, then Reason spans full width
   const leaveTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [
@@ -212,14 +224,14 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
           margins: { top: 40, bottom: 40, left: 80, right: 80 },
           children: [new Paragraph({
             spacing: { before: 0, after: 0 },
-            children: [new TextRun({ text: request.reason || '—', size: 18, color: C_TEXT })],
+            children: [new TextRun({ text: request.reason || '—', size: 18, color: C_TEXT, font: FONT_EN })],
           })],
         }),
       ]}),
     ],
   });
 
-  // ── Coverage table — substitutes in compact list ──
+  // ── Coverage table ──
   const subRows = (substitutes && substitutes.length > 0)
     ? substitutes.map((s, idx) => new TableRow({
         children: [
@@ -230,7 +242,7 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
             children: [new Paragraph({
               alignment: AlignmentType.CENTER,
               spacing: { before: 0, after: 0 },
-              children: [new TextRun({ text: String(idx + 1), bold: true, color: C_MUTED, size: 16 })],
+              children: [new TextRun({ text: String(idx + 1), bold: true, color: C_MUTED, size: 16, font: FONT_EN })],
             })],
           }),
           new TableCell({
@@ -240,9 +252,9 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
             children: [new Paragraph({
               spacing: { before: 0, after: 0 },
               children: [
-                new TextRun({ text: s.name || '', size: 18, color: C_TEXT }),
-                new TextRun({ text: `   ${s.id || ''}`, size: 14, color: C_MUTED }),
-                new TextRun({ text: '   ✓ Confirmed', size: 14, color: C_ACCENT }),
+                new TextRun({ text: s.name || '', size: 18, color: C_TEXT, font: FONT_EN }),
+                new TextRun({ text: `   ${s.id || ''}`, size: 14, color: C_MUTED, font: FONT_EN }),
+                new TextRun({ text: '   ✓ Confirmed', size: 14, color: C_ACCENT, font: FONT_EN }),
               ],
             })],
           }),
@@ -254,7 +266,7 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
         margins: { top: 40, bottom: 40, left: 80, right: 80 },
         children: [new Paragraph({
           spacing: { before: 0, after: 0 },
-          children: [new TextRun({ text: 'No substitutes designated.', italics: true, size: 16, color: C_MUTED })],
+          children: [new TextRun({ text: 'No substitutes designated.', italics: true, size: 16, color: C_MUTED, font: FONT_EN })],
         })],
       })]})];
   const substitutesTable = new Table({
@@ -262,22 +274,22 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
     rows: subRows,
   });
 
-  // ── Authorisations — manager and HR side by side ──
+  // ── Authorisations: 3 cells side-by-side — Manager | HR | CEO ──
   const sigCell = (titleEn, titleAr, name, when, status) => new TableCell({
-    width: { size: 50, type: WidthType.PERCENTAGE },
+    width: { size: 33, type: WidthType.PERCENTAGE },
     borders: thinAll(),
-    margins: { top: 60, bottom: 60, left: 100, right: 100 },
+    margins: { top: 60, bottom: 60, left: 80, right: 80 },
     children: [
       new Paragraph({
         spacing: { before: 0, after: 30 },
         children: [
-          new TextRun({ text: titleEn, bold: true, color: C_DARK, size: 16 }),
-          new TextRun({ text: '   ' + titleAr, color: C_DARK, size: 14, rightToLeft: true }),
+          new TextRun({ text: titleEn, bold: true, color: C_DARK, size: 14, font: FONT_EN }),
+          new TextRun({ text: '   ' + titleAr, color: C_DARK, size: 12, rightToLeft: true, font: FONT_AR }),
         ],
       }),
       new Paragraph({
         spacing: { before: 0, after: 20 },
-        children: [new TextRun({ text: name || '—', size: 18, color: C_TEXT, bold: true })],
+        children: [new TextRun({ text: name || '—', size: 16, color: C_TEXT, bold: true, font: FONT_EN })],
       }),
       new Paragraph({
         spacing: { before: 0, after: 30 },
@@ -285,22 +297,26 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
           new TextRun({
             text: status === 'Approved' ? '✓ ' + (when || 'Approved') : (when || 'Pending'),
             color: status === 'Approved' ? C_ACCENT : C_MUTED,
-            size: 14,
+            size: 12, font: FONT_EN,
           }),
         ],
       }),
       new Paragraph({
         alignment: AlignmentType.CENTER,
         spacing: { before: 30, after: 0 },
-        children: [new TextRun({ text: '_____________________', size: 16, color: C_BORDER })],
+        children: [new TextRun({ text: '_____________________', size: 14, color: C_BORDER, font: FONT_EN })],
       }),
       new Paragraph({
         alignment: AlignmentType.CENTER,
         spacing: { before: 0, after: 0 },
-        children: [new TextRun({ text: 'Signature / التوقيع', italics: true, color: C_MUTED, size: 12 })],
+        children: [
+          new TextRun({ text: 'Signature / ', italics: true, color: C_MUTED, size: 11, font: FONT_EN }),
+          new TextRun({ text: 'التوقيع', italics: true, color: C_MUTED, size: 11, rightToLeft: true, font: FONT_AR }),
+        ],
       }),
     ],
   });
+
   const signatureTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [new TableRow({ children: [
@@ -308,13 +324,19 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
         'Department Manager', 'رئيس القسم',
         manager?.name || '',
         request.manager_decided_at ? `Approved ${fmtDate(request.manager_decided_at)}` : '',
-        manager ? 'Approved' : 'Pending'
+        request.manager_decided_at ? 'Approved' : 'Pending'
       ),
       sigCell(
         'HR Department', 'إدارة الموارد البشرية',
         hrApprover?.name || '',
         request.hr_decided_at ? `Approved ${fmtDate(request.hr_decided_at)}` : '',
         request.hr_decided_at ? 'Approved' : 'Pending'
+      ),
+      sigCell(
+        CEO_TITLE_EN, CEO_TITLE_AR,
+        CEO_NAME,
+        '',
+        'Pending'
       ),
     ]})],
   });
@@ -327,11 +349,11 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
       children: [
         new TextRun({
           text: 'This leave is granted subject to ESAU policy and operational requirements.   ',
-          italics: true, color: C_MUTED, size: 12,
+          italics: true, color: C_MUTED, size: 12, font: FONT_EN,
         }),
         new TextRun({
           text: 'تمنح هذه الإجازة وفقاً لسياسة الشركة ومتطلبات العمل.',
-          italics: true, color: C_MUTED, size: 12, rightToLeft: true,
+          italics: true, color: C_MUTED, size: 12, rightToLeft: true, font: FONT_AR,
         }),
       ],
     }),
@@ -340,13 +362,13 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
   // ── Document with explicit A4 size and tight margins ──
   const doc = new Document({
     styles: {
-      default: { document: { run: { font: 'Calibri', size: 18, color: C_TEXT } } },
+      default: { document: { run: { font: FONT_EN, size: 18, color: C_TEXT } } },
     },
     sections: [{
       properties: {
         page: {
-          size: { width: 11906, height: 16838, orientation: 'portrait' }, // A4
-          margin: { top: 540, right: 540, bottom: 540, left: 540 },        // ~0.375 inch
+          size: { width: 11906, height: 16838, orientation: 'portrait' },
+          margin: { top: 540, right: 540, bottom: 540, left: 540 },
         },
       },
       children: [
@@ -374,7 +396,7 @@ const COUNTRY_HEAD_EMAIL = 'jamesliu@evergreen-shipping.com.sa';
 
 export function buildEmailDraft({ employee, request, manager, hrApprover, substitutes = [] }) {
   const leaveTypeLabel = LEAVE_TYPE_NAMES[request.leave_type_id] || 'Annual Leave';
-  const dateRange = `${fmtDate(request.start_date)} – ${fmtDate(request.end_date)}`;
+  const dateRange = `${fmtDate(request.start_date)} - ${fmtDate(request.end_date)}`;
 
   const to = [employee.email].filter(Boolean).join(',');
   const ccList = [
@@ -385,7 +407,7 @@ export function buildEmailDraft({ employee, request, manager, hrApprover, substi
   ].filter(Boolean);
   const cc = ccList.join(',');
 
-  const subject = `Leave Approved — ${employee.name} — ${dateRange}`;
+  const subject = `Leave Approved - ${employee.name} - ${dateRange}`;
 
   const body = [
     `Dear ${employee.name?.split(' ')[0] || 'Colleague'},`,
@@ -394,12 +416,12 @@ export function buildEmailDraft({ employee, request, manager, hrApprover, substi
     '',
     `Period: ${dateRange}`,
     `Days:   ${request.days} day${request.days === 1 ? '' : 's'}${request.is_half_day ? ' (half day)' : ''}`,
-    `Reason: ${request.reason || '—'}`,
+    `Reason: ${request.reason || '-'}`,
     '',
     `Coverage during your absence:`,
     ...(substitutes && substitutes.length > 0
-      ? substitutes.map(s => `  • ${s.name} (${s.id})`)
-      : ['  • —']),
+      ? substitutes.map(s => `  - ${s.name} (${s.id})`)
+      : ['  - -']),
     '',
     `Please find the signed vacation form attached.`,
     `The Arabic translation is included alongside the English text in the form.`,
@@ -408,7 +430,7 @@ export function buildEmailDraft({ employee, request, manager, hrApprover, substi
     '',
     `Best regards,`,
     `${hrApprover?.name || 'HR Department'}`,
-    `Evergreen Shipping Agency Saudi · HR Department`,
+    `Evergreen Shipping Agency Saudi - HR Department`,
   ].join('\n');
 
   const mailto = `mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
@@ -426,4 +448,29 @@ export function downloadBlob(blob, filename) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+// ─── helper: regenerate + download for any approved request ───────────────────
+// Looks up employee/manager/HR approver/substitutes from the supplied empMap and
+// delegates to generateVacationFormBlob. Used to re-download the form for any
+// past application from anywhere in the app (personal dashboard, requests view,
+// employee history modal, etc).
+export async function downloadVacationFormForRequest(request, empMap) {
+  if (!request) throw new Error('No request supplied');
+  if (!empMap)  throw new Error('Employee directory unavailable');
+  const employee = empMap[request.employee_id];
+  if (!employee) throw new Error('Employee not found in directory');
+  const manager     = request.manager_decided_by ? (empMap[request.manager_decided_by] || null) : null;
+  const hrApprover  = request.hr_decided_by      ? (empMap[request.hr_decided_by]      || null) : null;
+  const substitutes = (request.substitute_ids || [])
+    .map((psn) => empMap[psn])
+    .filter(Boolean);
+
+  const blob = await generateVacationFormBlob({
+    request, employee, manager, hrApprover, substitutes,
+  });
+  const safeName = (employee.name || request.employee_id).replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '');
+  const filename = `Vacation_Form_${safeName}_${request.start_date}.docx`;
+  downloadBlob(blob, filename);
+  return { blob, filename };
 }

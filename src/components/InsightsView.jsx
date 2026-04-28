@@ -6,6 +6,7 @@ import {
   ChevronRight, ChevronLeft, History, Calendar
 } from 'lucide-react';
 import { directGet } from '../supabaseClient.js';
+import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
 import {
   calculateBalance, yearsOfService, monthsOfService,
   fmtDate, fmtDateShort, getInitials, avatarColor, LOCATION_LABELS
@@ -1424,6 +1425,7 @@ function EmployeeHistoryModal({ empId, empMap, year, requests, permissions, leav
                     <th className="text-right px-3 py-2 font-semibold">DAYS</th>
                     <th className="text-left px-3 py-2 font-semibold">STATUS</th>
                     <th className="text-left px-3 py-2 font-semibold">REASON</th>
+                    <th className="text-left px-3 py-2 font-semibold">FORM</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1439,6 +1441,21 @@ function EmployeeHistoryModal({ empId, empMap, year, requests, permissions, leav
                                 style={{ background: sp.bg, color: sp.color }}>{sp.label}</span>
                         </td>
                         <td className="px-3 py-2 opacity-80 max-w-md truncate">{r.reason || <span className="opacity-50">—</span>}</td>
+                        <td className="px-3 py-2">
+                          {(r.status === 'approved' || r.stage === 'approved') ? (
+                            <button
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                try { await downloadVacationFormForRequest(r, empMap); }
+                                catch (err) { alert('Could not generate the form: ' + (err?.message || err)); }
+                              }}
+                              title="Download approved vacation form"
+                              className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                              style={{ background: 'rgba(45,95,63,0.08)', color: '#2D5F3F', border: '1px solid rgba(45,95,63,0.25)' }}>
+                              <Download className="w-3 h-3" /> Form
+                            </button>
+                          ) : <span className="opacity-50 text-[10px]">—</span>}
+                        </td>
                       </tr>
                     );
                   })}

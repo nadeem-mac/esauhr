@@ -3,7 +3,7 @@ import {
   LayoutDashboard, ClipboardList, Users, Calendar as CalIcon, Settings,
   Plus, LogOut, Activity, ShieldCheck
 , Clock , BarChart3 } from 'lucide-react';
-import { supabase } from '../supabaseClient.js';
+import { supabase, directGet } from '../supabaseClient.js';
 import Dashboard from './Dashboard.jsx';
 import Requests from './Requests.jsx';
 import Employees from './Employees.jsx';
@@ -103,28 +103,25 @@ export default function AppShell({ session, me, onRefreshMe }) {
     setLoading(true);
     setError('');
     try {
+      // Use directGet (raw fetch with timeout) instead of the supabase-js builder
+      // to avoid the gotrue-js Web Lock wedge that intermittently hangs the first
+      // query after sign-in. Each call has a hard timeout; failures degrade to [].
+      const safe = (p) => p.catch((err) => { console.warn('load failed:', err); return []; });
       const [e, t, r, b, h, p] = await Promise.all([
-        supabase.from('employees').select('*').order('name'),
-        supabase.from('leave_types').select('*').order('sort_order'),
-        supabase.from('leave_requests').select('*').order('requested_at', { ascending: false }),
-        supabase.from('leave_balances').select('*'),
-        supabase.from('public_holidays').select('*').order('date'),
-        supabase.from('permission_requests').select('*').order('permission_date', { ascending: false }),
+        safe(directGet('employees',           'select=*&order=name',                  { timeoutMs: 12000 })),
+        safe(directGet('leave_types',         'select=*&order=sort_order',            { timeoutMs: 8000  })),
+        safe(directGet('leave_requests',      'select=*&order=requested_at.desc',     { timeoutMs: 12000 })),
+        safe(directGet('leave_balances',      'select=*',                             { timeoutMs: 8000  })),
+        safe(directGet('public_holidays',     'select=*&order=date',                  { timeoutMs: 8000  })),
+        safe(directGet('permission_requests', 'select=*&order=permission_date.desc',  { timeoutMs: 8000  })),
       ]);
 
-      if (e.error) throw e.error;
-      if (t.error) throw t.error;
-      if (r.error) throw r.error;
-      if (b.error) throw b.error;
-      if (h.error) throw h.error;
-      // permissions are optional — don't fail the whole load if the table is missing.
-
-      setEmployees(e.data || []);
-      setLeaveTypes(t.data || []);
-      setRequests(r.data || []);
-      setBalances(b.data || []);
-      setHolidays(h.data || []);
-      setPermissions(p?.data || []);
+      setEmployees(Array.isArray(e) ? e : []);
+      setLeaveTypes(Array.isArray(t) ? t : []);
+      setRequests(Array.isArray(r) ? r : []);
+      setBalances(Array.isArray(b) ? b : []);
+      setHolidays(Array.isArray(h) ? h : []);
+      setPermissions(Array.isArray(p) ? p : []);
     } catch (err) {
       setError(err.message || 'Failed to load data');
     } finally {
@@ -165,7 +162,30 @@ export default function AppShell({ session, me, onRefreshMe }) {
 
   const pendingCount = useMemo(() => requests.filter(r => r.status === 'pending').length, [requests]);
 
-  const signOut = async () => { await supabase.auth.signOut(); };
+  const signOut = async () => {
+    // Bulletproof sign-out: clear local/session storage, race the supabase API
+    // against a 3s timeout, then hard-reload back to the login screen. This
+    // guarantees the user always returns to /login even if the gotrue-js client
+    // is wedged or the network call hangs.
+    try {
+      Object.keys(localStorage).forEach((k) => {
+        if (k.startsWith('sb-') || k.startsWith('supabase.')) localStorage.removeItem(k);
+      });
+      Object.keys(sessionStorage).forEach((k) => {
+        if (k.startsWith('sb-') || k.startsWith('supabase.')) sessionStorage.removeItem(k);
+      });
+    } catch (_) { /* storage may be unavailable in private mode */ }
+    try {
+      await Promise.race([
+        supabase.auth.signOut(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('signOut timeout')), 3000)),
+      ]);
+    } catch (e) {
+      console.warn('signOut: API did not respond, forcing reload anyway:', e?.message || e);
+    }
+    // Hard-redirect to the root — App.jsx will see no session and render <Auth />.
+    window.location.href = '/';
+  };
 
   const createRequest = async (payload) => {
     // The payload now carries: substitute_ids, substitute_decisions, stage='pending_substitutes'.
@@ -348,6 +368,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
             <PersonalDashboard
               me={me}
               leaveTypes={leaveTypes}
+              empMap={empMap}
               onOpenNewRequest={() => setShowNewRequest(true)}
             />
           )

@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Search, Download, Plus, Check, X, ClipboardList } from 'lucide-react';
 import { fmtDateShort, todayISO } from '../lib/leaveLogic.js';
+import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
 import { Card, Avatar, Pill, Empty } from './Dashboard.jsx';
 
 export default function Requests({ requests, leaveTypes, typeMap, empMap, onDecide, onDelete, onNewRequest }) {
@@ -168,6 +169,18 @@ export default function Requests({ requests, leaveTypes, typeMap, empMap, onDeci
                       <Pill color={r.status === 'approved' ? 'var(--evergreen-500)' : 'var(--clay)'}>
                         {r.status === 'approved' ? '✓ Approved' : '✗ Rejected'}
                       </Pill>
+                      {r.status === 'approved' && (
+                        <button
+                          onClick={async () => {
+                            try { await downloadVacationFormForRequest(r, empMap); }
+                            catch (err) { alert('Could not generate the form: ' + (err?.message || err)); }
+                          }}
+                          title="Download approved vacation form"
+                          className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full"
+                          style={{ background: 'rgba(45,95,63,0.08)', color: '#2D5F3F', border: '1px solid rgba(45,95,63,0.25)' }}>
+                          <Download className="w-3 h-3" /> Form
+                        </button>
+                      )}
                       <button onClick={() => remove(r.id)} disabled={isBusy}
                         className="text-xs opacity-40 hover:opacity-80 px-2">Delete</button>
                     </>

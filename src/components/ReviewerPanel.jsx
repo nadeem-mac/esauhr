@@ -128,12 +128,12 @@ export default function ReviewerPanel({ me }) {
   async function decidePerm(req, status) {
     setBusyId(`perm-${req.id}`);
     try {
-      const { error } = await supabase.from('permission_requests').update({
+      // directPatch (raw fetch + timeout) avoids supabase-js wedge for managers.
+      await directPatch('permission_requests', 'id', req.id, {
         status,
         reviewed_at: new Date().toISOString(),
         reviewed_by: me.id,
-      }).eq('id', req.id);
-      if (error) throw error;
+      }, { timeoutMs: 10000 });
       logAction(me, 'permission_decide', {
         targetType: 'permission_request',
         targetId: req.id,
