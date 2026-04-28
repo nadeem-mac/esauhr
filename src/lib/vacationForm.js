@@ -455,13 +455,24 @@ export function downloadBlob(blob, filename) {
 // delegates to generateVacationFormBlob. Used to re-download the form for any
 // past application from anywhere in the app (personal dashboard, requests view,
 // employee history modal, etc).
+// Resolve a stored 'decided_by' value to an employee. The DB stores either a
+// PSN (e.g. 'H94076') OR an auth_user_id (UUID), depending on which code path
+// wrote it. Try the empMap key lookup first, then fall back to scanning the
+// directory for a matching auth_user_id. Returns null if not found.
+function resolveApprover(decidedBy, empMap) {
+  if (!decidedBy) return null;
+  if (empMap[decidedBy]) return empMap[decidedBy]; // direct PSN hit
+  const directory = Object.values(empMap);
+  return directory.find((e) => e.auth_user_id === decidedBy) || null;
+}
+
 export async function downloadVacationFormForRequest(request, empMap) {
   if (!request) throw new Error('No request supplied');
   if (!empMap)  throw new Error('Employee directory unavailable');
   const employee = empMap[request.employee_id];
   if (!employee) throw new Error('Employee not found in directory');
-  const manager     = request.manager_decided_by ? (empMap[request.manager_decided_by] || null) : null;
-  const hrApprover  = request.hr_decided_by      ? (empMap[request.hr_decided_by]      || null) : null;
+  const manager     = resolveApprover(request.manager_decided_by, empMap);
+  const hrApprover  = resolveApprover(request.hr_decided_by,      empMap);
   const substitutes = (request.substitute_ids || [])
     .map((psn) => empMap[psn])
     .filter(Boolean);
