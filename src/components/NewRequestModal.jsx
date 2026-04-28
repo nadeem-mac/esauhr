@@ -8,6 +8,7 @@ import {
 export default function NewRequestModal({ employees, leaveTypes, requests, balances, holidays, onClose, onSubmit }) {
   const [employeeId, setEmployeeId] = useState('');
   const [leaveTypeId, setLeaveTypeId] = useState('annual');
+  const [customLeaveType, setCustomLeaveType] = useState('');
   const [startDate, setStartDate] = useState(todayISO());
   const [endDate, setEndDate] = useState(todayISO());
   const [isHalfDay, setIsHalfDay] = useState(false);
@@ -59,6 +60,10 @@ export default function NewRequestModal({ employees, leaveTypes, requests, balan
     e.preventDefault();
     if (!canSubmit) return;
     setError('');
+    if (leaveTypeId === 'other' && !customLeaveType.trim()) {
+      setError('Please specify the type of leave when "Other" is selected.');
+      return;
+    }
     if (substituteIds.length === 0) {
       setError('Please pick at least one substitute who can cover for you.');
       return;
@@ -79,7 +84,9 @@ export default function NewRequestModal({ employees, leaveTypes, requests, balan
         days: requestDays,
         is_half_day: isHalfDay,
         half_day_period: isHalfDay ? halfDayPeriod : null,
-        reason: reason || null,
+        reason: leaveTypeId === 'other' && customLeaveType
+          ? `Other (${customLeaveType}): ${reason || ''}`.trim().replace(/: $/, '')
+          : (reason || null),
         attachment_url: attachmentUrl || null,
         substitute_ids: substituteIds,
         substitute_decisions: decisions,
@@ -153,6 +160,21 @@ export default function NewRequestModal({ employees, leaveTypes, requests, balan
                 </button>
               ))}
             </div>
+            {leaveTypeId === 'other' && (
+              <div className="mt-3 p-3 rounded-lg" style={{ background: 'var(--paper-soft, #F8F8F2)', border: '1px solid var(--border-soft)' }}>
+                <Label>Specify leave type</Label>
+                <input
+                  type="text"
+                  value={customLeaveType}
+                  onChange={(e) => setCustomLeaveType(e.target.value)}
+                  placeholder="e.g. Educational leave, Compassionate, Personal..."
+                  className="w-full text-sm rounded-lg px-3 py-2 border outline-none mt-1"
+                  style={{ borderColor: 'var(--border-soft)' }}
+                  maxLength={80}
+                />
+                <div className="text-[10px] opacity-60 mt-1">This will be noted on the vacation form and approval email.</div>
+              </div>
+            )}
             {leaveType?.description && (
               <div className="text-xs opacity-60 mt-2">{leaveType.description}</div>
             )}

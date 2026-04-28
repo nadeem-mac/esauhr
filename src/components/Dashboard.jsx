@@ -2,8 +2,9 @@ import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { Check, ArrowRight, Palmtree, Calendar, KeyRound, Mail, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { supabase } from '../supabaseClient.js';
 import { todayISO, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
+import BashaierTasksCard from './BashaierTasksCard.jsx';
 
-export default function Dashboard({ me, employees, requests, typeMap, empMap, onGoToRequests, onNewRequest }) {
+export default function Dashboard({ me, employees, requests, typeMap, empMap, permissions, onGoToRequests, onNewRequest }) {
   // Personalised greeting — fully inline to eliminate any minifier scope issues.
   const _hr = new Date().getHours();
   const _period = _hr < 12 ? 'morning' : _hr < 17 ? 'afternoon' : 'evening';
@@ -174,6 +175,11 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, on
           )}
         </Card>
       </div>
+
+      {/* Bashaier's tasks — only for HR reviewer who isn't admin */}
+      {me?.is_hr_reviewer && !me?.is_admin && (
+        <BashaierTasksCard employees={employees} requests={requests} permissions={permissions} />
+      )}
 
       {/* PIN Requests — pending requests from staff who clicked Request access */}
       <PinRequestsCard me={me} employees={employees} />

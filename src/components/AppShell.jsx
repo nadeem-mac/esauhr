@@ -340,6 +340,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
               employees={employees} leaveTypes={leaveTypes} requests={requests}
               balances={balances} holidays={holidays}
               typeMap={typeMap} empMap={empMap}
+              permissions={permissions}
               onGoToRequests={() => setTab('requests')}
               onNewRequest={() => setShowNewRequest(true)}
             />
