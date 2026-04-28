@@ -150,7 +150,7 @@ export default function InsightsView({ me, employees, leaveTypes, requests, bala
     const totalEnt   = leaveRows.reduce((s, r) => s + (r.bal?.entitlement || 0), 0);
     const totalUsed  = leaveRows.reduce((s, r) => s + (r.bal?.used || 0), 0);
     const totalPend  = leaveRows.reduce((s, r) => s + (r.bal?.pending || 0), 0);
-    const totalRem   = leaveRows.reduce((s, r) => s + (r.bal?.remaining || 0), 0);
+    const totalRem   = leaveRows.reduce((s, r) => s + (r.bal?.available || 0), 0);
     const onLeaveNow = leaveRows.filter(r => r.bal?.used > 0).length;
     return { totalStaff: leaveRows.length, totalEnt, totalUsed, totalPend, totalRem, onLeaveNow };
   }, [leaveRows]);
@@ -203,7 +203,7 @@ export default function InsightsView({ me, employees, leaveTypes, requests, bala
       map[d].staff++;
       map[d].ent  += r.bal?.entitlement || 0;
       map[d].used += r.bal?.used || 0;
-      map[d].rem  += r.bal?.remaining || 0;
+      map[d].rem  += r.bal?.available || 0;
     });
     return Object.values(map).sort((a, b) => b.staff - a.staff);
   }, [leaveRows]);
@@ -272,7 +272,7 @@ export default function InsightsView({ me, employees, leaveTypes, requests, bala
             (r.bal?.entitlement ?? 0).toFixed(1),
             (r.bal?.used        ?? 0).toFixed(1),
             (r.bal?.pending     ?? 0).toFixed(1),
-            (r.bal?.remaining   ?? 0).toFixed(1),
+            (r.bal?.available   ?? 0).toFixed(1),
             r.lastApproved ? fmtDateShort(r.lastApproved.start_date) : '—',
             st.label,
           ];
@@ -314,7 +314,7 @@ export default function InsightsView({ me, employees, leaveTypes, requests, bala
         Number((r.bal?.entitlement ?? 0).toFixed(2)),
         Number((r.bal?.used        ?? 0).toFixed(2)),
         Number((r.bal?.pending     ?? 0).toFixed(2)),
-        Number((r.bal?.remaining   ?? 0).toFixed(2)),
+        Number((r.bal?.available   ?? 0).toFixed(2)),
         r.lastApproved ? r.lastApproved.start_date : '—',
         utilisationStatus(r.bal?.used || 0, r.bal?.entitlement || 0).label,
       ]);
@@ -700,7 +700,7 @@ function LeaveSummary({ year, leaveRows, leaveAgg, deptBreakdown }) {
                       <td className="px-3 py-3 text-right tabular-nums font-semibold">{used.toFixed(1)}</td>
                       <td className="px-3 py-3 text-right tabular-nums opacity-70">{(r.bal?.pending || 0).toFixed(1)}</td>
                       <td className="px-3 py-3 text-right tabular-nums font-semibold" style={{ color: '#2D5F3F' }}>
-                        {(r.bal?.remaining || 0).toFixed(1)}
+                        {(r.bal?.available || 0).toFixed(1)}
                       </td>
                       <td className="px-3 py-3 text-xs opacity-80">
                         {r.lastApproved ? fmtDateShort(r.lastApproved.start_date) : <span className="opacity-50">Never</span>}
