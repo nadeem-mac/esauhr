@@ -21,7 +21,7 @@ import AttendanceView from './AttendanceView.jsx';
 import { logAction } from '../lib/audit.js';
 import { fmtDate } from '../lib/leaveLogic.js';
 
-function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer }) {
+function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, me }) {
   // Tab visibility rules:
   //   Regular staff   → Dashboard, Requests, Calendar (no Employees, Settings, Diagnostics)
   //   Reviewer/Manager → adds Reviews + Attendance, hides Diagnostics
@@ -100,8 +100,8 @@ export default function AppShell({ session, me, onRefreshMe }) {
     [employees, me?.id]
   );
   const TABS = useMemo(
-    () => buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer }),
-    [isAdmin, isReviewer, isManager, isHrReviewer]
+    () => buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, me }),
+    [isAdmin, isReviewer, isManager, isHrReviewer, me?.id, me?.psn]
   );
 
   const loadAll = useCallback(async () => {
