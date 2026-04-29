@@ -23,21 +23,58 @@ export const supabase = supabaseConfigured
 export const SUPABASE_URL = url || '';
 export const SUPABASE_ANON_KEY = key || '';
 
+// ── Cached access token ────────────────────────────────────────────────────
+// Every direct* helper used to call supabase.auth.getSession() and race it
+// against a 3-second timeout BEFORE every single fetch. With ~6 queries on
+// load (and more on every realtime tick) that's 6x getSession() overhead per
+// burst. We instead grab the token once at startup and refresh it via the
+// onAuthStateChange listener, so each fetch is a single network call.
+let _cachedToken = key;
+let _tokenInitPromise = null;
+
+async function refreshTokenOnce() {
+  if (!supabase) return key;
+  try {
+    const { data: { session } } = await Promise.race([
+      supabase.auth.getSession(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('init getSession timeout')), 1500)),
+    ]);
+    _cachedToken = session?.access_token || key;
+  } catch {
+    _cachedToken = key;
+  }
+  return _cachedToken;
+}
+
+if (supabase) {
+  // Kick off the initial fetch but don't block the module load on it.
+  _tokenInitPromise = refreshTokenOnce();
+  supabase.auth.onAuthStateChange((_event, session) => {
+    _cachedToken = session?.access_token || key;
+  });
+}
+
+// Helpers wait at most a short time for the initial token fetch, then proceed
+// with whatever's cached (anon key if init hasn't finished).
+async function getActiveToken() {
+  if (_tokenInitPromise) {
+    try {
+      await Promise.race([
+        _tokenInitPromise,
+        new Promise(res => setTimeout(res, 300)),
+      ]);
+    } catch { /* fall through to cached */ }
+  }
+  return _cachedToken;
+}
+
 // Helper that bypasses supabase-js for critical writes that have been observed to
 // wedge the JS client. Performs a direct PATCH to the PostgREST endpoint with the
 // current session's access token. Falls back to anon key for unauthenticated ops.
 export async function directPatch(table, idColumn, idValue, patch, options = {}) {
   if (!supabase) throw new Error('Supabase not configured');
   const timeoutMs = options.timeoutMs || 12000;
-  // Try to grab the active session token; fall back to anon if missing
-  let accessToken = key;
-  try {
-    const { data: { session } } = await Promise.race([
-      supabase.auth.getSession(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('getSession timed out')), 3000)),
-    ]);
-    if (session?.access_token) accessToken = session.access_token;
-  } catch { /* fall back to anon key */ }
+  const accessToken = await getActiveToken();
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -67,14 +104,7 @@ export async function directPatch(table, idColumn, idValue, patch, options = {})
 export async function directGet(table, queryString, options = {}) {
   if (!supabase) throw new Error('Supabase not configured');
   const timeoutMs = options.timeoutMs || 10000;
-  let accessToken = key;
-  try {
-    const { data: { session } } = await Promise.race([
-      supabase.auth.getSession(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('getSession timed out')), 3000)),
-    ]);
-    if (session?.access_token) accessToken = session.access_token;
-  } catch { /* fall back to anon key */ }
+  const accessToken = await getActiveToken();
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -104,14 +134,7 @@ export async function directGet(table, queryString, options = {}) {
 export async function directPost(table, row, options = {}) {
   if (!supabase) throw new Error('Supabase not configured');
   const timeoutMs = options.timeoutMs || 12000;
-  let accessToken = key;
-  try {
-    const { data: { session } } = await Promise.race([
-      supabase.auth.getSession(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('getSession timed out')), 3000)),
-    ]);
-    if (session?.access_token) accessToken = session.access_token;
-  } catch { /* fall back to anon key */ }
+  const accessToken = await getActiveToken();
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);

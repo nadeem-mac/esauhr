@@ -176,19 +176,33 @@ export default function AppShell({ session, me, onRefreshMe }) {
     };
     refresh();
     const ch = supabase.channel(`pending-shifts-${me.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'employee_shifts' }, refresh)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'employee_shifts',
+        filter: `employee_id=eq.${me.id}`,
+      }, refresh)
       .subscribe();
     return () => { mounted = false; supabase.removeChannel(ch); };
   }, [me?.id]);
 
-  // Realtime subscription — updates when anyone in the team changes data
+  // Realtime subscription — updates when anyone in the team changes data.
+  // Multiple changes in quick succession (e.g. bulk status updates) used to
+  // trigger N copies of loadAll concurrently, each firing 6 parallel queries.
+  // We coalesce within a 400ms window so the worst case is one refresh.
   useEffect(() => {
+    let pending = null;
+    const debouncedLoad = () => {
+      if (pending) return;
+      pending = setTimeout(() => { pending = null; loadAll(); }, 400);
+    };
     const channel = supabase.channel('leave-desk-live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_requests' }, loadAll)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'employees' }, loadAll)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_types' }, loadAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_requests' }, debouncedLoad)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'employees' }, debouncedLoad)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_types' }, debouncedLoad)
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    return () => {
+      if (pending) clearTimeout(pending);
+      supabase.removeChannel(channel);
+    };
   }, [loadAll]);
 
   const typeMap = useMemo(() => Object.fromEntries(leaveTypes.map(t => [t.id, t])), [leaveTypes]);
