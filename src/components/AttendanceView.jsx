@@ -285,6 +285,7 @@ export default function AttendanceView({ me, employees }) {
   const [approvedLeaves, setApprovedLeaves] = useState([]);
   const [acceptedShifts, setAcceptedShifts] = useState([]);
   const [sentMarkers, setSentMarkers] = useState({}); // key: row.id → true
+  const [loggedMarkers, setLoggedMarkers] = useState({}); // key: 'empId:type' → true (P5)
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -335,6 +336,32 @@ export default function AttendanceView({ me, employees }) {
       } catch (e) {
         console.warn('Could not fetch accepted shifts:', e);
         if (!cancelled) setAcceptedShifts([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [csvDate]);
+
+  // P5: pre-load already-logged violations for the CSV date so re-uploading
+  // the same CSV (or revisiting after the page was closed) shows the rows
+  // that have already been emailed as already-logged.
+  useEffect(() => {
+    if (!csvDate) { setLoggedMarkers({}); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await directGet(
+          'attendance_violations?select=employee_id,violation_type&violation_date=eq.' + csvDate
+        );
+        if (cancelled) return;
+        const next = {};
+        (rows || []).forEach(r => {
+          if (r.employee_id && r.violation_type) {
+            next[r.employee_id + ':' + r.violation_type] = true;
+          }
+        });
+        setLoggedMarkers(next);
+      } catch (e) {
+        if (!cancelled) setLoggedMarkers({});
       }
     })();
     return () => { cancelled = true; };
@@ -522,26 +549,51 @@ export default function AttendanceView({ me, employees }) {
   const markSent = (rowId) => setSentMarkers(prev => ({ ...prev, [rowId]: true }));
 
   // Build mailto for a row
-  // Persist a violation row so monthly aggregation can find it later.
-  // Silent-fails if the migration hasn't been applied yet (table missing) —
-  // the email still goes out either way.
-  const logViolation = useCallback(async ({ entry, violationType, minutesOff, punchTime, scheduledStart, scheduledEnd }) => {
+  // P5: write a row to attendance_violations whenever Bashaier clicks an
+  // email button. Idempotent — the unique constraint on
+  // (employee_id, violation_date, violation_type) means a second click on
+  // the same row gets a 23505 from Postgres, which we swallow as success.
+  // Real schema (verified against live DB): id, employee_id, violation_date,
+  // violation_type, minutes_off, punch_in_time, punch_out_time,
+  // scheduled_start, scheduled_end, recorded_by, recorded_at, email_sent_at.
+  const logViolation = useCallback(async ({ entry, violationType, minutesOff, punchInTime, punchOutTime, scheduledStart, scheduledEnd }) => {
+    const empId = entry.employee.id;
+    const markerKey = empId + ':' + violationType;
+    // Optimistic: mark as logged immediately so the UI flips before the
+    // network round trip. If the insert fails for an unexpected reason
+    // (not a 23505 dup), we revert below.
+    setLoggedMarkers(prev => ({ ...prev, [markerKey]: true }));
+    const row = {
+      employee_id: empId,
+      violation_date: csvDate,                 // ISO yyyy-mm-dd from csvDate
+      violation_type: violationType,           // 'late' | 'early' | 'missed_in' | 'missed_out'
+      minutes_off: minutesOff ?? null,
+      punch_in_time:  punchInTime  || null,
+      punch_out_time: punchOutTime || null,
+      scheduled_start: scheduledStart || null,
+      scheduled_end:   scheduledEnd   || null,
+      recorded_by: me?.id || 'H94830',
+      email_sent_at: new Date().toISOString(),
+    };
     try {
-      const row = {
-        employee_id: entry.employee.id,
-        violation_date: csvDate,                 // ISO yyyy-mm-dd from csvDate
-        violation_type: violationType,           // 'late' | 'early' | 'missed_in' | 'missed_out'
-        minutes_off: minutesOff ?? null,
-        punch_time: punchTime || null,
-        scheduled_start: scheduledStart || null,
-        scheduled_end: scheduledEnd || null,
-        recorded_by: me?.id || 'H94830',
-        notified_employee_at: new Date().toISOString(),
-      };
-      await directPost('attendance_violations', row, { upsert: true, timeoutMs: 6000 });
+      await directPost('attendance_violations', row, { timeoutMs: 6000 });
+      return { ok: true };
     } catch (e) {
-      // Don't block the email if the table isn't there yet.
-      console.warn('Could not log attendance violation:', e?.message || e);
+      const msg = String(e?.message || e);
+      // 23505 = unique_violation. Means the row already exists for this
+      // (employee_id, violation_date, violation_type) — exactly what the
+      // unique constraint is for. Treat as success.
+      if (msg.includes('23505') || msg.includes('duplicate key')) {
+        return { ok: true, alreadyLogged: true };
+      }
+      // Real error — revert the optimistic marker so the user can retry.
+      setLoggedMarkers(prev => {
+        const next = { ...prev };
+        delete next[markerKey];
+        return next;
+      });
+      console.warn('Could not log attendance violation:', msg);
+      return { ok: false, error: msg };
     }
   }, [csvDate, me]);
 
@@ -561,7 +613,7 @@ export default function AttendanceView({ me, employees }) {
       entry,
       violationType: 'late',
       minutesOff: entry.minutesLate,
-      punchTime: entry.punchInStr,
+      punchInTime: entry.punchInStr,
       scheduledStart: entry.scheduledStart || '08:00',
       scheduledEnd: entry.scheduledEnd,
     });
@@ -583,7 +635,7 @@ export default function AttendanceView({ me, employees }) {
       entry,
       violationType: 'early',
       minutesOff: entry.minutesEarly,
-      punchTime: entry.punchOutStr,
+      punchOutTime: entry.punchOutStr,
       scheduledStart: entry.scheduledStart || '08:00',
       scheduledEnd: entry.scheduledEnd,
     });
@@ -608,7 +660,6 @@ export default function AttendanceView({ me, employees }) {
         entry,
         violationType,
         minutesOff: null,
-        punchTime: null,
         scheduledStart: entry.scheduledStart || '08:00',
         scheduledEnd: entry.scheduledEnd,
       });
@@ -705,12 +756,14 @@ export default function AttendanceView({ me, employees }) {
               detail: 'Punched in at ' + e.punchInStr + ' — ' + e.minutesLate + ' min after grace period'
                 + (e.isCustomShift ? ' · ' + e.scheduleLabel : ''),
               metaIcon: <Clock className="w-4 h-4"/>,
+              logged: !!loggedMarkers[e.employee.id + ':late'],
             }))}
             renderButton={(entry) => (
               <RowButton
                 onClick={() => handleEmailLate(entry)}
                 onMarkSent={() => markSent(entry.id)}
                 sent={!!sentMarkers[entry.id]}
+                logged={entry.logged}
                 label="Email lateness notice"
               />
             )}
@@ -727,12 +780,14 @@ export default function AttendanceView({ me, employees }) {
               detail: 'Punched out at ' + e.punchOutStr + ' — ' + e.minutesEarly + ' min before scheduled ' + e.scheduledEnd
                 + (e.isCustomShift ? ' · ' + e.scheduleLabel : (e.isSup ? ' (SUP team)' : '')),
               metaIcon: <Briefcase className="w-4 h-4"/>,
+              logged: !!loggedMarkers[e.employee.id + ':early'],
             }))}
             renderButton={(entry) => (
               <RowButton
                 onClick={() => handleEmailEarly(entry)}
                 onMarkSent={() => markSent(entry.id)}
                 sent={!!sentMarkers[entry.id]}
+                logged={entry.logged}
                 label="Email early-departure notice"
               />
             )}
@@ -744,19 +799,26 @@ export default function AttendanceView({ me, employees }) {
             iconColor="#1D4ED8"
             barFrom="#60A5FA" barTo="#1D4ED8"
             empty="All staff punched in and out — perfect compliance."
-            entries={detection.missed.map(e => ({
-              ...e,
-              detail: (e.missingType === 'in'  ? 'Missing punch-in (no first-punch on record)'
-                    : e.missingType === 'out' ? 'Missing punch-out (no last-punch on record)'
-                    : 'Missing both punch-in and punch-out')
-                + (e.isCustomShift ? ' · ' + e.scheduleLabel : ''),
-              metaIcon: <AlertTriangle className="w-4 h-4"/>,
-            }))}
+            entries={detection.missed.map(e => {
+              const types = e.missingType === 'both' ? ['missed_in', 'missed_out']
+                : e.missingType === 'in' ? ['missed_in'] : ['missed_out'];
+              const allLogged = types.every(t => loggedMarkers[e.employee.id + ':' + t]);
+              return ({
+                ...e,
+                detail: (e.missingType === 'in'  ? 'Missing punch-in (no first-punch on record)'
+                      : e.missingType === 'out' ? 'Missing punch-out (no last-punch on record)'
+                      : 'Missing both punch-in and punch-out')
+                  + (e.isCustomShift ? ' · ' + e.scheduleLabel : ''),
+                metaIcon: <AlertTriangle className="w-4 h-4"/>,
+                logged: allLogged,
+              });
+            })}
             renderButton={(entry) => (
               <RowButton
                 onClick={() => handleEmailMissed(entry)}
                 onMarkSent={() => markSent(entry.id)}
                 sent={!!sentMarkers[entry.id]}
+                logged={entry.logged}
                 label="Email reminder"
               />
             )}
@@ -899,11 +961,18 @@ function FlaggedSection({ title, kicker, iconColor, barFrom, barTo, entries, emp
   );
 }
 
-function RowButton({ onClick, onMarkSent, sent, label }) {
+function RowButton({ onClick, onMarkSent, sent, logged, label }) {
   if (sent) {
     return (
-      <div className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-full" style={{ background: '#ECFDF5', color: '#047857', fontWeight: 700 }}>
-        <CheckCircle2 className="w-4 h-4"/> Email Sent
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-full" style={{ background: '#ECFDF5', color: '#047857', fontWeight: 700 }}>
+          <CheckCircle2 className="w-4 h-4"/> Email Sent
+        </div>
+        {logged && (
+          <div className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: '#0F4C2A', color: '#FFFFFF', fontWeight: 700, letterSpacing: '0.1em' }} title="A row has been recorded in attendance_violations for this incident.">
+            LOGGED
+          </div>
+        )}
       </div>
     );
   }
@@ -920,6 +989,11 @@ function RowButton({ onClick, onMarkSent, sent, label }) {
         title="Mark as sent">
         ✓
       </button>
+      {logged && (
+        <div className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: '#0F4C2A', color: '#FFFFFF', fontWeight: 700, letterSpacing: '0.1em' }} title="A row has been recorded in attendance_violations for this incident.">
+          LOGGED
+        </div>
+      )}
     </div>
   );
 }
