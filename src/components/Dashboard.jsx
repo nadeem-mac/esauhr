@@ -3,6 +3,7 @@ import { Check, ArrowRight, Palmtree, Calendar, KeyRound, Mail, AlertCircle, Che
 import { supabase } from '../supabaseClient.js';
 import { todayISO, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 import BashaierTasksCard from './BashaierTasksCard.jsx';
+import ManagerShiftCard from './ManagerShiftCard.jsx';
 
 export default function Dashboard({ me, employees, requests, typeMap, empMap, permissions, onGoToRequests, onNewRequest }) {
   // Personalised greeting — fully inline to eliminate any minifier scope issues.
@@ -632,6 +633,9 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           <BashaierTasksCard employees={employees} requests={requests} permissions={permissions} />
         </div>
       )}
+
+      {/* Manager shift schedule — only renders for users with direct reports */}
+      <ManagerShiftCard me={me} employees={employees} />
 
       {/* PIN Requests — moved to modal triggered by the PIN REQUESTS badge.
            Card is always mounted (display:none on the modal wrapper hides it
