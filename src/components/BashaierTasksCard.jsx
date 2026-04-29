@@ -361,6 +361,33 @@ function computeTaskStatus(taskKey, today) {
   return { state: 'idle', due: '', color: '#9CA3AF', bg: '#F3F4F6' };
 }
 
+// Task 4: Monthly shift-staff timing reminder. Reminds dept managers to verify
+// or update shift-based working hours for any of their team members. Bashaier
+// sees this in her tasks card and clicks to send the reminder email.
+function buildShiftStaffReminder({ year, month }) {
+  const monthName = MONTH_FULL[month - 1] + ' ' + year;
+  const subject = 'Monthly Reminder \u2014 Please update shift-staff timing in HR system (' + monthName + ')';
+  const bodyPlain =
+    'Dear team,\n\n' +
+    'I hope you are well. This is the monthly reminder from HR to please review and update the shift-based working hours for any team member who works on a non-standard schedule.\n\n' +
+    'Why this matters: Our daily attendance check applies the standard 08:00 \u2013 17:00 schedule (or 08:00 \u2013 16:00 for the SUP/HR team) to detect late arrivals and early departures. If a team member is on a different shift and we do not have it on file, the system will incorrectly flag them as late or early, and they will receive an email they should not have.\n\n' +
+    'What I am asking: Please open the HR portal, find any team member whose schedule is not the standard 08:00 \u2013 17:00, and either confirm their existing shift entry is still correct, or update it. Once you save it, the team member will be asked to acknowledge the schedule, and HR will be notified once they accept.\n\n' +
+    'If you have no shift staff or all schedules are already correct, a quick reply confirming that is all I need.\n\n' +
+    'Thank you for keeping the records accurate \u2014 it makes a real difference for fair attendance handling and payroll.\n\n' +
+    HR_SIGNATURE;
+  const bodyHtml =
+    `<div style="font-family:Calibri,Arial,sans-serif;font-size:14px;color:#1F2937;line-height:1.55">
+      <p>Dear team,</p>
+      <p>I hope you are well. This is the monthly reminder from HR to please review and update the shift-based working hours for any team member who works on a non-standard schedule.</p>
+      <p><strong>Why this matters:</strong> Our daily attendance check applies the standard 08:00 \u2013 17:00 schedule (or 08:00 \u2013 16:00 for the SUP/HR team) to detect late arrivals and early departures. If a team member is on a different shift and we do not have it on file, the system will incorrectly flag them as late or early.</p>
+      <p><strong>What I am asking:</strong> Please open the HR portal, find any team member whose schedule is not the standard 08:00 \u2013 17:00, and either confirm their existing shift entry is still correct, or update it. Once saved, the team member will acknowledge the schedule, and HR will be notified.</p>
+      <p>If you have no shift staff or all schedules are already correct, a quick reply confirming that is all I need.</p>
+      <p>Thank you for keeping the records accurate \u2014 it makes a real difference for fair attendance handling and payroll.</p>
+      ${SIGNATURE_HTML}
+    </div>`;
+  return { subject, bodyPlain, bodyHtml, count: 0 };
+}
+
 // =============================================================================
 // MAIN COMPONENT
 // =============================================================================
@@ -412,6 +439,14 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
       icon: <Plane className="w-4 h-4" />,
       tone: '#2D5F3F',
       build: () => buildVacationSummary({ requests, employees, year: prevYear, month: prevMonth }),
+    },
+    {
+      key: 'shift_staff_reminder',
+      title: 'Shift staff timing reminder',
+      subtitle: 'Remind department managers to update shift-based schedules in the system',
+      icon: <Clock className="w-4 h-4" />,
+      tone: '#7E22CE',
+      build: () => buildShiftStaffReminder({ year, month }),
     },
   ], [perms, employees, requests, month, year, prevMonth, prevYear]);
 

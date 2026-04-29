@@ -189,19 +189,20 @@ function formatDateLong(yyyymmdd) {
 // Email body builders. Each returns { subject, body }.
 // ────────────────────────────────────────────────────────────────────────
 function lateEmailContent({ employee, dateLong, punchInStr, minutesLate }) {
-  // Subject format: "<Notice Type> — <PSN> <FULL NAME UPPERCASE> — <date>"
-  // PSN + name first makes the email instantly identifiable in the recipient's inbox.
   const psn = String(employee.id || employee.psn || '').toUpperCase();
   const fullName = String(employee.name || '').toUpperCase();
   const subject = 'Late Arrival Notice — ' + psn + ' ' + fullName + ' — ' + dateLong;
+  const firstName = (employee.first_name || (employee.name || '').split(' ')[0] || '').trim();
+  const greetName = firstName
+    ? firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase()
+    : 'colleague';
   const body =
-    'Dear ' + (employee.first_name || employee.name?.split(' ')[0] || '') + ',\n\n' +
-    'This is a formal notice regarding your late arrival on ' + dateLong + '.\n\n' +
-    'Per ESAU policy, the official clock-in time is 08:00 with a grace period until 08:15. ' +
-    'Our records show that you punched in at ' + punchInStr + ' — ' + minutesLate + ' minutes after the grace period.\n\n' +
-    'Please ensure timely attendance going forward. Repeated lateness without prior approval ' +
-    'may be reflected in your performance evaluation.\n\n' +
-    'If there were extenuating circumstances on this day, please reply with an explanation so we can update our records.\n\n' +
+    'Dear ' + greetName + ',\n\n' +
+    'I hope this finds you well. I am writing on behalf of HR regarding your attendance on ' + dateLong + '.\n\n' +
+    'According to our time card records for that day, your punch-in was logged at ' + punchInStr + ', which puts you about ' + minutesLate + ' minutes after the 08:15 grace window (with the official start time of 08:00).\n\n' +
+    'I understand that things come up — traffic, family matters, anything unexpected. If that was the case here, please reply with a short note so I can reflect it accurately in our records. If a planned reason is going to come up again, kindly inform your direct manager and HR in advance so we can plan around it together.\n\n' +
+    'Otherwise, I would appreciate your attention to morning timing going forward. Repeated late arrivals without prior approval do feed into the performance evaluation cycle, and I would much rather we avoid that conversation altogether.\n\n' +
+    'Thank you for understanding, and please do not hesitate to reach out if there is anything we can support you with.\n\n' +
     HR_SIGNATURE;
   return { subject, body };
 }
@@ -210,48 +211,56 @@ function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd,
   const psn = String(employee.id || employee.psn || '').toUpperCase();
   const fullName = String(employee.name || '').toUpperCase();
   const subject = 'Early Departure Notice — ' + psn + ' ' + fullName + ' — ' + dateLong;
+  const firstName = (employee.first_name || (employee.name || '').split(' ')[0] || '').trim();
+  const greetName = firstName
+    ? firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase()
+    : 'colleague';
   const body =
-    'Dear ' + (employee.first_name || employee.name?.split(' ')[0] || '') + ',\n\n' +
-    'This is a formal notice regarding your early departure on ' + dateLong + '.\n\n' +
-    'Per your scheduled working hours (08:00 to ' + scheduledEnd + '), employees are expected ' +
-    'to remain at work until the end of the day unless prior approval has been obtained. ' +
-    'Our records show that you punched out at ' + punchOutStr + ', which is ' + minutesEarly + ' minutes earlier than your scheduled end time.\n\n' +
-    'Please ensure that any early departure is approved in advance by your direct manager and ' +
-    'recorded as a permission request in the HR system.\n\n' +
-    'If this departure was approved or there were extenuating circumstances, please reply with the relevant context.\n\n' +
+    'Dear ' + greetName + ',\n\n' +
+    'I hope you are well. I am reaching out on behalf of HR regarding your check-out on ' + dateLong + '.\n\n' +
+    'Our time card log shows your punch-out at ' + punchOutStr + ', which is around ' + minutesEarly + ' minutes earlier than your scheduled end of ' + scheduledEnd + ' (we allow a 15-minute grace window before that time).\n\n' +
+    'Before I update your record, I wanted to check in with you. If you had a manager-approved reason — a permission request, family matter, or medical appointment — please let me know and I will log it accordingly. If it was unplanned, kindly loop in your direct manager and HR ahead of time next time so we can keep your file clean.\n\n' +
+    'We track these to keep payroll and overtime accurate, and to support fair evaluations. Repeated unapproved early departures are something HR has to flag, and I would much rather catch it now than have it become a pattern.\n\n' +
+    'Thank you for your continued effort, and please reply when you have a moment so I can close out the record properly.\n\n' +
     HR_SIGNATURE;
   return { subject, body };
 }
 
 function missedPunchEmailContent({ employee, dateLong, missingType }) {
   // missingType: 'in' | 'out' | 'both'
-  const what = missingType === 'in'   ? 'a punch-in entry'
-            : missingType === 'out'  ? 'a punch-out entry'
-            : 'both punch-in and punch-out entries';
+  const what = missingType === 'in'   ? 'your punch-in entry'
+            : missingType === 'out'  ? 'your punch-out entry'
+            : 'both your punch-in and punch-out entries';
   const psn = String(employee.id || employee.psn || '').toUpperCase();
   const fullName = String(employee.name || '').toUpperCase();
-  const subject = 'Reminder: Time Card Punch Missing — ' + psn + ' ' + fullName + ' — ' + dateLong;
+  const subject = 'Missing Punch Reminder — ' + psn + ' ' + fullName + ' — ' + dateLong;
+  const firstName = (employee.first_name || (employee.name || '').split(' ')[0] || '').trim();
+  const greetName = firstName
+    ? firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase()
+    : 'colleague';
   const body =
-    'Dear ' + (employee.first_name || employee.name?.split(' ')[0] || '') + ',\n\n' +
-    'We noticed that your time card for ' + dateLong + ' is missing ' + what + '.\n\n' +
-    'A reminder from HR: timely punch-in and punch-out are required for accurate attendance ' +
-    'records, payroll, and overtime tracking. We rely on these records as part of our compliance ' +
-    'with company policy and Saudi labor regulations.\n\n' +
-    'Please make sure to punch in and out every working day. If your card or terminal had issues ' +
-    'on ' + dateLong + ', please reply with the actual times so we can correct the record.\n\n' +
-    'If missed punches continue, this may be escalated to a formal evaluation warning per HR procedure.\n\n' +
-    'We are here to help — please reach out if you need any support.\n\n' +
+    'Dear ' + greetName + ',\n\n' +
+    'I hope this finds you well. I am reaching out on behalf of HR regarding your time card for ' + dateLong + '.\n\n' +
+    'Our records show that ' + what + ' was missing for that day. Occasional misses do happen, and I am not raising this to alarm you — but consistent and complete punch-in / punch-out is one of the few things we cannot be flexible on. It directly affects your payroll, overtime calculation, and our compliance with Saudi labor regulations.\n\n' +
+    'If your card or the terminal had an issue on that day, please reply with the actual times you started and finished, and I will correct the log manually. If it was an oversight, a quick check before leaving the office tends to help — even a phone reminder works wonders.\n\n' +
+    'I do have to mention, as part of our HR procedure, that repeated missed punches are tracked. After a certain number of incidents in a month, this becomes a formal evaluation warning. I would much prefer never to send that email, so please help me keep your record clean.\n\n' +
+    'Thank you, and please feel free to reach out if there is anything we can support you with on this.\n\n' +
     HR_SIGNATURE;
   return { subject, body };
 }
 
 // Build a mailto: URL with the proper TO + CC + subject + body.
 function buildMailto({ to, cc, subject, body }) {
-  const params = new URLSearchParams();
-  params.set('cc', cc.filter(Boolean).join(','));
-  params.set('subject', subject);
-  params.set('body', body);
-  return 'mailto:' + (to || '') + '?' + params.toString();
+  // We use encodeURIComponent (not URLSearchParams) because URLSearchParams encodes
+  // spaces as '+' which several mail clients leave literally as '+' instead of
+  // decoding back to a space. encodeURIComponent uses '%20' for spaces, which
+  // every mail client decodes correctly.
+  const parts = [];
+  const ccStr = (cc || []).filter(Boolean).join(',');
+  if (ccStr)   parts.push('cc='      + encodeURIComponent(ccStr));
+  if (subject) parts.push('subject=' + encodeURIComponent(subject));
+  if (body)    parts.push('body='    + encodeURIComponent(body));
+  return 'mailto:' + (to || '') + (parts.length ? '?' + parts.join('&') : '');
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -442,7 +451,7 @@ export default function AttendanceView({ me, employees }) {
       employee: entry.employee,
       dateLong,
       punchInStr: entry.punchInStr,
-      minutesLate: entry.minutesLate + 15, // total minutes after 08:00
+      minutesLate: entry.minutesLate, // minutes past the 08:15 grace window — matches the email body wording
     });
     const cc = [getManagerEmail(entry.employee), ...FIXED_CC].filter(Boolean);
     const url = buildMailto({ to: entry.employee.email, cc, subject, body });

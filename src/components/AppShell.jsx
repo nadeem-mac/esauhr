@@ -60,8 +60,13 @@ function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer }) {
     base.splice(2, 0, { id: 'reviews', label: 'Reviews',  icon: ShieldCheck });
   }
 
-  // Attendance — admin + reviewers
-  if (isAdmin || isReviewer) {
+  // Attendance — exclusively Bashaier (H94830) and Nadeem (H94152). Even other
+  // HR reviewers do NOT see this tab. Per Nadeem's directive: the daily time-card
+  // review, lateness emails, and the future evaluation-scoring escalation must be
+  // visible only to him and Bashaier.
+  const ATTENDANCE_PSNS = new Set(['H94830', 'H94152']);
+  const myPsn = String(me?.id || me?.psn || '').toUpperCase();
+  if (ATTENDANCE_PSNS.has(myPsn)) {
     const insertIdx = base.findIndex(t => t.id === 'calendar');
     base.splice(insertIdx >= 0 ? insertIdx + 1 : base.length, 0, { id: 'attendance', label: 'Attendance', icon: Clock });
   }
@@ -397,9 +402,13 @@ export default function AppShell({ session, me, onRefreshMe }) {
         {tab === 'reviews' && (
           <ReviewerPanel me={me} />
         )}
-        {tab === 'attendance' && (
-          <AttendanceView me={me} employees={employees} />
-        )}
+        {tab === 'attendance' && (() => {
+          // Defense in depth: even if someone forces tab='attendance' via URL or
+          // dev tools, the Attendance feature only renders for the allowlisted PSNs.
+          const _psn = String(me?.id || me?.psn || '').toUpperCase();
+          if (!new Set(['H94830', 'H94152']).has(_psn)) return null;
+          return <AttendanceView me={me} employees={employees} />;
+        })()}
         {tab === 'requests' && (
           <Requests
             requests={requests} leaveTypes={leaveTypes}
