@@ -1,9 +1,9 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import {
   CalendarDays, Coffee, Plane, Mail, Copy, ClipboardCheck,
-  AlertCircle, CheckCircle2, ChevronRight, Clock,
+  AlertCircle, CheckCircle2, ChevronRight, Clock, Sparkles, Check, ChevronDown,
 } from 'lucide-react';
-import { directGet } from '../supabaseClient.js';
+import { directGet, directPatchQuery, supabase } from '../supabaseClient.js';
 
 // =============================================================================
 // CONSTANTS
@@ -401,6 +401,9 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
   const [perms, setPerms] = useState(passedPerms || []);
   const [openTask, setOpenTask] = useState(null);
   const [copied, setCopied] = useState('');
+  const [acceptedShifts, setAcceptedShifts] = useState([]);
+  const [shiftPanelOpen, setShiftPanelOpen] = useState(false);
+  const [markingShifts, setMarkingShifts] = useState(false);
 
   // Lazy-load permissions if parent didn't pass them
   useEffect(() => {
@@ -414,6 +417,75 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
     })();
     return () => { mounted = false; };
   }, [passedPerms]);
+
+  // P3: surface accepted shifts the HR row hasn't yet acknowledged.
+  // Pulls employee_shifts where status='accepted' AND notified_hr_at IS NULL.
+  // Subscribes to realtime so the row appears the moment any staff accepts.
+  useEffect(() => {
+    let mounted = true;
+    const refresh = async () => {
+      try {
+        const rows = await directGet(
+          'employee_shifts',
+          'select=*&status=eq.accepted&notified_hr_at=is.null&order=accepted_at.desc',
+          { timeoutMs: 8000 }
+        );
+        if (mounted) setAcceptedShifts(Array.isArray(rows) ? rows : []);
+      } catch {
+        if (mounted) setAcceptedShifts([]);
+      }
+    };
+    refresh();
+    const ch = supabase.channel('hr-accepted-shifts')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'employee_shifts' }, refresh)
+      .subscribe();
+    return () => { mounted = false; supabase.removeChannel(ch); };
+  }, []);
+
+  // Group accepted shifts by employee so a 5-day rotation reads as one row
+  // ("Ariel — 5 shifts confirmed") instead of five repeated names.
+  const acceptedByEmployee = useMemo(() => {
+    const map = new Map();
+    acceptedShifts.forEach(s => {
+      const list = map.get(s.employee_id) || [];
+      list.push(s);
+      map.set(s.employee_id, list);
+    });
+    return Array.from(map.entries()).map(([eid, list]) => {
+      const emp = (employees || []).find(e => e.id === eid);
+      const setBy = (employees || []).find(e => e.id === list[0].set_by);
+      const dates = list.map(r => r.shift_date).sort();
+      return {
+        employeeId: eid,
+        employeeName: emp?.name || eid,
+        managerName: setBy?.name || list[0].set_by || '—',
+        count: list.length,
+        firstDate: dates[0],
+        lastDate: dates[dates.length - 1],
+        ids: list.map(r => r.id),
+      };
+    }).sort((a, b) => a.employeeName.localeCompare(b.employeeName));
+  }, [acceptedShifts, employees]);
+
+  const markShiftsReviewed = async () => {
+    if (!acceptedShifts.length || markingShifts) return;
+    setMarkingShifts(true);
+    try {
+      const ids = acceptedShifts.map(s => `"${s.id}"`).join(',');
+      await directPatchQuery(
+        'employee_shifts',
+        `id=in.(${ids})`,
+        { notified_hr_at: new Date().toISOString() },
+        { timeoutMs: 12000 }
+      );
+      setAcceptedShifts([]);
+      setShiftPanelOpen(false);
+    } catch {
+      // Silent fail — the realtime channel will refresh state
+    } finally {
+      setMarkingShifts(false);
+    }
+  };
 
   const tasks = useMemo(() => [
     {
@@ -502,6 +574,96 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
             </p>
           </div>
         </div>
+
+        {/* P3: HR notification line — surfaces accepted shifts the manager
+            assigned and the staff member confirmed, so Bashaier knows new
+            schedules are now live. Auto-hides when nothing is pending. */}
+        {acceptedShifts.length > 0 && (
+          <div
+            className="rounded-xl border mb-3 overflow-hidden transition-colors"
+            style={{
+              borderColor: 'var(--evergreen-200)',
+              background: 'linear-gradient(135deg, var(--evergreen-50) 0%, #FBFAF6 100%)',
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setShiftPanelOpen(o => !o)}
+              className="w-full flex items-center gap-3 px-3 py-3 text-left hover:bg-white/40 transition-colors"
+            >
+              <div
+                className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{ background: 'var(--evergreen-100)', color: 'var(--evergreen-600)', border: '1px solid var(--evergreen-200)' }}
+              >
+                <Sparkles className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold" style={{ color: '#1F1B16' }}>
+                  {acceptedByEmployee.length === 1
+                    ? `${acceptedByEmployee[0].employeeName.split(' ')[0]} confirmed a new shift schedule`
+                    : `${acceptedByEmployee.length} staff confirmed new shift schedules`}
+                </div>
+                <div className="text-[11px]" style={{ color: '#1F1B16' }}>
+                  {acceptedShifts.length} day{acceptedShifts.length === 1 ? '' : 's'} pending your review
+                </div>
+              </div>
+              <span
+                className="text-[10px] tracking-[0.2em] px-2 py-0.5 rounded-full flex-shrink-0"
+                style={{ background: 'var(--evergreen-600)', color: 'white' }}
+              >
+                NEW
+              </span>
+              <ChevronDown
+                className="w-4 h-4 flex-shrink-0 transition-transform"
+                style={{ color: '#1F1B16', transform: shiftPanelOpen ? 'rotate(180deg)' : 'none' }}
+              />
+            </button>
+
+            {shiftPanelOpen && (
+              <div className="px-3 pb-3 pt-1 fade-in">
+                <div className="space-y-1.5 mb-3">
+                  {acceptedByEmployee.map(row => (
+                    <div
+                      key={row.employeeId}
+                      className="flex items-center gap-3 rounded border px-3 py-2 bg-white"
+                      style={{ borderColor: 'var(--border-soft)' }}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium" style={{ color: '#1F1B16' }}>
+                          {row.employeeName}
+                        </div>
+                        <div className="text-[11px]" style={{ color: '#1F1B16' }}>
+                          {row.count} day{row.count === 1 ? '' : 's'} ({fmtDateShort(row.firstDate)}
+                          {row.firstDate !== row.lastDate ? ` → ${fmtDateShort(row.lastDate)}` : ''})
+                          {' · set by '}{row.managerName.split(' ')[0]}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px]" style={{ color: '#1F1B16' }}>
+                    Acknowledging marks these as reviewed.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={markShiftsReviewed}
+                    disabled={markingShifts}
+                    className="px-3 py-1.5 rounded text-xs flex items-center gap-1.5 text-white transition-opacity"
+                    style={{
+                      background: 'var(--evergreen-600)',
+                      opacity: markingShifts ? 0.5 : 1,
+                      cursor: markingShifts ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    {markingShifts ? 'Marking…' : 'Mark all reviewed'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="space-y-2.5">
           {tasks.map(task => {
