@@ -12,6 +12,7 @@ import SettingsView from './SettingsView.jsx';
 import ConnectivityTest from './ConnectivityTest.jsx';
 import NewRequestModal from './NewRequestModal.jsx';
 import EmployeeDetailModal from './EmployeeDetailModal.jsx';
+import ShiftAcknowledgmentModal from './ShiftAcknowledgmentModal.jsx';
 import InsightsView from './InsightsView.jsx';
 import AdminPanel from './AdminPanel.jsx';
 import PersonalDashboard from './PersonalDashboard.jsx';
@@ -90,6 +91,8 @@ export default function AppShell({ session, me, onRefreshMe }) {
   const [error, setError]               = useState('');
   const [showNewRequest, setShowNewRequest] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
+  const [pendingShifts, setPendingShifts] = useState([]);
+  const [shiftAckDismissed, setShiftAckDismissed] = useState(false);
 
   // Derived flags — must be AFTER all useState() so employees is in scope.
   const isAdmin    = Boolean(me?.is_admin);
@@ -151,6 +154,32 @@ export default function AppShell({ session, me, onRefreshMe }) {
       .subscribe();
     return () => { mounted = false; supabase.removeChannel(ch); };
   }, [isAdmin]);
+
+  // Pending shift acknowledgments — every signed-in user fetches any rows
+  // in employee_shifts where employee_id = me.id AND status = 'pending'.
+  // The fairy modal (ShiftAcknowledgmentModal) renders if the result is
+  // non-empty and the user has not dismissed it for the current session.
+  useEffect(() => {
+    if (!me?.id) { setPendingShifts([]); return; }
+    let mounted = true;
+    const refresh = async () => {
+      try {
+        const rows = await directGet(
+          'employee_shifts',
+          `select=*&employee_id=eq.${encodeURIComponent(me.id)}&status=eq.pending&order=shift_date`,
+          { timeoutMs: 8000 }
+        );
+        if (mounted) setPendingShifts(Array.isArray(rows) ? rows : []);
+      } catch {
+        if (mounted) setPendingShifts([]);
+      }
+    };
+    refresh();
+    const ch = supabase.channel(`pending-shifts-${me.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'employee_shifts' }, refresh)
+      .subscribe();
+    return () => { mounted = false; supabase.removeChannel(ch); };
+  }, [me?.id]);
 
   // Realtime subscription — updates when anyone in the team changes data
   useEffect(() => {
@@ -477,6 +506,16 @@ export default function AppShell({ session, me, onRefreshMe }) {
           typeMap={typeMap}
           me={me}
           onClose={() => setSelectedEmployee(null)}
+        />
+      )}
+
+      {pendingShifts.length > 0 && !shiftAckDismissed && (
+        <ShiftAcknowledgmentModal
+          me={me}
+          pendingShifts={pendingShifts}
+          employees={employees}
+          onClose={() => setShiftAckDismissed(true)}
+          onResolved={() => setShiftAckDismissed(true)}
         />
       )}
     </div>
