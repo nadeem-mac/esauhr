@@ -3,7 +3,7 @@ import {
   Upload, FileText, Clock, AlertTriangle, Mail, CheckCircle2,
   X, Calendar, Briefcase, Users, Send, Sparkles
 } from 'lucide-react';
-import { directGet } from '../supabaseClient.js';
+import { directGet, directPost } from '../supabaseClient.js';
 
 /* ────────────────────────────────────────────────────────────────────────
    Daily attendance check — driven by Time Card CSV upload.
@@ -367,6 +367,8 @@ export default function AttendanceView({ me, employees }) {
           row,
           missingType: missingIn && missingOut ? 'both' : (missingIn ? 'in' : 'out'),
           punchInStr, punchOutStr,
+          scheduledStart: sched.startStr,
+          scheduledEnd: sched.endStr,
         });
         return;
       }
@@ -381,6 +383,8 @@ export default function AttendanceView({ me, employees }) {
           punchInStr,
           punchInMin,
           minutesLate: punchInMin - lateCutoffMin,
+          scheduledStart: sched.startStr,
+          scheduledEnd: sched.endStr,
         });
         flagged = true;
       }
@@ -394,6 +398,7 @@ export default function AttendanceView({ me, employees }) {
           row,
           punchOutStr,
           punchOutMin,
+          scheduledStart: sched.startStr,
           scheduledEnd: sched.endStr,
           minutesEarly: scheduledEndMin - punchOutMin,
           isSup: isSupTeam(emp.id),
@@ -445,6 +450,29 @@ export default function AttendanceView({ me, employees }) {
   const markSent = (rowId) => setSentMarkers(prev => ({ ...prev, [rowId]: true }));
 
   // Build mailto for a row
+  // Persist a violation row so monthly aggregation can find it later.
+  // Silent-fails if the migration hasn't been applied yet (table missing) —
+  // the email still goes out either way.
+  const logViolation = useCallback(async ({ entry, violationType, minutesOff, punchTime, scheduledStart, scheduledEnd }) => {
+    try {
+      const row = {
+        employee_id: entry.employee.id,
+        violation_date: csvDate,                 // ISO yyyy-mm-dd from csvDate
+        violation_type: violationType,           // 'late' | 'early' | 'missed_in' | 'missed_out'
+        minutes_off: minutesOff ?? null,
+        punch_time: punchTime || null,
+        scheduled_start: scheduledStart || null,
+        scheduled_end: scheduledEnd || null,
+        recorded_by: me?.id || 'H94830',
+        notified_employee_at: new Date().toISOString(),
+      };
+      await directPost('attendance_violations', row, { upsert: true, timeoutMs: 6000 });
+    } catch (e) {
+      // Don't block the email if the table isn't there yet.
+      console.warn('Could not log attendance violation:', e?.message || e);
+    }
+  }, [csvDate, me]);
+
   const handleEmailLate = (entry) => {
     const dateLong = formatDateLong(csvDate);
     const { subject, body } = lateEmailContent({
@@ -455,6 +483,14 @@ export default function AttendanceView({ me, employees }) {
     });
     const cc = [getManagerEmail(entry.employee), ...FIXED_CC].filter(Boolean);
     const url = buildMailto({ to: entry.employee.email, cc, subject, body });
+    logViolation({
+      entry,
+      violationType: 'late',
+      minutesOff: entry.minutesLate,
+      punchTime: entry.punchInStr,
+      scheduledStart: entry.scheduledStart || '08:00',
+      scheduledEnd: entry.scheduledEnd,
+    });
     window.location.href = url;
   };
 
@@ -469,6 +505,14 @@ export default function AttendanceView({ me, employees }) {
     });
     const cc = [getManagerEmail(entry.employee), ...FIXED_CC].filter(Boolean);
     const url = buildMailto({ to: entry.employee.email, cc, subject, body });
+    logViolation({
+      entry,
+      violationType: 'early',
+      minutesOff: entry.minutesEarly,
+      punchTime: entry.punchOutStr,
+      scheduledStart: entry.scheduledStart || '08:00',
+      scheduledEnd: entry.scheduledEnd,
+    });
     window.location.href = url;
   };
 
@@ -481,6 +525,20 @@ export default function AttendanceView({ me, employees }) {
     });
     const cc = [getManagerEmail(entry.employee), ...FIXED_CC].filter(Boolean);
     const url = buildMailto({ to: entry.employee.email, cc, subject, body });
+    // Translate missingType ('in' | 'out' | 'both') into one or two violation rows.
+    const types = entry.missingType === 'both'
+      ? ['missed_in', 'missed_out']
+      : entry.missingType === 'in' ? ['missed_in'] : ['missed_out'];
+    types.forEach((violationType) => {
+      logViolation({
+        entry,
+        violationType,
+        minutesOff: null,
+        punchTime: null,
+        scheduledStart: entry.scheduledStart || '08:00',
+        scheduledEnd: entry.scheduledEnd,
+      });
+    });
     window.location.href = url;
   };
 

@@ -98,6 +98,45 @@ export async function directGet(table, queryString, options = {}) {
 }
 
 // Quick connectivity probe used by the Diagnostics screen
+// POST counterpart of directPatch — performs a direct INSERT to PostgREST.
+// Set options.upsert = true to use ON CONFLICT DO UPDATE semantics
+// (the table's unique constraint will silently dedupe).
+export async function directPost(table, row, options = {}) {
+  if (!supabase) throw new Error('Supabase not configured');
+  const timeoutMs = options.timeoutMs || 12000;
+  let accessToken = key;
+  try {
+    const { data: { session } } = await Promise.race([
+      supabase.auth.getSession(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('getSession timed out')), 3000)),
+    ]);
+    if (session?.access_token) accessToken = session.access_token;
+  } catch { /* fall back to anon key */ }
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(`${url}/rest/v1/${table}`, {
+      method: 'POST',
+      headers: {
+        'apikey': key,
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'Prefer': options.upsert
+          ? 'return=representation,resolution=merge-duplicates'
+          : 'return=representation',
+      },
+      body: JSON.stringify(row),
+      signal: ctrl.signal,
+    });
+    if (!r.ok) {
+      const errText = await r.text().catch(() => '');
+      throw new Error(`HTTP ${r.status}: ${errText || r.statusText}`);
+    }
+    return await r.json();
+  } finally { clearTimeout(timer); }
+}
+
 export async function probeSupabase() {
   if (!supabase) {
     return { ok: false, reason: 'missing_env', message: 'VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY is not set.' };
