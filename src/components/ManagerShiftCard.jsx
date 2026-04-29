@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Card } from './Dashboard.jsx';
-import { supabase } from '../supabaseClient.js';
+import { supabase, directGet, directPost, directDelete } from '../supabaseClient.js';
 import { ChevronLeft, ChevronRight, Loader2, Check, CalendarClock, Lock } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -109,14 +109,16 @@ export default function ManagerShiftCard({ me, employees }) {
     setError('');
     const fromKey = ymd(days[0]);
     const toKey   = ymd(days[6]);
-    const { data, error: err } = await supabase
-      .from('employee_shifts')
-      .select('shift_date, start_time, end_time, status')
-      .eq('employee_id', staffId)
-      .gte('shift_date', fromKey)
-      .lte('shift_date', toKey);
-
-    if (err) {
+    let data;
+    try {
+      data = await directGet(
+        'employee_shifts',
+        `select=shift_date,start_time,end_time,status` +
+        `&employee_id=eq.${encodeURIComponent(staffId)}` +
+        `&shift_date=gte.${fromKey}&shift_date=lte.${toKey}`,
+        { timeoutMs: 8000 }
+      );
+    } catch (err) {
       setError(err.message || 'Failed to load shifts');
       setLoading(false);
       return;
@@ -194,18 +196,16 @@ export default function ManagerShiftCard({ me, employees }) {
 
     try {
       if (upserts.length) {
-        const { error: upErr } = await supabase
-          .from('employee_shifts')
-          .upsert(upserts, { onConflict: 'employee_id,shift_date' });
-        if (upErr) throw upErr;
+        await directPost('employee_shifts', upserts, { upsert: true, timeoutMs: 15000 });
       }
       if (deleteKeys.length) {
-        const { error: delErr } = await supabase
-          .from('employee_shifts')
-          .delete()
-          .eq('employee_id', staffId)
-          .in('shift_date', deleteKeys);
-        if (delErr) throw delErr;
+        // PostgREST "in" filter takes a comma-separated list, with quoted dates
+        const list = deleteKeys.map(d => `"${d}"`).join(',');
+        await directDelete(
+          'employee_shifts',
+          `employee_id=eq.${encodeURIComponent(staffId)}&shift_date=in.(${list})`,
+          { timeoutMs: 12000 }
+        );
       }
       const staff = directReports.find(e => e.id === staffId);
       const staffName = (staff?.name || '').split(' ')[0] || 'staff';

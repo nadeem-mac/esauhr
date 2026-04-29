@@ -174,3 +174,61 @@ export async function probeSupabase() {
     return { ok: false, reason: 'network', message: e.message || String(e) };
   }
 }
+
+// DELETE counterpart of directPatch — performs a direct DELETE to PostgREST.
+// Filter is supplied as a PostgREST query string fragment (e.g.
+// "employee_id=eq.H94830&shift_date=in.(2026-04-29,2026-04-30)").
+export async function directDelete(table, queryString, options = {}) {
+  if (!supabase) throw new Error('Supabase not configured');
+  const timeoutMs = options.timeoutMs || 12000;
+  const accessToken = await getActiveToken();
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(`${url}/rest/v1/${table}?${queryString}`, {
+      method: 'DELETE',
+      headers: {
+        'apikey': key,
+        'Authorization': `Bearer ${accessToken}`,
+      },
+      signal: ctrl.signal,
+    });
+    if (!r.ok) {
+      const errText = await r.text().catch(() => '');
+      throw new Error(`HTTP ${r.status}: ${errText || r.statusText}`);
+    }
+    return true;
+  } finally { clearTimeout(timer); }
+}
+
+// Bulk-PATCH variant of directPatch. The filter is supplied as a PostgREST
+// query string fragment (e.g. "id=in.(uuid1,uuid2,uuid3)") so callers can
+// update an arbitrary set of rows in one round trip without going through
+// the wedge-prone supabase-js .update().in() path.
+export async function directPatchQuery(table, queryString, patch, options = {}) {
+  if (!supabase) throw new Error('Supabase not configured');
+  const timeoutMs = options.timeoutMs || 12000;
+  const accessToken = await getActiveToken();
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(`${url}/rest/v1/${table}?${queryString}`, {
+      method: 'PATCH',
+      headers: {
+        'apikey': key,
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation',
+      },
+      body: JSON.stringify(patch),
+      signal: ctrl.signal,
+    });
+    if (!r.ok) {
+      const errText = await r.text().catch(() => '');
+      throw new Error(`HTTP ${r.status}: ${errText || r.statusText}`);
+    }
+    return await r.json();
+  } finally { clearTimeout(timer); }
+}

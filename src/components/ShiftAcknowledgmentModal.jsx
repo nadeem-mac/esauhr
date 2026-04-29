@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { X, Check, AlertCircle, Loader2, CalendarClock } from 'lucide-react';
-import { supabase } from '../supabaseClient.js';
+import { supabase, directPatchQuery } from '../supabaseClient.js';
 import { logAction } from '../lib/audit.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -76,11 +76,13 @@ export default function ShiftAcknowledgmentModal({ me, pendingShifts, employees,
       : { status: 'declined', declined_at: now, accepted_at: null, decline_reason: reasonText || null };
 
     try {
-      const { error: err } = await supabase
-        .from('employee_shifts')
-        .update(patch)
-        .in('id', ids);
-      if (err) throw err;
+      const idList = ids.map(i => `"${i}"`).join(',');
+      await directPatchQuery(
+        'employee_shifts',
+        `id=in.(${idList})`,
+        patch,
+        { timeoutMs: 12000 }
+      );
 
       try {
         logAction(me, 'shift_acknowledgment', {
