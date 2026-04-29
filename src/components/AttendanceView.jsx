@@ -114,6 +114,16 @@ function minutesToHHMM(min) {
   return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
 }
 
+// Used by P4 to derive the late/early grace cutoffs from a custom shift's
+// start/end. Returns 'HH:MM'. Handles negative deltas. Falls back to the
+// input string if it can't be parsed (so callers degrade safely).
+function addMinutesToTime(timeStr, deltaMin) {
+  const base = timeToMinutes(timeStr);
+  if (base == null) return timeStr;
+  const total = ((base + deltaMin) % 1440 + 1440) % 1440;
+  return minutesToHHMM(total);
+}
+
 // Department check — SUP team has 8-4 hours.
 // SUP team for the working-hours policy is a fixed set of 4 PSNs, NOT the
 // SUP department. These four work 08:00 → 16:00 with a 15:45 early-leave
@@ -188,7 +198,7 @@ function formatDateLong(yyyymmdd) {
 // ────────────────────────────────────────────────────────────────────────
 // Email body builders. Each returns { subject, body }.
 // ────────────────────────────────────────────────────────────────────────
-function lateEmailContent({ employee, dateLong, punchInStr, minutesLate }) {
+function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, scheduledStart, lateCutoff }) {
   const psn = String(employee.id || employee.psn || '').toUpperCase();
   const fullName = String(employee.name || '').toUpperCase();
   const subject = 'Late Arrival Notice — ' + psn + ' ' + fullName + ' — ' + dateLong;
@@ -196,10 +206,12 @@ function lateEmailContent({ employee, dateLong, punchInStr, minutesLate }) {
   const greetName = firstName
     ? firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase()
     : 'colleague';
+  const startStr  = scheduledStart || '08:00';
+  const cutoffStr = lateCutoff     || '08:15';
   const body =
     'Dear ' + greetName + ',\n\n' +
     'I hope this finds you well. I am writing on behalf of HR regarding your attendance on ' + dateLong + '.\n\n' +
-    'According to our time card records for that day, your punch-in was logged at ' + punchInStr + ', which puts you about ' + minutesLate + ' minutes after the 08:15 grace window (with the official start time of 08:00).\n\n' +
+    'According to our time card records for that day, your punch-in was logged at ' + punchInStr + ', which puts you about ' + minutesLate + ' minutes after the ' + cutoffStr + ' grace window (with your scheduled start time of ' + startStr + ').\n\n' +
     'I understand that things come up — traffic, family matters, anything unexpected. If that was the case here, please reply with a short note so I can reflect it accurately in our records. If a planned reason is going to come up again, kindly inform your direct manager and HR in advance so we can plan around it together.\n\n' +
     'Otherwise, I would appreciate your attention to morning timing going forward. Repeated late arrivals without prior approval do feed into the performance evaluation cycle, and I would much rather we avoid that conversation altogether.\n\n' +
     'Thank you for understanding, and please do not hesitate to reach out if there is anything we can support you with.\n\n' +
@@ -271,6 +283,7 @@ export default function AttendanceView({ me, employees }) {
   const [csvFileName, setCsvFileName] = useState('');
   const [parseError, setParseError] = useState(null);
   const [approvedLeaves, setApprovedLeaves] = useState([]);
+  const [acceptedShifts, setAcceptedShifts] = useState([]);
   const [sentMarkers, setSentMarkers] = useState({}); // key: row.id → true
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
@@ -306,9 +319,45 @@ export default function AttendanceView({ me, employees }) {
     return () => { cancelled = true; };
   }, [csvDate]);
 
+  // P4: fetch employee_shifts the staff have accepted for the CSV's date.
+  // These take precedence over the default 08:00–17:00 / SUP 08:00–16:00.
+  // Only status='accepted' rows are honoured — pending/declined fall back
+  // to the defaults so an unconfirmed manager schedule never affects HR.
+  useEffect(() => {
+    if (!csvDate) { setAcceptedShifts([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await directGet(
+          'employee_shifts?select=employee_id,start_time,end_time,status&status=eq.accepted&shift_date=eq.' + csvDate
+        );
+        if (!cancelled) setAcceptedShifts(data || []);
+      } catch (e) {
+        console.warn('Could not fetch accepted shifts:', e);
+        if (!cancelled) setAcceptedShifts([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [csvDate]);
+
   const onLeaveOnDate = useCallback((empId) => {
     return approvedLeaves.some(l => String(l.employee_id) === String(empId));
   }, [approvedLeaves]);
+
+  // P4: fast lookup of accepted-shift override for the current csvDate, keyed
+  // by employee_id (uppercased). Stored as { startStr, endStr } — the time
+  // strings are normalised to 'HH:MM' (Postgres returns 'HH:MM:SS').
+  const shiftOverrideById = useMemo(() => {
+    const m = {};
+    (acceptedShifts || []).forEach(s => {
+      if (!s?.employee_id || !s?.start_time || !s?.end_time) return;
+      m[String(s.employee_id).toUpperCase()] = {
+        startStr: String(s.start_time).slice(0, 5),
+        endStr:   String(s.end_time).slice(0, 5),
+      };
+    });
+    return m;
+  }, [acceptedShifts]);
 
   // Build employee lookup by ID (PSN) and name
   const empById = useMemo(() => {
@@ -332,8 +381,6 @@ export default function AttendanceView({ me, employees }) {
     const out = { late: [], early: [], missed: [], onTime: [], onLeave: [], unknownEmp: [] };
     if (!parsed.rows.length || csvIsWeekend) return out;
 
-    const lateCutoffMin = timeToMinutes(LATE_CUTOFF);
-
     parsed.rows.forEach((row, idx) => {
       const empIdRaw = row['Employee ID'] || row['employee_id'] || row['EmployeeID'] || row['ID'] || '';
       const empId = String(empIdRaw).trim();
@@ -350,8 +397,23 @@ export default function AttendanceView({ me, employees }) {
         return;
       }
       const dept = (row['Department'] || emp.department || '').trim();
-      // SUP team is identified by PSN (Bashaier H94830, Badria H94458, Jaffar H94330, Fahad H94712), not by dept code.
-      const sched = scheduleFor(emp.id);
+      // P4: per-day shift override takes precedence over the team default.
+      // If staff accepted a custom schedule for this date, build a one-shot
+      // schedule object with a 15-min grace on each end (matching the policy
+      // applied to the 08:00 default). Otherwise use the team default.
+      const empKey = String(emp.id || '').toUpperCase();
+      const override = shiftOverrideById[empKey];
+      const sched = override
+        ? {
+            startStr: override.startStr,
+            endStr:   override.endStr,
+            lateCutoffStr:  addMinutesToTime(override.startStr,  +15),
+            earlyCutoffStr: addMinutesToTime(override.endStr,    -15),
+            label: 'Custom shift (' + override.startStr + '–' + override.endStr + ')',
+            isCustom: true,
+          }
+        : scheduleFor(emp.id);
+      const lateCutoffMin = timeToMinutes(sched.lateCutoffStr);
       const punchInStr = (row['First Punch'] || '').trim();
       const punchOutStr = (row['Last Punch'] || '').trim();
       const punchInMin = timeToMinutes(punchInStr);
@@ -369,6 +431,9 @@ export default function AttendanceView({ me, employees }) {
           punchInStr, punchOutStr,
           scheduledStart: sched.startStr,
           scheduledEnd: sched.endStr,
+          lateCutoff: sched.lateCutoffStr,
+          scheduleLabel: sched.label,
+          isCustomShift: !!sched.isCustom,
         });
         return;
       }
@@ -385,6 +450,9 @@ export default function AttendanceView({ me, employees }) {
           minutesLate: punchInMin - lateCutoffMin,
           scheduledStart: sched.startStr,
           scheduledEnd: sched.endStr,
+          lateCutoff: sched.lateCutoffStr,
+          scheduleLabel: sched.label,
+          isCustomShift: !!sched.isCustom,
         });
         flagged = true;
       }
@@ -400,6 +468,10 @@ export default function AttendanceView({ me, employees }) {
           punchOutMin,
           scheduledStart: sched.startStr,
           scheduledEnd: sched.endStr,
+          lateCutoff: sched.lateCutoffStr,
+          earlyCutoff: sched.earlyCutoffStr,
+          scheduleLabel: sched.label,
+          isCustomShift: !!sched.isCustom,
           minutesEarly: scheduledEndMin - punchOutMin,
           isSup: isSupTeam(emp.id),
         });
@@ -410,7 +482,7 @@ export default function AttendanceView({ me, employees }) {
       }
     });
     return out;
-  }, [parsed.rows, empById, onLeaveOnDate, csvIsWeekend]);
+  }, [parsed.rows, empById, onLeaveOnDate, csvIsWeekend, shiftOverrideById]);
 
   // File handling
   const handleFile = useCallback((file) => {
@@ -479,7 +551,9 @@ export default function AttendanceView({ me, employees }) {
       employee: entry.employee,
       dateLong,
       punchInStr: entry.punchInStr,
-      minutesLate: entry.minutesLate, // minutes past the 08:15 grace window — matches the email body wording
+      minutesLate: entry.minutesLate, // minutes past the grace window — matches the email body wording
+      scheduledStart: entry.scheduledStart,
+      lateCutoff: entry.lateCutoff,
     });
     const cc = [getManagerEmail(entry.employee), ...FIXED_CC].filter(Boolean);
     const url = buildMailto({ to: entry.employee.email, cc, subject, body });
@@ -628,7 +702,8 @@ export default function AttendanceView({ me, employees }) {
             empty="Nobody arrived late — well done team."
             entries={detection.late.map(e => ({
               ...e,
-              detail: 'Punched in at ' + e.punchInStr + ' — ' + e.minutesLate + ' min after grace period',
+              detail: 'Punched in at ' + e.punchInStr + ' — ' + e.minutesLate + ' min after grace period'
+                + (e.isCustomShift ? ' · ' + e.scheduleLabel : ''),
               metaIcon: <Clock className="w-4 h-4"/>,
             }))}
             renderButton={(entry) => (
@@ -649,7 +724,8 @@ export default function AttendanceView({ me, employees }) {
             empty="Nobody left early — full day attendance recorded."
             entries={detection.early.map(e => ({
               ...e,
-              detail: 'Punched out at ' + e.punchOutStr + ' — ' + e.minutesEarly + ' min before scheduled ' + e.scheduledEnd + (e.isSup ? ' (SUP team)' : ''),
+              detail: 'Punched out at ' + e.punchOutStr + ' — ' + e.minutesEarly + ' min before scheduled ' + e.scheduledEnd
+                + (e.isCustomShift ? ' · ' + e.scheduleLabel : (e.isSup ? ' (SUP team)' : '')),
               metaIcon: <Briefcase className="w-4 h-4"/>,
             }))}
             renderButton={(entry) => (
@@ -670,9 +746,10 @@ export default function AttendanceView({ me, employees }) {
             empty="All staff punched in and out — perfect compliance."
             entries={detection.missed.map(e => ({
               ...e,
-              detail: e.missingType === 'in'  ? 'Missing punch-in (no first-punch on record)'
+              detail: (e.missingType === 'in'  ? 'Missing punch-in (no first-punch on record)'
                     : e.missingType === 'out' ? 'Missing punch-out (no last-punch on record)'
-                    : 'Missing both punch-in and punch-out',
+                    : 'Missing both punch-in and punch-out')
+                + (e.isCustomShift ? ' · ' + e.scheduleLabel : ''),
               metaIcon: <AlertTriangle className="w-4 h-4"/>,
             }))}
             renderButton={(entry) => (
