@@ -71,8 +71,7 @@ export default function ManagerShiftCard({ me, employees }) {
     return employees
       .filter(e => e.manager_id === me.id && e.id !== me.id)
       .filter(e => (e.employment_status || 'active') === 'active')
-      .sort((a, b) => `${a.first_name || ''} ${a.last_name || ''}`
-        .localeCompare(`${b.first_name || ''} ${b.last_name || ''}`));
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   }, [employees, me]);
 
   const [staffId, setStaffId] = useState('');
@@ -209,7 +208,7 @@ export default function ManagerShiftCard({ me, employees }) {
         if (delErr) throw delErr;
       }
       const staff = directReports.find(e => e.id === staffId);
-      const staffName = staff?.first_name || 'staff';
+      const staffName = (staff?.name || '').split(' ')[0] || 'staff';
       setToast(`Saved. ${staffName} will see the schedule on next sign-in.`);
       setTimeout(() => setToast(''), 5000);
       await loadWeek(); // refresh status pills
@@ -246,7 +245,7 @@ export default function ManagerShiftCard({ me, employees }) {
           >
             {directReports.map(e => (
               <option key={e.id} value={e.id}>
-                {e.first_name} {e.last_name} — {e.designation || e.department || '—'}
+                {e.name} — {e.department || '—'}
               </option>
             ))}
           </select>
