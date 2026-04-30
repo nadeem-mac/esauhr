@@ -28,7 +28,16 @@ export default function ReviewerPanel({ me }) {
   const isHrReviewer  = !!me?.is_hr_reviewer;
   const isDeptManager = isManager && !isHrReviewer && !isAdmin;
   const canLeave      = isAdmin || isHrReviewer || isDeptManager;
-  const canPerm       = isAdmin || me?.can_review_permissions;
+  // canPerm = sees ALL permission_requests at the HR/admin tier (pending_hr)
+  // canPermAsManager = is a regular manager who sees their direct reports'
+  //   pending_manager rows. Distinct flag because the queue query, the
+  //   header copy, and the empty-state messaging differ between the two
+  //   roles. Without this the render was gated on canPerm only and a
+  //   manager opened the Reviews tab to find their permission queue
+  //   silently hidden, even though the data was fetched.
+  const canPerm           = isAdmin || me?.can_review_permissions;
+  const canPermAsManager  = isDeptManager;
+  const canSeePerm        = canPerm || canPermAsManager;
 
   // Helper: race a Supabase query against a timeout so the UI doesn't hang forever
   const withTimeout = (p, ms = 10000, label = 'query') => Promise.race([
@@ -176,7 +185,7 @@ export default function ReviewerPanel({ me }) {
     finally       { setBusyId(null); }
   }
 
-  if (!canLeave && !canPerm) return null;
+  if (!canLeave && !canSeePerm) return null;
 
   return (
     <div className="space-y-8">
@@ -185,9 +194,9 @@ export default function ReviewerPanel({ me }) {
           <div className="text-xs tracking-[0.25em] opacity-60">— REVIEW QUEUE</div>
           <h2 className="serif text-3xl mt-1" style={{ fontWeight: 500 }}>Pending decisions</h2>
           <p className="text-xs opacity-60 mt-1">
-            {canLeave && canPerm ? 'You review leave + permission requests.'
-             : canLeave         ? 'You review leave requests.'
-             :                    'You review permission requests.'}
+            {canLeave && canSeePerm ? 'You review leave + permission requests.'
+             : canLeave              ? 'You review leave requests.'
+             :                         'You review permission requests.'}
           </p>
         </div>
         <button onClick={load}
@@ -203,11 +212,15 @@ export default function ReviewerPanel({ me }) {
         </div>
       ) : (
         <>
-          {canPerm && (
+          {canSeePerm && (
             <section>
-              <h3 className="text-[10px] tracking-[0.25em] opacity-60 mb-3">PERMISSION REQUESTS · {perms.length}</h3>
+              <h3 className="text-[10px] tracking-[0.25em] opacity-60 mb-3">
+                {canPermAsManager && !canPerm ? 'DEPARTMENT PERMISSIONS · ' : 'PERMISSION REQUESTS · '}{perms.length}
+              </h3>
               {perms.length === 0 ? (
-                <EmptyState text="No pending permission requests." />
+                <EmptyState text={canPermAsManager && !canPerm
+                  ? 'No pending permission requests from your direct reports.'
+                  : 'No pending permission requests.'} />
               ) : (
                 <ul className="space-y-2">
                   {perms.map(req => {
