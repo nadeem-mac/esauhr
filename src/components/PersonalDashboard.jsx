@@ -12,7 +12,14 @@ import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
 import { Download } from 'lucide-react';
 
 // Staff personal dashboard. Compact colorful gradient tiles.
-export default function PersonalDashboard({ me, leaveTypes, empMap, onOpenNewRequest }) {
+export default function PersonalDashboard({
+  me,
+  leaveTypes,
+  empMap,
+  pendingShifts,        // employee_shifts rows with status='pending' for me
+  onOpenShiftAck,       // callback that opens the ShiftAcknowledgmentModal
+  onOpenNewRequest,
+}) {
   const [adjustments, setAdjustments] = useState({});
   const [requests,    setRequests]    = useState([]);
   const [permissions, setPermissions] = useState([]);
@@ -173,6 +180,79 @@ export default function PersonalDashboard({ me, leaveTypes, empMap, onOpenNewReq
         />
         <FlagTile monthSummary={monthSummary} />
       </section>
+
+      {/* SHIFT SCHEDULE — manager has assigned shifts awaiting my acknowledgment.
+          The card replaces the old auto-popping fairy modal. Tap anywhere on
+          the card to open the acknowledgment dialog where the staff member can
+          accept all listed shifts at once or decline (with a reason picked
+          from a short dropdown). The card disappears the moment the rows
+          are no longer pending — realtime sub on AppShell pushes the empty
+          set down and we re-render. */}
+      {Array.isArray(pendingShifts) && pendingShifts.length > 0 && (
+        <section
+          role="button"
+          tabIndex={0}
+          aria-label="Open shift schedule for acknowledgment"
+          onClick={() => { if (typeof onOpenShiftAck === 'function') onOpenShiftAck(); }}
+          onKeyDown={(e) => {
+            if ((e.key === 'Enter' || e.key === ' ') && typeof onOpenShiftAck === 'function') {
+              e.preventDefault();
+              onOpenShiftAck();
+            }
+          }}
+          className="rounded-2xl overflow-hidden cursor-pointer transition-transform hover:scale-[1.005] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+          style={{
+            background: 'linear-gradient(135deg, #E8F5EE 0%, #C9E6D5 100%)',
+            border: '1px solid #8FB39A',
+          }}
+        >
+          <div className="px-5 py-4 flex items-center gap-3"
+               style={{ borderBottom: '1px solid rgba(46, 95, 63, 0.2)' }}>
+            <Calendar className="w-4 h-4" style={{ color: '#1F4530' }} />
+            <div className="flex-1 min-w-0">
+              <div className="font-semibold text-sm" style={{ color: '#1F4530' }}>
+                Shift schedule — awaiting your acknowledgment
+              </div>
+              <div className="text-xs mt-0.5" style={{ color: '#1F4530' }}>
+                {(() => {
+                  const setBy = empMap?.[pendingShifts[0]?.set_by];
+                  const supName = setBy?.name ? setBy.name.split(' ')[0] : 'Your manager';
+                  const n = pendingShifts.length;
+                  return `${supName} has assigned ${n} shift${n === 1 ? '' : 's'} for you. Tap to review and respond.`;
+                })()}
+              </div>
+            </div>
+            <span className="text-xs font-semibold px-3 py-1.5 rounded-full"
+                  style={{ background: '#1F4530', color: '#fff' }}>
+              Review →
+            </span>
+          </div>
+          {/* Compact list of the dates so the card carries enough info to
+              be useful even before the user opens the modal. Cap at 3 rows
+              with an N more line so a five-shift week doesn't make the card
+              tower over the rest of the dashboard. */}
+          <ul className="divide-y" style={{ borderColor: 'rgba(46, 95, 63, 0.15)' }}>
+            {pendingShifts.slice(0, 3).map(s => {
+              const [y, m, d] = String(s.shift_date).split('-').map(n => parseInt(n, 10));
+              const dt = new Date(y, m - 1, d);
+              const dow = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dt.getDay()];
+              const pretty = dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+              const trim = (t) => String(t || '').slice(0, 5);
+              return (
+                <li key={s.id} className="px-5 py-2.5 flex items-center gap-3 text-sm" style={{ color: '#1F4530' }}>
+                  <span className="font-medium" style={{ minWidth: 56 }}>{dow} {pretty}</span>
+                  <span className="opacity-80 tabular-nums">{trim(s.start_time)} – {trim(s.end_time)}</span>
+                </li>
+              );
+            })}
+            {pendingShifts.length > 3 && (
+              <li className="px-5 py-2 text-xs" style={{ color: '#1F4530' }}>
+                + {pendingShifts.length - 3} more shift{pendingShifts.length - 3 === 1 ? '' : 's'} — open to see all
+              </li>
+            )}
+          </ul>
+        </section>
+      )}
 
       {/* SUBSTITUTION REQUESTS — colleagues asking ME to cover for them */}
       {subRequests.length > 0 && (

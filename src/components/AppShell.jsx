@@ -110,7 +110,11 @@ export default function AppShell({ session, me, onRefreshMe }) {
   const [showNewRequest, setShowNewRequest] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
   const [pendingShifts, setPendingShifts] = useState([]);
-  const [shiftAckDismissed, setShiftAckDismissed] = useState(false);
+  // Modal visibility for the shift acknowledgment dialog. Default is closed —
+  // staff are no longer ambushed on sign-in. Instead a "Shift schedule" card
+  // appears on PersonalDashboard whenever pendingShifts is non-empty, and
+  // tapping that card flips this flag to open the modal.
+  const [shiftAckOpen, setShiftAckOpen] = useState(false);
 
   // Derived flags — must be AFTER all useState() so employees is in scope.
   const isAdmin    = Boolean(me?.is_admin);
@@ -507,6 +511,8 @@ export default function AppShell({ session, me, onRefreshMe }) {
               me={me}
               leaveTypes={leaveTypes}
               empMap={empMap}
+              pendingShifts={pendingShifts}
+              onOpenShiftAck={() => setShiftAckOpen(true)}
               onOpenNewRequest={() => setShowNewRequest(true)}
             />
           )
@@ -604,13 +610,13 @@ export default function AppShell({ session, me, onRefreshMe }) {
         />
       )}
 
-      {pendingShifts.length > 0 && !shiftAckDismissed && (
+      {shiftAckOpen && pendingShifts.length > 0 && (
         <ShiftAcknowledgmentModal
           me={me}
           pendingShifts={pendingShifts}
           employees={employees}
-          onClose={() => setShiftAckDismissed(true)}
-          onResolved={() => setShiftAckDismissed(true)}
+          onClose={() => setShiftAckOpen(false)}
+          onResolved={() => setShiftAckOpen(false)}
         />
       )}
     </div>

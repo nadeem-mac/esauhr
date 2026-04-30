@@ -206,20 +206,37 @@ export default function ShiftAcknowledgmentModal({ me, pendingShifts, employees,
                 })}
               </div>
 
-              {/* Decline reason field (when declining) */}
+              {/* Decline reason field (when declining) — dropdown with two
+                  curated reasons. Free text was removed to keep declines
+                  comparable across staff and to spare the user from having
+                  to compose anything in a stressful moment. The two options
+                  cover the two legitimate HR reasons to decline a shift:
+                  either the day clashes with already-approved leave, or
+                  there's a personal commitment that can't be rescheduled.
+                  A "" sentinel is the empty default so we can validate that
+                  a reason was actually picked before allowing submit. */}
               {step === 'declining' && (
                 <div className="space-y-2 pt-2">
                   <label className="text-[10px] tracking-[0.25em]" style={SMALL_TEXT}>
-                    REASON FOR DECLINING (OPTIONAL)
+                    REASON FOR DECLINING
                   </label>
-                  <textarea
+                  <select
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
-                    placeholder="Help your manager understand…"
-                    rows={3}
                     className="w-full px-3 py-2 rounded border text-sm bg-white focus:outline-none"
-                    style={{ borderColor: 'var(--border)', color: '#1F1B16', resize: 'vertical' }}
-                  />
+                    style={{ borderColor: 'var(--border)', color: '#1F1B16' }}
+                  >
+                    <option value="">— Select a reason —</option>
+                    <option value="Already on approved leave">
+                      Already on approved leave
+                    </option>
+                    <option value="Personal commitment — unable to attend">
+                      Personal commitment — unable to attend
+                    </option>
+                  </select>
+                  <div className="text-xs" style={{ color: '#1F1B16', opacity: 0.7 }}>
+                    Your manager will see your reason and reach out to discuss the schedule.
+                  </div>
                 </div>
               )}
 
@@ -256,7 +273,8 @@ export default function ShiftAcknowledgmentModal({ me, pendingShifts, employees,
                 <button
                   type="button"
                   onClick={() => applyDecision('decline', reason.trim())}
-                  className="px-4 py-2 rounded text-sm text-white flex items-center gap-2"
+                  disabled={!reason}
+                  className="px-4 py-2 rounded text-sm text-white flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                   style={{ background: 'var(--clay)' }}
                 >
                   Confirm decline
