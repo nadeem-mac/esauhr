@@ -7,7 +7,18 @@ import { checkExceeds, summariseMonth, PERMISSION_QUOTA, PERMISSION_TYPES, reaso
 export default function PermissionRequestModal({ me, type = 'late_arrival', monthRows = [], onClose, onSubmitted }) {
   const today = new Date().toISOString().slice(0, 10);
   const [date,    setDate]    = useState(type === 'late_arrival' ? today : today);
-  const [hours,   setHours]   = useState(1);
+  // Time window — required as of the bilingual form rollout. Defaults are
+  // typical office hours so the staff member can adjust by a few clicks
+  // rather than starting from blank fields.
+  //   • Late Arrival: 'from' = scheduled start, 'to' = when they actually
+  //     arrived. Default 08:00 → 09:00 (1 hr late).
+  //   • Early Leave: 'from' = when they actually left, 'to' = scheduled
+  //     end. Default 16:00 → 17:00 (1 hr early).
+  const [timeFrom, setTimeFrom] = useState(type === 'late_arrival' ? '08:00' : '16:00');
+  const [timeTo,   setTimeTo]   = useState(type === 'late_arrival' ? '09:00' : '17:00');
+  // hours is now derived from the time window — kept as state because the
+  // quota-check helper expects a single hours value. Recomputed via
+  // useMemo whenever timeFrom/timeTo change.
   // Reason is now a curated dropdown (set per-type via reasonsFor) plus a
   // small free-text input that only appears when 'Other' is selected. The
   // final string saved to permission_requests.reason is composed at submit
@@ -22,13 +33,48 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
   const reasonOptions = reasonsFor(type);
   const isOther       = reasonCategory === 'Other';
 
+  // Duration in minutes — derived from timeFrom / timeTo. Returns NaN if
+  // either string is empty or malformed; surrounding code treats NaN as
+  // 'invalid' for validation and disables the submit button.
+  const durationMin = useMemo(() => {
+    const toMin = (s) => {
+      const m = /^(\d{1,2}):(\d{2})$/.exec(s || '');
+      if (!m) return NaN;
+      return Number(m[1]) * 60 + Number(m[2]);
+    };
+    const a = toMin(timeFrom), b = toMin(timeTo);
+    if (Number.isNaN(a) || Number.isNaN(b)) return NaN;
+    return b - a;
+  }, [timeFrom, timeTo]);
+
+  // hours = duration / 60. Round to 1 decimal so the numeric(3,1) column
+  // accepts it (0.5, 1.0, etc.).
+  const hours = useMemo(() => {
+    if (Number.isNaN(durationMin) || durationMin <= 0) return 0;
+    return Math.round((durationMin / 60) * 10) / 10;
+  }, [durationMin]);
+
   const summary = summariseMonth(monthRows);
   const exceeds = useMemo(() => checkExceeds(monthRows, hours), [monthRows, hours]);
   const Icon    = type === 'late_arrival' ? Sunrise : Sunset;
   const cfg     = PERMISSION_TYPES[type];
 
+  // Validation flags — used to disable the submit button + show inline
+  // hint text. Matches ESAU policy: each request 15–60 mins, must be a
+  // valid forward window.
+  const timeError =
+    Number.isNaN(durationMin) ? 'Pick a start and end time.' :
+    durationMin <= 0           ? 'End time must be after start time.' :
+    durationMin < 15           ? 'Minimum permission window is 15 minutes.' :
+    durationMin > 60           ? 'Each request must not exceed 60 minutes (company policy).' :
+    '';
+
   async function submit(e) {
     e.preventDefault();
+    if (timeError) {
+      setError(timeError);
+      return;
+    }
     // Validate reason — category required, and if 'Other' the staff must
     // specify what 'Other' means. Without these checks HR ends up with
     // empty or meaningless reasons that block reconciliation.
@@ -51,6 +97,8 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
         type,
         permission_date: date,
         hours,
+        time_from:       timeFrom,
+        time_to:         timeTo,
         reason:          finalReason,
         exceeds_quota:   exceeds.willExceed,
         requested_by:    me.id,
@@ -60,8 +108,8 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
       logAction(me, 'permission_create', {
         targetType: 'permission_request',
         targetId: data?.id,
-        targetLabel: `${cfg.label} · ${date} · ${hours}h${exceeds.willExceed ? ' (FLAGGED)' : ''}`,
-        details: { type, hours, exceeds_quota: exceeds.willExceed, reason: finalReason },
+        targetLabel: `${cfg.label} · ${date} · ${timeFrom}–${timeTo} (${durationMin}m)${exceeds.willExceed ? ' (FLAGGED)' : ''}`,
+        details: { type, hours, time_from: timeFrom, time_to: timeTo, exceeds_quota: exceeds.willExceed, reason: finalReason },
       });
       onSubmitted?.();
     } catch (err) {
@@ -124,24 +172,35 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
               style={{ borderColor: 'var(--border)' }}/>
           </div>
 
-          {/* Hours */}
+          {/* Time window — From / To clock times. The duration in mins
+              is auto-computed and shown read-only. Each request must be
+              between 15 and 60 mins per company policy (validated above
+              + enforced server-side via row-level check). */}
           <div>
-            <label className="block text-[10px] tracking-[0.25em] opacity-60 mb-2">HOURS</label>
-            <div className="grid grid-cols-3 gap-2">
-              {[1, 2, 3].map(h => (
-                <button key={h} type="button" onClick={() => setHours(h)}
-                  className="px-4 py-3 rounded-xl border text-sm transition-all"
-                  style={{
-                    borderColor: hours === h ? 'var(--ink)' : 'var(--border)',
-                    background: hours === h ? 'var(--ink)' : 'transparent',
-                    color: hours === h ? 'var(--paper)' : 'var(--ink)',
-                  }}>
-                  {h} hour{h !== 1 ? 's' : ''}
-                </button>
-              ))}
+            <label className="block text-[10px] tracking-[0.25em] mb-2"
+              style={{ color: '#1F1B16', fontWeight: 700 }}>
+              TIME · ARABIC الوقت
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <div className="text-[10px] mb-1" style={{ color: '#1F1B16', opacity: 0.7 }}>From · من</div>
+                <input type="time" value={timeFrom} onChange={e => setTimeFrom(e.target.value)}
+                  required step="60"
+                  className="w-full px-3 py-3 rounded-xl border bg-transparent text-sm font-mono"
+                  style={{ borderColor: 'var(--border)' }}/>
+              </div>
+              <div>
+                <div className="text-[10px] mb-1" style={{ color: '#1F1B16', opacity: 0.7 }}>To · إلى</div>
+                <input type="time" value={timeTo} onChange={e => setTimeTo(e.target.value)}
+                  required step="60"
+                  className="w-full px-3 py-3 rounded-xl border bg-transparent text-sm font-mono"
+                  style={{ borderColor: 'var(--border)' }}/>
+              </div>
             </div>
-            <div className="text-[11px] opacity-60 mt-2">
-              Each request is normally 1 hour. Picking 2 or 3 uses more of your monthly quota in a single request.
+            <div className="text-[11px] mt-2" style={{ color: timeError ? '#B91C1C' : '#1F1B16' }}>
+              {timeError || (
+                <>Duration: <span className="font-mono" style={{ fontWeight: 600 }}>{durationMin} mins</span> · uses {hours} {hours === 1 ? 'hour' : 'hours'} of your monthly bucket. Each request must not exceed 60 minutes (company policy).</>
+              )}
             </div>
           </div>
 
