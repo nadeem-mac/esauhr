@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Plane, Sunrise, Sunset, ChevronRight } from 'lucide-react';
 
 // =============================================================================
@@ -57,13 +58,20 @@ export default function RequestTypePicker({ onPick, onClose }) {
     },
   ];
 
-  return (
+  // Lock body scroll while open + portal-mount on document.body so the
+  // picker is fully isolated from any parent's render cycle.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
+  return createPortal(
     <div
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
       style={{
-        position: 'fixed', inset: 0, zIndex: 90,
+        position: 'fixed', inset: 0, zIndex: 100,
         background: 'rgba(15, 23, 42, 0.55)',
-        backdropFilter: 'blur(2px)',
         display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
         padding: '40px 16px', overflowY: 'auto',
       }}
@@ -131,6 +139,7 @@ export default function RequestTypePicker({ onPick, onClose }) {
           })}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

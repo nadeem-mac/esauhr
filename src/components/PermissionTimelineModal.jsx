@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X, CheckCircle2, Clock, XCircle, AlertTriangle, Sunrise, Sunset } from 'lucide-react';
 import { PERMISSION_TYPES } from '../lib/permissionLogic.js';
 
@@ -40,6 +41,15 @@ function fmtPermissionDate(iso) {
 }
 
 export default function PermissionTimelineModal({ row, employee, onClose }) {
+  // Lock body scroll while the modal is open so the page behind doesn't
+  // bounce or scroll when the user interacts with the modal. Restored on
+  // unmount.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
   if (!row) return null;
 
   const cfg     = PERMISSION_TYPES[row.type] || PERMISSION_TYPES.late_arrival;
@@ -49,13 +59,18 @@ export default function PermissionTimelineModal({ row, employee, onClose }) {
   // Build the four stages with their resolved state
   const stages = buildStages(row, stage);
 
-  return (
+  // Render via portal directly into document.body so the modal sits outside
+  // PermissionStatusCard's DOM tree. Without the portal, every realtime
+  // event on permission_requests triggered a parent re-render that
+  // cascaded through the modal subtree — visible to the user as flicker.
+  // The portal isolates the modal so parent state changes (load() refetch,
+  // refreshing toggle, hover transitions on row buttons) don't touch it.
+  return createPortal(
     <div
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
       style={{
-        position: 'fixed', inset: 0, zIndex: 90,
+        position: 'fixed', inset: 0, zIndex: 100,
         background: 'rgba(15, 23, 42, 0.55)',
-        backdropFilter: 'blur(2px)',
         display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
         padding: '40px 16px', overflowY: 'auto',
       }}
@@ -172,7 +187,8 @@ export default function PermissionTimelineModal({ row, employee, onClose }) {
           </ol>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
