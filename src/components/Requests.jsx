@@ -149,21 +149,17 @@ export default function Requests({ requests, leaveTypes, typeMap, empMap, onDeci
                 )}
                 <div className="flex gap-2 w-full sm:w-auto">
                   {r.status === 'pending' ? (
-                    <>
-                      <button onClick={() => act(r.id, 'approved')} disabled={isBusy}
-                        className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-full text-sm disabled:opacity-50"
-                        style={{ background: 'var(--evergreen-500)', color: 'var(--paper)' }}>
-                        <Check className="w-4 h-4"/> Approve
-                      </button>
-                      <button onClick={() => {
-                        const note = prompt('Reason for rejection (optional):');
-                        if (note !== null) act(r.id, 'rejected', note);
-                      }} disabled={isBusy}
-                        className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-full text-sm border disabled:opacity-50"
-                        style={{ borderColor: 'var(--clay)', color: 'var(--clay)' }}>
-                        <X className="w-4 h-4"/> Reject
-                      </button>
-                    </>
+                    // Per the access-control overhaul: every approval must go through
+                    // the multi-stage flow in the Reviews tab (manager step → HR step
+                    // → docx). Single-step Approve/Reject from this list view is
+                    // disabled — it would bypass the manager check that the user
+                    // explicitly required. Click "Open in Reviews" to action it.
+                    <Pill color="var(--copper)">
+                      ⏳ {r.stage === 'pending_hr' ? 'Awaiting HR' :
+                         r.stage === 'pending_manager' ? 'Awaiting manager' :
+                         r.stage === 'pending_substitutes' ? 'Awaiting substitute' :
+                         'Pending'}
+                    </Pill>
                   ) : (
                     <>
                       <Pill color={r.status === 'approved' ? 'var(--evergreen-500)' : 'var(--clay)'}>

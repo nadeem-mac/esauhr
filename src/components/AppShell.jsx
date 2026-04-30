@@ -257,20 +257,45 @@ export default function AppShell({ session, me, onRefreshMe }) {
   };
 
   const decideRequest = async (id, status, note) => {
-    const { error } = await supabase.from('leave_requests').update({
-      status,
-      decided_at: new Date().toISOString(),
-      decided_by: session.user.email,
-      decision_note: note || null,
-    }).eq('id', id);
-    if (error) throw error;
+    // Stage-aware decision. The legacy caller (Requests.jsx) used to
+    // pass status='approved'|'rejected' as a single-step decision, which
+    // bypassed the manager → HR multi-stage flow. After the access-control
+    // overhaul, every decision must advance one stage at a time:
+    //   pending_substitutes → pending_manager  (substitute path)
+    //   pending_manager     → pending_hr OR rejected_by_manager
+    //   pending_hr          → approved OR rejected_by_hr
+    // The DB trigger keeps the legacy `status` column synced from `stage`.
+    // Only admin (Nadeem) can call this directly now; everyone else uses
+    // ReviewerPanel which already does this correctly. We keep the function
+    // for admin emergency use and for backwards compat with anything that
+    // might still call it.
     const req = requests.find(r => r.id === id);
-    const empName = req ? (empMap[req.employee_id]?.name || req.employee_id) : '';
+    if (!req) throw new Error('Request not found in local cache');
+    const isApprove = status === 'approved';
+    let nextStage = null;
+    const patch = {};
+    const now = new Date().toISOString();
+    if (req.stage === 'pending_manager') {
+      nextStage = isApprove ? 'pending_hr' : 'rejected_by_manager';
+      patch.manager_decided_at = now;
+      patch.manager_decided_by = me?.auth_user_id || null;
+      if (note) patch.manager_note = note;
+    } else if (req.stage === 'pending_hr') {
+      nextStage = isApprove ? 'approved' : 'rejected_by_hr';
+      patch.hr_decided_at = now;
+      patch.hr_decided_by = me?.auth_user_id || null;
+    } else {
+      throw new Error('Cannot decide a request at stage "' + req.stage + '" from this view. Use the Reviews tab.');
+    }
+    patch.stage = nextStage;
+    const { error } = await supabase.from('leave_requests').update(patch).eq('id', id);
+    if (error) throw error;
+    const empName = empMap[req.employee_id]?.name || req.employee_id;
     logAction(me, 'leave_request_decide', {
       targetType: 'leave_request',
       targetId: id,
-      targetLabel: `${empName} · ${status}`,
-      details: { status, note: note || null },
+      targetLabel: `${empName} · ${nextStage}`,
+      details: { stage: nextStage, note: note || null },
     });
     await loadAll();
   };
