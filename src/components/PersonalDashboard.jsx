@@ -138,24 +138,20 @@ export default function PersonalDashboard({
         </p>
       </section>
 
-      {/* COLORFUL TILE GRID — 3 cols */}
+      {/* TILE GRID — 3 cols. Row 1: leave-context tiles (annual / next /
+          pending). Row 2: permission tiles (late / early adjacent) +
+          evaluation flag. Late + Early sit beside each other so the
+          combined-quota story reads naturally. */}
       <section className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
         <ColorTile
-          gradient="linear-gradient(135deg, #00D4C0 0%, #008C9E 100%)"
+          accent="#008C9E"
           label="ANNUAL LEAVE" icon={Calendar}
           stat={remaining} unit=" days"
           desc={`Of your ${totalEntitlement}-day yearly entitlement.`}
           progress={100 - usedPct}
         />
         <ColorTile
-          gradient="linear-gradient(135deg, #FF8A4D 0%, #FF4E6A 100%)"
-          label="LATE ARRIVAL" icon={Sunrise}
-          stat={lateUsed} unit={`h / ${PERMISSION_QUOTA.monthlyHours}h`}
-          desc="Combined cap: late + early. 3 occurrences."
-          progress={Math.min(100, (lateUsed/PERMISSION_QUOTA.monthlyHours)*100)}
-        />
-        <ColorTile
-          gradient="linear-gradient(135deg, #8B5CF6 0%, #4F46E5 100%)"
+          accent="#4F46E5"
           label="NEXT VACATION" icon={Plane}
           stat={nextLeave ? labelForType(nextLeave.leave_type_id, leaveTypes).split(' ')[0] : 'None'}
           desc={nextLeave
@@ -164,17 +160,24 @@ export default function PersonalDashboard({
           smallStat
         />
         <ColorTile
-          gradient="linear-gradient(135deg, #F472B6 0%, #DB2777 100%)"
+          accent="#F97316"
+          label="PENDING REQUESTS" icon={Clock}
+          stat={pendingCount} unit=""
+          desc={pendingCount === 0 ? 'Queue is clear.' : 'Awaiting decision.'}
+        />
+        <ColorTile
+          accent="#FF4E6A"
+          label="LATE ARRIVAL" icon={Sunrise}
+          stat={lateUsed} unit={`h / ${PERMISSION_QUOTA.monthlyHours}h`}
+          desc="Combined cap: late + early. 3 occurrences."
+          progress={Math.min(100, (lateUsed/PERMISSION_QUOTA.monthlyHours)*100)}
+        />
+        <ColorTile
+          accent="#DB2777"
           label="EARLY LEAVING" icon={Sunset}
           stat={earlyUsed} unit="h used"
           desc="Shared bucket with late arrivals this month."
           progress={Math.min(100, (earlyUsed/PERMISSION_QUOTA.monthlyHours)*100)}
-        />
-        <ColorTile
-          gradient="linear-gradient(135deg, #FBBF24 0%, #F97316 100%)"
-          label="PENDING REQUESTS" icon={Clock}
-          stat={pendingCount} unit=""
-          desc={pendingCount === 0 ? 'Queue is clear.' : 'Awaiting decision.'}
         />
         <FlagTile monthSummary={monthSummary} />
       </section>
@@ -368,26 +371,58 @@ export default function PersonalDashboard({
 }
 
 /* === Colorful gradient tile === */
-function ColorTile({ gradient, label, icon: Icon, stat, unit = '', desc, progress, onClick, smallStat = false }) {
+// Paper-chrome tile — matches the canonical .esau-card look (rounded-xl,
+// #FFFDF7 background, soft warm border, gentle hover lift). Keeps a small
+// dose of brand color via the accent dot in the header and the optional
+// progress bar fill, but the surrounding chrome is the same as every other
+// card on the page.
+//
+// Color is now passed as `accent` (a single hex/var) instead of `gradient`.
+// The accent threads through:
+//   • the small dot at the start of the header row
+//   • the progress bar fill
+function ColorTile({ accent = '#1F1B16', label, icon: Icon, stat, unit = '', desc, progress, onClick, smallStat = false }) {
   return (
     <div onClick={onClick}
-      className={`relative rounded-2xl p-4 text-white overflow-hidden flex flex-col justify-between transition-transform hover:-translate-y-1 ${onClick ? 'cursor-pointer' : ''}`}
-      style={{ background: gradient, minHeight: '140px', boxShadow:'0 8px 22px rgba(15,40,24,0.10)' }}>
-      <div className="absolute rounded-full pointer-events-none"
-        style={{ top:'-36px', right:'-36px', width:'120px', height:'120px', background:'rgba(255,255,255,0.13)' }} />
-      <div className="relative flex items-center justify-between">
-        <span className="text-[9px] tracking-[0.25em] font-semibold opacity-90">{label}</span>
-        {Icon && <Icon className="w-4 h-4 opacity-90" />}
-      </div>
-      <div className="relative">
-        <div className={smallStat ? "text-2xl font-bold leading-tight mt-2" : "font-bold leading-none mt-2"}
-             style={{ fontSize: smallStat ? undefined : '40px', letterSpacing:'-0.03em' }}>
-          {stat}{unit && <span className="font-medium opacity-70" style={{ fontSize:'15px', marginLeft:'2px' }}>{unit}</span>}
+      className={`rounded-xl border p-5 esau-card flex flex-col justify-between ${onClick ? 'cursor-pointer' : ''}`}
+      style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7', minHeight: '140px' }}>
+      {/* Header — accent dot + label on the left, icon on the right */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: accent }} />
+          <span className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.22em', fontWeight: 700 }}>
+            {label}
+          </span>
         </div>
-        <div className="text-[11px] opacity-90 mt-1 leading-snug">{desc}</div>
+        {Icon && <Icon className="w-4 h-4" style={{ color: accent }} />}
+      </div>
+      {/* Body — big serif stat, unit, description, optional progress bar */}
+      <div>
+        <div
+          style={{
+            fontFamily: "Georgia, 'Times New Roman', serif",
+            fontSize: smallStat ? '24px' : '38px',
+            color: '#1F1B16',
+            lineHeight: 1.05,
+            marginTop: '8px',
+            fontWeight: 500,
+            letterSpacing: '-0.02em',
+          }}
+        >
+          {stat}{unit && (
+            <span className="font-normal" style={{ fontSize: '14px', color: '#1F1B16', marginLeft: '3px' }}>
+              {unit}
+            </span>
+          )}
+        </div>
+        {desc && (
+          <div className="text-[11px] mt-1 leading-snug" style={{ color: '#1F1B16' }}>
+            {desc}
+          </div>
+        )}
         {progress !== undefined && (
-          <div className="h-1 rounded-full overflow-hidden mt-2" style={{ background:'rgba(255,255,255,0.25)' }}>
-            <div className="h-full rounded-full" style={{ width: progress + '%', background:'rgba(255,255,255,0.95)' }} />
+          <div className="h-1 rounded-full overflow-hidden mt-2.5" style={{ background: 'rgba(31,27,22,0.08)' }}>
+            <div className="h-full rounded-full" style={{ width: progress + '%', background: accent }} />
           </div>
         )}
       </div>
@@ -397,23 +432,36 @@ function ColorTile({ gradient, label, icon: Icon, stat, unit = '', desc, progres
 
 function FlagTile({ monthSummary }) {
   const flagged = monthSummary.overQuota;
-  const gradient = flagged
-    ? 'linear-gradient(135deg, #EF4444 0%, #B91C1C 100%)'
-    : 'linear-gradient(135deg, #34D399 0%, #059669 100%)';
+  const accent = flagged ? '#B91C1C' : 'var(--evergreen-600)';
   return (
-    <div className="relative rounded-2xl p-4 text-white overflow-hidden flex flex-col justify-between"
-      style={{ background: gradient, minHeight: '140px', boxShadow:'0 8px 22px rgba(15,40,24,0.10)' }}>
-      <div className="absolute rounded-full pointer-events-none"
-        style={{ top:'-36px', right:'-36px', width:'120px', height:'120px', background:'rgba(255,255,255,0.13)' }} />
-      <div className="relative flex items-center justify-between">
-        <span className="text-[9px] tracking-[0.25em] font-semibold opacity-90">EVALUATION FLAG</span>
-        <AlertTriangle className="w-4 h-4 opacity-90" />
+    <div
+      className="rounded-xl border p-5 esau-card flex flex-col justify-between"
+      style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7', minHeight: '140px' }}
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-1.5 h-1.5 rounded-full" style={{ background: accent }} />
+          <span className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.22em', fontWeight: 700 }}>
+            EVALUATION FLAG
+          </span>
+        </div>
+        <AlertTriangle className="w-4 h-4" style={{ color: accent }} />
       </div>
-      <div className="relative">
-        <div className="text-xl font-bold leading-tight mt-2">
+      <div>
+        <div
+          style={{
+            fontFamily: "Georgia, 'Times New Roman', serif",
+            fontSize: '24px',
+            color: '#1F1B16',
+            lineHeight: 1.05,
+            marginTop: '8px',
+            fontWeight: 500,
+            letterSpacing: '-0.02em',
+          }}
+        >
           {flagged ? 'Flagged' : 'Within quota'}
         </div>
-        <div className="text-[11px] opacity-90 mt-1 leading-snug">
+        <div className="text-[11px] mt-1 leading-snug" style={{ color: '#1F1B16' }}>
           {flagged
             ? `${monthSummary.hoursUsed}h used in ${monthSummary.occurrences} occurrence${monthSummary.occurrences !== 1 ? 's' : ''} — exceeds 3hr cap.`
             : `Combined cap: 3hr / 3 times per month. ${monthSummary.hoursRemaining}h left.`}
