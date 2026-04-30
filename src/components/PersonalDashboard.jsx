@@ -8,6 +8,7 @@ import { UserCheck, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { fmtDate, calculateBalance, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 import { summariseMonth, PERMISSION_QUOTA } from '../lib/permissionLogic.js';
 import PermissionRequestModal from './PermissionRequestModal.jsx';
+import StaffShiftStatusCard from './StaffShiftStatusCard.jsx';
 import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
 import { Download } from 'lucide-react';
 
@@ -253,6 +254,15 @@ export default function PersonalDashboard({
           </ul>
         </section>
       )}
+
+      {/* SHIFT STATUS — recent activity card. Renders only when the staff
+          member has accepted or declined any shift in the last 30 days, so
+          they can track the status of decisions they've already made (e.g.
+          accepted shift waiting for SUP final approval, or declined shift
+          waiting for manager follow-up). The card itself decides whether
+          to render based on its own data fetch — pass-through here is
+          deliberately minimal. */}
+      <StaffShiftStatusCard me={me} />
 
       {/* SUBSTITUTION REQUESTS — colleagues asking ME to cover for them */}
       {subRequests.length > 0 && (

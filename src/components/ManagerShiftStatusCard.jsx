@@ -19,7 +19,7 @@ import { directGet, supabase } from '../supabaseClient.js';
 //   declined       → red   "Declined — '<reason>'"
 //
 // Scope: rows where set_by === me.id, ordered by shift_date asc.
-// We hide rows that are >7 days in the past so the panel doesn't bloat.
+// We hide rows that are >30 days in the past so the panel doesn't bloat.
 //
 // Realtime: subscribes to employee_shifts changes filtered to set_by=eq.{me.id}
 // so when staff acknowledges, the row flips live without a manual refresh.
@@ -44,10 +44,12 @@ export default function ManagerShiftStatusCard({ me, employees }) {
 
   const load = useCallback(async () => {
     if (!me?.id) return;
-    // Only show shifts from the past 7 days onward — older ones are irrelevant
-    // and would just clutter the list.
+    // Show shifts from the last 30 days through all upcoming weeks. Older
+    // history is irrelevant for active management; the 30-day window keeps
+    // the panel manageable while still covering the typical SUP review
+    // cadence and any month-end reconciliation.
     const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - 7);
+    cutoff.setDate(cutoff.getDate() - 30);
     const cutoffISO = cutoff.toISOString().slice(0, 10);
     try {
       const data = await directGet(

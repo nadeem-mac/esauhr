@@ -47,6 +47,13 @@ export default function ShiftAcknowledgmentModal({ me, pendingShifts, employees,
   const [step, setStep] = useState('review');           // 'review' | 'declining' | 'submitting' | 'done'
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
+  // Once the user commits, we lock in their choice for the done-state
+  // copy so the success message can speak the right outcome — accepted
+  // shifts route to SUP (Bashaier) for final approval, declined ones
+  // route back to the manager. The original modal showed the same
+  // generic 'Thank you' for both, which left the staff member uncertain
+  // about what happens next.
+  const [doneDecision, setDoneDecision] = useState(null); // 'accept' | 'decline'
 
   const setBy = useMemo(() => {
     if (!pendingShifts?.length) return null;
@@ -93,6 +100,7 @@ export default function ShiftAcknowledgmentModal({ me, pendingShifts, employees,
         });
       } catch { /* audit best-effort */ }
 
+      setDoneDecision(decision);
       setStep('done');
       // Brief confirmation, then close so AppShell refreshes
       setTimeout(() => {
@@ -159,15 +167,28 @@ export default function ShiftAcknowledgmentModal({ me, pendingShifts, employees,
             <div className="flex flex-col items-center text-center py-6 gap-3 fade-in">
               <div
                 className="w-12 h-12 rounded-full flex items-center justify-center"
-                style={{ background: 'var(--evergreen-100)' }}
+                style={{
+                  background: doneDecision === 'decline'
+                    ? 'rgba(184, 74, 62, 0.12)'
+                    : 'var(--evergreen-100)',
+                }}
               >
-                <Check className="w-6 h-6" style={{ color: 'var(--evergreen-600)' }} />
+                <Check
+                  className="w-6 h-6"
+                  style={{
+                    color: doneDecision === 'decline'
+                      ? 'var(--clay)'
+                      : 'var(--evergreen-600)',
+                  }}
+                />
               </div>
-              <div className="serif text-xl" style={{ fontWeight: 500 }}>
-                Thank you.
+              <div className="text-lg" style={{ fontWeight: 600, color: '#1F1B16' }}>
+                {doneDecision === 'decline' ? 'Decline recorded.' : 'Acceptance recorded.'}
               </div>
-              <div className="text-sm" style={SMALL_TEXT}>
-                Your decision has been recorded.
+              <div className="text-sm max-w-sm" style={SMALL_TEXT}>
+                {doneDecision === 'decline'
+                  ? 'Your manager will be notified and will follow up with you to discuss the schedule.'
+                  : 'Final approval is now pending with the SUP (Bashaier). You will see the status update on your dashboard once approved.'}
               </div>
             </div>
           ) : (

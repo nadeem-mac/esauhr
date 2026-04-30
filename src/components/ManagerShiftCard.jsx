@@ -218,15 +218,24 @@ export default function ManagerShiftCard({ me, employees }) {
       const staffName = (staff?.name || '').split(' ')[0] || 'Staff';
       const nDays = upserts.length;
       const nRemoved = deleteKeys.length;
-      const parts = [];
-      if (nDays) parts.push(`${nDays} shift day${nDays === 1 ? '' : 's'} saved`);
-      if (nRemoved) parts.push(`${nRemoved} day${nRemoved === 1 ? '' : 's'} cleared`);
-      const summary = parts.length ? parts.join(' · ') : 'No changes';
-      // The toast renders as a green success banner on the card footer.
-      // It explains both what just happened AND what the staff member will
-      // see next, so the manager knows their hand-off is complete.
-      setToast(`✓ Done — ${summary}. ${staffName} will see this on next sign-in and must accept before HR is notified.`);
-      setTimeout(() => setToast(''), 8000);
+      // Build the success toast based on what actually changed. Three cases:
+      //   1. Roster issued (any new/updated rows) — staff must acknowledge,
+      //      then SUP (Bashaier) issues the final approval.
+      //   2. Only off-days cleared — no acknowledgment chain, just confirm
+      //      the schedule is updated.
+      //   3. Nothing changed — terse no-op.
+      let summary;
+      if (nDays && nRemoved) {
+        summary = `✓ Shift roster issued — ${nDays} day${nDays === 1 ? '' : 's'} dispatched, ${nRemoved} cleared. ${staffName} will be asked to acknowledge on next sign-in. Final approval will be issued by the SUP (Bashaier) once acknowledged.`;
+      } else if (nDays) {
+        summary = `✓ Shift roster issued — ${nDays} day${nDays === 1 ? '' : 's'} dispatched. ${staffName} will be asked to acknowledge on next sign-in. Final approval will be issued by the SUP (Bashaier) once acknowledged.`;
+      } else if (nRemoved) {
+        summary = `✓ Schedule updated — ${nRemoved} day${nRemoved === 1 ? '' : 's'} cleared.`;
+      } else {
+        summary = '✓ No changes to save.';
+      }
+      setToast(summary);
+      setTimeout(() => setToast(''), 9000);
       await loadWeek(); // refresh status pills
     } catch (e) {
       // If anything still fails we want a human-readable message instead of
@@ -436,7 +445,7 @@ export default function ManagerShiftCard({ me, employees }) {
             ) : toast ? (
               <span style={{ color: 'var(--evergreen-600)', fontWeight: 500 }}>{toast}</span>
             ) : (
-              <>Past dates are locked. Saved entries are sent to the staff member for acknowledgment before HR is notified.</>
+              <>Past dates and accepted shifts are locked. Saved entries are dispatched to the staff member for acknowledgment, then routed to the SUP (Bashaier) for final approval.</>
             )}
           </div>
           <button
