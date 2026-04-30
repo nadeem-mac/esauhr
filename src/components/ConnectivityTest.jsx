@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { CheckCircle2, XCircle, AlertTriangle, RefreshCw, Activity } from 'lucide-react';
-import { supabase, supabaseConfigured, SUPABASE_URL, probeSupabase } from '../supabaseClient.js';
+import { supabase, supabaseConfigured, SUPABASE_URL, probeSupabase, directGet, directPost } from '../supabaseClient.js';
 import { Card } from './Dashboard.jsx';
 
 const TABLES = ['employees', 'leave_types', 'leave_requests', 'leave_balances', 'public_holidays', 'audit_log'];
@@ -12,52 +12,82 @@ export default function ConnectivityTest() {
   const run = async () => {
     setRunning(true);
     const r = [];
+    // Push a check + immediately push to UI state so the user sees progress
+    // as the run goes, instead of an empty page until the very end.
+    const push = (entry) => { r.push(entry); setResults([...r]); };
+
+    // Race a promise against a timeout so a wedged supabase-js call never
+    // hangs the whole diagnostics. The rest of the app uses directGet/Post
+    // for exactly this reason; here we apply the same pattern.
+    const withTimeout = (promise, ms, label) => Promise.race([
+      Promise.resolve(promise),
+      new Promise((_, rej) => setTimeout(() => rej(new Error(label + ' timed out after ' + ms + 'ms')), ms)),
+    ]);
 
     // 1. Env vars
-    r.push({
+    push({
       name: 'Environment variables',
       detail: 'VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY',
       ok: supabaseConfigured,
       message: supabaseConfigured ? 'Configured' : 'Missing — set them in Netlify or .env.local',
     });
 
-    if (!supabaseConfigured) { setResults(r); setRunning(false); return; }
+    if (!supabaseConfigured) { setRunning(false); return; }
 
-    // 2. Reach Supabase
-    const probe = await probeSupabase();
-    r.push({
+    // 2. Reach Supabase — probeSupabase uses supabase.from() under the hood,
+    // which can wedge. Wrap it.
+    let probe;
+    try {
+      probe = await withTimeout(probeSupabase(), 8000, 'Supabase probe');
+    } catch (e) {
+      probe = { ok: false, message: e.message || 'Probe failed' };
+    }
+    push({
       name: 'Supabase reachable',
       detail: SUPABASE_URL,
       ok: probe.ok,
       message: probe.ok ? `Connected in ${probe.elapsed} ms` : probe.message,
     });
 
-    if (!probe.ok) { setResults(r); setRunning(false); return; }
+    if (!probe.ok) { setRunning(false); return; }
 
-    // 3. Auth session
-    const { data: sess } = await supabase.auth.getSession();
-    r.push({
+    // 3. Auth session — getSession() acquires a Web Lock and can stall on
+    // some sessions (the gotrue-js wedge). Wrap it.
+    let sess = { session: null };
+    try {
+      const out = await withTimeout(supabase.auth.getSession(), 5000, 'getSession');
+      sess = out?.data || { session: null };
+    } catch (e) {
+      console.warn('Diagnostics: getSession timed out:', e.message);
+    }
+    push({
       name: 'Authentication',
       detail: sess.session ? `Signed in as ${sess.session.user.email}` : 'No active session',
       ok: !!sess.session,
       message: sess.session ? 'Active session' : 'No active session — sign in to write data',
     });
 
-    // 4. Each table check
+    // 4. Each table check — use directGet (raw fetch with timeout).
+    // Read 1 row to confirm the table is reachable; we don't need exact counts.
     for (const tbl of TABLES) {
       const t0 = performance.now();
-      const { error, count } = await supabase
-        .from(tbl)
-        .select('*', { count: 'exact', head: true });
-      const elapsed = Math.round(performance.now() - t0);
-
-      r.push({
-        name: `Table · ${tbl}`,
-        detail: error ? error.message : `${count} row${count === 1 ? '' : 's'}`,
-        ok: !error,
-        message: error ? error.message : `OK in ${elapsed} ms`,
-        warn: !error && tbl === 'employees' && count === 0,
-      });
+      try {
+        await directGet(tbl, 'select=*&limit=1', { timeoutMs: 6000 });
+        const elapsed = Math.round(performance.now() - t0);
+        push({
+          name: `Table · ${tbl}`,
+          detail: 'reachable',
+          ok: true,
+          message: `OK in ${elapsed} ms`,
+        });
+      } catch (err) {
+        push({
+          name: `Table · ${tbl}`,
+          detail: err.message || 'failed',
+          ok: false,
+          message: err.message || 'Failed',
+        });
+      }
     }
 
     // 5. Write probe via audit_log
@@ -66,24 +96,31 @@ export default function ConnectivityTest() {
       // Live audit_log schema (verified by direct DB probe):
       //   id, actor_user_id, actor_psn, actor_name, action,
       //   target_type, target_id, target_label, details, created_at, user_agent
-      // The previous payload used `actor` and `entity_type` which don't exist.
-      const { error } = await supabase.from('audit_log').insert({
-        action: 'connectivity_test',
-        target_type: 'system',
-        actor_user_id: sess.session.user.id || null,
-        actor_psn:     null, // diagnostics doesn't have me.id wired in here
-        actor_name:    sess.session.user.email || null,
-        details:       { ts: new Date().toISOString() },
-        user_agent:    typeof navigator !== 'undefined' ? navigator.userAgent : null,
-      });
-      const elapsed = Math.round(performance.now() - t0);
-
-      r.push({
-        name: 'Write access',
-        detail: 'audit_log insert',
-        ok: !error,
-        message: error ? error.message : `Wrote test row in ${elapsed} ms`,
-      });
+      try {
+        await directPost('audit_log', {
+          action: 'connectivity_test',
+          target_type: 'system',
+          actor_user_id: sess.session.user.id || null,
+          actor_psn:     null,
+          actor_name:    sess.session.user.email || null,
+          details:       { ts: new Date().toISOString() },
+          user_agent:    typeof navigator !== 'undefined' ? navigator.userAgent : null,
+        }, { timeoutMs: 6000 });
+        const elapsed = Math.round(performance.now() - t0);
+        push({
+          name: 'Write access',
+          detail: 'audit_log insert',
+          ok: true,
+          message: `Wrote test row in ${elapsed} ms`,
+        });
+      } catch (err) {
+        push({
+          name: 'Write access',
+          detail: 'audit_log insert',
+          ok: false,
+          message: err.message || 'Failed',
+        });
+      }
     }
 
     // 6. Realtime channel test
@@ -97,14 +134,14 @@ export default function ConnectivityTest() {
         });
       });
       supabase.removeChannel(channel);
-      r.push({
+      push({
         name: 'Realtime',
         detail: 'WebSocket subscription',
         ok: sub === 'ok',
         message: sub === 'ok' ? 'Subscribed and unsubscribed cleanly' : `Status: ${sub}`,
       });
     } catch (e) {
-      r.push({
+      push({
         name: 'Realtime',
         detail: 'WebSocket subscription',
         ok: false,
@@ -112,7 +149,6 @@ export default function ConnectivityTest() {
       });
     }
 
-    setResults(r);
     setRunning(false);
   };
 
