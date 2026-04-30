@@ -3,6 +3,7 @@ import { Check, ArrowRight, Palmtree, Calendar, KeyRound, Mail, AlertCircle, Che
 import { supabase } from '../supabaseClient.js';
 import { todayISO, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 import BashaierTasksCard from './BashaierTasksCard.jsx';
+import PendingShiftApprovalsCard from './PendingShiftApprovalsCard.jsx';
 import ManagerShiftCard from './ManagerShiftCard.jsx';
 
 export default function Dashboard({ me, employees, requests, typeMap, empMap, permissions, onGoToRequests, onNewRequest }) {
@@ -627,6 +628,17 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
         </Card>
       </div>
 
+      {/* Pending shift approvals — Bashaier-only Card. Self-hides when the
+          queue is empty so it never shows a stale 0-state. Sits between the
+          leave/permission cards above and the monthly-report tasks below
+          because conceptually it's a third "things to approve" surface,
+          parallel to leave approvals — not a sibling of report drafting. */}
+      {me?.is_hr_reviewer && !me?.is_admin && (
+        <div className="mt-5">
+          <PendingShiftApprovalsCard employees={employees} />
+        </div>
+      )}
+
       {/* Bashaier's tasks — only for HR reviewer who isn't admin */}
       {me?.is_hr_reviewer && !me?.is_admin && (
         <div id="bashaier-tasks-anchor" style={{ scrollMarginTop: '80px' }}>
@@ -740,7 +752,10 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
 /* ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ small UI primitives shared across pages ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ */
 export function Card({ title, subtitle, children, accent }) {
   return (
-    <div className="rounded-xl border p-5" style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}>
+    <div
+      className="rounded-xl border p-5 esau-card"
+      style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}
+    >
       {(title || subtitle) && (
         <div className="flex items-baseline justify-between mb-4 pb-3 border-b" style={{ borderColor: 'var(--border-soft)' }}>
           <div className="flex items-center gap-2">
