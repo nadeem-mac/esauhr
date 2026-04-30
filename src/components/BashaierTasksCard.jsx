@@ -571,7 +571,7 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
       }
       agg.totalCount += 1;
       if (v.violation_type === 'late') agg.lateCount += 1;
-      else if (v.violation_type === 'early') agg.earlyCount += 1;
+      else if (v.violation_type === 'early' || v.violation_type === 'early_leave') agg.earlyCount += 1;
       else if (v.violation_type === 'missed_in' || v.violation_type === 'missed_out') agg.missedCount += 1;
       if (v.violation_date) agg.dates.add(v.violation_date);
     });

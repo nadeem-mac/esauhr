@@ -633,7 +633,7 @@ export default function AttendanceView({ me, employees }) {
     const url = buildMailto({ to: entry.employee.email, cc, subject, body });
     logViolation({
       entry,
-      violationType: 'early',
+      violationType: 'early_leave',
       minutesOff: entry.minutesEarly,
       punchOutTime: entry.punchOutStr,
       scheduledStart: entry.scheduledStart || '08:00',
@@ -780,7 +780,7 @@ export default function AttendanceView({ me, employees }) {
               detail: 'Punched out at ' + e.punchOutStr + ' — ' + e.minutesEarly + ' min before scheduled ' + e.scheduledEnd
                 + (e.isCustomShift ? ' · ' + e.scheduleLabel : (e.isSup ? ' (SUP team)' : '')),
               metaIcon: <Briefcase className="w-4 h-4"/>,
-              logged: !!loggedMarkers[e.employee.id + ':early'],
+              logged: !!loggedMarkers[e.employee.id + ':early_leave'],
             }))}
             renderButton={(entry) => (
               <RowButton
