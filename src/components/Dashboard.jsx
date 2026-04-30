@@ -23,10 +23,26 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
     [requests, today]
   );
 
-  const pending = useMemo(
-    () => requests.filter(r => r.status === 'pending').sort((a,b) => new Date(b.requested_at) - new Date(a.requested_at)),
-    [requests]
-  );
+  // Pending decisions waiting on the viewing user. Combines leave requests
+  // and permission requests so the PENDING APPROVAL tile + 'Pending
+  // requests' card reflect everything Bashaier (or any reviewer) needs to
+  // act on. Each item is tagged with _kind so the rendering in the
+  // 'Pending requests' card below can branch correctly.
+  //
+  // For HR (Bashaier): leaves at stage='pending_hr' + permissions at
+  // stage='pending_hr'. For admins: same — admins see the same final-tier
+  // queue plus per-stage breakdowns elsewhere if needed.
+  const pending = useMemo(() => {
+    const leaves = (requests || [])
+      .filter(r => r.status === 'pending')
+      .map(r => ({ ...r, _kind: 'leave' }));
+    const perms = (permissions || [])
+      .filter(p => p.status === 'pending')
+      .map(p => ({ ...p, _kind: 'permission' }));
+    return [...leaves, ...perms].sort((a, b) =>
+      new Date(b.requested_at || b.created_at) - new Date(a.requested_at || a.created_at)
+    );
+  }, [requests, permissions]);
 
   const upcoming = useMemo(() => {
     return requests

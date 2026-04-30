@@ -3,6 +3,7 @@ import { supabase, directPatch, directGet } from '../supabaseClient.js';
 import { CheckCircle2, XCircle, Clock, Loader2, AlertTriangle, Sunrise, Sunset, Calendar, RefreshCw } from 'lucide-react';
 import { logAction } from '../lib/audit.js';
 import HrApprovalModal from './HrApprovalModal.jsx';
+import PermissionApprovedModal from './PermissionApprovedModal.jsx';
 import { fmtDate } from '../lib/leaveLogic.js';
 import { PERMISSION_TYPES, summariseMonth } from '../lib/permissionLogic.js';
 
@@ -14,6 +15,10 @@ export default function ReviewerPanel({ me }) {
   const [leave, setLeave]             = useState([]);
   const [perms, setPerms]             = useState([]);
   const [empMap, setEmpMap]           = useState({});
+  // After Bashaier issues the FINAL HR approval on a permission, this holds
+  // the freshly-approved row so PermissionApprovedModal opens with the
+  // download letter / open email draft actions.
+  const [approvedPermission, setApprovedPermission] = useState(null);
   const [isManager, setIsManager]     = useState(false);
   const [loading, setLoading]         = useState(true);
   const [busyId, setBusyId]           = useState(null);
@@ -180,6 +185,14 @@ export default function ReviewerPanel({ me }) {
         targetLabel: `${empMap[req.employee_id]?.name || req.employee_id} · ${PERMISSION_TYPES[req.type]?.label} · ${nextStage}`,
         details: { stage: nextStage, action, exceeds_quota: req.exceeds_quota },
       });
+      // Final HR approval — open the post-approval modal so Bashaier can
+      // download the printable .docx letter and open the prefilled email
+      // draft (To: staff, CC: manager + executives). The patched fields
+      // are merged onto the row so the modal shows the just-stamped
+      // hr_decided_at without waiting for the next load() pass.
+      if (nextStage === 'approved') {
+        setApprovedPermission({ ...req, ...patch });
+      }
       await load();
     } catch (err) { alert(err.message); }
     finally       { setBusyId(null); }
@@ -357,6 +370,16 @@ export default function ReviewerPanel({ me }) {
           me={me}
           onClose={() => setHrModalReq(null)}
           onApproved={() => { setHrModalReq(null); load(); }}
+        />
+      )}
+      {approvedPermission && (
+        <PermissionApprovedModal
+          request={approvedPermission}
+          employee={empMap[approvedPermission.employee_id]}
+          manager={empMap[empMap[approvedPermission.employee_id]?.manager_id]}
+          hrApprover={me}
+          employees={Object.values(empMap)}
+          onClose={() => setApprovedPermission(null)}
         />
       )}
     </div>
