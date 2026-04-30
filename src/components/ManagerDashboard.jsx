@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { fmtDate, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 import { PERMISSION_TYPES } from '../lib/permissionLogic.js';
+import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
 
 // ────────────────────────────────────────────────────────────────────────────
 // ManagerDashboard
@@ -215,8 +216,20 @@ export default function ManagerDashboard({ me, employees, onGoToReviews, onGoToR
   const todayLong = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
   // ── Render ──────────────────────────────────────────────────────────────
+  // empMap derived inline so PendingSubstitutionsCard can show colleague
+  // names instead of bare PSN ids. Cheap — employees array is small.
+  const empMap = useMemo(
+    () => Object.fromEntries((employees || []).map(e => [e.id, e])),
+    [employees]
+  );
+
   return (
     <div className="fade-in space-y-6">
+      {/* Substitution requests — surfaced for managers in case a staff
+          member picks them as a substitute. Card hides itself when
+          there's nothing to act on. */}
+      <PendingSubstitutionsCard me={me} empMap={empMap} />
+
       {/* Greeting */}
       <div>
         <div className="text-[10px] tracking-[0.25em] mb-1" style={{ color: '#1F1B16', fontWeight: 700 }}>

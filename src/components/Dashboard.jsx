@@ -5,6 +5,7 @@ import { todayISO, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLo
 import BashaierTasksCard from './BashaierTasksCard.jsx';
 import PendingShiftApprovalsCard from './PendingShiftApprovalsCard.jsx';
 import ManagerShiftCard from './ManagerShiftCard.jsx';
+import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
 
 export default function Dashboard({ me, employees, requests, typeMap, empMap, permissions, onGoToRequests, onGoToReviews, onNewRequest }) {
   // Personalised greeting — fully inline to eliminate any minifier scope issues.
@@ -232,6 +233,12 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
 
   return (
     <div className="space-y-8">
+      {/* Substitution requests — Bashaier or Nadeem might be picked as a
+          substitute by another staff member. The card hides itself when
+          there's nothing to act on, so it's safe to mount here even
+          though most days it'll render nothing. */}
+      <PendingSubstitutionsCard me={me} empMap={empMap} />
+
       {/* Hover-lift styles for badges across the dashboard. Inline boxShadow on
           each badge is overridden on :hover with !important so the lift looks
           consistent. Added gentle transition + tiny scale on the colored rail. */}

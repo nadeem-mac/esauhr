@@ -4,11 +4,11 @@ import {
   Calendar, Clock, Plus, AlertTriangle, Sun, Sunrise, Sunset,
   CheckCircle2, XCircle, Loader2, Users, Plane
 } from 'lucide-react';
-import { UserCheck, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { fmtDate, calculateBalance, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 import { summariseMonth, PERMISSION_QUOTA } from '../lib/permissionLogic.js';
 import PermissionStatusCard from './PermissionStatusCard.jsx';
 import StaffShiftStatusCard from './StaffShiftStatusCard.jsx';
+import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
 import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
 import { Download } from 'lucide-react';
 
@@ -24,9 +24,6 @@ export default function PersonalDashboard({
   const [adjustments, setAdjustments] = useState({});
   const [requests,    setRequests]    = useState([]);
   const [permissions, setPermissions] = useState([]);
-  // Substitution requests where THIS user is one of the proposed substitutes
-  // and the request is still waiting on substitute decisions.
-  const [subRequests, setSubRequests] = useState([]);
   const [loading,     setLoading]     = useState(true);
 
   const load = useCallback(async () => {
@@ -37,57 +34,20 @@ export default function PersonalDashboard({
       const month = new Date().toISOString().slice(0, 7);
       // directGet (raw fetch + timeout) avoids supabase-js wedge after sign-in.
       const safe = (p) => p.catch((err) => { console.warn('PD load failed:', err); return null; });
-      const [bal, reqs, perms, subs] = await Promise.all([
+      const [bal, reqs, perms] = await Promise.all([
         safe(directGet('leave_balances',     `select=*&employee_id=eq.${me.id}&year=eq.${year}&leave_type_id=eq.annual&limit=1`, { timeoutMs: 10000 })),
         safe(directGet('leave_requests',     `select=*&employee_id=eq.${me.id}&order=start_date.desc&limit=20`,                    { timeoutMs: 10000 })),
         safe(directGet('permission_requests',`select=*&employee_id=eq.${me.id}&permission_date=gte.${month}-01&order=permission_date.desc`, { timeoutMs: 10000 })),
-        safe(directGet('leave_requests',     `select=*&substitute_ids=cs.{${me.id}}&stage=eq.pending_substitutes&order=start_date.asc`, { timeoutMs: 10000 })),
       ]);
       setAdjustments(Array.isArray(bal) && bal.length > 0 ? bal[0] : {});
       setRequests(Array.isArray(reqs) ? reqs : []);
       setPermissions(Array.isArray(perms) ? perms : []);
-      // Filter to only requests where MY decision is still 'pending'
-      setSubRequests((Array.isArray(subs) ? subs : []).filter(r => {
-        const d = r.substitute_decisions?.[me.id];
-        if (!d) return true;
-        const dec = typeof d === 'string' ? d : d.decision;
-        return dec !== 'accepted' && dec !== 'declined';
-      }));
     } catch (err) {
       console.warn('PersonalDashboard load failed:', err);
     } finally { setLoading(false); }
   }, [me?.id]);
 
   useEffect(() => { load(); }, [load]);
-
-  // Substitute response handler at COMPONENT scope (was previously trapped inside
-  // a useEffect by a bad earlier patch).
-  // The Postgres trigger advance_stage_on_substitute_decision will auto-advance
-  // the request stage to 'pending_manager' (if all accepted) or
-  // 'rejected_by_substitute' (if anyone declined).
-  const respondToSubstitution = useCallback(async (request, decision) => {
-    if (!me?.id) return;
-    const merged = {
-      ...(request.substitute_decisions || {}),
-      [me.id]: { decision, at: new Date().toISOString() }
-    };
-    try {
-      const updatePromise = supabase
-        .from('leave_requests')
-        .update({ substitute_decisions: merged })
-        .eq('id', request.id);
-      // 10s timeout so a hung supabase-js client doesn't lock the UI
-      const { error } = await Promise.race([
-        Promise.resolve(updatePromise),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('decision update timed out')), 10000)),
-      ]);
-      if (error) throw error;
-      await load();
-    } catch (err) {
-      console.warn('substitute decision failed:', err);
-      alert('Could not record your decision: ' + (err.message || err));
-    }
-  }, [me?.id, load]);
 
   // Realtime subscription removed — it was wedging the supabase-js client. Users
   // can refresh the page or it will reload when they navigate back to the dashboard.
@@ -271,51 +231,11 @@ export default function PersonalDashboard({
 
       <StaffShiftStatusCard me={me} />
 
-      {/* SUBSTITUTION REQUESTS — colleagues asking ME to cover for them */}
-      {subRequests.length > 0 && (
-        <section className="rounded-2xl overflow-hidden"
-                 style={{ background: 'linear-gradient(135deg, #FFF8E7 0%, #FFE8B8 100%)', border: '1px solid #E8C97A' }}>
-          <div className="px-5 py-4 flex items-center gap-2"
-               style={{ borderBottom: '1px solid #E8C97A' }}>
-            <UserCheck className="w-4 h-4" style={{ color: '#8B6914' }} />
-            <div className="font-semibold text-sm" style={{ color: '#5C4406' }}>
-              {subRequests.length === 1 ? 'A colleague needs you to cover' : `${subRequests.length} colleagues need you to cover`}
-            </div>
-          </div>
-          <ul className="divide-y" style={{ borderColor: 'rgba(139,105,20,0.2)' }}>
-            {subRequests.map(req => {
-              const initials = getInitials(req.employee_id);
-              return (
-                <li key={req.id} className="px-5 py-3 flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
-                       style={{ background: avatarColor(req.employee_id) }}>
-                    {initials}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-semibold truncate" style={{ color: '#5C4406' }}>
-                      {req.employee_id}
-                    </div>
-                    <div className="text-xs opacity-80" style={{ color: '#5C4406' }}>
-                      {fmtDateShort(req.start_date)} → {fmtDateShort(req.end_date)} · {req.days} day{req.days !== 1 ? 's' : ''}
-                      {req.reason ? ' · ' + req.reason : ''}
-                    </div>
-                  </div>
-                  <button onClick={() => respondToSubstitution(req, 'declined')}
-                    className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-full"
-                    style={{ background: '#fff', color: '#B83A2E', border: '1px solid #B83A2E' }}>
-                    <ThumbsDown className="w-3 h-3" /> Decline
-                  </button>
-                  <button onClick={() => respondToSubstitution(req, 'accepted')}
-                    className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-full"
-                    style={{ background: 'linear-gradient(135deg, #2D5F3F 0%, #1F4530 100%)', color: '#fff' }}>
-                    <ThumbsUp className="w-3 h-3" /> Accept
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      )}
+      {/* SUBSTITUTION REQUESTS — colleagues asking ME to cover for them.
+          Extracted to a shared component so admins, HR, and managers
+          (who land on different dashboard variants) also see this when
+          they're picked as substitutes. */}
+      <PendingSubstitutionsCard me={me} empMap={empMap} />
 
       {/* RECENT */}
       <section className="rounded-2xl border bg-white p-5" style={{ borderColor:'var(--border-soft)' }}>
