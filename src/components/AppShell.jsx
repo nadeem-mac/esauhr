@@ -89,6 +89,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
   const [balances, setBalances]         = useState([]);
   const [holidays, setHolidays]         = useState([]);
   const [loading, setLoading]           = useState(true);
+  const [refreshing, setRefreshing]     = useState(false);
   const [error, setError]               = useState('');
   const [showNewRequest, setShowNewRequest] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
@@ -108,8 +109,8 @@ export default function AppShell({ session, me, onRefreshMe }) {
     [isAdmin, isReviewer, isManager, isHrReviewer, me?.id, me?.psn]
   );
 
-  const loadAll = useCallback(async () => {
-    setLoading(true);
+  const loadAll = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     setError('');
     try {
       // Use directGet (raw fetch with timeout) instead of the supabase-js builder
@@ -134,7 +135,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
     } catch (err) {
       setError(err.message || 'Failed to load data');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -377,24 +378,31 @@ export default function AppShell({ session, me, onRefreshMe }) {
               <Plus className="w-4 h-4" /><span className="hidden sm:inline">New request</span>
             </button>
             <button
-              onClick={() => {
-                // Hard refresh — bust HTTP cache so the browser re-fetches the
-                // JS bundle and the app re-runs all data loads. Use the URL
-                // constructor so the nc= param is replaced (not duplicated)
-                // when it's already present in the search string.
+              onClick={async () => {
+                // Silent in-place refresh — re-fetch all data from the
+                // server without reloading the page or signing the user
+                // out. The icon spins while it's running so the user gets
+                // feedback. Auth state is untouched.
+                if (refreshing) return;
+                setRefreshing(true);
                 try {
-                  const url = new URL(window.location.href);
-                  url.searchParams.set('nc', Date.now().toString());
-                  window.location.replace(url.toString());
-                } catch {
-                  window.location.reload();
+                  // Refresh the user record (in case role flags changed
+                  // server-side, e.g. Nadeem just made them a manager) and
+                  // all the app data in parallel.
+                  await Promise.all([
+                    typeof onRefreshMe === 'function' ? onRefreshMe() : Promise.resolve(),
+                    loadAll({ silent: true }),
+                  ]);
+                } finally {
+                  setRefreshing(false);
                 }
               }}
-              className="p-2.5 rounded-full border esau-refresh-btn"
+              disabled={refreshing}
+              className="p-2.5 rounded-full border esau-refresh-btn disabled:opacity-60"
               title="Refresh — fetch the latest data"
               aria-label="Refresh"
               style={{ borderColor: 'var(--border-soft)' }}>
-              <RefreshCw className="w-4 h-4" />
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
             </button>
             <button onClick={signOut}
               className="p-2.5 rounded-full border"
