@@ -121,15 +121,34 @@ export default function HrApprovalModal({ request, employee, manager, substitute
                 <div className="flex items-start gap-3 pt-3 border-t" style={{ borderColor: 'var(--border-soft, #E8E5D8)' }}>
                   <Users className="w-4 h-4 mt-0.5 opacity-70 flex-shrink-0" />
                   <div className="flex-1 text-xs">
-                    <div className="opacity-70 mb-1">Coverage confirmed by:</div>
+                    <div className="opacity-70 mb-1.5">Coverage confirmed by:</div>
                     {(substitutes || []).length === 0 && (
                       <div className="opacity-60 italic">No substitute coverage on file</div>
                     )}
-                    {(substitutes || []).map(s => (
-                      <div key={s.id} className="mt-0.5">
-                        {s.name} <span className="opacity-50">({s.id})</span>
-                      </div>
-                    ))}
+                    {/* Each substitute with their accept/decline status.
+                        Reads request.substitute_decisions[psn] which is
+                        either a string ('accepted'|'declined'|'pending')
+                        or an object { decision, at } depending on when
+                        the row was written. */}
+                    {(substitutes || []).map(s => {
+                      const raw = request?.substitute_decisions?.[s.id];
+                      const dec = !raw ? 'pending' :
+                                  typeof raw === 'string' ? raw : (raw.decision || 'pending');
+                      const accepted = dec === 'accepted';
+                      const declined = dec === 'declined';
+                      const bg    = accepted ? '#ECFDF5' : declined ? '#FEE2E2' : '#FEF3C7';
+                      const color = accepted ? '#0F4C2A' : declined ? '#B91C1C' : '#92400E';
+                      const label = accepted ? 'ACCEPTED' : declined ? 'DECLINED' : 'PENDING';
+                      return (
+                        <div key={s.id} className="mt-1 flex items-center gap-2">
+                          <span>{s.name} <span className="opacity-50">({s.id})</span></span>
+                          <span className="px-1.5 py-0.5 rounded-full"
+                                style={{ background: bg, color, fontSize: '9px', fontWeight: 700, letterSpacing: '0.1em' }}>
+                            {label}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 

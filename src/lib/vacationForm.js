@@ -394,6 +394,19 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
 const CEO_EMAIL          = 'johnho@evergreen-shipping.com.sa';
 const COUNTRY_HEAD_EMAIL = 'jamesliu@evergreen-shipping.com.sa';
 
+// HR signature block — kept identical to the one in permissionLetter.js so
+// every approval email Bashaier sends shares the same closing. If the org
+// changes the HR signatory, update both files.
+const HR_SIGNATURE = {
+  name:    'BASHAIER ALI',
+  company: 'Evergreen Shipping Agency Saudi Co.,(L.L.C)',
+  unit:    'ESAU - SADMN SUP/ HR DEPT',
+  address: 'P.O.Box : 1008,  DAMMAM – 31431, K.S.A',
+  whatsapp:'966-54 320 9694',
+  tel:     '966-013 813 8563 – Ext 8543',
+  email:   'bashaier.alsubaie@evergreen-shipping.com.sa',
+};
+
 export function buildEmailDraft({ employee, request, manager, hrApprover, substitutes = [] }) {
   const leaveTypeLabel = LEAVE_TYPE_NAMES[request.leave_type_id] || 'Annual Leave';
   const dateRange = `${fmtDate(request.start_date)} - ${fmtDate(request.end_date)}`;
@@ -401,39 +414,48 @@ export function buildEmailDraft({ employee, request, manager, hrApprover, substi
   const to = [employee.email].filter(Boolean).join(',');
   const ccList = [
     manager?.email,
-    hrApprover?.email,
     CEO_EMAIL,
     COUNTRY_HEAD_EMAIL,
   ].filter(Boolean);
   const cc = ccList.join(',');
 
-  const subject = `Leave Approved - ${employee.name} - ${dateRange}`;
+  const subject = `Leave approved · ${employee.name} · ${dateRange}`;
 
   const body = [
     `Dear ${employee.name?.split(' ')[0] || 'Colleague'},`,
     '',
-    `Your ${leaveTypeLabel.toLowerCase()} request has been approved.`,
+    `Your ${leaveTypeLabel.toLowerCase()} request from ${dateRange} (${request.days} day${request.days === 1 ? '' : 's'}${request.is_half_day ? ' — half day' : ''}) has been approved.`,
     '',
-    `Period: ${dateRange}`,
-    `Days:   ${request.days} day${request.days === 1 ? '' : 's'}${request.is_half_day ? ' (half day)' : ''}`,
-    `Reason: ${request.reason || '-'}`,
+    `Reason on file: ${request.reason || '—'}`,
     '',
     `Coverage during your absence:`,
     ...(substitutes && substitutes.length > 0
-      ? substitutes.map(s => `  - ${s.name} (${s.id})`)
-      : ['  - -']),
+      ? substitutes.map(s => `  • ${s.name} (${s.id})`)
+      : ['  • —']),
     '',
-    `Please find the signed vacation form attached.`,
-    `The Arabic translation is included alongside the English text in the form.`,
+    `The signed vacation form is attached for your records, kindly print it and get it signed by your manager and submit hard copy to HR office.`,
     '',
     `If you have any questions, please contact HR.`,
     '',
-    `Best regards,`,
-    `${hrApprover?.name || 'HR Department'}`,
-    `Evergreen Shipping Agency Saudi - HR Department`,
+    `Thanks and regards,`,
+    '',
+    HR_SIGNATURE.name,
+    HR_SIGNATURE.company,
+    HR_SIGNATURE.unit,
+    HR_SIGNATURE.address,
+    `WhatsApp: ${HR_SIGNATURE.whatsapp}`,
+    `Tel: ${HR_SIGNATURE.tel}`,
+    `Email: ${HR_SIGNATURE.email}`,
   ].join('\n');
 
-  const mailto = `mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  // URLSearchParams encodes spaces as '+'; replace with %20 so the body
+  // reads correctly in Outlook / Apple Mail / Gmail web. Mirrors the
+  // permission email mailto encoding.
+  const params = new URLSearchParams();
+  if (cc) params.set('cc', cc);
+  params.set('subject', subject);
+  params.set('body', body);
+  const mailto = `mailto:${encodeURIComponent(to)}?${params.toString().replace(/\+/g, '%20')}`;
 
   return { to, cc, subject, body, mailto };
 }

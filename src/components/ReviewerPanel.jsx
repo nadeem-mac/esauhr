@@ -351,8 +351,31 @@ export default function ReviewerPanel({ me }) {
                               {req.reason ? ' · ' + req.reason : ''}
                             </div>
                             {req.substitute_ids && req.substitute_ids.length > 0 && (
-                              <div className="text-xs opacity-60 mt-1">
-                                Cover: {req.substitute_ids.map(sid => empMap[sid]?.name || sid).join(', ')}
+                              <div className="text-xs mt-1.5 flex items-center gap-1.5 flex-wrap">
+                                <span style={{ color: '#1F1B16', fontWeight: 600, letterSpacing: '0.1em', fontSize: '10px' }}>COVER:</span>
+                                {req.substitute_ids.map(sid => {
+                                  // substitute_decisions can hold either
+                                  // { psn: 'accepted' | 'declined' | 'pending' }
+                                  // or { psn: { decision, at } } depending on
+                                  // when the row was written. Handle both.
+                                  const raw = req.substitute_decisions?.[sid];
+                                  const dec = !raw ? 'pending' :
+                                              typeof raw === 'string' ? raw : (raw.decision || 'pending');
+                                  const accepted = dec === 'accepted';
+                                  const declined = dec === 'declined';
+                                  const bg    = accepted ? '#ECFDF5' : declined ? '#FEE2E2' : '#FEF3C7';
+                                  const color = accepted ? '#0F4C2A' : declined ? '#B91C1C' : '#92400E';
+                                  const label = accepted ? '✓' : declined ? '✕' : '…';
+                                  return (
+                                    <span key={sid}
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
+                                      style={{ background: bg, color, fontSize: '11px', fontWeight: 500 }}
+                                      title={dec.toUpperCase()}>
+                                      <span style={{ fontWeight: 700 }}>{label}</span>
+                                      {empMap[sid]?.name || sid}
+                                    </span>
+                                  );
+                                })}
                               </div>
                             )}
                           </div>
