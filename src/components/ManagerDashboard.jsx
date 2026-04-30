@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { fmtDate, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 import ManagerShiftCard from './ManagerShiftCard.jsx';
+import ManagerShiftStatusCard from './ManagerShiftStatusCard.jsx';
 
 // ────────────────────────────────────────────────────────────────────────────
 // ManagerDashboard
@@ -231,6 +232,13 @@ export default function ManagerDashboard({ me, employees, onGoToReviews }) {
           save. Each save creates pending shifts; the staff member sees a fairy
           modal on their next sign-in to accept or decline. */}
       <ManagerShiftCard me={me} employees={employees} />
+
+      {/* Shift status — read-only companion to the editor above. Shows every
+          shift this manager has assigned with its current acknowledgment state
+          (waiting / accepted / declined). Updates live via realtime so when
+          staff acknowledges, the row flips here without the manager needing
+          to refresh. */}
+      <ManagerShiftStatusCard me={me} employees={employees} />
 
       {loading && (
         <div className="text-center text-xs opacity-50 py-2">Loading team data…</div>
