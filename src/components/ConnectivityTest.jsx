@@ -63,11 +63,18 @@ export default function ConnectivityTest() {
     // 5. Write probe via audit_log
     if (sess.session) {
       const t0 = performance.now();
+      // Live audit_log schema (verified by direct DB probe):
+      //   id, actor_user_id, actor_psn, actor_name, action,
+      //   target_type, target_id, target_label, details, created_at, user_agent
+      // The previous payload used `actor` and `entity_type` which don't exist.
       const { error } = await supabase.from('audit_log').insert({
         action: 'connectivity_test',
-        entity_type: 'system',
-        actor: sess.session.user.email,
-        details: { ts: new Date().toISOString() },
+        target_type: 'system',
+        actor_user_id: sess.session.user.id || null,
+        actor_psn:     null, // diagnostics doesn't have me.id wired in here
+        actor_name:    sess.session.user.email || null,
+        details:       { ts: new Date().toISOString() },
+        user_agent:    typeof navigator !== 'undefined' ? navigator.userAgent : null,
       });
       const elapsed = Math.round(performance.now() - t0);
 
