@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Card } from './Dashboard.jsx';
 import { supabase, directGet, directPost, directDelete } from '../supabaseClient.js';
-import { ChevronLeft, ChevronRight, Loader2, Check, CalendarClock, Lock } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, Check, CalendarClock, Lock, CheckCircle2 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ManagerShiftCard
@@ -172,9 +172,12 @@ export default function ManagerShiftCard({ me, employees }) {
     const upserts = [];
     const deleteKeys = [];
     days.forEach(d => {
-      if (d < today) return;          // never touch the past
       const key = ymd(d);
       const s = shifts[key];
+      // Never touch the past, and never overwrite a shift the staff
+      // member has already accepted — re-saving would reset its status
+      // back to pending and silently invalidate their acknowledgment.
+      if (d < today || s?.status === 'accepted') return;
       if (!s) return;
       if (s.on) {
         upserts.push({
@@ -344,6 +347,14 @@ export default function ManagerShiftCard({ me, employees }) {
               const key = ymd(d);
               const s = shifts[key] || { on: false, start: DEFAULT_START, end: DEFAULT_END, status: null };
               const isPast = d < today;
+              // Once a shift is accepted by the staff member, the manager
+              // can no longer edit it — re-saving would silently flip the
+              // row back to pending and invalidate the acknowledgment that
+              // already flowed through to the SUP/HR side. Lock it visibly
+              // (green ACCEPTED pill, disabled inputs) but keep the row
+              // styled normally so it doesn't look like an inactive past day.
+              const isAccepted = s?.status === 'accepted';
+              const isLocked = isPast || isAccepted;
               return (
                 <div
                   key={key}
@@ -357,7 +368,7 @@ export default function ManagerShiftCard({ me, employees }) {
                   <input
                     type="checkbox"
                     checked={s.on}
-                    disabled={isPast}
+                    disabled={isLocked}
                     onChange={() => toggleDay(key)}
                     className="w-4 h-4 cursor-pointer disabled:cursor-not-allowed"
                     style={{ accentColor: 'var(--evergreen-600)' }}
@@ -368,7 +379,14 @@ export default function ManagerShiftCard({ me, employees }) {
                     <div className="text-sm font-medium" style={{ color: '#1F1B16' }}>
                       {DOW_SHORT[d.getDay()]} {d.getDate()} {d.toLocaleDateString(SAR_LOCALE, { month: 'short' })}
                     </div>
-                    {isPast ? (
+                    {isAccepted ? (
+                      <div
+                        className="text-[10px] tracking-[0.2em] flex items-center gap-1"
+                        style={{ color: '#0F4C2A', fontWeight: 700 }}
+                      >
+                        <CheckCircle2 className="w-2.5 h-2.5" /> ACCEPTED
+                      </div>
+                    ) : isPast ? (
                       <div className="text-[10px] tracking-[0.2em] flex items-center gap-1" style={SMALL_TEXT}>
                         <Lock className="w-2.5 h-2.5" /> LOCKED · PAST
                       </div>
@@ -385,7 +403,7 @@ export default function ManagerShiftCard({ me, employees }) {
                         <input
                           type="time"
                           value={s.start}
-                          disabled={isPast}
+                          disabled={isLocked}
                           onChange={(e) => setField(key, 'start', e.target.value)}
                           className="px-2 py-1 rounded border text-sm bg-white disabled:bg-transparent"
                           style={{ borderColor: 'var(--border)', color: '#1F1B16' }}
@@ -394,7 +412,7 @@ export default function ManagerShiftCard({ me, employees }) {
                         <input
                           type="time"
                           value={s.end}
-                          disabled={isPast}
+                          disabled={isLocked}
                           onChange={(e) => setField(key, 'end', e.target.value)}
                           className="px-2 py-1 rounded border text-sm bg-white disabled:bg-transparent"
                           style={{ borderColor: 'var(--border)', color: '#1F1B16' }}

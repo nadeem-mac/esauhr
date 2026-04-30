@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { X, Check, AlertCircle, Loader2, CalendarClock } from 'lucide-react';
+import { X, Check, AlertCircle, Loader2, Calendar, CalendarClock } from 'lucide-react';
 import { supabase, directPatchQuery } from '../supabaseClient.js';
 import { logAction } from '../lib/audit.js';
 
@@ -107,9 +107,6 @@ export default function ShiftAcknowledgmentModal({ me, pendingShifts, employees,
 
   if (!sortedShifts.length) return null;
 
-  // Friendly first name for the headline
-  const firstName = (me?.name || '').split(' ')[0] || 'there';
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -128,18 +125,21 @@ export default function ShiftAcknowledgmentModal({ me, pendingShifts, employees,
         >
           <div className="flex items-start gap-3">
             <div
-              className="w-10 h-10 rounded-full flex items-center justify-center text-2xl shrink-0"
+              className="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
               style={{ background: 'var(--evergreen-50)', border: '1px solid var(--evergreen-200)' }}
             >
-              🧚
+              <Calendar className="w-5 h-5" style={{ color: 'var(--evergreen-600)' }} />
             </div>
             <div>
-              <div className="text-[10px] tracking-[0.25em] mb-1" style={SMALL_TEXT}>
-                A NOTE FROM YOUR MANAGER
-              </div>
-              <h2 className="serif text-2xl" style={{ fontWeight: 500, letterSpacing: '-0.02em' }}>
-                Hello, {firstName}
+              <h2
+                className="text-lg"
+                style={{ fontWeight: 600, letterSpacing: '-0.01em', color: '#1F1B16' }}
+              >
+                Shift schedule for your review
               </h2>
+              <div className="text-xs mt-1" style={SMALL_TEXT}>
+                Your manager has assigned the following shifts. Please confirm or decline each one.
+              </div>
             </div>
           </div>
           <button
@@ -172,12 +172,12 @@ export default function ShiftAcknowledgmentModal({ me, pendingShifts, employees,
             </div>
           ) : (
             <>
-              <p className="text-sm leading-relaxed" style={SMALL_TEXT}>
-                {setBy?.name ? <strong>{setBy.name}</strong> : 'Your manager'}
-                {' '}has set the following shift schedule for you
-                {dateRange ? <> ({dateRange})</> : null}.
-                Please review and confirm so HR can be notified.
-              </p>
+              {setBy?.name && (
+                <p className="text-xs" style={SMALL_TEXT}>
+                  Assigned by <strong>{setBy.name}</strong>
+                  {dateRange ? <> · {dateRange}</> : null}.
+                </p>
+              )}
 
               {/* Shift rows */}
               <div className="space-y-1.5">
