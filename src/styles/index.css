@@ -70,6 +70,23 @@ body {
   border-color: #D4C7AB !important;
 }
 
+/* Same lift, slightly different shadow profile for the .esau-badge tile
+   family (KPI strip at the top of the admin dashboard, Headcount by
+   department badges, anywhere else esau-badge is applied). The existing
+   esau-card comment above claimed the two were already in sync — they
+   weren't, esau-badge had no rule at all, so badges sat flat while info
+   cards lifted. This brings the two families into uniform hover behavior
+   without flattening their distinct visual identities (badges keep their
+   colored side rails / gradients; cards keep their paper background). */
+.esau-badge {
+  transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 220ms ease;
+}
+.esau-badge:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 4px 10px rgba(31,27,22,0.06), 0 14px 32px rgba(31,27,22,0.10);
+}
+
 @keyframes draw-line { from { stroke-dashoffset: 1200; } to { stroke-dashoffset: 0; } }
 .draw-line { stroke-dasharray: 1200; stroke-dashoffset: 1200; animation: draw-line 3s ease-out forwards; }
 .draw-line-2 { animation-delay: 0.3s; }
