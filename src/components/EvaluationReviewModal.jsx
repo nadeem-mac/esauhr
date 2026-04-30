@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { X, Mail, AlertTriangle, Check, Loader2, Calendar, ExternalLink } from 'lucide-react';
-import { directPost, directGet } from '../supabaseClient.js';
+import { directPost } from '../supabaseClient.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EvaluationReviewModal
@@ -18,22 +18,28 @@ import { directPost, directGet } from '../supabaseClient.js';
 //     a row to evaluation_scores so the score view picks it up.
 //
 // Schema reference (verified against live DB by direct probe):
-//   evaluation_scores: id, employee_id, violation_count, base_score,
-//                      reviewed_by, reviewed_at, created_at, updated_at, notes
-//   evaluation_scores_final view: same columns + computed final_score
-//   No unique constraint on (employee_id, month) — we enforce idempotency
-//   app-side by checking the [<MonthLong YYYY>] tag at the start of `notes`.
+//   evaluation_scores columns:
+//     id, employee_id, period_year, period_month,
+//     base_score, attendance_deduction, violation_count,
+//     warning_email_sent, warning_email_sent_at, warning_email_sent_to,
+//     reviewed_by, reviewed_at, notes, created_at, updated_at
+//   Unique constraint: (employee_id, period_year, period_month)
 //
-// Insert payload (per click):
-//   employee_id      → who is being reviewed
-//   violation_count  → totalCount for the calendar month
-//   base_score       → 100 (the starting baseline)
-//   notes            → human-readable breakdown ("[April 2026] 8 incidents …")
-//   reviewed_by      → me.id (Bashaier)
-//   reviewed_at      → now
+//   evaluation_scores_final view: same columns + computed final_score.
+//   Verified live: final_score = base_score - attendance_deduction
+//   (e.g. 8 violations → deduction 6 → final 94).
 //
-// final_score is computed by the view (presumably base_score - max(0, n-5)*2
-// per the spec), so we don't write it directly.
+// Insert payload per click:
+//   employee_id, period_year, period_month        → identity (constraint key)
+//   violation_count                               → row.totalCount
+//   base_score                                    → 100 (baseline)
+//   attendance_deduction                          → max(0, totalCount - 5) * 2
+//   warning_email_sent / _at / _to                → true / now / manager email
+//   reviewed_by, reviewed_at                      → Bashaier / now
+//   notes                                         → human-readable breakdown
+//
+// Idempotency: catch 23505 (unique_violation) on the unique constraint and
+// treat it as success — same pattern P5 uses for attendance_violations.
 //
 // Idempotency
 //   evaluation_scores has no unique constraint we can rely on, so we check
@@ -158,50 +164,52 @@ export default function EvaluationReviewModal({ row, employee, manager, onClose,
     setStep('submitting');
     setError('');
 
+    // Period identifier — the table's unique constraint is
+    // (employee_id, period_year, period_month). Derive both from row.monthStart.
+    const [yStr, mStr] = (row.monthStart || '').split('-');
+    const periodYear  = parseInt(yStr, 10);
+    const periodMonth = parseInt(mStr, 10);
+    const managerEmail = (employee?.manager_id && manager?.email) ? manager.email : null;
+
     try {
-      // Idempotency check: look for an existing row for this employee whose
-      // notes already start with [<monthLong>]. If one exists, skip the insert
-      // and treat as success.
-      const tag = `[${monthLong}]`;
-      const existing = await directGet(
-        'evaluation_scores',
-        `select=id,notes&employee_id=eq.${encodeURIComponent(employee.id)}` +
-        `&notes=ilike.${encodeURIComponent(tag + '%')}`,
-        { timeoutMs: 8000 }
-      );
-      if (Array.isArray(existing) && existing.length > 0) {
-        setStep('already');
-        // Still open the mail client — Bashaier likely wants to resend
-        window.location.href = mailtoUrl;
-        if (onLogged) onLogged({ alreadyLogged: true });
-        return;
-      }
-
-      // Insert one row with structured notes
-      const notes = buildNotes({
-        monthLong,
-        lateCount:   row.lateCount,
-        earlyCount:  row.earlyCount,
-        missedCount: row.missedCount,
-        totalCount:  row.totalCount,
-        pointsDeducted,
-      });
-
+      // Direct insert — let the unique constraint enforce idempotency.
+      // 23505 (duplicate key) is treated as success (already-logged).
       await directPost('evaluation_scores', {
-        employee_id: employee.id,
-        violation_count: row.totalCount,
-        base_score: 100,
-        notes,
-        reviewed_by: me?.id || 'H94830',
-        reviewed_at: new Date().toISOString(),
+        employee_id:           employee.id,
+        period_year:           periodYear,
+        period_month:          periodMonth,
+        violation_count:       row.totalCount,
+        base_score:            100,
+        attendance_deduction:  pointsDeducted,
+        warning_email_sent:    true,
+        warning_email_sent_at: new Date().toISOString(),
+        warning_email_sent_to: managerEmail,
+        reviewed_by:           me?.id || 'H94830',
+        reviewed_at:           new Date().toISOString(),
+        notes:                 buildNotes({
+          monthLong,
+          lateCount:   row.lateCount,
+          earlyCount:  row.earlyCount,
+          missedCount: row.missedCount,
+          totalCount:  row.totalCount,
+          pointsDeducted,
+        }),
       }, { timeoutMs: 10000 });
 
       setStep('done');
-      // Open the mail client with the pre-drafted email
       window.location.href = mailtoUrl;
       if (onLogged) onLogged({ alreadyLogged: false });
     } catch (e) {
       const msg = String(e?.message || e);
+      // 23505 = unique_violation on (employee_id, period_year, period_month).
+      // Means we already reviewed this employee for this month — treat as
+      // success and still open the mail client in case Bashaier wants to resend.
+      if (msg.includes('23505') || msg.includes('duplicate key')) {
+        setStep('already');
+        window.location.href = mailtoUrl;
+        if (onLogged) onLogged({ alreadyLogged: true });
+        return;
+      }
       setError(msg);
       setStep('review');
     }

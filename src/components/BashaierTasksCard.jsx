@@ -531,13 +531,15 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
         if (mounted) setMonthViolations([]);
       }
       try {
-        // App-side idempotency lookup — find evaluation_scores rows whose
-        // notes start with [<MonthLong YYYY>] for this month.
-        const monthLong = new Date(monthRange.monthStart).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
-        const tag = `[${monthLong}]`;
+        // Find evaluation_scores rows already created for the current
+        // calendar month, keyed by the unique (period_year, period_month).
+        // Far simpler and more correct than scanning notes for a tag prefix.
+        const [yStr, mStr] = monthRange.monthStart.split('-');
+        const periodYear  = parseInt(yStr, 10);
+        const periodMonth = parseInt(mStr, 10);
         const rows = await directGet(
           'evaluation_scores',
-          `select=employee_id,notes&notes=ilike.${encodeURIComponent(tag + '%')}`,
+          `select=employee_id&period_year=eq.${periodYear}&period_month=eq.${periodMonth}`,
           { timeoutMs: 8000 }
         );
         if (mounted) {
