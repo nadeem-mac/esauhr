@@ -16,6 +16,7 @@ import ShiftAcknowledgmentModal from './ShiftAcknowledgmentModal.jsx';
 import InsightsView from './InsightsView.jsx';
 import AdminPanel from './AdminPanel.jsx';
 import PersonalDashboard from './PersonalDashboard.jsx';
+import ManagerDashboard  from './ManagerDashboard.jsx';
 import ReviewerPanel from './ReviewerPanel.jsx';
 import EvergreenLogo from './EvergreenLogo.jsx';
 import AttendanceView from './AttendanceView.jsx';
@@ -420,10 +421,10 @@ export default function AppShell({ session, me, onRefreshMe }) {
 
       <main className="max-w-7xl mx-auto px-6 py-8 fade-in" key={tab}>
         {tab === 'dashboard' && (
-          (isAdmin || isReviewer) ? (
-            // Admin AND reviewers (Bashaier) see the full admin Dashboard.
-            // The Reset PIN section in EmployeeDetailModal still gates on isAdmin
-            // only, so Bashaier sees everything but cannot reset PINs from there.
+          (isAdmin || isHrReviewer) ? (
+            // Admin Dashboard: Nadeem (admin) and Bashaier (HR reviewer) only.
+            // Dept heads who used to have can_review_leave=true are routed to
+            // ManagerDashboard below — they should never see the company-wide view.
             <Dashboard
               me={me}
               employees={employees} leaveTypes={leaveTypes} requests={requests}
@@ -432,6 +433,15 @@ export default function AppShell({ session, me, onRefreshMe }) {
               permissions={permissions}
               onGoToRequests={() => setTab('requests')}
               onNewRequest={() => setShowNewRequest(true)}
+            />
+          ) : isManager ? (
+            // ManagerDashboard: any user who has direct reports (manager_id===me.id
+            // for some employee) but is not admin/HR. Same component for every
+            // manager; data is scoped to their own direct reports.
+            <ManagerDashboard
+              me={me}
+              employees={employees}
+              onGoToReviews={() => setTab('reviews')}
             />
           ) : (
             <PersonalDashboard
@@ -501,6 +511,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
 
       {showNewRequest && (
         <NewRequestModal
+          me={me}
           employees={employees} leaveTypes={leaveTypes}
           requests={requests} balances={balances} holidays={holidays}
           onClose={() => setShowNewRequest(false)}

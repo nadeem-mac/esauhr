@@ -5,8 +5,13 @@ import {
   todayISO, fmtDateShort, LOCATION_LABELS,
 } from '../lib/leaveLogic.js';
 
-export default function NewRequestModal({ employees, leaveTypes, requests, balances, holidays, onClose, onSubmit }) {
-  const [employeeId, setEmployeeId] = useState('');
+export default function NewRequestModal({ me, employees, leaveTypes, requests, balances, holidays, onClose, onSubmit }) {
+  // Picker rule: admin and HR can pick any employee (e.g. submitting on
+  // someone's behalf). Everyone else can only submit for themselves — their
+  // own name is pre-locked, no search box, no dropdown. This matches item 4
+  // of the access-control overhaul: "the staff can only request" for himself.
+  const isPicker = !!(me?.is_admin || me?.is_hr_reviewer);
+  const [employeeId, setEmployeeId] = useState(isPicker ? '' : (me?.id || ''));
   const [leaveTypeId, setLeaveTypeId] = useState('annual');
   const [customLeaveType, setCustomLeaveType] = useState('');
   const [startDate, setStartDate] = useState(todayISO());
@@ -34,6 +39,14 @@ export default function NewRequestModal({ employees, leaveTypes, requests, balan
   useEffect(() => {
     if (endDate < startDate) setEndDate(startDate);
   }, [startDate, endDate]);
+
+  // Belt-and-braces: if a non-picker user somehow renders before `me` is set,
+  // backfill employeeId once it arrives so the request is always self-attributed.
+  useEffect(() => {
+    if (!isPicker && me?.id && employeeId !== me.id) {
+      setEmployeeId(me.id);
+    }
+  }, [isPicker, me?.id, employeeId]);
 
   const requestDays = useMemo(() =>
     leaveType ? calculateRequestDays(startDate, endDate, leaveType, holidays, isHalfDay) : 0
@@ -121,25 +134,45 @@ export default function NewRequestModal({ employees, leaveTypes, requests, balan
           {/* Employee */}
           <div>
             <Label>Employee</Label>
-            <input value={empSearch} onChange={e => setEmpSearch(e.target.value)}
-              placeholder="Search by name or ID…"
-              className="w-full px-3 py-2.5 rounded-lg border bg-transparent text-sm focus:outline-none mb-2"
-              style={{ borderColor: 'var(--border-soft)' }}/>
-            <div className="max-h-40 overflow-y-auto rounded-lg border" style={{ borderColor: 'var(--border-soft)' }}>
-              {filteredEmps.length === 0 ? (
-                <div className="p-3 text-sm opacity-60 text-center">No employees match.</div>
-              ) : filteredEmps.slice(0, 50).map(e => (
-                <button key={e.id} type="button" onClick={() => { setEmployeeId(e.id); setEmpSearch(e.name); }}
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-black/5 flex justify-between border-b"
-                  style={{
-                    borderColor: 'var(--border-soft)',
-                    background: employeeId === e.id ? 'var(--evergreen-50)' : 'transparent',
-                  }}>
-                  <span>{e.name}</span>
-                  <span className="opacity-50 text-xs mono">{e.id} · {LOCATION_LABELS[e.location] || e.location}</span>
-                </button>
-              ))}
-            </div>
+            {isPicker ? (
+              <>
+                <input value={empSearch} onChange={e => setEmpSearch(e.target.value)}
+                  placeholder="Search by name or ID…"
+                  className="w-full px-3 py-2.5 rounded-lg border bg-transparent text-sm focus:outline-none mb-2"
+                  style={{ borderColor: 'var(--border-soft)' }}/>
+                <div className="max-h-40 overflow-y-auto rounded-lg border" style={{ borderColor: 'var(--border-soft)' }}>
+                  {filteredEmps.length === 0 ? (
+                    <div className="p-3 text-sm opacity-60 text-center">No employees match.</div>
+                  ) : filteredEmps.slice(0, 50).map(e => (
+                    <button key={e.id} type="button" onClick={() => { setEmployeeId(e.id); setEmpSearch(e.name); }}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-black/5 flex justify-between border-b"
+                      style={{
+                        borderColor: 'var(--border-soft)',
+                        background: employeeId === e.id ? 'var(--evergreen-50)' : 'transparent',
+                      }}>
+                      <span>{e.name}</span>
+                      <span className="opacity-50 text-xs mono">{e.id} · {LOCATION_LABELS[e.location] || e.location}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="rounded-lg border px-3 py-2.5 flex items-center justify-between"
+                   style={{ borderColor: 'var(--border-soft)', background: 'var(--evergreen-50)' }}>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium" style={{ color: '#1F1B16' }}>
+                    {me?.name || employeeId || 'You'}
+                  </div>
+                  <div className="text-[11px]" style={{ color: '#1F1B16' }}>
+                    {employeeId} · Submitting on your own behalf
+                  </div>
+                </div>
+                <span className="text-[10px] tracking-[0.18em] px-2 py-0.5 rounded-full"
+                      style={{ background: '#0F4C2A', color: 'white', fontWeight: 700 }}>
+                  YOU
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Leave type */}

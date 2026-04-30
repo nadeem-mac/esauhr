@@ -6,13 +6,15 @@ import HrApprovalModal from './HrApprovalModal.jsx';
 import { fmtDate } from '../lib/leaveLogic.js';
 import { PERMISSION_TYPES, summariseMonth } from '../lib/permissionLogic.js';
 
-// Visible to anyone with can_review_leave OR can_review_permissions OR is_admin.
-// Shows pending items in two stacks: leave requests and permission requests.
+// Visible to anyone with can_review_leave OR can_review_permissions OR is_admin
+// OR is a manager (has someone whose manager_id === me.id). After the dept-head
+// flag revoke, "manager" is now derived from the org chart, not from a flag.
 
 export default function ReviewerPanel({ me }) {
   const [leave, setLeave]             = useState([]);
   const [perms, setPerms]             = useState([]);
   const [empMap, setEmpMap]           = useState({});
+  const [isManager, setIsManager]     = useState(false);
   const [loading, setLoading]         = useState(true);
   const [busyId, setBusyId]           = useState(null);
   const [hrModalReq, setHrModalReq]   = useState(null);
@@ -20,11 +22,11 @@ export default function ReviewerPanel({ me }) {
   // Role flags for stage-based routing
   // - is_admin (Nadeem): sees both pending_manager and pending_hr
   // - is_hr_reviewer (Bashaier, Nadeem): sees pending_hr only (final HR approval)
-  // - can_review_leave but NOT is_hr_reviewer (5 dept heads): sees pending_manager
-  //   filtered to requests from staff in their own department
+  // - isManager (derived: has direct reports) AND not HR/admin: sees pending_manager
+  //   for their own direct reports only. Replaces the old can_review_leave gate.
   const isAdmin       = !!me?.is_admin;
   const isHrReviewer  = !!me?.is_hr_reviewer;
-  const isDeptManager = !!me?.can_review_leave && !isHrReviewer;
+  const isDeptManager = isManager && !isHrReviewer && !isAdmin;
   const canLeave      = isAdmin || isHrReviewer || isDeptManager;
   const canPerm       = isAdmin || me?.can_review_permissions;
 
@@ -46,11 +48,18 @@ export default function ReviewerPanel({ me }) {
       (emps || []).forEach(e => { map[e.id] = e; });
       setEmpMap(map);
 
-      // For dept managers we need the IDs of staff in their department
-      const myDept = me?.department;
+      // For dept managers we filter requests to their direct reports — anyone
+      // whose manager_id === me.id. This is more accurate than the old
+      // department-based filter and matches the org-chart definition of
+      // "his own staff".
       const deptStaffIds = (emps || [])
-        .filter(e => e.department === myDept && e.id !== me?.id)
+        .filter(e => e.manager_id === me?.id)
         .map(e => e.id);
+      // Mirror the derived isManager flag at component scope so other parts
+      // of the panel (button gating, decideLeave's stage check) can read it.
+      const hasDirectReports = deptStaffIds.length > 0;
+      setIsManager(hasDirectReports);
+      const localIsDeptManager = hasDirectReports && !isHrReviewer && !isAdmin;
 
       // Build the leave queue query string based on role.
       let leaveQs = null;
@@ -58,7 +67,7 @@ export default function ReviewerPanel({ me }) {
         leaveQs = 'select=*&stage=in.(pending_manager,pending_hr)&order=requested_at.desc';
       } else if (isHrReviewer) {
         leaveQs = 'select=*&stage=eq.pending_hr&order=requested_at.desc';
-      } else if (isDeptManager && deptStaffIds.length > 0) {
+      } else if (localIsDeptManager) {
         leaveQs = `select=*&stage=eq.pending_manager&employee_id=in.(${deptStaffIds.join(',')})&order=requested_at.desc`;
       }
 
@@ -66,7 +75,7 @@ export default function ReviewerPanel({ me }) {
       let permQs = null;
       if (canPerm) {
         permQs = 'select=*&status=eq.pending&order=requested_at.desc';
-      } else if (isDeptManager && deptStaffIds.length > 0) {
+      } else if (localIsDeptManager) {
         permQs = `select=*&status=eq.pending&employee_id=in.(${deptStaffIds.join(',')})&order=requested_at.desc`;
       }
 
@@ -80,7 +89,7 @@ export default function ReviewerPanel({ me }) {
     } finally {
       setLoading(false);
     }
-  }, [me?.id, me?.department, isAdmin, isHrReviewer, isDeptManager, canPerm]);
+  }, [me?.id, isAdmin, isHrReviewer, canPerm]);
 
   useEffect(() => { load(); }, [load]);
 
