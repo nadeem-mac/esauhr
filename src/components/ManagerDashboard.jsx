@@ -2,8 +2,10 @@ import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { directGet, supabase } from '../supabaseClient.js';
 import {
   Users, Plane, Clock, AlertTriangle, CheckCircle2, ChevronRight, Calendar,
+  Sunrise, Sunset,
 } from 'lucide-react';
 import { fmtDate, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
+import { PERMISSION_TYPES } from '../lib/permissionLogic.js';
 
 // ────────────────────────────────────────────────────────────────────────────
 // ManagerDashboard
@@ -30,6 +32,7 @@ import { fmtDate, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLog
 export default function ManagerDashboard({ me, employees, onGoToReviews, onGoToRequests, onGoToShifts }) {
   const [requests, setRequests] = useState([]);
   const [shifts, setShifts]     = useState([]);
+  const [permissions, setPermissions] = useState([]);
   const [loading, setLoading]   = useState(true);
 
   // Direct reports — the team this manager owns
@@ -43,6 +46,7 @@ export default function ManagerDashboard({ me, employees, onGoToReviews, onGoToR
     if (!me?.id || reportIds.length === 0) {
       setRequests([]);
       setShifts([]);
+      setPermissions([]);
       setLoading(false);
       return;
     }
@@ -57,7 +61,7 @@ export default function ManagerDashboard({ me, employees, onGoToReviews, onGoToR
       const list = reportIds.map(id => `"${id}"`).join(',');
       const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 7);
       const cutoffISO = cutoff.toISOString().slice(0, 10);
-      const [rows, shiftRows] = await Promise.all([
+      const [rows, shiftRows, permRows] = await Promise.all([
         directGet(
           'leave_requests',
           `select=*&employee_id=in.(${list})&order=start_date.desc&limit=100`,
@@ -68,13 +72,20 @@ export default function ManagerDashboard({ me, employees, onGoToReviews, onGoToR
           `select=id,employee_id,shift_date,status&set_by=eq.${encodeURIComponent(me.id)}&shift_date=gte.${cutoffISO}`,
           { timeoutMs: 10000 }
         ).catch(() => []),
+        directGet(
+          'permission_requests',
+          `select=*&employee_id=in.(${list})&order=permission_date.desc&limit=100`,
+          { timeoutMs: 10000 }
+        ).catch(() => []),
       ]);
       setRequests(Array.isArray(rows) ? rows : []);
       setShifts(Array.isArray(shiftRows) ? shiftRows : []);
+      setPermissions(Array.isArray(permRows) ? permRows : []);
     } catch (err) {
       console.warn('ManagerDashboard load failed:', err);
       setRequests([]);
       setShifts([]);
+      setPermissions([]);
     } finally {
       setLoading(false);
     }
@@ -98,13 +109,51 @@ export default function ManagerDashboard({ me, employees, onGoToReviews, onGoToR
     return () => { try { supabase.removeChannel(channel); } catch {} };
   }, [me?.id, load]);
 
+  // Realtime — permission_requests + leave_requests for this manager's
+  // direct reports. When a staff member submits a request, the PENDING
+  // APPROVAL tile and the Pending approvals card need to flip live without
+  // the manager having to refresh. Filter is on the table itself
+  // (Postgres realtime can't filter by IN clause), so we re-evaluate via
+  // load() and let the client-side filter pick up only this manager's
+  // reports.
+  useEffect(() => {
+    if (!me?.id || !supabase) return;
+    const ch = supabase
+      .channel(`mgr-dash-requests-${me.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'permission_requests' },
+        () => load()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'leave_requests' },
+        () => load()
+      )
+      .subscribe();
+    return () => { try { supabase.removeChannel(ch); } catch {} };
+  }, [me?.id, load]);
+
   // ── Derived slices ──────────────────────────────────────────────────────
   const today = new Date().toISOString().slice(0, 10);
 
-  const pendingMine = useMemo(
-    () => requests.filter(r => r.stage === 'pending_manager'),
-    [requests]
-  );
+  // Pending approvals at THIS manager's stage — a unified list of leave
+  // requests AND permission requests (late arrival / early leave) that
+  // need this manager's decision. Each item is tagged with `kind` so the
+  // UI can render the right preview row. The user previously couldn't
+  // see permission submissions on the manager dashboard because only
+  // leaves were rolled up here.
+  const pendingMine = useMemo(() => {
+    const leaves = (requests || [])
+      .filter(r => r.stage === 'pending_manager')
+      .map(r => ({ ...r, _kind: 'leave', _sortKey: r.requested_at || r.created_at || r.start_date }));
+    const perms = (permissions || [])
+      .filter(p => p.stage === 'pending_manager')
+      .map(p => ({ ...p, _kind: 'permission', _sortKey: p.requested_at || p.created_at || p.permission_date }));
+    return [...leaves, ...perms].sort((a, b) =>
+      String(b._sortKey || '').localeCompare(String(a._sortKey || ''))
+    );
+  }, [requests, permissions]);
 
   const onLeaveToday = useMemo(
     () => requests.filter(r =>
@@ -238,17 +287,47 @@ export default function ManagerDashboard({ me, employees, onGoToReviews, onGoToR
             <div className="space-y-2">
               {pendingMine.map(r => {
                 const emp = empById[r.employee_id];
+                const isPerm = r._kind === 'permission';
+                const PermIcon = isPerm ? (r.type === 'early_leave' ? Sunset : Sunrise) : null;
+                const permLabel = isPerm ? (PERMISSION_TYPES[r.type]?.label || r.type) : null;
                 return (
-                  <button key={r.id} onClick={onGoToReviews}
+                  <button key={`${r._kind}-${r.id}`} onClick={onGoToReviews}
                     className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border bg-white hover:bg-black/5 transition-colors text-left"
                     style={{ borderColor: 'var(--border-soft)' }}>
                     <Avatar name={emp?.name || r.employee_id} />
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium" style={{ color: '#1F1B16' }}>
-                        {emp?.name || r.employee_id}
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-sm font-medium" style={{ color: '#1F1B16' }}>
+                          {emp?.name || r.employee_id}
+                        </span>
+                        {/* Tiny tag so the manager can tell at a glance whether
+                            this is a leave vs a permission request without
+                            having to read the line below. */}
+                        <span
+                          className="text-[9px] px-1.5 py-0.5 rounded-full inline-flex items-center gap-1"
+                          style={{
+                            background: isPerm ? '#FEF3C7' : 'var(--evergreen-50)',
+                            color:      isPerm ? '#A16207' : 'var(--evergreen-700)',
+                            fontWeight: 700, letterSpacing: '0.1em',
+                          }}
+                        >
+                          {isPerm
+                            ? <>{PermIcon && <PermIcon className="w-2.5 h-2.5" />} {r.type === 'early_leave' ? 'EARLY' : 'LATE'}</>
+                            : 'LEAVE'}
+                        </span>
+                        {isPerm && r.exceeds_quota && (
+                          <span
+                            className="text-[9px] px-1.5 py-0.5 rounded-full inline-flex items-center gap-1"
+                            style={{ background: '#FFEDD5', color: '#9A3412', fontWeight: 700, letterSpacing: '0.1em' }}
+                          >
+                            <AlertTriangle className="w-2.5 h-2.5" /> OVER QUOTA
+                          </span>
+                        )}
                       </div>
-                      <div className="text-[11px]" style={{ color: '#1F1B16' }}>
-                        {fmtDateShort(r.start_date)} → {fmtDateShort(r.end_date)} · {r.reason || r.leave_type_id}
+                      <div className="text-[11px] mt-0.5" style={{ color: '#1F1B16' }}>
+                        {isPerm
+                          ? `${permLabel} · ${fmtDateShort(r.permission_date)} · ${Number(r.hours)}h${r.reason ? ` · ${r.reason}` : ''}`
+                          : `${fmtDateShort(r.start_date)} → ${fmtDateShort(r.end_date)} · ${r.reason || r.leave_type_id}`}
                       </div>
                     </div>
                     <ChevronRight className="w-4 h-4" style={{ color: '#1F1B16' }} />
