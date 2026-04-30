@@ -4,6 +4,7 @@ import {
   Users, Plane, Clock, AlertTriangle, CheckCircle2, ChevronRight,
 } from 'lucide-react';
 import { fmtDate, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
+import ManagerShiftCard from './ManagerShiftCard.jsx';
 
 // ────────────────────────────────────────────────────────────────────────────
 // ManagerDashboard
@@ -225,6 +226,11 @@ export default function ManagerDashboard({ me, employees, onGoToReviews }) {
           </div>
         )}
       </Card>
+
+      {/* Shift scheduling — pick a direct report, set per-day start/end times,
+          save. Each save creates pending shifts; the staff member sees a fairy
+          modal on their next sign-in to accept or decline. */}
+      <ManagerShiftCard me={me} employees={employees} />
 
       {loading && (
         <div className="text-center text-xs opacity-50 py-2">Loading team data…</div>
