@@ -13,6 +13,8 @@ import CalendarView from './CalendarView.jsx';
 import SettingsView from './SettingsView.jsx';
 import ConnectivityTest from './ConnectivityTest.jsx';
 import NewRequestModal from './NewRequestModal.jsx';
+import RequestTypePicker from './RequestTypePicker.jsx';
+import PermissionRequestModal from './PermissionRequestModal.jsx';
 import EmployeeDetailModal from './EmployeeDetailModal.jsx';
 import ShiftAcknowledgmentModal from './ShiftAcknowledgmentModal.jsx';
 import InsightsView from './InsightsView.jsx';
@@ -107,7 +109,21 @@ export default function AppShell({ session, me, onRefreshMe }) {
   const [loading, setLoading]           = useState(true);
   const [refreshing, setRefreshing]     = useState(false);
   const [error, setError]               = useState('');
-  const [showNewRequest, setShowNewRequest] = useState(false);
+  // Request flow — what the "+ New request" button opens. Used to be a single
+  // boolean that opened NewRequestModal directly (vacation/leave only). Staff
+  // who needed a permission (late arrival / early leave) had to find the
+  // colored dashboard tile, which was easy to miss. Now the entry opens a
+  // type picker first, and the picker routes to the right form.
+  //
+  // States: null = closed, 'pick' = picker visible, 'leave' = vacation form,
+  //         'late_arrival' / 'early_leave' = permission form
+  const [requestFlow, setRequestFlow] = useState(null);
+  // Backwards-compatible alias so existing call sites (`onNewRequest`,
+  // `onOpenNewRequest`) still open the picker. Internal callers can call
+  // setRequestFlow(...) directly to skip the picker (e.g. dashboard
+  // shortcuts that already know the type).
+  const showNewRequest = requestFlow === 'pick' || requestFlow === 'leave'; // legacy reads
+  const setShowNewRequest = (v) => setRequestFlow(v ? 'pick' : null);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
   const [pendingShifts, setPendingShifts] = useState([]);
   // Modal visibility for the shift acknowledgment dialog. Default is closed —
@@ -585,16 +601,44 @@ export default function AppShell({ session, me, onRefreshMe }) {
         )}
       </main>
 
-      {showNewRequest && (
+      {/* Request flow router — picker first, then either the leave form or
+          the permission form depending on what the staff member chose. */}
+      {requestFlow === 'pick' && (
+        <RequestTypePicker
+          onClose={() => setRequestFlow(null)}
+          onPick={(type) => setRequestFlow(type)}
+        />
+      )}
+      {requestFlow === 'leave' && (
         <NewRequestModal
           me={me}
           employees={employees} leaveTypes={leaveTypes}
           requests={requests} balances={balances} holidays={holidays}
-          onClose={() => setShowNewRequest(false)}
+          onClose={() => setRequestFlow(null)}
           onSubmit={async (payload) => {
             await createRequest(payload);
-            setShowNewRequest(false);
+            setRequestFlow(null);
           }}
+        />
+      )}
+      {(requestFlow === 'late_arrival' || requestFlow === 'early_leave') && (
+        <PermissionRequestModal
+          me={me}
+          type={requestFlow}
+          monthRows={(() => {
+            // Filter the global permissions list down to this user's
+            // current-month rows, which is what the modal needs for its
+            // quota math (summariseMonth + checkExceeds). RLS already
+            // restricts non-admin/HR users to their own rows; we still
+            // narrow by employee_id defensively.
+            const m = new Date().toISOString().slice(0, 7); // YYYY-MM
+            return (permissions || []).filter(p =>
+              p.employee_id === me?.id &&
+              String(p.permission_date || '').startsWith(m)
+            );
+          })()}
+          onClose={() => setRequestFlow(null)}
+          onSubmitted={() => setRequestFlow(null)}
         />
       )}
 

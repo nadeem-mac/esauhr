@@ -8,6 +8,7 @@ import { UserCheck, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { fmtDate, calculateBalance, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 import { summariseMonth, PERMISSION_QUOTA } from '../lib/permissionLogic.js';
 import PermissionRequestModal from './PermissionRequestModal.jsx';
+import PermissionStatusCard from './PermissionStatusCard.jsx';
 import StaffShiftStatusCard from './StaffShiftStatusCard.jsx';
 import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
 import { Download } from 'lucide-react';
@@ -263,6 +264,13 @@ export default function PersonalDashboard({
           to render based on its own data fetch — pass-through here is
           deliberately minimal. */}
       <StaffShiftStatusCard me={me} />
+
+      {/* Permission application history — separate from the colored quota
+          tiles above. Shows each application the staff has submitted in
+          the last 30 days, its current status (pending/approved/rejected
+          /flagged-for-review), and any decision note from HR. The card
+          self-hides for staff with no permission activity. */}
+      <PermissionStatusCard me={me} />
 
       {/* SUBSTITUTION REQUESTS — colleagues asking ME to cover for them */}
       {subRequests.length > 0 && (
