@@ -19,6 +19,11 @@ export default function ReviewerPanel({ me }) {
   // the freshly-approved row so PermissionApprovedModal opens with the
   // download letter / open email draft actions.
   const [approvedPermission, setApprovedPermission] = useState(null);
+  // History of permission decisions made by THIS HR reviewer in the last
+  // 30 days. Surfaces below the active queue so Bashaier can review her
+  // own decisions, re-open the timeline for context, and re-download
+  // the letter / re-open the email draft if she missed it the first time.
+  const [recentDecisions, setRecentDecisions] = useState([]);
   const [isManager, setIsManager]     = useState(false);
   const [loading, setLoading]         = useState(true);
   const [busyId, setBusyId]           = useState(null);
@@ -102,6 +107,26 @@ export default function ReviewerPanel({ me }) {
 
       setLeave(lr || []);
       setPerms(pr || []);
+
+      // History pull — only HR/admin reviewers (managers don't get a
+      // 'recent decisions' view because their volume is tiny per person
+      // and the manager dashboard already surfaces it via Pending
+      // approvals card). 30-day window keyed by hr_decided_at, includes
+      // both approved and rejected_by_hr rows.
+      if (canPerm) {
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - 30);
+        const cutoffISO = cutoff.toISOString();
+        const histQs = `select=*&hr_decided_by=eq.${encodeURIComponent(me.id)}&hr_decided_at=gte.${cutoffISO}&order=hr_decided_at.desc`;
+        try {
+          const hist = await directGet('permission_requests', histQs, { timeoutMs: 10000 });
+          setRecentDecisions(Array.isArray(hist) ? hist : []);
+        } catch {
+          setRecentDecisions([]);
+        }
+      } else {
+        setRecentDecisions([]);
+      }
     } catch (err) {
       console.warn('ReviewerPanel load failed:', err);
     } finally {
@@ -357,6 +382,77 @@ export default function ReviewerPanel({ me }) {
                   })}
                 </ul>
               )}
+            </section>
+          )}
+
+          {/* HR-only — recent decisions made by this reviewer in the last
+              30 days. Lets Bashaier see what she's already acted on,
+              re-open the timeline for context, and re-trigger the
+              download letter / email draft if she missed it. Hidden for
+              managers (their volume is too small to warrant a separate
+              section, and ManagerDashboard's Pending approvals already
+              shows their recent activity). */}
+          {canPerm && recentDecisions.length > 0 && (
+            <section>
+              <h3 className="text-[10px] tracking-[0.25em] opacity-60 mb-3">
+                MY RECENT DECISIONS · {recentDecisions.length}
+              </h3>
+              <ul className="space-y-2">
+                {recentDecisions.map(req => {
+                  const emp = empMap[req.employee_id];
+                  const TypeIcon = req.type === 'late_arrival' ? Sunrise : Sunset;
+                  const wasApproved = req.stage === 'approved';
+                  return (
+                    <li key={req.id} className="rounded-xl px-4 py-2.5 border flex items-center gap-3"
+                      style={{ background: '#FFFDF7', borderColor: 'var(--border-soft)' }}>
+                      <div
+                        className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                        style={{ background: req.type === 'early_leave' ? '#FCE7F3' : '#FEF3C7',
+                                 color:      req.type === 'early_leave' ? '#BE185D' : '#A16207' }}>
+                        <TypeIcon className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-medium" style={{ color: '#1F1B16' }}>
+                            {emp?.name || req.employee_id}
+                          </span>
+                          <span className="text-[11px]" style={{ color: '#1F1B16', opacity: 0.6 }}>
+                            · {PERMISSION_TYPES[req.type]?.label} · {Number(req.hours)}h · {fmtDate(req.permission_date)}
+                          </span>
+                          <span
+                            className="text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1"
+                            style={{
+                              background: wasApproved ? '#ECFDF5' : '#FEE2E2',
+                              color:      wasApproved ? '#0F4C2A' : '#B91C1C',
+                              fontWeight: 700, letterSpacing: '0.1em',
+                            }}>
+                            {wasApproved
+                              ? <><CheckCircle2 className="w-2.5 h-2.5" /> APPROVED</>
+                              : <><XCircle className="w-2.5 h-2.5" /> REJECTED</>}
+                          </span>
+                        </div>
+                        <div className="text-[10px] mt-0.5" style={{ color: '#1F1B16', opacity: 0.6 }}>
+                          Decided {new Date(req.hr_decided_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </div>
+                      {/* Re-open the post-approval modal so Bashaier can
+                          re-download the .docx letter or re-open the
+                          email draft. Only useful for approved rows. */}
+                      {wasApproved && (
+                        <button
+                          type="button"
+                          onClick={() => setApprovedPermission(req)}
+                          className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap"
+                          style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
+                          title="Re-open letter and email draft"
+                        >
+                          Letter / email
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
             </section>
           )}
         </>
