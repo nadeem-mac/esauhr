@@ -33,9 +33,12 @@ function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, me }) {
     { id: 'requests',   label: 'Requests',  icon: ClipboardList },
   ];
 
-  // Employees tab — admin and reviewers only (Bashaier needs to see the directory).
-  // Regular staff don't get this tab.
-  if (isAdmin || isReviewer || isManager) {
+  // Employees tab — admin and HR-reviewer (Bashaier) only. Managers do NOT
+  // see the company directory; their dashboard already surfaces their direct
+  // reports, and the Employees tab would expose the full 61-person list which
+  // contradicts the org-chart-scoped access rule. Regular staff also don't
+  // get this tab.
+  if (isAdmin || isHrReviewer) {
     base.push({ id: 'employees', label: 'Employees', icon: Users });
   }
 
@@ -503,7 +506,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
             onNewRequest={() => setShowNewRequest(true)}
           />
         )}
-        {tab === 'employees' && (isAdmin || isReviewer || isManager) && (
+        {tab === 'employees' && (isAdmin || isHrReviewer) && (
           <Employees
             employees={employees} leaveTypes={leaveTypes}
             requests={requests} balances={balances}
