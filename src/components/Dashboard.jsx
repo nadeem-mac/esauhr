@@ -285,152 +285,70 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
            style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
 
         {/* TOTAL STAFF — with location split */}
-        <div className="rounded-xl bg-white relative overflow-hidden esau-badge"
-             style={{ border: '1px solid #E5E0D5', boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
-          <div aria-hidden style={{ position:'absolute', top:0, left:0, bottom:0, width:'5px', background:'linear-gradient(180deg, #34D399 0%, #047857 100%)' }}/>
-          <div className="p-4 pl-6">
-            <div className="flex items-start justify-between mb-2">
-              <div>
-                <div className="text-[10px]" style={{ color: '#047857', letterSpacing: '0.18em', fontWeight: 700 }}>TOTAL STAFF</div>
-                <div className="text-[11px]" style={{ color: '#1F1B16', marginTop: '2px' }}>Active employees</div>
-              </div>
-              <div className="rounded-full px-3 py-1"
-                   style={{ background: '#ECFDF5', color: '#047857', fontSize: '20px', fontWeight: 700, lineHeight: 1 }}>
-                {employees.length}
-              </div>
+        <Tile label="TOTAL STAFF" sublabel="Active employees" count={employees.length}
+              accentDark="#047857" accentTint="#ECFDF5">
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <span style={{ fontSize: '14px', lineHeight: 1 }}>📍</span>
+              <span style={{ fontSize: '14px', fontWeight: 600, color: '#1F1B16' }}>{byLocation.DMM || 0}</span>
+              <span className="text-[11px]" style={{ color: '#1F1B16' }}>DMM</span>
             </div>
-            <div className="flex items-center gap-3 mt-3 flex-wrap">
-              <div className="flex items-center gap-1.5">
-                <span style={{ fontSize: '14px', lineHeight: 1 }}>📍</span>
-                <span style={{ fontSize: '14px', fontWeight: 600, color: '#1F1B16' }}>{byLocation.DMM || 0}</span>
-                <span className="text-[11px]" style={{ color: '#1F1B16' }}>DMM</span>
-              </div>
-              <div style={{ width: '1px', height: '14px', background: '#E5E0D5' }}/>
-              <div className="flex items-center gap-1.5">
-                <span style={{ fontSize: '14px', lineHeight: 1 }}>📍</span>
-                <span style={{ fontSize: '14px', fontWeight: 600, color: '#1F1B16' }}>{byLocation.JED || 0}</span>
-                <span className="text-[11px]" style={{ color: '#1F1B16' }}>JED</span>
-              </div>
-              <div style={{ width: '1px', height: '14px', background: '#E5E0D5' }}/>
-              <div className="flex items-center gap-1.5">
-                <span style={{ fontSize: '14px', lineHeight: 1 }}>📍</span>
-                <span style={{ fontSize: '14px', fontWeight: 600, color: '#1F1B16' }}>{byLocation.RYD || 0}</span>
-                <span className="text-[11px]" style={{ color: '#1F1B16' }}>RYD</span>
-              </div>
+            <div style={{ width: '1px', height: '14px', background: '#E5E0D5' }}/>
+            <div className="flex items-center gap-1.5">
+              <span style={{ fontSize: '14px', lineHeight: 1 }}>📍</span>
+              <span style={{ fontSize: '14px', fontWeight: 600, color: '#1F1B16' }}>{byLocation.JED || 0}</span>
+              <span className="text-[11px]" style={{ color: '#1F1B16' }}>JED</span>
             </div>
-            <div className="mt-3 rounded-full overflow-hidden flex" style={{ height: '6px', background: '#F1ECE0' }}>
-              {(byLocation.DMM || 0) > 0 && <div title={`${byLocation.DMM} DMM`} style={{ width: `${Math.round(((byLocation.DMM || 0) / Math.max(employees.length, 1)) * 100)}%`, background: 'linear-gradient(90deg, #6EE7B7 0%, #10B981 100%)' }}/>}
-              {(byLocation.JED || 0) > 0 && <div title={`${byLocation.JED} JED`} style={{ width: `${Math.round(((byLocation.JED || 0) / Math.max(employees.length, 1)) * 100)}%`, background: 'linear-gradient(90deg, #67E8F9 0%, #06B6D4 100%)' }}/>}
-              {(byLocation.RYD || 0) > 0 && <div title={`${byLocation.RYD} RYD`} style={{ width: `${Math.round(((byLocation.RYD || 0) / Math.max(employees.length, 1)) * 100)}%`, background: 'linear-gradient(90deg, #FCD34D 0%, #F59E0B 100%)' }}/>}
+            <div style={{ width: '1px', height: '14px', background: '#E5E0D5' }}/>
+            <div className="flex items-center gap-1.5">
+              <span style={{ fontSize: '14px', lineHeight: 1 }}>📍</span>
+              <span style={{ fontSize: '14px', fontWeight: 600, color: '#1F1B16' }}>{byLocation.RYD || 0}</span>
+              <span className="text-[11px]" style={{ color: '#1F1B16' }}>RYD</span>
             </div>
           </div>
-        </div>
+          <div className="mt-3 rounded-full overflow-hidden flex" style={{ height: '6px', background: '#F1ECE0' }}>
+            {(byLocation.DMM || 0) > 0 && <div title={`${byLocation.DMM} DMM`} style={{ width: `${Math.round(((byLocation.DMM || 0) / Math.max(employees.length, 1)) * 100)}%`, background: 'linear-gradient(90deg, #6EE7B7 0%, #10B981 100%)' }}/>}
+            {(byLocation.JED || 0) > 0 && <div title={`${byLocation.JED} JED`} style={{ width: `${Math.round(((byLocation.JED || 0) / Math.max(employees.length, 1)) * 100)}%`, background: 'linear-gradient(90deg, #67E8F9 0%, #06B6D4 100%)' }}/>}
+            {(byLocation.RYD || 0) > 0 && <div title={`${byLocation.RYD} RYD`} style={{ width: `${Math.round(((byLocation.RYD || 0) / Math.max(employees.length, 1)) * 100)}%`, background: 'linear-gradient(90deg, #FCD34D 0%, #F59E0B 100%)' }}/>}
+          </div>
+        </Tile>
 
         {/* ON LEAVE TODAY */}
-        <div className="rounded-xl bg-white relative overflow-hidden esau-badge"
-             style={{ border: '1px solid #E5E0D5', boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
-          <div aria-hidden style={{ position:'absolute', top:0, left:0, bottom:0, width:'5px', background:'linear-gradient(180deg, #67E8F9 0%, #0E7490 100%)' }}/>
-          <div className="p-4 pl-6">
-            <div className="flex items-start justify-between mb-2">
-              <div>
-                <div className="text-[10px]" style={{ color: '#0E7490', letterSpacing: '0.18em', fontWeight: 700 }}>ON LEAVE TODAY</div>
-                <div className="text-[11px]" style={{ color: '#1F1B16', marginTop: '2px' }}>Currently out of office</div>
-              </div>
-              <div className="rounded-full px-3 py-1"
-                   style={{ background: '#ECFEFF', color: '#0E7490', fontSize: '20px', fontWeight: 700, lineHeight: 1 }}>
-                {onLeaveToday.length}
-              </div>
-            </div>
-            <div className="text-[20px] mt-2">🏖️</div>
-          </div>
-        </div>
+        <Tile label="ON LEAVE TODAY" sublabel="Currently out of office" count={onLeaveToday.length}
+              accentDark="#0E7490" accentTint="#ECFEFF">
+          <div className="text-[20px]">🏖️</div>
+        </Tile>
 
         {/* PENDING APPROVAL */}
-        <button onClick={onGoToRequests}
-             className="text-left rounded-xl bg-white relative overflow-hidden cursor-pointer esau-badge"
-             style={{ border: '1px solid #E5E0D5', boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
-          <div aria-hidden style={{ position:'absolute', top:0, left:0, bottom:0, width:'5px', background:'linear-gradient(180deg, #FBBF24 0%, #C2410C 100%)' }}/>
-          <div className="p-4 pl-6">
-            <div className="flex items-start justify-between mb-2">
-              <div>
-                <div className="text-[10px]" style={{ color: '#C2410C', letterSpacing: '0.18em', fontWeight: 700 }}>PENDING APPROVAL</div>
-                <div className="text-[11px]" style={{ color: '#1F1B16', marginTop: '2px' }}>Awaiting your decision</div>
-              </div>
-              <div className="rounded-full px-3 py-1"
-                   style={{ background: '#FFFBEB', color: '#C2410C', fontSize: '20px', fontWeight: 700, lineHeight: 1 }}>
-                {pending.length}
-              </div>
-            </div>
-            <div className="text-[20px] mt-2">⏳</div>
-          </div>
-        </button>
+        <Tile label="PENDING APPROVAL" sublabel="Awaiting your decision" count={pending.length}
+              accentDark="#C2410C" accentTint="#FFFBEB" onClick={onGoToRequests}>
+          <div className="text-[20px]">⏳</div>
+        </Tile>
 
         {/* APPROVED THIS MONTH */}
-        <div className="rounded-xl bg-white relative overflow-hidden esau-badge"
-             style={{ border: '1px solid #E5E0D5', boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
-          <div aria-hidden style={{ position:'absolute', top:0, left:0, bottom:0, width:'5px', background:'linear-gradient(180deg, #A78BFA 0%, #6D28D9 100%)' }}/>
-          <div className="p-4 pl-6">
-            <div className="flex items-start justify-between mb-2">
-              <div>
-                <div className="text-[10px]" style={{ color: '#6D28D9', letterSpacing: '0.18em', fontWeight: 700 }}>APPROVED THIS MONTH</div>
-                <div className="text-[11px]" style={{ color: '#1F1B16', marginTop: '2px' }}>{new Date().toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</div>
-              </div>
-              <div className="rounded-full px-3 py-1"
-                   style={{ background: '#F5F3FF', color: '#6D28D9', fontSize: '20px', fontWeight: 700, lineHeight: 1 }}>
-                {approvedThisMonth}
-              </div>
-            </div>
-            <div className="text-[20px] mt-2">✅</div>
-          </div>
-        </div>
+        <Tile label="APPROVED THIS MONTH" sublabel={new Date().toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })} count={approvedThisMonth}
+              accentDark="#6D28D9" accentTint="#F5F3FF">
+          <div className="text-[20px]">✅</div>
+        </Tile>
 
         {/* PIN REQUESTS — admin/HR only; opens modal with the queue */}
         {canSeePinReqs && (
-          <button
-             onClick={() => setPinModalOpen(true)}
-             className="text-left rounded-xl bg-white relative overflow-hidden cursor-pointer esau-badge"
-             style={{ border: '1px solid #E5E0D5', boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
-            <div aria-hidden style={{ position:'absolute', top:0, left:0, bottom:0, width:'5px', background:'linear-gradient(180deg, #94A3B8 0%, #334155 100%)' }}/>
-            <div className="p-4 pl-6">
-              <div className="flex items-start justify-between mb-2">
-                <div>
-                  <div className="text-[10px]" style={{ color: '#334155', letterSpacing: '0.18em', fontWeight: 700 }}>PIN REQUESTS</div>
-                  <div className="text-[11px]" style={{ color: '#1F1B16', marginTop: '2px' }}>Click to review</div>
-                </div>
-                <div className="rounded-full px-3 py-1"
-                     style={{ background: '#F1F5F9', color: '#334155', fontSize: '20px', fontWeight: 700, lineHeight: 1 }}>
-                  {pinReqCount}
-                </div>
-              </div>
-              <div className="text-[20px] mt-2">🔑</div>
-            </div>
-          </button>
+          <Tile label="PIN REQUESTS" sublabel="Click to review" count={pinReqCount}
+                accentDark="#334155" accentTint="#F1F5F9" onClick={() => setPinModalOpen(true)}>
+            <div className="text-[20px]">🔑</div>
+          </Tile>
         )}
 
         {/* YOUR TASKS — HR reviewer only */}
         {bashaierMode && (
-          <button
-             onClick={() => {
-               const el = document.getElementById('bashaier-tasks-anchor');
-               if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-             }}
-             className="text-left rounded-xl bg-white relative overflow-hidden cursor-pointer esau-badge"
-             style={{ border: '1px solid #E5E0D5', boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
-            <div aria-hidden style={{ position:'absolute', top:0, left:0, bottom:0, width:'5px', background:'linear-gradient(180deg, #F472B6 0%, #BE185D 100%)' }}/>
-            <div className="p-4 pl-6">
-              <div className="flex items-start justify-between mb-2">
-                <div>
-                  <div className="text-[10px]" style={{ color: '#BE185D', letterSpacing: '0.18em', fontWeight: 700 }}>YOUR TASKS</div>
-                  <div className="text-[11px]" style={{ color: '#1F1B16', marginTop: '2px' }}>Reports for Mr John</div>
-                </div>
-                <div className="rounded-full px-3 py-1"
-                     style={{ background: '#FDF2F8', color: '#BE185D', fontSize: '20px', fontWeight: 700, lineHeight: 1 }}>
-                  3
-                </div>
-              </div>
-              <div className="text-[20px] mt-2">📋</div>
-            </div>
-          </button>
+          <Tile label="YOUR TASKS" sublabel="Reports for Mr John" count={3}
+                accentDark="#BE185D" accentTint="#FDF2F8"
+                onClick={() => {
+                  const el = document.getElementById('bashaier-tasks-anchor');
+                  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }}>
+            <div className="text-[20px]">📋</div>
+          </Tile>
         )}
 
       </div>
@@ -769,6 +687,50 @@ export function Card({ title, subtitle, children, accent }) {
       )}
       {children}
     </div>
+  );
+}
+
+// KPI Tile — small canonical-chrome card with a colored count pill on the
+// right and an optional accent dot in the header. Used for the strip of stat
+// tiles at the top of the admin dashboard (TOTAL STAFF / ON LEAVE TODAY /
+// PENDING APPROVAL / etc.) and also for the dept-headcount badges below.
+// Earlier these were each rendered inline with a colored 5px gradient side
+// rail + bg-white + bespoke box-shadow — visually distinct enough from the
+// info cards (Out of office today, Pending requests, Upcoming leaves) that
+// the page didn't read as one family. Tile gives them the canonical paper
+// chrome (#FFFDF7 + border-soft + esau-card hover) while preserving the
+// dept-color identity through the small accent dot and the tinted count
+// pill on the right.
+export function Tile({ label, sublabel, count, accentDark, accentTint, onClick, children }) {
+  const Tag = onClick ? 'button' : 'div';
+  const tagProps = onClick ? { onClick, type: 'button' } : {};
+  return (
+    <Tag {...tagProps}
+         className={`text-left rounded-xl border p-5 esau-card w-full ${onClick ? 'cursor-pointer' : ''}`}
+         style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}>
+      <div className="flex items-start justify-between pb-3 mb-3 border-b" style={{ borderColor: 'var(--border-soft)' }}>
+        <div className="flex items-center gap-2 min-w-0">
+          {accentDark && <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: accentDark }} />}
+          <div className="min-w-0">
+            <div className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.18em', fontWeight: 700 }}>
+              {label}
+            </div>
+            {sublabel && (
+              <div className="text-[11px]" style={{ color: '#1F1B16', marginTop: '2px' }}>
+                {sublabel}
+              </div>
+            )}
+          </div>
+        </div>
+        {(count !== undefined && count !== null) && (
+          <div className="rounded-full px-3 py-1 flex-shrink-0"
+               style={{ background: accentTint || '#F4EEDF', color: accentDark || '#1F1B16', fontSize: '20px', fontWeight: 700, lineHeight: 1 }}>
+            {count}
+          </div>
+        )}
+      </div>
+      {children}
+    </Tag>
   );
 }
 
