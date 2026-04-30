@@ -2,15 +2,25 @@ import React, { useState, useMemo } from 'react';
 import { supabase } from '../supabaseClient.js';
 import { X, AlertTriangle, Sunrise, Sunset, Loader2 } from 'lucide-react';
 import { logAction } from '../lib/audit.js';
-import { checkExceeds, summariseMonth, PERMISSION_QUOTA, PERMISSION_TYPES } from '../lib/permissionLogic.js';
+import { checkExceeds, summariseMonth, PERMISSION_QUOTA, PERMISSION_TYPES, reasonsFor } from '../lib/permissionLogic.js';
 
 export default function PermissionRequestModal({ me, type = 'late_arrival', monthRows = [], onClose, onSubmitted }) {
   const today = new Date().toISOString().slice(0, 10);
   const [date,    setDate]    = useState(type === 'late_arrival' ? today : today);
   const [hours,   setHours]   = useState(1);
-  const [reason,  setReason]  = useState('');
+  // Reason is now a curated dropdown (set per-type via reasonsFor) plus a
+  // small free-text input that only appears when 'Other' is selected. The
+  // final string saved to permission_requests.reason is composed at submit
+  // time. Free-text was removed because HR couldn't bucket the data
+  // meaningfully when every staff phrased "doctor" / "medical" / "clinic"
+  // differently.
+  const [reasonCategory, setReasonCategory] = useState('');
+  const [reasonOther,    setReasonOther]    = useState('');
   const [busy,    setBusy]    = useState(false);
   const [error,   setError]   = useState('');
+
+  const reasonOptions = reasonsFor(type);
+  const isOther       = reasonCategory === 'Other';
 
   const summary = summariseMonth(monthRows);
   const exceeds = useMemo(() => checkExceeds(monthRows, hours), [monthRows, hours]);
@@ -19,6 +29,20 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
 
   async function submit(e) {
     e.preventDefault();
+    // Validate reason — category required, and if 'Other' the staff must
+    // specify what 'Other' means. Without these checks HR ends up with
+    // empty or meaningless reasons that block reconciliation.
+    if (!reasonCategory) {
+      setError('Please pick a reason from the list.');
+      return;
+    }
+    if (isOther && !reasonOther.trim()) {
+      setError('You picked "Other" — please specify the reason in a few words.');
+      return;
+    }
+    const finalReason = isOther
+      ? `Other — ${reasonOther.trim()}`
+      : reasonCategory;
     setBusy(true);
     setError('');
     try {
@@ -27,7 +51,7 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
         type,
         permission_date: date,
         hours,
-        reason:          reason || null,
+        reason:          finalReason,
         exceeds_quota:   exceeds.willExceed,
         requested_by:    me.id,
       }).select().single();
@@ -36,7 +60,7 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
         targetType: 'permission_request',
         targetId: data?.id,
         targetLabel: `${cfg.label} · ${date} · ${hours}h${exceeds.willExceed ? ' (FLAGGED)' : ''}`,
-        details: { type, hours, exceeds_quota: exceeds.willExceed },
+        details: { type, hours, exceeds_quota: exceeds.willExceed, reason: finalReason },
       });
       onSubmitted?.();
     } catch (err) {
@@ -120,13 +144,43 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
             </div>
           </div>
 
-          {/* Reason */}
+          {/* Reason — curated dropdown. The list is type-specific (different
+              framing for late vs early) and tailored to what HR most often
+              sees and can act on. 'Other' opens a small specifier input
+              underneath, which becomes required when picked. */}
           <div>
-            <label className="block text-[10px] tracking-[0.25em] opacity-60 mb-2">REASON (optional)</label>
-            <textarea value={reason} onChange={e => setReason(e.target.value)}
-              rows={3} placeholder="e.g. doctor's appointment, family commitment…"
-              className="w-full px-4 py-3 rounded-xl border bg-transparent text-sm resize-none"
-              style={{ borderColor: 'var(--border)' }}/>
+            <label className="block text-[10px] tracking-[0.25em] mb-2" style={{ color: '#1F1B16', fontWeight: 700 }}>
+              REASON
+            </label>
+            <select
+              value={reasonCategory}
+              onChange={e => setReasonCategory(e.target.value)}
+              required
+              className="w-full px-4 py-3 rounded-xl border bg-white text-sm"
+              style={{ borderColor: 'var(--border)', color: '#1F1B16' }}
+            >
+              <option value="">— Select a reason —</option>
+              {reasonOptions.map(r => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
+            {isOther && (
+              <div className="mt-2">
+                <label className="block text-[10px] tracking-[0.25em] mb-1.5" style={{ color: '#1F1B16', fontWeight: 700 }}>
+                  PLEASE SPECIFY
+                </label>
+                <input
+                  type="text"
+                  value={reasonOther}
+                  onChange={e => setReasonOther(e.target.value)}
+                  placeholder="A few words so HR understands the context"
+                  required
+                  maxLength={120}
+                  className="w-full px-4 py-2.5 rounded-xl border bg-white text-sm"
+                  style={{ borderColor: 'var(--border)', color: '#1F1B16' }}
+                />
+              </div>
+            )}
           </div>
 
           {/* Quota warning */}

@@ -63,3 +63,37 @@ export function groupByMonth(rows) {
   });
   return out;
 }
+
+// Curated reason lists for permission requests. Drives the dropdown in
+// PermissionRequestModal — replaces what used to be free-text. Sourced from
+// what HR most frequently sees and approves at Evergreen Shipping (KSA):
+// medical and government/Iqama paperwork dominate, followed by family
+// responsibility and bank visits. The two lists are tailored separately
+// because late-arrival and early-leave have slightly different framing
+// (start-of-day vs end-of-day commitments).
+//
+// 'Other' is the safety valve — when picked, the modal asks for a brief
+// free-text specifier so HR still gets useful context. Without 'Other',
+// edge cases would force people into the closest-fit category, which
+// muddies the data HR uses to plan.
+export const LATE_ARRIVAL_REASONS = [
+  'Medical appointment',
+  'Government / Iqama / official paperwork',
+  'Bank or financial appointment',
+  'Family responsibility — school drop-off / dependent care',
+  'Traffic or road delay',
+  'Other',
+];
+
+export const EARLY_LEAVE_REASONS = [
+  'Medical appointment',
+  'Government / Iqama / official paperwork',
+  'Bank or financial appointment',
+  'Family responsibility — school pickup / dependent care',
+  'Personal urgent matter',
+  'Other',
+];
+
+export function reasonsFor(type) {
+  return type === 'early_leave' ? EARLY_LEAVE_REASONS : LATE_ARRIVAL_REASONS;
+}
