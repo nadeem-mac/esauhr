@@ -616,25 +616,29 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
 
   return (
     <>
-      <div className="rounded-2xl border bg-white p-5 sm:p-6"
-           style={{ borderColor: 'var(--border-soft)', background: 'linear-gradient(135deg, #FFFFFF 0%, #FBFAF6 100%)' }}>
-        <div className="flex items-start justify-between gap-3 mb-4">
-          <div>
-            <div className="flex items-center gap-2 text-[10px] tracking-[0.25em] opacity-60 mb-1">
-              <ClipboardCheck className="w-3 h-3" /> YOUR TASKS THIS MONTH
-            </div>
-            <h2 className="serif text-2xl" style={{ color: 'var(--ink)' }}>Reports for Mr John</h2>
-            <p className="text-xs opacity-70 mt-1">
-              Three scheduled emails. Click any task to preview, then send via your mail client or copy to paste into Outlook.
-            </p>
+      {/* REPORTS FOR MR JOHN — the three monthly emails. Outer wrapper uses
+          the canonical .esau-card chrome (matching <Card> in Dashboard.jsx)
+          so it sits cleanly alongside the dashboard cards above it (Out of
+          office today / Pending requests / Upcoming leaves) and inherits
+          the same hover lift. The shift-approval queue used to live inside
+          this card; it now has its own home in PendingShiftApprovalsCard. */}
+      <div
+        className="rounded-xl border p-5 esau-card"
+        style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}
+      >
+        <div className="flex items-baseline justify-between mb-4 pb-3 border-b" style={{ borderColor: 'var(--border-soft)' }}>
+          <div className="flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--evergreen-500)' }} />
+            <h3 className="serif text-lg" style={{ fontWeight: 500 }}>Reports for Mr John</h3>
+          </div>
+          <div className="text-xs opacity-60 flex items-center gap-1.5">
+            <ClipboardCheck className="w-3 h-3" /> 3 scheduled emails
           </div>
         </div>
 
-        {/* Pending shift approvals — moved out to its own dashboard card.
-            See PendingShiftApprovalsCard.jsx, mounted from Dashboard.jsx for
-            HR reviewers. The block used to render here with whimsical Sparkles
-            framing alongside the monthly-report tasks; now it sits as a peer
-            of the leave queue, where it conceptually belongs. */}
+        <p className="text-xs mb-4" style={{ color: '#1F1B16' }}>
+          Click any task to preview, then send via your mail client or copy to paste into Outlook.
+        </p>
 
         {/* P6: Performance escalation — surfaces staff who exceeded 5
             attendance violations this calendar month. Auto-hides when there
