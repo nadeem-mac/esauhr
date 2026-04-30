@@ -566,7 +566,7 @@ export default function AttendanceView({ me, employees }) {
     const row = {
       employee_id: empId,
       violation_date: csvDate,                 // ISO yyyy-mm-dd from csvDate
-      violation_type: violationType,           // 'late' | 'early' | 'missed_in' | 'missed_out'
+      violation_type: violationType,           // 'late' | 'early_leave' | 'missed_in' | 'missed_out'
       minutes_off: minutesOff ?? null,
       punch_in_time:  punchInTime  || null,
       punch_out_time: punchOutTime || null,
