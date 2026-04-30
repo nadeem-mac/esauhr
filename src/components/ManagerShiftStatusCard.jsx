@@ -15,7 +15,7 @@ import { directGet, supabase } from '../supabaseClient.js';
 //
 // Data shape per shift:
 //   pending        → grey  "Waiting for staff"
-//   accepted       → green "Accepted DD MMM HH:mm" (+ optionally "HR notified")
+//   accepted       → green "Accepted DD MMM HH:mm" (+ optionally "Approved by SUP")
 //   declined       → red   "Declined — '<reason>'"
 //
 // Scope: rows where set_by === me.id, ordered by shift_date asc.
@@ -165,8 +165,11 @@ export default function ManagerShiftStatusCard({ me, employees }) {
         </div>
       </div>
 
-      {/* Roll-up tiles */}
-      <div className="grid grid-cols-3 gap-2 mt-4">
+      {/* Roll-up tiles — four columns. Reading left to right traces the
+          happy path of the shift workflow: Waiting (sent, awaiting staff)
+          → Accepted (staff acknowledged) → Approved by SUP (Bashaier/HR
+          signed off) → Declined sits last as the negative-outcome bucket. */}
+      <div className="grid grid-cols-4 gap-2 mt-4">
         <RollupTile
           label="Waiting for staff"
           count={total.pending}
@@ -180,6 +183,13 @@ export default function ManagerShiftStatusCard({ me, employees }) {
           color="#0F4C2A"
           bg="#ECFDF5"
           icon={<CheckCircle2 className="w-3.5 h-3.5" />}
+        />
+        <RollupTile
+          label="Approved by SUP"
+          count={total.approvedBySup}
+          color="#1D4ED8"
+          bg="#DBEAFE"
+          icon={<Bell className="w-3.5 h-3.5" />}
         />
         <RollupTile
           label="Declined"
@@ -209,11 +219,18 @@ export default function ManagerShiftStatusCard({ me, employees }) {
 // ── Helpers ──
 
 function countByStatus(rows) {
-  const c = { pending: 0, accepted: 0, declined: 0 };
+  // Four buckets: pending / accepted / declined are mutually exclusive on
+  // status. approvedBySup is a SECONDARY count that overlaps with accepted —
+  // an accepted shift becomes "approved by SUP" once Bashaier (or whoever
+  // is acting in the SUP-review role) signs off and notified_hr_at gets a
+  // timestamp. We surface it as its own tile so the manager can see at a
+  // glance which accepted shifts have been fully greenlit through HR.
+  const c = { pending: 0, accepted: 0, declined: 0, approvedBySup: 0 };
   rows.forEach(r => {
     if (r.status === 'pending')  c.pending++;
     if (r.status === 'accepted') c.accepted++;
     if (r.status === 'declined') c.declined++;
+    if (r.status === 'accepted' && r.notified_hr_at != null) c.approvedBySup++;
   });
   return c;
 }
@@ -312,7 +329,7 @@ function ShiftStatusRow({ shift }) {
           <>
             {' '}·{' '}
             <span style={{ color: '#1D4ED8' }} className="inline-flex items-center gap-1">
-              <Bell className="w-2.5 h-2.5" /> HR notified
+              <Bell className="w-2.5 h-2.5" /> Approved by SUP
             </span>
           </>
         )}

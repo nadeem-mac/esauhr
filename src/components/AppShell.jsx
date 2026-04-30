@@ -67,6 +67,17 @@ function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, me }) {
     base.splice(2, 0, { id: 'reviews', label: 'Reviews',  icon: ShieldCheck });
   }
 
+  // Shifts — manager-only workspace for assigning per-day hours to direct
+  // reports and tracking acknowledgment + SUP approval state. Splits cleanly
+  // out of the Requests tab so Requests can go back to being leave-only.
+  // Excludes admin and HR-reviewer (Bashaier) — they manage shifts from
+  // their own dashboards. Spliced AFTER Reviews so it lands at index 2,
+  // pushing Reviews down by one (final order: Dashboard, Requests, Shifts,
+  // Reviews, Calendar).
+  if (isManager && !isAdmin && !isHrReviewer) {
+    base.splice(2, 0, { id: 'shifts', label: 'Shifts', icon: CalIcon });
+  }
+
   // Attendance — exclusively Bashaier (H94830) and Nadeem (H94152). Even other
   // HR reviewers do NOT see this tab. Per Nadeem's directive: the daily time-card
   // review, lateness emails, and the future evaluation-scoring escalation must be
@@ -489,6 +500,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
               employees={employees}
               onGoToReviews={() => setTab('reviews')}
               onGoToRequests={() => setTab('requests')}
+              onGoToShifts={() => setTab('shifts')}
             />
           ) : (
             <PersonalDashboard
@@ -510,24 +522,22 @@ export default function AppShell({ session, me, onRefreshMe }) {
           return <AttendanceView me={me} employees={employees} />;
         })()}
         {tab === 'requests' && (
+          <Requests
+            requests={requests} leaveTypes={leaveTypes}
+            typeMap={typeMap} empMap={empMap}
+            onDecide={decideRequest} onDelete={deleteRequest}
+            onNewRequest={() => setShowNewRequest(true)}
+          />
+        )}
+        {tab === 'shifts' && isManager && !isAdmin && !isHrReviewer && (
+          // Manager-only shift workspace. The editor lets the manager assign
+          // per-day shifts to direct reports; the status panel below shows
+          // live acknowledgment state plus SUP approval for every shift on
+          // file. Defense-in-depth route guard mirrors the buildTabs gate so
+          // a forced ?tab=shifts URL from a non-manager renders nothing.
           <div className="space-y-6">
-            {/* Manager-only shift workspace lives at the top of the Requests
-                tab. The editor (top) lets the manager assign shifts; the
-                status panel (below) shows live acknowledgment state for
-                every shift they've already sent. Both hide for non-managers
-                — staff and HR see only the leave-request list below. */}
-            {isManager && !isAdmin && !isHrReviewer && (
-              <>
-                <ManagerShiftCard me={me} employees={employees} />
-                <ManagerShiftStatusCard me={me} employees={employees} />
-              </>
-            )}
-            <Requests
-              requests={requests} leaveTypes={leaveTypes}
-              typeMap={typeMap} empMap={empMap}
-              onDecide={decideRequest} onDelete={deleteRequest}
-              onNewRequest={() => setShowNewRequest(true)}
-            />
+            <ManagerShiftCard me={me} employees={employees} />
+            <ManagerShiftStatusCard me={me} employees={employees} />
           </div>
         )}
         {tab === 'employees' && (isAdmin || isHrReviewer) && (

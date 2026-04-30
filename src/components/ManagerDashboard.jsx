@@ -27,7 +27,7 @@ import { fmtDate, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLog
 //   • Admin actions (PIN reset, employee management, system settings)
 // ────────────────────────────────────────────────────────────────────────────
 
-export default function ManagerDashboard({ me, employees, onGoToReviews, onGoToRequests }) {
+export default function ManagerDashboard({ me, employees, onGoToReviews, onGoToRequests, onGoToShifts }) {
   const [requests, setRequests] = useState([]);
   const [shifts, setShifts]     = useState([]);
   const [loading, setLoading]   = useState(true);
@@ -225,9 +225,9 @@ export default function ManagerDashboard({ me, employees, onGoToReviews, onGoToR
                   ? `This week · ${shiftCounts.pending} waiting · ${shiftCounts.accepted} accepted`
                   : `This week · all ${shiftCounts.accepted} accepted`
           }
-          actionLabel={typeof onGoToRequests === 'function' ? 'Open →' : undefined}
-          onAction={typeof onGoToRequests === 'function' ? onGoToRequests : undefined}
-          onClick={typeof onGoToRequests === 'function' ? onGoToRequests : undefined}
+          actionLabel={typeof onGoToShifts === 'function' ? 'Open →' : undefined}
+          onAction={typeof onGoToShifts === 'function' ? onGoToShifts : undefined}
+          onClick={typeof onGoToShifts === 'function' ? onGoToShifts : undefined}
         />
       </div>
 
@@ -307,8 +307,9 @@ export default function ManagerDashboard({ me, employees, onGoToReviews, onGoToR
       </Card>
 
       {/* Shift cards moved out: the editor (ManagerShiftCard) and the
-          per-day status breakdown (ManagerShiftStatusCard) now live in the
-          Requests tab. The dashboard SHIFT STATUS tile above links there. */}
+          per-day status breakdown (ManagerShiftStatusCard) live on the
+          dedicated Shifts tab now (manager-only). The dashboard SHIFT
+          STATUS tile above links there. */}
 
       {loading && (
         <div className="text-center text-xs opacity-50 py-2">Loading team data…</div>
