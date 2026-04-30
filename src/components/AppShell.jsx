@@ -99,7 +99,21 @@ function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, me }) {
 export default function AppShell({ session, me, onRefreshMe }) {
   // State declarations come FIRST so derived flags can read 'employees'.
   const [pendingRegCount, setPendingRegCount] = useState(0);
-  const [tab, setTab] = useState('dashboard');
+  // Active tab — persisted in sessionStorage so a browser refresh keeps
+  // the user on whatever view they were looking at (Shifts, Reviews,
+  // Calendar, etc.) instead of bouncing them back to Dashboard. Per-tab
+  // session storage so different browser tabs can hold different views.
+  const [tab, setTab] = useState(() => {
+    try {
+      return sessionStorage.getItem('esauhr.tab') || 'dashboard';
+    } catch { return 'dashboard'; }
+  });
+  // Wrap setter so every tab change writes back to sessionStorage. Defining
+  // the wrapper inline keeps every existing setTab call site unchanged.
+  const setTabPersistent = (next) => {
+    setTab(next);
+    try { sessionStorage.setItem('esauhr.tab', next); } catch {}
+  };
   const [employees, setEmployees]       = useState([]);
   const [leaveTypes, setLeaveTypes]     = useState([]);
   const [requests, setRequests]         = useState([]);
@@ -461,7 +475,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
         {/* Tabs */}
         <div className="max-w-7xl mx-auto px-6 flex gap-1 overflow-x-auto">
           {TABS.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)}
+            <button key={t.id} onClick={() => setTabPersistent(t.id)}
               className="relative flex items-center gap-2 px-4 py-3 text-sm whitespace-nowrap transition-colors"
               style={{
                 color: tab === t.id ? 'var(--ink)' : 'var(--ink-soft)',
@@ -508,7 +522,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
               balances={balances} holidays={holidays}
               typeMap={typeMap} empMap={empMap}
               permissions={permissions}
-              onGoToRequests={() => setTab('requests')}
+              onGoToRequests={() => setTabPersistent("requests")}
               onNewRequest={() => setShowNewRequest(true)}
             />
           ) : isManager ? (
@@ -518,9 +532,9 @@ export default function AppShell({ session, me, onRefreshMe }) {
             <ManagerDashboard
               me={me}
               employees={employees}
-              onGoToReviews={() => setTab('reviews')}
-              onGoToRequests={() => setTab('requests')}
-              onGoToShifts={() => setTab('shifts')}
+              onGoToReviews={() => setTabPersistent("reviews")}
+              onGoToRequests={() => setTabPersistent("requests")}
+              onGoToShifts={() => setTabPersistent("shifts")}
             />
           ) : (
             <PersonalDashboard

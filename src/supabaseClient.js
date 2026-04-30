@@ -10,7 +10,7 @@ export const supabaseConfigured = Boolean(url && key);
 export const supabase = supabaseConfigured
   ? createClient(url, key, {
       auth: {
-        persistSession: false,
+        persistSession: true,  // keep the user signed in across browser refresh
         autoRefreshToken: true,
         detectSessionInUrl: true,
         // Skip the Web Lock â Leave Desk is a single-tab app and the lock just
