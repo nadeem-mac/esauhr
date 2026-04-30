@@ -1,9 +1,10 @@
 // Permission letter — generates a single-page A4 .docx that documents an
-// approved late-arrival or early-leave permission request, plus the matching
-// email draft Bashaier sends to the staff member with manager + executive CC.
+// approved late-arrival or early-leave permission request. Format follows
+// professional HR correspondence style: letterhead, date/ref, addressee,
+// subject line, body paragraphs, structured tables, signature block.
 //
-// Mirrors the structure of vacationForm.js so the two flows feel consistent
-// when printed side-by-side.
+// Mirrors the visual hierarchy of vacationForm.js but reads as a formal
+// HR letter rather than a data form.
 
 import {
   Document, Packer, Paragraph, TextRun,
@@ -27,21 +28,43 @@ const TYPE_LABEL = {
   early_leave:  'Early Leave',
 };
 
-// CC roster for the approval email. Lookup is by lowercase name substring
-// against employees.name + employees.email. Update this list when the org
-// chart changes — the resolver handles partial matches and silently skips
-// anyone who doesn't have an email on file.
+// CC roster for the approval email — see resolveExecCcEmails below.
 const EXEC_CC_NAMES = ['john', 'james', 'fahad hussain', 'badria', 'jaffar'];
 
-// ─── colour palette ───────────────────────────────────────────────────────────
-const C_DARK   = '2D5F3F';
-const C_TEXT   = '1F2937';
-const C_MUTED  = '6B7280';
-const C_BORDER = 'D1D5DB';
-const C_ACCENT = '15803D';
+// HR signature block — used in BOTH the docx and the email body. Single
+// source of truth so future updates only touch one place. Per user
+// direction this is the official HR signature for permission approval
+// correspondence and stays the same regardless of which HR reviewer
+// approves (they all sign as the SUP / HR DEPT).
+const HR_SIGNATURE = {
+  name:    'BASHAIER ALI',
+  company: 'Evergreen Shipping Agency Saudi Co.,(L.L.C)',
+  unit:    'ESAU - SADMN SUP/ HR DEPT',
+  address: 'P.O.Box : 1008,  DAMMAM – 31431, K.S.A',
+  whatsapp:'966-54 320 9694',
+  tel:     '966-013 813 8563 – Ext 8543',
+  email:   'bashaier.alsubaie@evergreen-shipping.com.sa',
+};
 
-// ─── helpers ──────────────────────────────────────────────────────────────────
-const fmtDate = (iso) => {
+// ─── colour palette ───────────────────────────────────────────────────────────
+const C_DARK   = '0F2818';   // very dark green — headings
+const C_TEXT   = '1F1B16';   // body
+const C_MUTED  = '6B7280';   // captions
+const C_BORDER = 'D1D5DB';
+const C_ACCENT = '2D5F3F';   // brand evergreen for letterhead
+
+// ─── formatters ───────────────────────────────────────────────────────────────
+const fmtDateLong = (iso) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+};
+const fmtDateMed = (iso) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+};
+const fmtDateShort = (iso) => {
   if (!iso) return '—';
   const d = new Date(iso);
   return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' });
@@ -49,35 +72,36 @@ const fmtDate = (iso) => {
 const fmtDateTime = (iso) => {
   if (!iso) return '—';
   const d = new Date(iso);
-  return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} · ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
+  return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })} · ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
 };
 
-// Standard cell with consistent padding + borders
-const cell = (children, opts = {}) => new TableCell({
-  children: Array.isArray(children) ? children : [children],
-  width: opts.width || { size: 50, type: WidthType.PERCENTAGE },
-  margins: { top: 120, bottom: 120, left: 160, right: 160 },
-  shading: opts.shading,
-  borders: {
-    top:    { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-    bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-    left:   { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-    right:  { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-  },
+// ─── docx primitives ──────────────────────────────────────────────────────────
+const run = (text, opts = {}) => new TextRun({
+  text: String(text ?? ''),
+  font: 'Calibri',
+  size: opts.size ?? 22,
+  color: opts.color ?? C_TEXT,
+  bold: !!opts.bold,
+  italics: !!opts.italics,
+  ...(opts.spacing != null ? { characterSpacing: opts.spacing } : {}),
 });
-
-const labelPara = (text) => new Paragraph({
-  children: [new TextRun({
-    text, color: C_MUTED, size: 16, font: 'Calibri',
-    bold: true, characterSpacing: 40,
-  })],
+const para = (text, opts = {}) => new Paragraph({
+  children: Array.isArray(text) ? text : [run(text, opts.run || {})],
+  alignment: opts.align || AlignmentType.LEFT,
+  spacing: { before: opts.before ?? 0, after: opts.after ?? 80 },
 });
-const valuePara = (text, opts = {}) => new Paragraph({
-  children: [new TextRun({
-    text: String(text || '—'), color: C_TEXT, size: opts.size || 22, font: 'Calibri',
-    bold: !!opts.bold,
-  })],
-  spacing: { before: 60 },
+const spacer = (after = 120) => new Paragraph({ children: [run('')], spacing: { after } });
+const noBorder = () => ({
+  top:    { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+  bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+  left:   { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+  right:  { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+});
+const thinBorder = () => ({
+  top:    { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
+  bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
+  left:   { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
+  right:  { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
 });
 
 // ─── main generator ───────────────────────────────────────────────────────────
@@ -86,125 +110,216 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
   const typeLabel = TYPE_LABEL[request.type] || request.type;
   const dept      = DEPT_NAMES[employee?.department] || employee?.department || '—';
   const loc       = LOCATION_NAMES[employee?.location] || employee?.location || '—';
+  const today     = new Date().toISOString();
 
-  // ── HEADER ────────────────────────────────────────────────────────────────
-  const headerTable = new Table({
+  // ── LETTERHEAD ────────────────────────────────────────────────────────────
+  const letterhead = [
+    new Paragraph({
+      children: [run(HR_SIGNATURE.company.toUpperCase(), {
+        bold: true, size: 28, color: C_ACCENT, spacing: 30,
+      })],
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 60 },
+    }),
+    new Paragraph({
+      children: [run(HR_SIGNATURE.unit, { size: 18, color: C_MUTED })],
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 40 },
+    }),
+    new Paragraph({
+      children: [run(`${HR_SIGNATURE.address}  ·  Tel ${HR_SIGNATURE.tel}`, { size: 16, color: C_MUTED })],
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 0 },
+    }),
+    // Divider line
+    new Paragraph({
+      children: [run('')],
+      border: { bottom: { color: C_ACCENT, space: 4, style: BorderStyle.SINGLE, size: 8 } },
+      spacing: { before: 120, after: 200 },
+    }),
+  ];
+
+  // ── DATE + REF ROW ────────────────────────────────────────────────────────
+  const dateRefRow = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [new TableRow({
       children: [
         new TableCell({
-          children: [
-            new Paragraph({
-              children: [new TextRun({ text: 'EVERGREEN SHIPPING', bold: true, size: 32, color: C_DARK, font: 'Calibri' })],
-              spacing: { after: 60 },
-            }),
-            new Paragraph({
-              children: [new TextRun({ text: 'Saudi Arabia · KSA', color: C_MUTED, size: 18, font: 'Calibri' })],
-            }),
-          ],
-          width: { size: 70, type: WidthType.PERCENTAGE },
-          margins: { top: 60, bottom: 60, left: 100, right: 100 },
+          children: [new Paragraph({
+            children: [run('Date:  ', { bold: true, color: C_MUTED, size: 18 }), run(fmtDateMed(today), { size: 20 })],
+          })],
+          width: { size: 60, type: WidthType.PERCENTAGE },
           borders: noBorder(),
+          margins: { top: 0, bottom: 0, left: 0, right: 0 },
         }),
         new TableCell({
-          children: [
-            new Paragraph({
-              children: [new TextRun({ text: 'PERMISSION APPROVAL', bold: true, size: 22, color: C_ACCENT, characterSpacing: 60, font: 'Calibri' })],
-              alignment: AlignmentType.RIGHT,
-              spacing: { after: 40 },
-            }),
-            new Paragraph({
-              children: [new TextRun({ text: `Issued ${fmtDate(new Date().toISOString())}`, color: C_MUTED, size: 16, font: 'Calibri' })],
-              alignment: AlignmentType.RIGHT,
-            }),
-            new Paragraph({
-              children: [new TextRun({ text: `Ref · PR-${String(request.id).padStart(5, '0')}`, color: C_MUTED, size: 16, font: 'Calibri' })],
-              alignment: AlignmentType.RIGHT,
-            }),
-          ],
-          width: { size: 30, type: WidthType.PERCENTAGE },
-          margins: { top: 60, bottom: 60, left: 100, right: 100 },
+          children: [new Paragraph({
+            children: [run('Ref:  ', { bold: true, color: C_MUTED, size: 18 }), run(`PR-${String(request.id).padStart(5, '0')}`, { size: 20, bold: true })],
+            alignment: AlignmentType.RIGHT,
+          })],
+          width: { size: 40, type: WidthType.PERCENTAGE },
           borders: noBorder(),
+          margins: { top: 0, bottom: 0, left: 0, right: 0 },
         }),
       ],
     })],
   });
 
-  // ── EMPLOYEE BLOCK ────────────────────────────────────────────────────────
-  const empTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [
-      new TableRow({
-        children: [
-          cell([labelPara('EMPLOYEE'),  valuePara(employee?.name || '—', { bold: true, size: 24 })]),
-          cell([labelPara('PSN'),       valuePara(employee?.id || '—',   { bold: true })]),
-          cell([labelPara('DEPT · LOC'),valuePara(`${dept} · ${loc}`)]),
-        ],
+  // ── ADDRESSEE BLOCK ───────────────────────────────────────────────────────
+  const addresseeBlock = [
+    spacer(160),
+    para([run('To:  ', { bold: true, color: C_MUTED, size: 18 }), run(employee?.name || '—', { bold: true, size: 22 })]),
+    para([
+      run('Employee ID: ', { color: C_MUTED, size: 18 }),
+      run(employee?.id || '—', { size: 18 }),
+      run('     ·     ', { color: C_MUTED, size: 18 }),
+      run('Department: ', { color: C_MUTED, size: 18 }),
+      run(`${dept} (${employee?.department || '—'})`, { size: 18 }),
+      run('     ·     ', { color: C_MUTED, size: 18 }),
+      run('Location: ', { color: C_MUTED, size: 18 }),
+      run(loc, { size: 18 }),
+    ]),
+  ];
+
+  // ── SUBJECT LINE ──────────────────────────────────────────────────────────
+  const subjectBlock = [
+    spacer(200),
+    para([
+      run('Subject:  ', { bold: true, color: C_MUTED, size: 18 }),
+      run(`Approval — ${typeLabel} Permission`, { bold: true, size: 22, color: C_DARK }),
+    ]),
+  ];
+
+  // ── SALUTATION + OPENING ──────────────────────────────────────────────────
+  const firstName = (employee?.name || '').split(' ')[0] || 'Colleague';
+  const opening = [
+    spacer(200),
+    para(`Dear ${firstName},`, { run: { size: 22 } }),
+    spacer(100),
+    para(
+      `This letter confirms that your request for ${typeLabel.toLowerCase()} permission on ${fmtDateLong(request.permission_date)} has been formally approved by the Human Resources Department.`,
+      { run: { size: 22 } },
+    ),
+  ];
+
+  // ── PERMISSION DETAILS / APPROVAL CHAIN ROWS ──────────────────────────────
+  const detailRow = (label, value, opts = {}) => new TableRow({
+    children: [
+      new TableCell({
+        children: [new Paragraph({
+          children: [run(label.toUpperCase(), { bold: true, color: C_MUTED, size: 16, spacing: 30 })],
+        })],
+        width: { size: 32, type: WidthType.PERCENTAGE },
+        margins: { top: 100, bottom: 100, left: 160, right: 100 },
+        shading: { fill: 'FAFAF7' },
+        borders: thinBorder(),
       }),
-      new TableRow({
-        children: [
-          cell([labelPara('PERMISSION TYPE'), valuePara(typeLabel, { bold: true })]),
-          cell([labelPara('DATE'),            valuePara(fmtDate(request.permission_date), { bold: true })]),
-          cell([labelPara('HOURS'),           valuePara(`${Number(request.hours)} hour${Number(request.hours) === 1 ? '' : 's'}`, { bold: true })]),
-        ],
+      new TableCell({
+        children: [new Paragraph({
+          children: [run(value, { size: 22, bold: !!opts.bold, color: opts.color || C_TEXT })],
+        })],
+        width: { size: 68, type: WidthType.PERCENTAGE },
+        margins: { top: 100, bottom: 100, left: 160, right: 100 },
+        borders: thinBorder(),
       }),
     ],
   });
 
-  // ── REASON ────────────────────────────────────────────────────────────────
-  const reasonTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [new TableRow({
-      children: [cell(
-        [labelPara('REASON GIVEN BY EMPLOYEE'), valuePara(request.reason || '—')],
-        { width: { size: 100, type: WidthType.PERCENTAGE }, shading: { fill: 'FAFAF7' } },
-      )],
-    })],
-  });
-
-  // ── APPROVAL CHAIN ────────────────────────────────────────────────────────
-  const approvalTable = new Table({
+  const detailsHeader = [
+    spacer(160),
+    para('Permission details', { run: { size: 18, bold: true, color: C_MUTED, spacing: 30 } }),
+  ];
+  const detailsTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [
-      new TableRow({
-        children: [
-          cell([labelPara('STAFF SUBMISSION'),
-                valuePara(employee?.name || '—', { bold: true }),
-                valuePara(fmtDateTime(request.requested_at))]),
-          cell([labelPara('MANAGER APPROVAL'),
-                valuePara(manager?.name || '—', { bold: true }),
-                valuePara(fmtDateTime(request.manager_decided_at))]),
-          cell([labelPara('HR FINAL APPROVAL'),
-                valuePara(hrApprover?.name || '—', { bold: true }),
-                valuePara(fmtDateTime(request.hr_decided_at))]),
-        ],
-      }),
+      detailRow('Type',           typeLabel,                                                               { bold: true, color: C_DARK }),
+      detailRow('Date',           fmtDateLong(request.permission_date),                                    { bold: true }),
+      detailRow('Approved hours', `${Number(request.hours)} hour${Number(request.hours) === 1 ? '' : 's'}`, { bold: true }),
+      detailRow('Reason',         request.reason || '—'),
     ],
   });
+
+  const chainHeader = [
+    spacer(160),
+    para('Approval chain', { run: { size: 18, bold: true, color: C_MUTED, spacing: 30 } }),
+  ];
+  const chainTable = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      detailRow('Submitted by',     `${employee?.name || '—'}  ·  ${fmtDateTime(request.requested_at)}`),
+      detailRow('Approved by manager', `${manager?.name || '—'}  ·  ${fmtDateTime(request.manager_decided_at)}`),
+      detailRow('Approved by HR',   `${hrApprover?.name || HR_SIGNATURE.name}  ·  ${fmtDateTime(request.hr_decided_at)}`, { bold: true, color: C_ACCENT }),
+    ],
+  });
+
+  // ── INSTRUCTIONS PARAGRAPH ────────────────────────────────────────────────
+  const instructions = [
+    spacer(200),
+    para(
+      `Kindly print this letter, obtain your direct manager\u2019s signature in the designated area below, and submit the hard copy to the HR Department for filing.`,
+      { run: { size: 22 } },
+    ),
+    spacer(80),
+    para(
+      `This permission counts toward your monthly bucket of 3 hours / 3 occurrences (combined late arrival + early leaving).`,
+      { run: { size: 20, italics: true, color: C_MUTED } },
+    ),
+  ];
 
   // ── SIGNATURE STRIP ───────────────────────────────────────────────────────
-  const sigTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [
-      new TableRow({
-        children: [
-          sigCell('Employee acknowledgment', employee?.name),
-          sigCell('Direct manager',          manager?.name),
-          sigCell('HR (SUP)',                hrApprover?.name),
-        ],
+  const sigCell = (title, name) => new TableCell({
+    children: [
+      new Paragraph({
+        children: [run(title.toUpperCase(), { bold: true, color: C_MUTED, size: 14, spacing: 60 })],
+      }),
+      new Paragraph({
+        children: [run(name || '—', { size: 18 })],
+        spacing: { before: 60 },
+      }),
+      new Paragraph({
+        children: [run('________________________', { color: C_MUTED, size: 18 })],
+        spacing: { before: 320 },
+      }),
+      new Paragraph({
+        children: [run('Signature & date', { italics: true, color: C_MUTED, size: 14 })],
       }),
     ],
+    margins: { top: 160, bottom: 160, left: 160, right: 160 },
+    borders: thinBorder(),
   });
 
-  // ── FOOTER NOTE ───────────────────────────────────────────────────────────
-  const footerPara = new Paragraph({
-    children: [new TextRun({
-      text: 'This permission has been recorded against the employee\'s monthly bucket (3 hours / 3 occurrences combined late + early). Generated automatically by Leave Desk on final HR approval.',
-      color: C_MUTED, size: 16, italics: true, font: 'Calibri',
+  const sigStrip = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [new TableRow({
+      children: [
+        sigCell('Employee', employee?.name),
+        sigCell('Direct manager', manager?.name),
+        sigCell('HR (SUP)', hrApprover?.name || HR_SIGNATURE.name),
+      ],
     })],
-    alignment: AlignmentType.CENTER,
-    spacing: { before: 200 },
   });
+
+  // ── HR SIGNATURE BLOCK (Bashaier's full signature) ────────────────────────
+  const hrSig = [
+    spacer(280),
+    para('Thanks and regards,', { run: { size: 22 } }),
+    spacer(60),
+    para(HR_SIGNATURE.name,    { run: { size: 22, bold: true, color: C_DARK } }),
+    para(HR_SIGNATURE.company, { run: { size: 18, color: C_MUTED } }),
+    para(HR_SIGNATURE.unit,    { run: { size: 18, color: C_MUTED } }),
+    para(HR_SIGNATURE.address, { run: { size: 18, color: C_MUTED } }),
+    para(`WhatsApp: ${HR_SIGNATURE.whatsapp}     ·     Tel: ${HR_SIGNATURE.tel}`, { run: { size: 16, color: C_MUTED } }),
+    para(`Email: ${HR_SIGNATURE.email}`, { run: { size: 16, color: C_MUTED } }),
+  ];
+
+  // ── FOOTER ────────────────────────────────────────────────────────────────
+  const footer = [
+    spacer(180),
+    para(
+      `Issued by Leave Desk on ${fmtDateMed(today)} · This is an officially generated HR document.`,
+      { run: { size: 14, italics: true, color: C_MUTED }, align: AlignmentType.CENTER },
+    ),
+  ];
 
   const doc = new Document({
     styles: { default: { document: { run: { font: 'Calibri' } } } },
@@ -212,20 +327,24 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
       properties: {
         page: {
           size:    { width: 11906, height: 16838 }, // A4
-          margin:  { top: 720, right: 720, bottom: 720, left: 720 },
+          margin:  { top: 720, right: 900, bottom: 720, left: 900 },
         },
       },
       children: [
-        headerTable,
-        spacer(160),
-        empTable,
-        spacer(120),
-        reasonTable,
-        spacer(120),
-        approvalTable,
-        spacer(220),
-        sigTable,
-        footerPara,
+        ...letterhead,
+        dateRefRow,
+        ...addresseeBlock,
+        ...subjectBlock,
+        ...opening,
+        ...detailsHeader,
+        detailsTable,
+        ...chainHeader,
+        chainTable,
+        ...instructions,
+        spacer(200),
+        sigStrip,
+        ...hrSig,
+        ...footer,
       ],
     }],
   });
@@ -233,52 +352,11 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
   return await Packer.toBlob(doc);
 }
 
-function spacer(after = 100) {
-  return new Paragraph({ children: [new TextRun({ text: '' })], spacing: { after } });
-}
-function noBorder() {
-  return {
-    top:    { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-    bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-    left:   { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-    right:  { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-  };
-}
-function sigCell(label, name) {
-  return new TableCell({
-    children: [
-      new Paragraph({
-        children: [new TextRun({ text: label.toUpperCase(), color: C_MUTED, size: 14, bold: true, characterSpacing: 60, font: 'Calibri' })],
-      }),
-      new Paragraph({
-        children: [new TextRun({ text: name || '—', color: C_TEXT, size: 18, font: 'Calibri' })],
-        spacing: { before: 80 },
-      }),
-      // Signature line
-      new Paragraph({
-        children: [new TextRun({ text: '__________________________', color: C_MUTED, size: 18, font: 'Calibri' })],
-        spacing: { before: 320 },
-      }),
-      new Paragraph({
-        children: [new TextRun({ text: 'Signature & date', color: C_MUTED, size: 14, italics: true, font: 'Calibri' })],
-      }),
-    ],
-    margins: { top: 160, bottom: 160, left: 160, right: 160 },
-    borders: {
-      top:    { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-      bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-      left:   { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-      right:  { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-    },
-  });
-}
-
 // ─── email draft ──────────────────────────────────────────────────────────────
 
-// Resolve the executive CC list from the live employees array. Matches by
-// lowercase substring against employees.name; returns deduped list of emails.
-// Logs a warning for any name in EXEC_CC_NAMES that has no email match —
-// that's a data issue, not a bug, and the user can fix it in Settings.
+// Match list against employees by lowercase name substring; returns deduped
+// emails. Logs a warning for any name without an email match — that's a
+// data issue (not a bug) and the user can fix it in Settings.
 export function resolveExecCcEmails(employees = []) {
   const emails = new Set();
   for (const needle of EXEC_CC_NAMES) {
@@ -297,37 +375,52 @@ export function resolveExecCcEmails(employees = []) {
 export function buildPermissionEmailDraft({ employee, manager, hrApprover, request, employees = [] }) {
   const typeLabel = TYPE_LABEL[request.type] || request.type;
   const to        = employee?.email || '';
-  const cc        = [
+  const ccRaw     = [
     manager?.email,
     ...resolveExecCcEmails(employees),
   ].filter(Boolean);
-  // De-dupe in case the manager is also in the exec CC list
-  const ccDeduped = Array.from(new Set(cc.filter(e => e !== to)));
+  // De-dupe + remove the To address from CC
+  const cc = Array.from(new Set(ccRaw.filter(e => e !== to)));
 
-  const subject = `Permission approved · ${typeLabel} · ${fmtDate(request.permission_date)}`;
-  const body =
-    `Dear ${(employee?.name || '').split(' ')[0] || 'Colleague'},\n\n` +
-    `Your request for ${typeLabel.toLowerCase()} permission on ${fmtDate(request.permission_date)} (${Number(request.hours)} hour${Number(request.hours) === 1 ? '' : 's'}) has been approved.\n\n` +
-    `Reason on file: ${request.reason || '—'}\n\n` +
-    `Approval chain:\n` +
-    `  • Submitted: ${fmtDateTime(request.requested_at)}\n` +
-    `  • Manager (${manager?.name || '—'}): ${fmtDateTime(request.manager_decided_at)}\n` +
-    `  • HR (${hrApprover?.name || '—'}): ${fmtDateTime(request.hr_decided_at)}\n\n` +
-    `The signed permission letter is attached for your records.\n\n` +
-    `This permission counts toward your monthly bucket of 3 hours / 3 occurrences combined late + early.\n\n` +
-    `Kind regards,\n` +
-    `${hrApprover?.name || 'HR'}\n` +
-    `Evergreen Shipping HR`;
+  const firstName = (employee?.name || '').split(' ')[0] || 'Colleague';
+  const subject   = `Permission approved · ${typeLabel} · ${fmtDateShort(request.permission_date)}`;
+
+  // Body matches the HR-approved copy verbatim. Bullet markers are real
+  // bullet glyphs because most desktop mail clients render them as plain
+  // text and the bullet look is part of the formal feel.
+  const body = [
+    `Dear ${firstName},`,
+    ``,
+    `Your request for ${typeLabel.toLowerCase()} permission on ${fmtDateShort(request.permission_date)} (${Number(request.hours)} hour${Number(request.hours) === 1 ? '' : 's'}) has been approved.`,
+    ``,
+    `Reason on file: ${request.reason || '—'}`,
+    ``,
+    `Approval chain:`,
+    `  • Submitted: ${fmtDateTime(request.requested_at)}`,
+    `  • Manager (${manager?.name || '—'}): ${fmtDateTime(request.manager_decided_at)}`,
+    `  • HR (${hrApprover?.name || HR_SIGNATURE.name}): ${fmtDateTime(request.hr_decided_at)}`,
+    ``,
+    `The signed permission letter is attached for your records, kindly print it and get it signed by your manager and submit hard copy to HR office.`,
+    ``,
+    `This permission counts toward your monthly bucket of 3 hours / 3 occurrences combined late + early.`,
+    ``,
+    `Thanks and regards,`,
+    ``,
+    HR_SIGNATURE.name,
+    HR_SIGNATURE.company,
+    HR_SIGNATURE.unit,
+    HR_SIGNATURE.address,
+    `WhatsApp: ${HR_SIGNATURE.whatsapp}`,
+    `Tel: ${HR_SIGNATURE.tel}`,
+    `Email: ${HR_SIGNATURE.email}`,
+  ].join('\n');
 
   return {
     to,
-    cc: ccDeduped,
+    cc,
     subject,
     body,
-    // mailto: link suitable for opening in the user's default mail client.
-    // Pre-fills to/cc/subject/body. Attachment must be added manually after
-    // the user downloads the .docx — mailto: doesn't support attachments.
-    mailto: buildMailto({ to, cc: ccDeduped, subject, body }),
+    mailto: buildMailto({ to, cc, subject, body }),
   };
 }
 
@@ -336,6 +429,9 @@ function buildMailto({ to, cc, subject, body }) {
   if (cc.length) params.set('cc', cc.join(','));
   params.set('subject', subject);
   params.set('body', body);
+  // URLSearchParams encodes spaces as '+' which most mail clients treat as
+  // literal '+'. Replace with %20 so the body reads correctly in Outlook,
+  // Apple Mail, and Gmail web.
   return `mailto:${encodeURIComponent(to)}?${params.toString().replace(/\+/g, '%20')}`;
 }
 
