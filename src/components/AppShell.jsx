@@ -388,13 +388,21 @@ export default function AppShell({ session, me, onRefreshMe }) {
                 // feedback. Auth state is untouched.
                 if (refreshing) return;
                 setRefreshing(true);
+
+                // Hard timeout: even if every refresh path wedges (e.g. a
+                // bad supabase-js call inside resolveMe), the spinner must
+                // always stop within 12 seconds. The previous version
+                // could spin forever because Promise.all blocks until the
+                // slowest promise resolves. This race ensures progress.
+                const withTimeout = (p, ms) => Promise.race([
+                  Promise.resolve(p).catch(err => { console.warn('refresh subtask failed:', err); return null; }),
+                  new Promise(res => setTimeout(() => { console.warn('refresh subtask timed out after ' + ms + 'ms'); res(null); }, ms)),
+                ]);
+
                 try {
-                  // Refresh the user record (in case role flags changed
-                  // server-side, e.g. Nadeem just made them a manager) and
-                  // all the app data in parallel.
                   await Promise.all([
-                    typeof onRefreshMe === 'function' ? onRefreshMe() : Promise.resolve(),
-                    loadAll({ silent: true }),
+                    withTimeout(typeof onRefreshMe === 'function' ? onRefreshMe() : Promise.resolve(), 10000),
+                    withTimeout(loadAll({ silent: true }), 12000),
                   ]);
                 } finally {
                   setRefreshing(false);

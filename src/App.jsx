@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { supabase, supabaseConfigured } from './supabaseClient.js';
+import { supabase, supabaseConfigured, directGet, directPatchQuery } from './supabaseClient.js';
 import { emailToPsn } from './lib/psnAuth.js';
 import { logAction } from './lib/audit.js';
 import Auth from './components/Auth.jsx';
@@ -16,23 +16,45 @@ export default function App() {
   const resolveMe = useCallback(async (s) => {
     if (!s?.user) { setMe(null); return null; }
     try {
-      let { data: byAuth } = await supabase
-        .from('employees').select('*')
-        .eq('auth_user_id', s.user.id).maybeSingle();
-      if (byAuth) { setMe(byAuth); return byAuth; }
+      // Use directGet (raw fetch + timeout) instead of supabase.from().select().
+      // The lazy supabase-js builder wedges on some sessions — when it does,
+      // resolveMe never resolves, which means anything awaiting onRefreshMe()
+      // (i.e. the header refresh button) hangs forever despite the actual
+      // data fetches having succeeded.
+      const byAuth = await directGet(
+        'employees',
+        `select=*&auth_user_id=eq.${encodeURIComponent(s.user.id)}&limit=1`,
+        { timeoutMs: 8000 }
+      );
+      if (Array.isArray(byAuth) && byAuth[0]) {
+        setMe(byAuth[0]);
+        return byAuth[0];
+      }
 
       const psn = emailToPsn(s.user.email);
       if (!psn) { setMe(null); return null; }
 
-      const { data: byPsn } = await supabase
-        .from('employees').select('*')
-        .eq('id', psn).maybeSingle();
-      if (!byPsn) { setMe(null); return null; }
+      const byPsn = await directGet(
+        'employees',
+        `select=*&id=eq.${encodeURIComponent(psn)}&limit=1`,
+        { timeoutMs: 8000 }
+      );
+      if (!Array.isArray(byPsn) || !byPsn[0]) { setMe(null); return null; }
 
-      await supabase.from('employees')
-        .update({ auth_user_id: s.user.id }).eq('id', psn).is('auth_user_id', null);
+      // Backfill auth_user_id on first match. Best-effort — a failure here
+      // doesn't block sign-in; the user is just unlinked until next try.
+      try {
+        await directPatchQuery(
+          'employees',
+          `id=eq.${encodeURIComponent(psn)}&auth_user_id=is.null`,
+          { auth_user_id: s.user.id },
+          { timeoutMs: 6000 }
+        );
+      } catch (err) {
+        console.warn('auth_user_id backfill failed:', err?.message || err);
+      }
 
-      const linked = { ...byPsn, auth_user_id: s.user.id };
+      const linked = { ...byPsn[0], auth_user_id: s.user.id };
       setMe(linked);
       return linked;
     } catch (err) {
