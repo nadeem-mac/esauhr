@@ -136,10 +136,20 @@ export async function directPost(table, row, options = {}) {
   const timeoutMs = options.timeoutMs || 12000;
   const accessToken = await getActiveToken();
 
+  // PostgREST upsert quirk: when `Prefer: resolution=merge-duplicates` is set
+  // and the unique constraint that's firing is NOT the table's primary key,
+  // we must also pass `on_conflict=col1,col2` as a query param so PostgREST
+  // knows which constraint to use. Without it, PostgREST falls back to the
+  // primary key (always `id` here), the merge target doesn't match, and
+  // every duplicate row hits the OTHER unique constraint with a 23505.
+  const qs = options.upsert && options.onConflict
+    ? `?on_conflict=${encodeURIComponent(options.onConflict)}`
+    : '';
+
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const r = await fetch(`${url}/rest/v1/${table}`, {
+    const r = await fetch(`${url}/rest/v1/${table}${qs}`, {
       method: 'POST',
       headers: {
         'apikey': key,

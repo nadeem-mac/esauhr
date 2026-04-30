@@ -196,7 +196,11 @@ export default function ManagerShiftCard({ me, employees }) {
 
     try {
       if (upserts.length) {
-        await directPost('employee_shifts', upserts, { upsert: true, timeoutMs: 15000 });
+        await directPost('employee_shifts', upserts, {
+          upsert: true,
+          onConflict: 'employee_id,shift_date',
+          timeoutMs: 15000,
+        });
       }
       if (deleteKeys.length) {
         // PostgREST "in" filter takes a comma-separated list, with quoted dates
@@ -208,12 +212,31 @@ export default function ManagerShiftCard({ me, employees }) {
         );
       }
       const staff = directReports.find(e => e.id === staffId);
-      const staffName = (staff?.name || '').split(' ')[0] || 'staff';
-      setToast(`Saved. ${staffName} will see the schedule on next sign-in.`);
-      setTimeout(() => setToast(''), 5000);
+      const staffName = (staff?.name || '').split(' ')[0] || 'Staff';
+      const nDays = upserts.length;
+      const nRemoved = deleteKeys.length;
+      const parts = [];
+      if (nDays) parts.push(`${nDays} shift day${nDays === 1 ? '' : 's'} saved`);
+      if (nRemoved) parts.push(`${nRemoved} day${nRemoved === 1 ? '' : 's'} cleared`);
+      const summary = parts.length ? parts.join(' · ') : 'No changes';
+      // The toast renders as a green success banner on the card footer.
+      // It explains both what just happened AND what the staff member will
+      // see next, so the manager knows their hand-off is complete.
+      setToast(`✓ Done — ${summary}. ${staffName} will see this on next sign-in and must accept before HR is notified.`);
+      setTimeout(() => setToast(''), 8000);
       await loadWeek(); // refresh status pills
     } catch (e) {
-      setError(e.message || 'Save failed');
+      // If anything still fails we want a human-readable message instead of
+      // raw HTTP. The 23505 path should be unreachable now thanks to the
+      // on_conflict param, but if it ever fires we surface a friendly note.
+      const raw = e?.message || 'Save failed';
+      let friendly = raw;
+      if (raw.includes('23505') || raw.includes('duplicate key')) {
+        friendly = 'A schedule already exists for one of those days. Try saving again — the conflict should clear automatically.';
+      } else if (raw.includes('HTTP 4')) {
+        friendly = 'Server rejected the save. ' + raw.replace(/^HTTP \d+:\s*/, '');
+      }
+      setError(friendly);
     } finally {
       setSaving(false);
     }
@@ -289,6 +312,26 @@ export default function ManagerShiftCard({ me, employees }) {
             <ChevronRight className="w-4 h-4" />
           </button>
         </div>
+
+        {/* Prominent status banner — appears right above the day rows
+            after a save so the manager can't miss the confirmation. The
+            footer line still echoes it but managers tend to scan from
+            the top of the editing area. */}
+        {(toast || error) && (
+          <div
+            className="rounded-lg border px-3 py-2.5 text-xs leading-relaxed flex items-start gap-2"
+            style={{
+              borderColor: error ? 'var(--clay-200, #E5C5BD)' : 'var(--evergreen-200)',
+              background:  error ? 'var(--clay-50,  #FCF1ED)' : 'var(--evergreen-50, #ECFDF5)',
+              color:       error ? 'var(--clay)'             : 'var(--evergreen-700, #0F4C2A)',
+              fontWeight: 500,
+            }}
+            role={error ? 'alert' : 'status'}
+          >
+            <span aria-hidden="true">{error ? '⚠' : '✓'}</span>
+            <span>{error || toast}</span>
+          </div>
+        )}
 
         {/* Day rows */}
         {loading ? (
