@@ -300,6 +300,9 @@ export default function AdminPanel({ session, me, onRefreshMe }) {
         </section>
       )}
 
+      {/* ─────────── SIGN-IN ACTIVITY (admin-only) ─────────── */}
+      <SignInActivity auditLog={auditLog} loading={auditLoading} onRefresh={loadAudit} />
+
       {/* ─────────── ACTIVITY LOG (admin-only) ─────────── */}
       <section className="pt-8 border-t" style={{ borderColor: 'rgba(244,238,223,0.08)' }}>
         <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
@@ -387,5 +390,132 @@ function CopyRow({ label, value, onCopy, mono }) {
         </button>
       </div>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SignInActivity — paired sign-in / sign-out times per user, sorted by most
+// recent. Built from audit_log rows where action ∈ {sign_in, sign_out}.
+// Admin-only — gated by the audit_log RLS policy + AdminPanel admin gate.
+// ─────────────────────────────────────────────────────────────────────────────
+function SignInActivity({ auditLog, loading, onRefresh }) {
+  const events = (auditLog || []).filter(l => l.action === 'sign_in' || l.action === 'sign_out');
+  const byUser = {};
+  events.forEach(e => {
+    const key = e.actor_psn || e.actor_user_id || 'unknown';
+    if (!byUser[key]) byUser[key] = [];
+    byUser[key].push(e);
+  });
+  // Build session rows: walk each user's events in reverse-chrono order
+  // (which is how they arrive from the DB), pairing each sign_in with the
+  // most recent sign_out that came after it.
+  const sessions = [];
+  Object.entries(byUser).forEach(([key, evts]) => {
+    let pendingOut = null;
+    for (let i = 0; i < evts.length; i++) {
+      const e = evts[i];
+      if (e.action === 'sign_out') {
+        pendingOut = e;
+      } else if (e.action === 'sign_in') {
+        sessions.push({
+          actor_psn:    e.actor_psn,
+          actor_name:   e.actor_name,
+          signedInAt:   e.created_at,
+          signedOutAt:  pendingOut ? pendingOut.created_at : null,
+          email:        e.details?.email || null,
+        });
+        pendingOut = null;
+      }
+    }
+  });
+  sessions.sort((a, b) => (b.signedInAt || '').localeCompare(a.signedInAt || ''));
+
+  const fmt = (iso) => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleString('en-GB', {
+      day: '2-digit', month: 'short',
+      hour: '2-digit', minute: '2-digit',
+      hour12: false,
+    });
+  };
+  const duration = (a, b) => {
+    if (!a || !b) return null;
+    const ms = new Date(b).getTime() - new Date(a).getTime();
+    if (ms < 0 || !isFinite(ms)) return null;
+    const mins = Math.round(ms / 60000);
+    if (mins < 60) return mins + 'm';
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return h + 'h ' + (m ? m + 'm' : '');
+  };
+
+  return (
+    <section className="pt-8 border-t" style={{ borderColor: 'rgba(244,238,223,0.08)' }}>
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <div>
+          <h3 className="text-xs tracking-[0.25em] opacity-60">SIGN-IN ACTIVITY</h3>
+          <p className="text-xs opacity-50 mt-1">
+            When each user signed in and out. Latest 30 sessions across all staff.
+          </p>
+        </div>
+        <button onClick={onRefresh}
+          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs border opacity-70 hover:opacity-100"
+          style={{ borderColor: 'rgba(244,238,223,0.2)' }}>
+          <RefreshCw className="w-3 h-3" /> Refresh
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="opacity-60 text-sm flex items-center gap-2">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading sign-in activity…
+        </div>
+      ) : sessions.length === 0 ? (
+        <div className="rounded-xl p-6 text-center text-sm opacity-60"
+          style={{ background: 'rgba(244,238,223,0.03)', border: '1px solid rgba(244,238,223,0.08)' }}>
+          No sign-in activity recorded yet. New sign-ins from now on will appear here.
+        </div>
+      ) : (
+        <div className="rounded-xl overflow-hidden"
+          style={{ background: 'rgba(244,238,223,0.03)', border: '1px solid rgba(244,238,223,0.08)' }}>
+          <table className="w-full text-xs">
+            <thead>
+              <tr style={{ background: 'rgba(244,238,223,0.04)' }}>
+                <th className="text-left px-4 py-2.5 tracking-[0.15em] opacity-60 font-normal">PSN</th>
+                <th className="text-left px-4 py-2.5 tracking-[0.15em] opacity-60 font-normal">NAME</th>
+                <th className="text-left px-4 py-2.5 tracking-[0.15em] opacity-60 font-normal">SIGNED IN</th>
+                <th className="text-left px-4 py-2.5 tracking-[0.15em] opacity-60 font-normal">SIGNED OUT</th>
+                <th className="text-left px-4 py-2.5 tracking-[0.15em] opacity-60 font-normal">DURATION</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sessions.slice(0, 30).map((s, i) => {
+                const isActive = !s.signedOutAt;
+                return (
+                  <tr key={i} style={{ borderTop: '1px solid rgba(244,238,223,0.06)' }}>
+                    <td className="px-4 py-2.5 font-mono opacity-70">{s.actor_psn || '—'}</td>
+                    <td className="px-4 py-2.5 truncate" style={{ maxWidth: 220 }}>{s.actor_name || '—'}</td>
+                    <td className="px-4 py-2.5 opacity-90">{fmt(s.signedInAt)}</td>
+                    <td className="px-4 py-2.5">
+                      {isActive ? (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full"
+                          style={{ background: 'rgba(143,179,154,0.2)', color: '#BFD5C4', fontWeight: 700, letterSpacing: '0.1em' }}>
+                          ACTIVE
+                        </span>
+                      ) : (
+                        <span className="opacity-90">{fmt(s.signedOutAt)}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 opacity-70">
+                      {duration(s.signedInAt, s.signedOutAt) || (isActive ? 'in progress' : '—')}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }

@@ -1,7 +1,7 @@
 // Audit logging helper.
 // Fire-and-forget: never throws into the caller's path.
 
-import { supabase } from '../supabaseClient.js';
+import { directPost } from '../supabaseClient.js';
 
 /**
  * Log an action to the audit_log table.
@@ -12,7 +12,12 @@ import { supabase } from '../supabaseClient.js';
 export async function logAction(me, action, opts = {}) {
   if (!me) return;
   try {
-    await supabase.from('audit_log').insert({
+    // directPost (raw fetch + timeout) instead of supabase.from().insert():
+    // the lazy supabase-js builder wedges silently on some sessions, and
+    // because this function's catch block is silent, every wedged insert
+    // resulted in zero rows ever landing in audit_log. directPost fails
+    // loudly to the console instead of hanging forever.
+    await directPost('audit_log', {
       actor_user_id: me.auth_user_id || null,
       actor_psn:     me.id,
       actor_name:    me.name,
@@ -22,10 +27,10 @@ export async function logAction(me, action, opts = {}) {
       target_label:  opts.targetLabel || null,
       details:       opts.details     || null,
       user_agent:    typeof navigator !== 'undefined' ? navigator.userAgent : null,
-    });
+    }, { timeoutMs: 6000 });
   } catch (err) {
-    // Silent — audit logging must never disrupt the user.
-    if (typeof console !== 'undefined') console.warn('audit log failed:', err);
+    // Still don't disrupt the user, but log loudly so future debugging is easy.
+    if (typeof console !== 'undefined') console.warn('audit log failed:', err?.message || err);
   }
 }
 
