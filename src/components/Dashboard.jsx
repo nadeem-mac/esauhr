@@ -471,68 +471,70 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
             const femalePct = 100 - malePct;
             return (
               <div key={dept}
-                   className="rounded-xl bg-white relative overflow-hidden esau-badge"
+                   className="rounded-xl border p-5 esau-card"
                    style={{
-                     border: '1px solid #E5E0D5',
-                     boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)',
+                     borderColor: 'var(--border-soft)',
+                     background: '#FFFDF7',
                    }}>
-                {/* Colored side rail */}
-                <div aria-hidden style={{
-                  position: 'absolute', top: 0, left: 0, bottom: 0, width: '5px',
-                  background: `linear-gradient(180deg, ${palette.from} 0%, ${palette.to} 100%)`,
-                }}/>
-                <div className="p-4 pl-6">
-                  {/* Header row: dept code + total */}
-                  <div className="flex items-start justify-between mb-3">
+                {/* Header row: dept code + total — laid out like the canonical
+                    Card header (small accent dot + label on the left, count
+                    pill on the right) so the badges read as siblings of the
+                    info cards below them ("Out of office today" et al.). The
+                    accent dot replaces the old 5px gradient side rail and
+                    keeps a tiny dose of dept color identity without breaking
+                    the unified paper chrome. */}
+                <div className="flex items-start justify-between pb-3 mb-3 border-b" style={{ borderColor: 'var(--border-soft)' }}>
+                  <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full" style={{ background: palette.to }} />
                     <div>
                       <div className="text-[10px]"
-                           style={{ color: palette.to, letterSpacing: '0.18em', fontWeight: 700 }}>
+                           style={{ color: '#1F1B16', letterSpacing: '0.18em', fontWeight: 700 }}>
                         {dept}
                       </div>
                       <div className="text-[11px]" style={{ color: '#1F1B16', marginTop: '2px' }}>
                         {Math.round((count / employees.length) * 100)}% of staff
                       </div>
                     </div>
-                    <div className="rounded-full px-3 py-1"
-                         style={{
-                           background: palette.tint,
-                           color: palette.to,
-                           fontSize: '20px',
-                           fontWeight: 700,
-                           letterSpacing: '-0.01em',
-                           lineHeight: 1,
-                         }}>
-                      {count}
-                    </div>
                   </div>
+                  <div className="rounded-full px-3 py-1"
+                       style={{
+                         background: palette.tint,
+                         color: palette.to,
+                         fontSize: '20px',
+                         fontWeight: 700,
+                         letterSpacing: '-0.01em',
+                         lineHeight: 1,
+                       }}>
+                    {count}
+                  </div>
+                </div>
 
-                  {/* Gender breakdown row */}
-                  <div className="flex items-center gap-3 mt-3">
-                    <div className="flex items-center gap-1.5">
-                      <span style={{ fontSize: '16px', lineHeight: 1 }}>👨</span>
-                      <span style={{ fontSize: '15px', fontWeight: 600, color: '#1F1B16' }}>{g.male}</span>
-                      <span className="text-[11px]" style={{ color: '#1F1B16' }}>men</span>
-                    </div>
-                    <div style={{ width: '1px', height: '14px', background: '#E5E0D5' }}/>
-                    <div className="flex items-center gap-1.5">
-                      <span style={{ fontSize: '16px', lineHeight: 1 }}>👩</span>
-                      <span style={{ fontSize: '15px', fontWeight: 600, color: g.female > 0 ? '#BE185D' : '#1F1B16' }}>{g.female}</span>
-                      <span className="text-[11px]" style={{ color: '#1F1B16' }}>women</span>
-                    </div>
+                {/* Gender breakdown row */}
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <span style={{ fontSize: '16px', lineHeight: 1 }}>👨</span>
+                    <span style={{ fontSize: '15px', fontWeight: 600, color: '#1F1B16' }}>{g.male}</span>
+                    <span className="text-[11px]" style={{ color: '#1F1B16' }}>men</span>
                   </div>
+                  <div style={{ width: '1px', height: '14px', background: '#E5E0D5' }}/>
+                  <div className="flex items-center gap-1.5">
+                    <span style={{ fontSize: '16px', lineHeight: 1 }}>👩</span>
+                    <span style={{ fontSize: '15px', fontWeight: 600, color: g.female > 0 ? '#BE185D' : '#1F1B16' }}>{g.female}</span>
+                    <span className="text-[11px]" style={{ color: '#1F1B16' }}>women</span>
+                  </div>
+                </div>
 
-                  {/* Mini split bar */}
-                  <div className="mt-3 rounded-full overflow-hidden flex"
-                       style={{ height: '6px', background: '#F1ECE0' }}>
-                    {g.male > 0 && (
-                      <div title={`${g.male} men (${malePct}%)`}
-                           style={{ width: `${malePct}%`, background: 'linear-gradient(90deg, #93C5FD 0%, #3B82F6 100%)' }}/>
-                    )}
-                    {g.female > 0 && (
-                      <div title={`${g.female} women (${femalePct}%)`}
-                           style={{ width: `${femalePct}%`, background: 'linear-gradient(90deg, #F9A8D4 0%, #DB2777 100%)' }}/>
-                    )}
-                  </div>
+                {/* Mini split bar */}
+                <div className="mt-3 rounded-full overflow-hidden flex"
+                     style={{ height: '6px', background: '#F1ECE0' }}>
+                  {g.male > 0 && (
+                    <div title={`${g.male} men (${malePct}%)`}
+                         style={{ width: `${malePct}%`, background: 'linear-gradient(90deg, #93C5FD 0%, #3B82F6 100%)' }}/>
+                  )}
+                  {g.female > 0 && (
+                    <div title={`${g.female} women (${femalePct}%)`}
+                         style={{ width: `${femalePct}%`, background: 'linear-gradient(90deg, #F9A8D4 0%, #DB2777 100%)' }}/>
+                  )}
                 </div>
               </div>
             );
