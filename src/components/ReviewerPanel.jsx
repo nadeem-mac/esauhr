@@ -71,12 +71,16 @@ export default function ReviewerPanel({ me }) {
         leaveQs = `select=*&stage=eq.pending_manager&employee_id=in.(${deptStaffIds.join(',')})&order=requested_at.desc`;
       }
 
-      // Permission requests still use status='pending'
+      // Permission requests now use the same stage flow as leave_requests:
+      // staff submits → 'pending_manager' (manager reviews) → 'pending_hr'
+      // (Bashaier reviews) → 'approved'. Managers see only their direct
+      // reports' rows at the manager stage; HR sees only rows that have
+      // already cleared the manager step.
       let permQs = null;
       if (canPerm) {
-        permQs = 'select=*&status=eq.pending&order=requested_at.desc';
+        permQs = 'select=*&stage=eq.pending_hr&order=requested_at.desc';
       } else if (localIsDeptManager) {
-        permQs = `select=*&status=eq.pending&employee_id=in.(${deptStaffIds.join(',')})&order=requested_at.desc`;
+        permQs = `select=*&stage=eq.pending_manager&employee_id=in.(${deptStaffIds.join(',')})&order=requested_at.desc`;
       }
 
       const lr = leaveQs ? await directGet('leave_requests', leaveQs, { timeoutMs: 10000 }) : [];
@@ -134,20 +138,38 @@ export default function ReviewerPanel({ me }) {
     finally       { setBusyId(null); }
   }
 
-  async function decidePerm(req, status) {
+  async function decidePerm(req, action) {
     setBusyId(`perm-${req.id}`);
+    const now = new Date().toISOString();
+    let nextStage, patch = {};
+
+    if (req.stage === 'pending_manager') {
+      nextStage = action === 'approved' ? 'pending_hr' : 'rejected_by_manager';
+      patch.manager_decided_at = now;
+      patch.manager_decided_by = me.id;
+    } else if (req.stage === 'pending_hr') {
+      nextStage = action === 'approved' ? 'approved' : 'rejected_by_hr';
+      patch.hr_decided_at = now;
+      patch.hr_decided_by = me.id;
+    } else {
+      alert('Unexpected request stage: ' + req.stage);
+      setBusyId(null);
+      return;
+    }
+    patch.stage = nextStage;
+    // Legacy reviewed_by/at columns — kept for backward compat with audit
+    // surfaces that haven't been migrated yet. The trigger derives `status`
+    // from `stage` so we don't need to touch it.
+    patch.reviewed_at = now;
+    patch.reviewed_by = me.id;
+
     try {
-      // directPatch (raw fetch + timeout) avoids supabase-js wedge for managers.
-      await directPatch('permission_requests', 'id', req.id, {
-        status,
-        reviewed_at: new Date().toISOString(),
-        reviewed_by: me.id,
-      }, { timeoutMs: 10000 });
+      await directPatch('permission_requests', 'id', req.id, patch, { timeoutMs: 10000 });
       logAction(me, 'permission_decide', {
         targetType: 'permission_request',
         targetId: req.id,
-        targetLabel: `${empMap[req.employee_id]?.name || req.employee_id} · ${PERMISSION_TYPES[req.type]?.label} · ${status}`,
-        details: { status, exceeds_quota: req.exceeds_quota },
+        targetLabel: `${empMap[req.employee_id]?.name || req.employee_id} · ${PERMISSION_TYPES[req.type]?.label} · ${nextStage}`,
+        details: { stage: nextStage, action, exceeds_quota: req.exceeds_quota },
       });
       await load();
     } catch (err) { alert(err.message); }

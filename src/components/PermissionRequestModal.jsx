@@ -54,6 +54,7 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
         reason:          finalReason,
         exceeds_quota:   exceeds.willExceed,
         requested_by:    me.id,
+        stage:           'pending_manager',
       }).select().single();
       if (error) throw error;
       logAction(me, 'permission_create', {

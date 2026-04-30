@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { CheckCircle2, XCircle, Clock, AlertTriangle, Sunrise, Sunset, RefreshCw } from 'lucide-react';
 import { directGet, supabase } from '../supabaseClient.js';
+import PermissionTimelineModal from './PermissionTimelineModal.jsx';
 
 // =============================================================================
 // PermissionStatusCard
@@ -38,6 +39,10 @@ export default function PermissionStatusCard({ me }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // Selected row for the timeline modal. Click any item in the per-row list
+  // to read-only view its 4-stage approval progress (submitted → manager →
+  // HR → final). Submission still goes exclusively through '+ New Request'.
+  const [openRow, setOpenRow] = useState(null);
 
   const load = useCallback(async () => {
     if (!me?.id) return;
@@ -132,10 +137,18 @@ export default function PermissionStatusCard({ me }) {
         <Pill label="Flagged"  count={counts.flagged}  color="#9A3412" bg="#FFEDD5" Icon={AlertTriangle} />
       </div>
 
-      {/* Per-application list */}
+      {/* Per-application list — each row is clickable, opens read-only
+          timeline modal showing the 4 approval stages. */}
       <ul className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
-        {rows.map(r => <Row key={r.id} row={r} />)}
+        {rows.map(r => <Row key={r.id} row={r} onClick={() => setOpenRow(r)} />)}
       </ul>
+
+      {openRow && (
+        <PermissionTimelineModal
+          row={openRow}
+          onClose={() => setOpenRow(null)}
+        />
+      )}
     </section>
   );
 }
@@ -161,11 +174,26 @@ function Pill({ label, count, color, bg, Icon }) {
   );
 }
 
-function Row({ row }) {
-  const typeMeta   = TYPE_META[row.type] || TYPE_META.late_arrival;
-  const statusMeta = STATUS_META[row.status] || STATUS_META.pending;
+// Stage-aware pill metadata. Falls through to legacy `status` for any rows
+// that haven't yet had `stage` populated (defensive — the backfill in
+// migration_permissions_two_step.sql should have set every existing row).
+const STAGE_META = {
+  pending_manager:     { label: 'AWAITING MANAGER', color: '#A16207', bg: '#FEF3C7', Icon: Clock },
+  pending_hr:          { label: 'AWAITING HR',      color: '#1D4ED8', bg: '#DBEAFE', Icon: Clock },
+  approved:            { label: 'APPROVED',         color: '#0F4C2A', bg: '#ECFDF5', Icon: CheckCircle2 },
+  rejected_by_manager: { label: 'REJECTED · MGR',   color: '#B91C1C', bg: '#FEE2E2', Icon: XCircle },
+  rejected_by_hr:      { label: 'REJECTED · HR',    color: '#B91C1C', bg: '#FEE2E2', Icon: XCircle },
+  cancelled:           { label: 'CANCELLED',        color: '#737373', bg: '#F5F5F5', Icon: XCircle },
+};
+
+function Row({ row, onClick }) {
+  const typeMeta = TYPE_META[row.type] || TYPE_META.late_arrival;
+  // Prefer stage; fall back to legacy status if stage not yet populated
+  const stageMeta = STAGE_META[row.stage]
+                  || STATUS_META[row.status]
+                  || STATUS_META.pending;
   const TypeIcon   = typeMeta.Icon;
-  const StatusIcon = statusMeta.Icon;
+  const StatusIcon = stageMeta.Icon;
 
   // Date formatting — show "Sun 3 May 2026" so the staff can spot the day at
   // a glance without having to mentally convert YYYY-MM-DD.
@@ -175,57 +203,62 @@ function Row({ row }) {
   const pretty = dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
   return (
-    <li className="py-2.5 flex items-start gap-3 text-xs">
-      {/* Type badge — colored circle with the matching icon */}
-      <div
-        className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
-        style={{ background: typeMeta.bg, color: typeMeta.color, border: `1px solid ${typeMeta.bg}` }}
+    <li>
+      <button
+        type="button"
+        onClick={onClick}
+        className="w-full text-left py-2.5 flex items-start gap-3 text-xs hover:bg-black/[0.02] rounded transition-colors px-1 -mx-1"
+        aria-label={`Open progress timeline for ${typeMeta.label} on ${pretty}`}
       >
-        <TypeIcon className="w-4 h-4" />
-      </div>
-
-      <div className="flex-1 min-w-0">
-        {/* Title row: type + date + hours */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-medium" style={{ color: '#1F1B16' }}>
-            {typeMeta.label}
-          </span>
-          <span style={{ color: '#1F1B16' }}>·</span>
-          <span style={{ color: '#1F1B16' }}>{dow} {pretty}</span>
-          <span style={{ color: '#1F1B16' }}>·</span>
-          <span className="tabular-nums" style={{ color: '#1F1B16' }}>
-            {Number(row.hours)}h
-          </span>
-          {row.exceeds_quota && (
-            <span
-              className="text-[9px] px-1.5 py-0.5 rounded-full inline-flex items-center gap-1"
-              style={{ background: '#FFEDD5', color: '#9A3412', fontWeight: 700, letterSpacing: '0.1em' }}
-            >
-              <AlertTriangle className="w-2.5 h-2.5" /> OVER QUOTA
-            </span>
-          )}
+        {/* Type badge — colored circle with the matching icon */}
+        <div
+          className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+          style={{ background: typeMeta.bg, color: typeMeta.color, border: `1px solid ${typeMeta.bg}` }}
+        >
+          <TypeIcon className="w-4 h-4" />
         </div>
 
-        {/* Reason and decision note */}
-        {row.reason && (
-          <div className="mt-1" style={{ color: '#1F1B16' }}>
-            <em>"{row.reason}"</em>
+        <div className="flex-1 min-w-0">
+          {/* Title row: type + date + hours */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-medium" style={{ color: '#1F1B16' }}>
+              {typeMeta.label}
+            </span>
+            <span style={{ color: '#1F1B16' }}>·</span>
+            <span style={{ color: '#1F1B16' }}>{dow} {pretty}</span>
+            <span style={{ color: '#1F1B16' }}>·</span>
+            <span className="tabular-nums" style={{ color: '#1F1B16' }}>
+              {Number(row.hours)}h
+            </span>
+            {row.exceeds_quota && (
+              <span
+                className="text-[9px] px-1.5 py-0.5 rounded-full inline-flex items-center gap-1"
+                style={{ background: '#FFEDD5', color: '#9A3412', fontWeight: 700, letterSpacing: '0.1em' }}
+              >
+                <AlertTriangle className="w-2.5 h-2.5" /> OVER QUOTA
+              </span>
+            )}
           </div>
-        )}
-        {row.status !== 'pending' && row.decision_note && (
-          <div className="mt-1" style={{ color: '#1F1B16' }}>
-            <strong>Note from HR:</strong> {row.decision_note}
-          </div>
-        )}
-      </div>
 
-      {/* Status pill */}
-      <span
-        className="text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1 flex-shrink-0"
-        style={{ background: statusMeta.bg, color: statusMeta.color, fontWeight: 700, letterSpacing: '0.1em' }}
-      >
-        <StatusIcon className="w-2.5 h-2.5" /> {statusMeta.label}
-      </span>
+          {/* Reason — short tap target hint at the end so users learn the row is clickable */}
+          {row.reason && (
+            <div className="mt-1" style={{ color: '#1F1B16' }}>
+              <em>"{row.reason}"</em>
+            </div>
+          )}
+          <div className="text-[10px] mt-1 opacity-60" style={{ color: '#1F1B16' }}>
+            Tap to see approval progress
+          </div>
+        </div>
+
+        {/* Stage pill */}
+        <span
+          className="text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1 flex-shrink-0 whitespace-nowrap"
+          style={{ background: stageMeta.bg, color: stageMeta.color, fontWeight: 700, letterSpacing: '0.1em' }}
+        >
+          <StatusIcon className="w-2.5 h-2.5" /> {stageMeta.label}
+        </span>
+      </button>
     </li>
   );
 }
