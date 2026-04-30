@@ -121,13 +121,27 @@ export default function ManagerDashboard({ me, employees, onGoToReviews, onGoToR
       .slice(0, 8);
   }, [requests, today]);
 
-  // Counts for the SHIFT STATUS tile. We bucket every shift the manager has
-  // assigned (past 7 days through all upcoming weeks) by status. The tile
-  // headlines "WAITING" because that's the count the manager most needs to
-  // act on (chase staff for acknowledgment); accepted/declined are secondary.
+  // Counts for the SHIFT STATUS tile. The tile primary number shows the
+  // TOTAL number of shifts this manager has assigned for the current
+  // calendar week (Sun–Sat containing today) — pending + accepted +
+  // declined combined. We still derive pending/accepted/declined for
+  // the secondary subtitle, but the headline is the activity volume.
+  // Tap the tile → jump to Requests tab where the editor and the full
+  // per-shift status breakdown live.
   const shiftCounts = useMemo(() => {
-    const c = { pending: 0, accepted: 0, declined: 0, total: shifts.length };
+    // Compute Sun..Sat containing today, in ISO date strings.
+    const t = new Date();
+    const day = t.getDay(); // 0 = Sunday
+    const sunday = new Date(t); sunday.setDate(t.getDate() - day);
+    const saturday = new Date(sunday); saturday.setDate(sunday.getDate() + 6);
+    const sundayISO   = sunday.toISOString().slice(0, 10);
+    const saturdayISO = saturday.toISOString().slice(0, 10);
+
+    const inThisWeek = (d) => d >= sundayISO && d <= saturdayISO;
+    const c = { pending: 0, accepted: 0, declined: 0, total: 0 };
     shifts.forEach(s => {
+      if (!inThisWeek(s.shift_date)) return;
+      c.total++;
       if (s.status === 'pending')  c.pending++;
       else if (s.status === 'accepted') c.accepted++;
       else if (s.status === 'declined') c.declined++;
@@ -199,20 +213,21 @@ export default function ManagerDashboard({ me, employees, onGoToReviews, onGoToR
         />
         <StatCard
           label="SHIFT STATUS"
-          value={shiftCounts.pending}
+          value={shiftCounts.total}
           icon={<Calendar className="w-5 h-5" />}
           accent={shiftCounts.declined > 0 ? '#B91C1C' : (shiftCounts.pending > 0 ? '#A16207' : '#0F4C2A')}
           subtitle={
             shiftCounts.total === 0
-              ? 'No shifts assigned'
+              ? 'No shifts this week'
               : shiftCounts.declined > 0
-                ? `${shiftCounts.declined} declined · ${shiftCounts.pending} waiting`
+                ? `This week · ${shiftCounts.declined} declined · ${shiftCounts.pending} waiting`
                 : shiftCounts.pending > 0
-                  ? `Waiting · ${shiftCounts.accepted} accepted`
-                  : `All ${shiftCounts.accepted} accepted`
+                  ? `This week · ${shiftCounts.pending} waiting · ${shiftCounts.accepted} accepted`
+                  : `This week · all ${shiftCounts.accepted} accepted`
           }
-          actionLabel={shiftCounts.total > 0 && typeof onGoToRequests === 'function' ? 'View →' : undefined}
-          onAction={shiftCounts.total > 0 && typeof onGoToRequests === 'function' ? onGoToRequests : undefined}
+          actionLabel={typeof onGoToRequests === 'function' ? 'Open →' : undefined}
+          onAction={typeof onGoToRequests === 'function' ? onGoToRequests : undefined}
+          onClick={typeof onGoToRequests === 'function' ? onGoToRequests : undefined}
         />
       </div>
 
@@ -304,10 +319,27 @@ export default function ManagerDashboard({ me, employees, onGoToReviews, onGoToR
 
 // ── Helper components ──────────────────────────────────────────────────────
 
-function StatCard({ label, value, icon, accent, subtitle, actionLabel, onAction }) {
+function StatCard({ label, value, icon, accent, subtitle, actionLabel, onAction, onClick }) {
+  // If onClick is provided, the entire tile becomes clickable. The inner
+  // action button (if present) calls stopPropagation so it doesn't fire
+  // twice when both onClick and onAction land on the same tile.
+  const Wrapper = onClick ? 'button' : 'div';
+  const wrapperProps = onClick
+    ? { type: 'button', onClick, 'aria-label': `${label} — open` }
+    : {};
   return (
-    <div className="rounded-2xl border bg-white p-4 flex items-center gap-4"
-         style={{ borderColor: 'var(--border-soft)', boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
+    <Wrapper
+      {...wrapperProps}
+      className={
+        'rounded-2xl border bg-white p-4 flex items-center gap-4 text-left w-full ' +
+        (onClick ? 'transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-offset-2' : '')
+      }
+      style={{
+        borderColor: 'var(--border-soft)',
+        boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)',
+        cursor: onClick ? 'pointer' : 'default',
+      }}
+    >
       <div className="w-11 h-11 rounded-full flex items-center justify-center flex-shrink-0"
            style={{ background: `${accent}15`, color: accent, border: `1px solid ${accent}30` }}>
         {icon}
@@ -320,13 +352,18 @@ function StatCard({ label, value, icon, accent, subtitle, actionLabel, onAction 
         <div className="text-[11px]" style={{ color: '#1F1B16' }}>{subtitle}</div>
       </div>
       {actionLabel && onAction && (
-        <button onClick={onAction}
+        <span
+          onClick={(e) => { e.stopPropagation(); onAction(e); }}
           className="text-xs px-3 py-1.5 rounded-full border flex-shrink-0"
-          style={{ borderColor: accent, color: accent, fontWeight: 600 }}>
+          style={{ borderColor: accent, color: accent, fontWeight: 600 }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onAction(e); } }}
+        >
           {actionLabel}
-        </button>
+        </span>
       )}
-    </div>
+    </Wrapper>
   );
 }
 
