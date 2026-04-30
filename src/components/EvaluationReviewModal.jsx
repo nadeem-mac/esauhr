@@ -17,13 +17,23 @@ import { directPost, directGet } from '../supabaseClient.js';
 //     CC chain). One-click "Send & log" opens the mail client AND writes
 //     a row to evaluation_scores so the score view picks it up.
 //
-// Schema reference (verified against live DB):
-//   evaluation_scores table columns are minimal:
-//     id, employee_id, notes, reviewed_by, reviewed_at, created_at, updated_at
-//   The view evaluation_scores_final exposes employee_id, base_score, final_score.
-//   We pack the structured info (month, counts, deduction) into `notes` as
-//   a single human-readable line so the view (whatever it does) and any
-//   future report can parse it.
+// Schema reference (verified against live DB by direct probe):
+//   evaluation_scores: id, employee_id, violation_count, base_score,
+//                      reviewed_by, reviewed_at, created_at, updated_at, notes
+//   evaluation_scores_final view: same columns + computed final_score
+//   No unique constraint on (employee_id, month) — we enforce idempotency
+//   app-side by checking the [<MonthLong YYYY>] tag at the start of `notes`.
+//
+// Insert payload (per click):
+//   employee_id      → who is being reviewed
+//   violation_count  → totalCount for the calendar month
+//   base_score       → 100 (the starting baseline)
+//   notes            → human-readable breakdown ("[April 2026] 8 incidents …")
+//   reviewed_by      → me.id (Bashaier)
+//   reviewed_at      → now
+//
+// final_score is computed by the view (presumably base_score - max(0, n-5)*2
+// per the spec), so we don't write it directly.
 //
 // Idempotency
 //   evaluation_scores has no unique constraint we can rely on, so we check
@@ -179,6 +189,8 @@ export default function EvaluationReviewModal({ row, employee, manager, onClose,
 
       await directPost('evaluation_scores', {
         employee_id: employee.id,
+        violation_count: row.totalCount,
+        base_score: 100,
         notes,
         reviewed_by: me?.id || 'H94830',
         reviewed_at: new Date().toISOString(),
