@@ -6,6 +6,8 @@ import {
 import { supabase, directGet } from '../supabaseClient.js';
 import Dashboard from './Dashboard.jsx';
 import Requests from './Requests.jsx';
+import ManagerShiftCard from './ManagerShiftCard.jsx';
+import ManagerShiftStatusCard from './ManagerShiftStatusCard.jsx';
 import Employees from './Employees.jsx';
 import CalendarView from './CalendarView.jsx';
 import SettingsView from './SettingsView.jsx';
@@ -486,6 +488,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
               me={me}
               employees={employees}
               onGoToReviews={() => setTab('reviews')}
+              onGoToRequests={() => setTab('requests')}
             />
           ) : (
             <PersonalDashboard
@@ -507,12 +510,25 @@ export default function AppShell({ session, me, onRefreshMe }) {
           return <AttendanceView me={me} employees={employees} />;
         })()}
         {tab === 'requests' && (
-          <Requests
-            requests={requests} leaveTypes={leaveTypes}
-            typeMap={typeMap} empMap={empMap}
-            onDecide={decideRequest} onDelete={deleteRequest}
-            onNewRequest={() => setShowNewRequest(true)}
-          />
+          <div className="space-y-6">
+            {/* Manager-only shift workspace lives at the top of the Requests
+                tab. The editor (top) lets the manager assign shifts; the
+                status panel (below) shows live acknowledgment state for
+                every shift they've already sent. Both hide for non-managers
+                — staff and HR see only the leave-request list below. */}
+            {isManager && !isAdmin && !isHrReviewer && (
+              <>
+                <ManagerShiftCard me={me} employees={employees} />
+                <ManagerShiftStatusCard me={me} employees={employees} />
+              </>
+            )}
+            <Requests
+              requests={requests} leaveTypes={leaveTypes}
+              typeMap={typeMap} empMap={empMap}
+              onDecide={decideRequest} onDelete={deleteRequest}
+              onNewRequest={() => setShowNewRequest(true)}
+            />
+          </div>
         )}
         {tab === 'employees' && (isAdmin || isHrReviewer) && (
           <Employees

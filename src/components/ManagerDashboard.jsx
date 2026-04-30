@@ -1,11 +1,9 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { directGet } from '../supabaseClient.js';
+import { directGet, supabase } from '../supabaseClient.js';
 import {
-  Users, Plane, Clock, AlertTriangle, CheckCircle2, ChevronRight,
+  Users, Plane, Clock, AlertTriangle, CheckCircle2, ChevronRight, Calendar,
 } from 'lucide-react';
 import { fmtDate, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
-import ManagerShiftCard from './ManagerShiftCard.jsx';
-import ManagerShiftStatusCard from './ManagerShiftStatusCard.jsx';
 
 // ────────────────────────────────────────────────────────────────────────────
 // ManagerDashboard
@@ -29,8 +27,9 @@ import ManagerShiftStatusCard from './ManagerShiftStatusCard.jsx';
 //   • Admin actions (PIN reset, employee management, system settings)
 // ────────────────────────────────────────────────────────────────────────────
 
-export default function ManagerDashboard({ me, employees, onGoToReviews }) {
+export default function ManagerDashboard({ me, employees, onGoToReviews, onGoToRequests }) {
   const [requests, setRequests] = useState([]);
+  const [shifts, setShifts]     = useState([]);
   const [loading, setLoading]   = useState(true);
 
   // Direct reports — the team this manager owns
@@ -43,6 +42,7 @@ export default function ManagerDashboard({ me, employees, onGoToReviews }) {
   const load = useCallback(async () => {
     if (!me?.id || reportIds.length === 0) {
       setRequests([]);
+      setShifts([]);
       setLoading(false);
       return;
     }
@@ -52,22 +52,51 @@ export default function ManagerDashboard({ me, employees, onGoToReviews }) {
       // direct reports. We keep them all (any status/stage) and filter
       // client-side so the dashboard can show pending, on-leave-today,
       // and upcoming approved in one shot.
+      // Also pull every shift this manager has assigned (set_by=me.id) so
+      // the SHIFT STATUS tile can show pending/accepted/declined counts.
       const list = reportIds.map(id => `"${id}"`).join(',');
-      const rows = await directGet(
-        'leave_requests',
-        `select=*&employee_id=in.(${list})&order=start_date.desc&limit=100`,
-        { timeoutMs: 10000 }
-      );
+      const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 7);
+      const cutoffISO = cutoff.toISOString().slice(0, 10);
+      const [rows, shiftRows] = await Promise.all([
+        directGet(
+          'leave_requests',
+          `select=*&employee_id=in.(${list})&order=start_date.desc&limit=100`,
+          { timeoutMs: 10000 }
+        ).catch(() => []),
+        directGet(
+          'employee_shifts',
+          `select=id,employee_id,shift_date,status&set_by=eq.${encodeURIComponent(me.id)}&shift_date=gte.${cutoffISO}`,
+          { timeoutMs: 10000 }
+        ).catch(() => []),
+      ]);
       setRequests(Array.isArray(rows) ? rows : []);
+      setShifts(Array.isArray(shiftRows) ? shiftRows : []);
     } catch (err) {
       console.warn('ManagerDashboard load failed:', err);
       setRequests([]);
+      setShifts([]);
     } finally {
       setLoading(false);
     }
   }, [me?.id, reportIds.join(',')]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Realtime — when a staff member acknowledges a shift this manager assigned,
+  // the SHIFT STATUS tile must reflect that without a manual refresh. Filter
+  // on set_by so we only get events for shifts this manager set.
+  useEffect(() => {
+    if (!me?.id || !supabase) return;
+    const channel = supabase
+      .channel(`mgr-dash-shifts-${me.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'employee_shifts', filter: `set_by=eq.${me.id}` },
+        () => load()
+      )
+      .subscribe();
+    return () => { try { supabase.removeChannel(channel); } catch {} };
+  }, [me?.id, load]);
 
   // ── Derived slices ──────────────────────────────────────────────────────
   const today = new Date().toISOString().slice(0, 10);
@@ -91,6 +120,20 @@ export default function ManagerDashboard({ me, employees, onGoToReviews }) {
       .sort((a, b) => a.start_date.localeCompare(b.start_date))
       .slice(0, 8);
   }, [requests, today]);
+
+  // Counts for the SHIFT STATUS tile. We bucket every shift the manager has
+  // assigned (past 7 days through all upcoming weeks) by status. The tile
+  // headlines "WAITING" because that's the count the manager most needs to
+  // act on (chase staff for acknowledgment); accepted/declined are secondary.
+  const shiftCounts = useMemo(() => {
+    const c = { pending: 0, accepted: 0, declined: 0, total: shifts.length };
+    shifts.forEach(s => {
+      if (s.status === 'pending')  c.pending++;
+      else if (s.status === 'accepted') c.accepted++;
+      else if (s.status === 'declined') c.declined++;
+    });
+    return c;
+  }, [shifts]);
 
   const empById = useMemo(() => {
     const m = {};
@@ -126,8 +169,11 @@ export default function ManagerDashboard({ me, employees, onGoToReviews }) {
         </div>
       </div>
 
-      {/* Stat strip */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* Stat strip — 4 tiles. SHIFT STATUS sits next to ON LEAVE TODAY
+          and surfaces the count of shifts waiting for staff acknowledgment.
+          Tapping the tile jumps to the Requests tab where the editor and
+          per-shift breakdown live. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           label="YOUR TEAM"
           value={directReports.length}
@@ -150,6 +196,23 @@ export default function ManagerDashboard({ me, employees, onGoToReviews }) {
           icon={<Plane className="w-5 h-5" />}
           accent="#5A8A9A"
           subtitle={onLeaveToday.length === 1 ? 'Team member out' : 'Team members out'}
+        />
+        <StatCard
+          label="SHIFT STATUS"
+          value={shiftCounts.pending}
+          icon={<Calendar className="w-5 h-5" />}
+          accent={shiftCounts.declined > 0 ? '#B91C1C' : (shiftCounts.pending > 0 ? '#A16207' : '#0F4C2A')}
+          subtitle={
+            shiftCounts.total === 0
+              ? 'No shifts assigned'
+              : shiftCounts.declined > 0
+                ? `${shiftCounts.declined} declined · ${shiftCounts.pending} waiting`
+                : shiftCounts.pending > 0
+                  ? `Waiting · ${shiftCounts.accepted} accepted`
+                  : `All ${shiftCounts.accepted} accepted`
+          }
+          actionLabel={shiftCounts.total > 0 && typeof onGoToRequests === 'function' ? 'View →' : undefined}
+          onAction={shiftCounts.total > 0 && typeof onGoToRequests === 'function' ? onGoToRequests : undefined}
         />
       </div>
 
@@ -228,17 +291,9 @@ export default function ManagerDashboard({ me, employees, onGoToReviews }) {
         )}
       </Card>
 
-      {/* Shift scheduling — pick a direct report, set per-day start/end times,
-          save. Each save creates pending shifts; the staff member sees a fairy
-          modal on their next sign-in to accept or decline. */}
-      <ManagerShiftCard me={me} employees={employees} />
-
-      {/* Shift status — read-only companion to the editor above. Shows every
-          shift this manager has assigned with its current acknowledgment state
-          (waiting / accepted / declined). Updates live via realtime so when
-          staff acknowledges, the row flips here without the manager needing
-          to refresh. */}
-      <ManagerShiftStatusCard me={me} employees={employees} />
+      {/* Shift cards moved out: the editor (ManagerShiftCard) and the
+          per-day status breakdown (ManagerShiftStatusCard) now live in the
+          Requests tab. The dashboard SHIFT STATUS tile above links there. */}
 
       {loading && (
         <div className="text-center text-xs opacity-50 py-2">Loading team data…</div>
