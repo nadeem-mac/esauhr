@@ -68,6 +68,23 @@ async function getActiveToken() {
   return _cachedToken;
 }
 
+// AbortController-driven timeouts in the direct* helpers used to leak the
+// raw DOMException ("signal is aborted without reason" in Chromium, "The
+// operation was aborted" in Firefox) up into setError(...) calls that
+// rendered it verbatim in the UI. Translate it once here so every caller
+// inherits a friendly message without having to special-case AbortError
+// on each call site. Non-abort errors pass through unchanged so server
+// HTTP errors still surface their real text.
+function translateAbort(e) {
+  if (!e) return e;
+  const name = e.name || '';
+  const msg  = e.message || '';
+  if (name === 'AbortError' || /aborted/i.test(msg)) {
+    return new Error('The request timed out. Please check your connection and try again.');
+  }
+  return e;
+}
+
 // Helper that bypasses supabase-js for critical writes that have been observed to
 // wedge the JS client. Performs a direct PATCH to the PostgREST endpoint with the
 // current session's access token. Falls back to anon key for unauthenticated ops.
@@ -95,6 +112,8 @@ export async function directPatch(table, idColumn, idValue, patch, options = {})
       throw new Error(`HTTP ${r.status}: ${errText || r.statusText}`);
     }
     return await r.json();
+  } catch (e) {
+    throw translateAbort(e);
   } finally { clearTimeout(timer); }
 }
 
@@ -124,6 +143,8 @@ export async function directGet(table, queryString, options = {}) {
       throw new Error(`HTTP ${r.status}: ${errText || r.statusText}`);
     }
     return await r.json();
+  } catch (e) {
+    throw translateAbort(e);
   } finally { clearTimeout(timer); }
 }
 
@@ -167,6 +188,8 @@ export async function directPost(table, row, options = {}) {
       throw new Error(`HTTP ${r.status}: ${errText || r.statusText}`);
     }
     return await r.json();
+  } catch (e) {
+    throw translateAbort(e);
   } finally { clearTimeout(timer); }
 }
 
@@ -209,6 +232,8 @@ export async function directDelete(table, queryString, options = {}) {
       throw new Error(`HTTP ${r.status}: ${errText || r.statusText}`);
     }
     return true;
+  } catch (e) {
+    throw translateAbort(e);
   } finally { clearTimeout(timer); }
 }
 
@@ -240,5 +265,7 @@ export async function directPatchQuery(table, queryString, patch, options = {}) 
       throw new Error(`HTTP ${r.status}: ${errText || r.statusText}`);
     }
     return await r.json();
+  } catch (e) {
+    throw translateAbort(e);
   } finally { clearTimeout(timer); }
 }
