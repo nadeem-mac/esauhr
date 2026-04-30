@@ -6,7 +6,7 @@ import BashaierTasksCard from './BashaierTasksCard.jsx';
 import PendingShiftApprovalsCard from './PendingShiftApprovalsCard.jsx';
 import ManagerShiftCard from './ManagerShiftCard.jsx';
 
-export default function Dashboard({ me, employees, requests, typeMap, empMap, permissions, onGoToRequests, onNewRequest }) {
+export default function Dashboard({ me, employees, requests, typeMap, empMap, permissions, onGoToRequests, onGoToReviews, onNewRequest }) {
   // Personalised greeting — fully inline to eliminate any minifier scope issues.
   const _hr = new Date().getHours();
   const _period = _hr < 12 ? 'morning' : _hr < 17 ? 'afternoon' : 'evening';
@@ -337,7 +337,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
 
         {/* PENDING APPROVAL */}
         <Tile label="PENDING APPROVAL" sublabel="Awaiting your decision" count={pending.length}
-              accentDark="#C2410C" accentTint="#FFFBEB" onClick={onGoToRequests}>
+              accentDark="#C2410C" accentTint="#FFFBEB" onClick={onGoToReviews || onGoToRequests}>
           <div className="text-[20px]">⏳</div>
         </Tile>
 
@@ -525,7 +525,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
               })}
               {pending.length > 5 && (
                 <li>
-                  <button onClick={onGoToRequests} className="text-xs flex items-center gap-1 opacity-70 hover:opacity-100">
+                  <button onClick={onGoToReviews || onGoToRequests} className="text-xs flex items-center gap-1 opacity-70 hover:opacity-100">
                     See {pending.length - 5} more <ArrowRight className="w-3 h-3"/>
                   </button>
                 </li>

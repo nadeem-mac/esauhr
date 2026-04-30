@@ -523,6 +523,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
               typeMap={typeMap} empMap={empMap}
               permissions={permissions}
               onGoToRequests={() => setTabPersistent("requests")}
+              onGoToReviews={() => setTabPersistent("reviews")}
               onNewRequest={() => setShowNewRequest(true)}
             />
           ) : isManager ? (
