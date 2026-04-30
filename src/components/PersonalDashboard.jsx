@@ -262,14 +262,14 @@ export default function PersonalDashboard({
           waiting for manager follow-up). The card itself decides whether
           to render based on its own data fetch — pass-through here is
           deliberately minimal. */}
-      <StaffShiftStatusCard me={me} />
-
-      {/* Permission application history — separate from the colored quota
-          tiles above. Shows each application the staff has submitted in
-          the last 30 days, its current status (pending/approved/rejected
-          /flagged-for-review), and any decision note from HR. The card
-          self-hides for staff with no permission activity. */}
+      {/* Permission application history — sits ABOVE the shift status card
+          because permissions are the more frequent staff-side activity
+          (multiple applications per month vs. shifts which are mostly
+          weekly). Self-hides when the staff has no permission activity in
+          the last 30 days. */}
       <PermissionStatusCard me={me} />
+
+      <StaffShiftStatusCard me={me} />
 
       {/* SUBSTITUTION REQUESTS — colleagues asking ME to cover for them */}
       {subRequests.length > 0 && (

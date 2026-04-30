@@ -69,8 +69,12 @@ export default function RequestTypePicker({ onPick, onClose }) {
       }}
     >
       <div
-        className="w-full max-w-md rounded-2xl border esau-card"
-        style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}
+        className="w-full max-w-md rounded-2xl border"
+        style={{
+          borderColor: 'var(--border-soft)',
+          background: '#FFFDF7',
+          boxShadow: '0 12px 40px rgba(31,27,22,0.18)',
+        }}
       >
         {/* Header */}
         <div className="flex items-baseline justify-between px-6 py-5 border-b" style={{ borderColor: 'var(--border-soft)' }}>
