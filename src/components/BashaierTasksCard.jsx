@@ -1,9 +1,10 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import {
   CalendarDays, Coffee, Plane, Mail, Copy, ClipboardCheck,
-  AlertCircle, CheckCircle2, ChevronRight, Clock, Sparkles, Check, ChevronDown,
+  AlertCircle, CheckCircle2, ChevronRight, Clock, Sparkles, Check, ChevronDown, AlertTriangle,
 } from 'lucide-react';
 import { directGet, directPatchQuery, supabase } from '../supabaseClient.js';
+import EvaluationReviewModal from './EvaluationReviewModal.jsx';
 
 // =============================================================================
 // CONSTANTS
@@ -487,6 +488,123 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
     }
   };
 
+  // P6: monthly violation aggregation
+  // ────────────────────────────────────────────────────────────────────────
+  // Fetches every attendance_violations row for the current calendar month,
+  // aggregates per employee, and surfaces anyone with > 5 incidents in the
+  // "Performance escalation" panel. Clicking review opens
+  // EvaluationReviewModal which writes to evaluation_scores.
+  const [monthViolations, setMonthViolations] = useState([]);
+  const [loggedEvalKeys, setLoggedEvalKeys] = useState({});  // 'empId:YYYY-MM' → true
+  const [evalPanelOpen, setEvalPanelOpen] = useState(false);
+  const [reviewModalRow, setReviewModalRow] = useState(null);
+
+  const monthRange = useMemo(() => {
+    const y = today.getFullYear();
+    const m = today.getMonth();
+    const first = new Date(y, m, 1);
+    const last  = new Date(y, m + 1, 0);
+    const ymd = (d) => {
+      const yy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yy}-${mm}-${dd}`;
+    };
+    return { start: ymd(first), end: ymd(last), monthStart: `${y}-${String(m + 1).padStart(2, '0')}-01` };
+  }, [today]);
+
+  // Pull this month's attendance_violations + already-logged evaluation_scores
+  // tagged for this month. Realtime channel re-fetches when either changes.
+  useEffect(() => {
+    let mounted = true;
+    const refresh = async () => {
+      try {
+        const rows = await directGet(
+          'attendance_violations',
+          `select=employee_id,violation_type,violation_date` +
+          `&violation_date=gte.${monthRange.start}&violation_date=lte.${monthRange.end}` +
+          `&order=violation_date`,
+          { timeoutMs: 8000 }
+        );
+        if (mounted) setMonthViolations(Array.isArray(rows) ? rows : []);
+      } catch {
+        if (mounted) setMonthViolations([]);
+      }
+      try {
+        // App-side idempotency lookup — find evaluation_scores rows whose
+        // notes start with [<MonthLong YYYY>] for this month.
+        const monthLong = new Date(monthRange.monthStart).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+        const tag = `[${monthLong}]`;
+        const rows = await directGet(
+          'evaluation_scores',
+          `select=employee_id,notes&notes=ilike.${encodeURIComponent(tag + '%')}`,
+          { timeoutMs: 8000 }
+        );
+        if (mounted) {
+          const m = {};
+          (rows || []).forEach(r => {
+            m[`${r.employee_id}:${monthRange.monthStart.slice(0, 7)}`] = true;
+          });
+          setLoggedEvalKeys(m);
+        }
+      } catch {
+        if (mounted) setLoggedEvalKeys({});
+      }
+    };
+    refresh();
+    const ch = supabase.channel('hr-monthly-violations')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance_violations' }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'evaluation_scores' }, refresh)
+      .subscribe();
+    return () => { mounted = false; supabase.removeChannel(ch); };
+  }, [monthRange.start, monthRange.end, monthRange.monthStart]);
+
+  // Aggregate to one row per employee with >5 violations this month.
+  const escalations = useMemo(() => {
+    const byEmp = new Map();
+    monthViolations.forEach(v => {
+      if (!v?.employee_id) return;
+      let agg = byEmp.get(v.employee_id);
+      if (!agg) {
+        agg = { employeeId: v.employee_id, totalCount: 0, lateCount: 0, earlyCount: 0, missedCount: 0, dates: new Set() };
+        byEmp.set(v.employee_id, agg);
+      }
+      agg.totalCount += 1;
+      if (v.violation_type === 'late') agg.lateCount += 1;
+      else if (v.violation_type === 'early') agg.earlyCount += 1;
+      else if (v.violation_type === 'missed_in' || v.violation_type === 'missed_out') agg.missedCount += 1;
+      if (v.violation_date) agg.dates.add(v.violation_date);
+    });
+    return Array.from(byEmp.values())
+      .filter(a => a.totalCount > 5)
+      .map(a => {
+        const emp = (employees || []).find(e => e.id === a.employeeId);
+        const monthYM = monthRange.monthStart.slice(0, 7);
+        return {
+          ...a,
+          dates: Array.from(a.dates).sort(),
+          monthStart: monthRange.monthStart,
+          employeeName: emp?.name || a.employeeId,
+          alreadyLogged: !!loggedEvalKeys[`${a.employeeId}:${monthYM}`],
+        };
+      })
+      .sort((a, b) => b.totalCount - a.totalCount);
+  }, [monthViolations, employees, loggedEvalKeys, monthRange.monthStart]);
+
+  const escalationsPending = useMemo(
+    () => escalations.filter(r => !r.alreadyLogged),
+    [escalations]
+  );
+
+  const openReviewFor = (row) => {
+    const employee = (employees || []).find(e => e.id === row.employeeId) || { id: row.employeeId };
+    const manager  = employee?.manager_id
+      ? (employees || []).find(e => e.id === employee.manager_id) || null
+      : null;
+    setReviewModalRow({ row, employee, manager });
+  };
+  // ────────────────────────────────────────────────────────────────────────
+
   const tasks = useMemo(() => [
     {
       key: 'mid_month_perms',
@@ -665,6 +783,88 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
           </div>
         )}
 
+        {/* P6: Performance escalation — surfaces staff who exceeded 5
+            attendance violations this calendar month. Auto-hides when there
+            are no pending escalations. Already-reviewed rows are filtered
+            out so they don't keep nagging Bashaier. */}
+        {escalationsPending.length > 0 && (
+          <div
+            className="rounded-xl border mb-3 overflow-hidden transition-colors"
+            style={{
+              borderColor: '#FFCDD2',
+              background: 'linear-gradient(135deg, #FBE9E7 0%, #FBFAF6 100%)',
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setEvalPanelOpen(o => !o)}
+              className="w-full flex items-center gap-3 px-3 py-3 text-left hover:bg-white/40 transition-colors"
+            >
+              <div
+                className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{ background: '#FFEBEE', color: 'var(--clay)', border: '1px solid #FFCDD2' }}
+              >
+                <AlertTriangle className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold" style={{ color: '#1F1B16' }}>
+                  {escalationsPending.length === 1
+                    ? `${escalationsPending[0].employeeName.split(' ')[0]} crossed the monthly attendance threshold`
+                    : `${escalationsPending.length} staff crossed the monthly attendance threshold`}
+                </div>
+                <div className="text-[11px]" style={{ color: '#1F1B16' }}>
+                  Above 5 incidents this month — review and notify direct manager
+                </div>
+              </div>
+              <span
+                className="text-[10px] tracking-[0.2em] px-2 py-0.5 rounded-full flex-shrink-0"
+                style={{ background: 'var(--clay)', color: 'white' }}
+              >
+                ESCALATE
+              </span>
+              <ChevronDown
+                className="w-4 h-4 flex-shrink-0 transition-transform"
+                style={{ color: '#1F1B16', transform: evalPanelOpen ? 'rotate(180deg)' : 'none' }}
+              />
+            </button>
+
+            {evalPanelOpen && (
+              <div className="px-3 pb-3 pt-1 fade-in">
+                <div className="space-y-1.5 mb-1">
+                  {escalationsPending.map(row => {
+                    const charged = Math.max(0, row.totalCount - 5);
+                    return (
+                      <div
+                        key={row.employeeId}
+                        className="flex items-center gap-3 rounded border px-3 py-2 bg-white"
+                        style={{ borderColor: 'var(--border-soft)' }}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium" style={{ color: '#1F1B16' }}>
+                            {row.employeeName}
+                          </div>
+                          <div className="text-[11px]" style={{ color: '#1F1B16' }}>
+                            {row.totalCount} incidents · {row.lateCount} late · {row.earlyCount} early · {row.missedCount} missed
+                            {' · '}<strong>{charged * 2} pt deduction</strong>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => openReviewFor(row)}
+                          className="px-3 py-1.5 rounded text-xs text-white flex items-center gap-1.5"
+                          style={{ background: 'var(--clay)' }}
+                        >
+                          <ChevronRight className="w-3.5 h-3.5" /> Review
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="space-y-2.5">
           {tasks.map(task => {
             const st = computeTaskStatus(task.key, today);
@@ -708,6 +908,17 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
           onCopyHtml={() => copyHtml(openTask)}
           onCopyPlain={() => copyPlain(openTask)}
           copied={copied}
+        />
+      )}
+
+      {reviewModalRow && (
+        <EvaluationReviewModal
+          row={reviewModalRow.row}
+          employee={reviewModalRow.employee}
+          manager={reviewModalRow.manager}
+          me={{ id: 'H94830' }}
+          onClose={() => setReviewModalRow(null)}
+          onLogged={() => { /* realtime channel will refresh state */ }}
         />
       )}
     </>
