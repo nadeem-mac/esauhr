@@ -7,7 +7,6 @@ import {
 import { UserCheck, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { fmtDate, calculateBalance, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 import { summariseMonth, PERMISSION_QUOTA } from '../lib/permissionLogic.js';
-import PermissionRequestModal from './PermissionRequestModal.jsx';
 import PermissionStatusCard from './PermissionStatusCard.jsx';
 import StaffShiftStatusCard from './StaffShiftStatusCard.jsx';
 import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
@@ -29,7 +28,6 @@ export default function PersonalDashboard({
   // and the request is still waiting on substitute decisions.
   const [subRequests, setSubRequests] = useState([]);
   const [loading,     setLoading]     = useState(true);
-  const [permModal,   setPermModal]   = useState(null);
 
   const load = useCallback(async () => {
     if (!me?.id) return;
@@ -155,7 +153,6 @@ export default function PersonalDashboard({
           stat={lateUsed} unit={`h / ${PERMISSION_QUOTA.monthlyHours}h`}
           desc="Combined cap: late + early. 3 occurrences."
           progress={Math.min(100, (lateUsed/PERMISSION_QUOTA.monthlyHours)*100)}
-          onClick={() => setPermModal('late_arrival')}
         />
         <ColorTile
           gradient="linear-gradient(135deg, #8B5CF6 0%, #4F46E5 100%)"
@@ -172,7 +169,6 @@ export default function PersonalDashboard({
           stat={earlyUsed} unit="h used"
           desc="Shared bucket with late arrivals this month."
           progress={Math.min(100, (earlyUsed/PERMISSION_QUOTA.monthlyHours)*100)}
-          onClick={() => setPermModal('early_leave')}
         />
         <ColorTile
           gradient="linear-gradient(135deg, #FBBF24 0%, #F97316 100%)"
@@ -367,16 +363,6 @@ export default function PersonalDashboard({
           </ul>
         )}
       </section>
-
-      {permModal && (
-        <PermissionRequestModal
-          me={me}
-          type={permModal}
-          monthRows={permissions}
-          onClose={() => setPermModal(null)}
-          onSubmitted={() => { setPermModal(null); load(); }}
-        />
-      )}
     </div>
   );
 }
