@@ -1,47 +1,33 @@
 import React, { useEffect, useState } from 'react';
-import { directGet } from '../supabaseClient.js';
+import { supabase } from '../supabaseClient.js';
 import EvergreenLogo from './EvergreenLogo.jsx';
 
 // Public verify page. Anyone scanning the QR code on a printed
-// permission letter lands here. Reads the request from the live
-// database and displays its current state — no auth, no editing.
-//
-// Three possible states displayed:
-//   • Approved (green tick) — request is final and stamped
-//   • Pending  (yellow)     — still in workflow
-//   • Rejected/Expired (red)— terminal but not approved
-//
-// Designed for quick visual confirmation by a manager spot-checking
-// a printout: "Yes, this letter matches a real, approved record."
+// permission letter lands here. Calls the public verify_permission
+// RPC (security definer, returns only approved requests with
+// sanitized fields) — no auth required.
 
 export default function VerifyPage({ requestId }) {
-  const [state, setState] = useState({ loading: true, request: null, employee: null, error: null });
+  const [state, setState] = useState({ loading: true, request: null, error: null });
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const rows = await directGet(
-          'permission_requests',
-          `select=*&id=eq.${requestId}&limit=1`,
-          { timeoutMs: 8000 },
-        );
+        const { data, error } = await supabase.rpc('verify_permission', { p_id: requestId });
         if (cancelled) return;
-        if (!rows || !rows.length) {
-          setState({ loading: false, request: null, employee: null, error: 'Request not found.' });
+        if (error) {
+          setState({ loading: false, request: null, error: error.message || 'Lookup failed.' });
           return;
         }
-        const req = rows[0];
-        // Look up the employee for the display
-        const emps = await directGet(
-          'employees',
-          `select=id,name,department,location&id=eq.${encodeURIComponent(req.employee_id)}&limit=1`,
-          { timeoutMs: 8000 },
-        );
-        if (cancelled) return;
-        setState({ loading: false, request: req, employee: emps?.[0] || null, error: null });
+        const row = Array.isArray(data) ? data[0] : data;
+        if (!row) {
+          setState({ loading: false, request: null, error: 'No approved request found with this reference.' });
+          return;
+        }
+        setState({ loading: false, request: row, error: null });
       } catch (err) {
-        if (!cancelled) setState({ loading: false, request: null, employee: null, error: err?.message || 'Lookup failed.' });
+        if (!cancelled) setState({ loading: false, request: null, error: err?.message || 'Lookup failed.' });
       }
     })();
     return () => { cancelled = true; };
@@ -64,19 +50,19 @@ export default function VerifyPage({ requestId }) {
           <div className="esau-card p-6 text-center text-sm opacity-70">Looking up request…</div>
         )}
 
-        {state.error && (
+        {state.error && !state.request && (
           <div className="esau-card p-6 text-center"
                style={{ borderLeft: '4px solid #B83A2E' }}>
             <div className="text-xs tracking-[0.2em] font-semibold mb-2" style={{ color: '#B83A2E' }}>NOT FOUND</div>
             <div className="text-sm opacity-80">{state.error}</div>
             <div className="text-xs opacity-60 mt-3">
-              This QR code points to a request that does not exist in our records.
-              The letter may be invalid, or the QR may be from a different system.
+              This QR points to a request that does not exist, has not been approved,
+              or has been removed. Contact HR if you believe this is an error.
             </div>
           </div>
         )}
 
-        {state.request && <RequestCard request={state.request} employee={state.employee} />}
+        {state.request && <RequestCard request={state.request} />}
 
         <div className="mt-6 text-center text-[10px] opacity-50">
           Evergreen Shipping Agency Saudi Co. (L.L.C) · ESAU SADMN SUP / HR Dept
@@ -86,8 +72,8 @@ export default function VerifyPage({ requestId }) {
   );
 }
 
-function RequestCard({ request, employee }) {
-  const stage = request.stage || request.status || 'unknown';
+function RequestCard({ request }) {
+  const stage = request.stage || 'unknown';
   const palette = stagePalette(stage);
   const typeLabel = request.type === 'late_arrival' ? 'Late Arrival'
                   : request.type === 'early_leave'  ? 'Early Departure'
@@ -106,27 +92,23 @@ function RequestCard({ request, employee }) {
       <Row label="Permission date">{fmtDate(request.permission_date)}</Row>
       <Row label="Time window">
         {request.time_from && request.time_to
-          ? `${request.time_from} → ${request.time_to}`
+          ? `${request.time_from.slice(0, 5)} → ${request.time_to.slice(0, 5)}`
           : '—'}
       </Row>
-      <Row label="Employee">{employee?.name || request.employee_id}</Row>
-      {employee?.department && <Row label="Department">{employee.department}{employee.location ? ` · ${employee.location}` : ''}</Row>}
+      <Row label="Employee">{request.employee_name || request.employee_id}</Row>
+      {request.employee_department && (
+        <Row label="Department">
+          {request.employee_department}{request.employee_location ? ` · ${request.employee_location}` : ''}
+        </Row>
+      )}
       <Row label="Submitted">{fmtDateTime(request.requested_at)}</Row>
       {request.manager_decided_at && <Row label="Manager decided">{fmtDateTime(request.manager_decided_at)}</Row>}
       {request.hr_decided_at && <Row label="HR decided">{fmtDateTime(request.hr_decided_at)}</Row>}
 
-      {stage === 'approved' && (
-        <div className="mt-5 pt-4 text-xs opacity-70" style={{ borderTop: '1px dashed var(--border-soft, #E5E0D5)' }}>
-          ✓ This request was formally approved and recorded.
-          The printed letter you are holding is authentic.
-        </div>
-      )}
-      {stage !== 'approved' && (
-        <div className="mt-5 pt-4 text-xs opacity-70" style={{ borderTop: '1px dashed var(--border-soft, #E5E0D5)' }}>
-          The request is currently in <b>{stage}</b> state. If the printed letter
-          claims approval but this page does not, please contact HR for clarification.
-        </div>
-      )}
+      <div className="mt-5 pt-4 text-xs opacity-70" style={{ borderTop: '1px dashed var(--border-soft, #E5E0D5)' }}>
+        ✓ This request was formally approved and recorded.
+        The printed letter is authentic.
+      </div>
     </div>
   );
 }

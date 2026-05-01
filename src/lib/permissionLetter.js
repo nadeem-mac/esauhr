@@ -748,19 +748,13 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
         alignment: AlignmentType.RIGHT,
         children: [
           new TextRun({
-            text: ' ✓ APPROVED ',
+            text: '✓ APPROVED',
             font: FONT_BRAND,
-            size: 22,           // 11pt
+            size: 24,           // 12pt
             bold: true,
             color: '2D5F3F',    // brand green
           }),
         ],
-        border: {
-          top:    { style: BorderStyle.SINGLE, size: 8, color: '2D5F3F', space: 4 },
-          bottom: { style: BorderStyle.SINGLE, size: 8, color: '2D5F3F', space: 4 },
-          left:   { style: BorderStyle.SINGLE, size: 8, color: '2D5F3F', space: 4 },
-          right:  { style: BorderStyle.SINGLE, size: 8, color: '2D5F3F', space: 4 },
-        },
         spacing: { before: 0, after: 0 },
       }),
     ],
