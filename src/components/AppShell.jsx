@@ -476,45 +476,44 @@ export default function AppShell({ session, me, onRefreshMe }) {
             </button>
             <button
               onClick={async () => {
-                // Silent in-place refresh — re-fetch all data from the
-                // server without reloading the page or signing the user
-                // out. The icon spins while it's running so the user gets
-                // feedback. Auth state is untouched.
+                // Hard refresh — reload the page so the user always gets
+                // the latest deployed bundle. Steps:
+                //   1. Show the overlay (so the user sees the refresh
+                //      starting before the navigation kicks in)
+                //   2. Unregister any service workers (avoids cached
+                //      bundles being served from sw.js after a deploy)
+                //   3. Clear the Cache Storage entries (PWA caches)
+                //   4. Reload with cache bypass
                 if (refreshing) return;
                 setRefreshing(true);
-
-                // Hard timeout: even if every refresh path wedges (e.g. a
-                // bad supabase-js call inside resolveMe), the spinner must
-                // always stop within 12 seconds. The previous version
-                // could spin forever because Promise.all blocks until the
-                // slowest promise resolves. This race ensures progress.
-                const withTimeout = (p, ms) => Promise.race([
-                  Promise.resolve(p).catch(err => { console.warn('refresh subtask failed:', err); return null; }),
-                  new Promise(res => setTimeout(() => { console.warn('refresh subtask timed out after ' + ms + 'ms'); res(null); }, ms)),
-                ]);
-
-                // Minimum overlay hold — keeps the ship animation visible
-                // for at least 3 seconds even when the underlying fetch
-                // resolves in <1s. Without this the overlay just flashes
-                // on a fast connection and the user can't tell anything
-                // happened. Race with the actual work + timeouts so the
-                // overlay closes when BOTH the data is ready AND 3 seconds
-                // have elapsed, whichever is later.
-                const minHold = new Promise(res => setTimeout(res, 3000));
-
                 try {
-                  await Promise.all([
-                    withTimeout(typeof onRefreshMe === 'function' ? onRefreshMe() : Promise.resolve(), 10000),
-                    withTimeout(loadAll({ silent: true }), 12000),
-                    minHold,
-                  ]);
+                  // Best-effort SW + cache cleanup. Failures are
+                  // non-blocking — the location.reload below will still
+                  // run and pull a fresh copy via cache-bust.
+                  if ('serviceWorker' in navigator) {
+                    try {
+                      const regs = await navigator.serviceWorker.getRegistrations();
+                      await Promise.all(regs.map(r => r.unregister().catch(() => {})));
+                    } catch {}
+                  }
+                  if (typeof caches !== 'undefined' && caches?.keys) {
+                    try {
+                      const keys = await caches.keys();
+                      await Promise.all(keys.map(k => caches.delete(k).catch(() => {})));
+                    } catch {}
+                  }
                 } finally {
-                  setRefreshing(false);
+                  // Append a cache-bust query so the browser must
+                  // re-fetch index.html (and consequently the latest
+                  // hashed asset bundles).
+                  const url = new URL(window.location.href);
+                  url.searchParams.set('_r', Date.now().toString());
+                  window.location.replace(url.toString());
                 }
               }}
               disabled={refreshing}
               className="p-2.5 rounded-full border esau-refresh-btn disabled:opacity-60"
-              title="Refresh — fetch the latest data"
+              title="Refresh — reload the latest version of the site"
               aria-label="Refresh"
               style={{ borderColor: 'var(--border-soft)' }}>
               <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
