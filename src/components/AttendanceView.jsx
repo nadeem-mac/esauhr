@@ -125,19 +125,19 @@ function addMinutesToTime(timeStr, deltaMin) {
 }
 
 // Department check — SUP team has 8-4 hours.
-// SUP team for the working-hours policy is a fixed set of 4 PSNs, NOT the
-// SUP department. These four work 08:00 → 16:00 with a 15:45 early-leave
-// cutoff. Everyone else (including SUP-dept members like Aminah, Norah,
-// Shahad) follows the standard 08:00 → 17:00 schedule with a 16:45 cutoff.
-const SUP_TEAM_PSNS = new Set(['H94830', 'H94458', 'H94330', 'H94712']);
-
-function isSupTeam(psn) {
-  return SUP_TEAM_PSNS.has(String(psn || '').trim().toUpperCase());
+// Working-hours group is now stored on the employee record as
+// working_hours_group ('standard' default, or 'sup_team'). The
+// SUP team works 08:00 → 16:00 with a 15:45 early-leave cutoff;
+// 'standard' is 08:00 → 17:00 with a 16:45 cutoff. Driving this
+// from a flag, not a hardcoded PSN list, makes the schedule
+// reassignable without a code deploy.
+function isSupTeam(emp) {
+  return emp?.working_hours_group === 'sup_team';
 }
 
-// Lookup the schedule for an employee based on their department.
-function scheduleFor(psn) {
-  if (isSupTeam(psn)) {
+// Lookup the schedule for an employee.
+function scheduleFor(emp) {
+  if (isSupTeam(emp)) {
     return { startStr: OFFICIAL_START, endStr: SUP_END, lateCutoffStr: LATE_CUTOFF, earlyCutoffStr: SUP_EARLY_CUTOFF, label: 'SUP team (08:00–16:00)' };
   }
   return { startStr: OFFICIAL_START, endStr: STD_END, lateCutoffStr: LATE_CUTOFF, earlyCutoffStr: STD_EARLY_CUTOFF, label: 'Standard (08:00–17:00)' };
@@ -439,7 +439,7 @@ export default function AttendanceView({ me, employees }) {
             label: 'Custom shift (' + override.startStr + '–' + override.endStr + ')',
             isCustom: true,
           }
-        : scheduleFor(emp.id);
+        : scheduleFor(emp);
       const lateCutoffMin = timeToMinutes(sched.lateCutoffStr);
       const punchInStr = (row['First Punch'] || '').trim();
       const punchOutStr = (row['Last Punch'] || '').trim();
@@ -500,7 +500,7 @@ export default function AttendanceView({ me, employees }) {
           scheduleLabel: sched.label,
           isCustomShift: !!sched.isCustom,
           minutesEarly: scheduledEndMin - punchOutMin,
-          isSup: isSupTeam(emp.id),
+          isSup: isSupTeam(emp),
         });
         flagged = true;
       }
