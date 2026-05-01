@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { UserCheck, ThumbsUp, ThumbsDown, Loader2 } from 'lucide-react';
-import { supabase, directGet } from '../supabaseClient.js';
+import { UserCheck, ThumbsUp, ThumbsDown, Loader2, Check, HelpCircle, X } from 'lucide-react';
+import { supabase, directGet, directPatch } from '../supabaseClient.js';
 import { fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 
 // =============================================================================
@@ -91,15 +91,17 @@ export default function PendingSubstitutionsCard({ me, empMap }) {
       [me.id]: { decision, at: new Date().toISOString() }
     };
     try {
-      const updatePromise = supabase
-        .from('leave_requests')
-        .update({ substitute_decisions: merged })
-        .eq('id', request.id);
-      const { error } = await Promise.race([
-        Promise.resolve(updatePromise),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('decision update timed out')), 10000)),
-      ]);
-      if (error) throw error;
+      // directPatch (raw fetch + AbortController timeout) instead of
+      // supabase-js. The supabase-js client has wedged elsewhere in this
+      // app (PersonalDashboard load, ManagerShiftCard) — those flows
+      // were all migrated to direct* helpers for the same reason. A
+      // wedged update here would silently never resolve and the user
+      // would see no error, no state change — leaving them clicking
+      // Accept again and again. directPatch always returns or throws
+      // within the timeout.
+      await directPatch('leave_requests', 'id', request.id,
+                        { substitute_decisions: merged },
+                        { timeoutMs: 10000 });
       await load();
     } catch (err) {
       console.warn('[substitutions] respond failed:', err);
@@ -131,37 +133,74 @@ export default function PendingSubstitutionsCard({ me, empMap }) {
           const empName = empMap?.[req.employee_id]?.name || req.employee_id;
           const initials = getInitials(empName);
           const busy = busyId === req.id;
+          // Co-substitute roster: every substitute on this request EXCEPT
+          // me. Lets H94328 see things like 'Nadeem ✓ accepted, Rizwan
+          // still pending' so the gating is obvious — it's clear why
+          // his approval is still needed even when others have already
+          // confirmed. Empty (length 0) when he's the only substitute.
+          const others = (req.substitute_ids || []).filter(sid => sid !== me.id);
           return (
-            <li key={req.id} className="px-5 py-3 flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
-                   style={{ background: avatarColor(empName) }}>
-                {initials}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold truncate" style={{ color: '#5C4406' }}>
-                  {empName}
+            <li key={req.id} className="px-5 py-3.5">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                     style={{ background: avatarColor(empName) }}>
+                  {initials}
                 </div>
-                <div className="text-xs opacity-80" style={{ color: '#5C4406' }}>
-                  {fmtDateShort(req.start_date)} → {fmtDateShort(req.end_date)} · {req.days} day{req.days !== 1 ? 's' : ''}
-                  {req.reason ? ' · ' + req.reason : ''}
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold truncate" style={{ color: '#5C4406' }}>
+                    {empName}
+                  </div>
+                  <div className="text-xs opacity-80" style={{ color: '#5C4406' }}>
+                    {fmtDateShort(req.start_date)} → {fmtDateShort(req.end_date)} · {req.days} day{req.days !== 1 ? 's' : ''}
+                    {req.reason ? ' · ' + req.reason : ''}
+                  </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => respond(req, 'declined')}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-full disabled:opacity-50"
+                  style={{ background: '#fff', color: '#B83A2E', border: '1px solid #B83A2E' }}>
+                  {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <ThumbsDown className="w-3 h-3" />} Decline
+                </button>
+                <button
+                  type="button"
+                  onClick={() => respond(req, 'accepted')}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-full disabled:opacity-50"
+                  style={{ background: 'linear-gradient(135deg, #2D5F3F 0%, #1F4530 100%)', color: '#fff' }}>
+                  {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <ThumbsUp className="w-3 h-3" />} Accept
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => respond(req, 'declined')}
-                disabled={busy}
-                className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-full disabled:opacity-50"
-                style={{ background: '#fff', color: '#B83A2E', border: '1px solid #B83A2E' }}>
-                {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <ThumbsDown className="w-3 h-3" />} Decline
-              </button>
-              <button
-                type="button"
-                onClick={() => respond(req, 'accepted')}
-                disabled={busy}
-                className="inline-flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-full disabled:opacity-50"
-                style={{ background: 'linear-gradient(135deg, #2D5F3F 0%, #1F4530 100%)', color: '#fff' }}>
-                {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <ThumbsUp className="w-3 h-3" />} Accept
-              </button>
+              {others.length > 0 && (
+                <div className="mt-2.5 pl-12 flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px]" style={{ color: '#5C4406', opacity: 0.7, letterSpacing: '0.1em', fontWeight: 700 }}>
+                    OTHER COVER:
+                  </span>
+                  {others.map(sid => {
+                    const raw = req.substitute_decisions?.[sid];
+                    const dec = !raw ? 'pending' :
+                                typeof raw === 'string' ? raw : (raw.decision || 'pending');
+                    const accepted = dec === 'accepted';
+                    const declined = dec === 'declined';
+                    const Icon = accepted ? Check : declined ? X : HelpCircle;
+                    const bg    = accepted ? '#ECFDF5' : declined ? '#FEE2E2' : 'rgba(255,255,255,0.6)';
+                    const color = accepted ? '#0F4C2A' : declined ? '#B91C1C' : '#5C4406';
+                    return (
+                      <span key={sid}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
+                        style={{ background: bg, color, fontSize: '10px', fontWeight: 500, border: accepted || declined ? 'none' : '1px solid rgba(139,105,20,0.3)' }}
+                        title={dec.toUpperCase()}>
+                        <Icon className="w-2.5 h-2.5" />
+                        {empMap?.[sid]?.name || sid}
+                      </span>
+                    );
+                  })}
+                  <span className="text-[10px]" style={{ color: '#5C4406', opacity: 0.7 }}>
+                    · everyone must accept before the manager can review
+                  </span>
+                </div>
+              )}
             </li>
           );
         })}
