@@ -35,7 +35,10 @@ const TYPE = {
 };
 
 const EXEC_CC = [
-  { name: 'john ho' },
+  // Direct email — bypasses employees-table lookup. Used for execs
+  // whose names may not match the employees roster reliably (or who
+  // are not in the roster at all).
+  { name: 'john ho', email: 'johnho@evergreen-shipping.com.sa' },
   { name: 'james' },
   { name: 'fahad hussain' },
   { name: 'fahad', dept: 'SUP' },
@@ -675,13 +678,19 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
 export function resolveExecCcEmails(employees = []) {
   const emails = new Set();
   for (const entry of EXEC_CC) {
+    // Direct email always added — bypasses any roster lookup.
+    if (entry.email) emails.add(entry.email);
+
+    // Roster fuzzy match as a supplement (covers cases where the
+    // person is in the employees table with a different email format,
+    // or where additional matches are valid).
     const matches = (employees || []).filter(e => {
       if (!e?.email) return false;
       const nameOK = (e.name || '').toLowerCase().includes(entry.name);
       const deptOK = entry.dept ? (e.department === entry.dept) : true;
       return nameOK && deptOK;
     });
-    if (matches.length === 0) {
+    if (matches.length === 0 && !entry.email) {
       const tag = entry.dept ? `${entry.name} (${entry.dept})` : entry.name;
       console.warn(`[permission letter] No employee matched CC entry "${tag}" with email on file`);
       continue;
