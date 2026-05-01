@@ -279,6 +279,58 @@ export default function ReviewerPanel({ me }) {
     finally       { setBusyId(null); }
   }
 
+  // Bulk approval — only meaningful for managers handling pending_manager
+  // requests. HR's pending_hr queue intentionally does NOT support bulk
+  // approve because each approval triggers the post-approval modal +
+  // letter generation per request. Bulk would skip those.
+  async function bulkApproveLeave() {
+    const pending = leave.filter(r => r.stage === 'pending_manager');
+    if (pending.length === 0) return;
+    const confirmed = confirm(
+      `Approve all ${pending.length} pending leave request${pending.length === 1 ? '' : 's'}?\n\n` +
+      pending.map(r => {
+        const emp = empMap[r.employee_id];
+        return `  • ${emp?.name || r.employee_id} · ${fmtDate(new Date(r.start_date))}` +
+               (r.end_date && r.end_date !== r.start_date ? ` → ${fmtDate(new Date(r.end_date))}` : '');
+      }).join('\n')
+    );
+    if (!confirmed) return;
+    setBusyId('bulk-leave');
+    try {
+      // Serial — each decideLeave call mutates state and runs trigger
+      // logic; doing them one at a time keeps the audit log + DB
+      // consistent and prevents server-side rate limits.
+      for (const req of pending) {
+        await decideLeave(req, 'approved');
+      }
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function bulkApprovePerms() {
+    const pending = perms.filter(r => r.stage === 'pending_manager');
+    if (pending.length === 0) return;
+    const confirmed = confirm(
+      `Approve all ${pending.length} pending permission${pending.length === 1 ? '' : 's'}?\n\n` +
+      pending.map(r => {
+        const emp = empMap[r.employee_id];
+        return `  • ${emp?.name || r.employee_id} · ${PERMISSION_TYPES[r.type]?.label}` +
+               ` · ${fmtDate(new Date(r.permission_date))} · ${r.hours}h` +
+               (r.exceeds_quota ? ' (OVER QUOTA)' : '');
+      }).join('\n')
+    );
+    if (!confirmed) return;
+    setBusyId('bulk-perms');
+    try {
+      for (const req of pending) {
+        await decidePerm(req, 'approved');
+      }
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   if (!canLeave && !canSeePerm) return null;
 
   return (
@@ -308,9 +360,25 @@ export default function ReviewerPanel({ me }) {
         <>
           {canSeePerm && (
             <section>
-              <h3 className="text-[10px] tracking-[0.25em] opacity-60 mb-3">
-                {canPermAsManager && !canPerm ? 'DEPARTMENT PERMISSIONS · ' : 'PERMISSION REQUESTS · '}{perms.length}
-              </h3>
+              <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+                <h3 className="text-[10px] tracking-[0.25em] opacity-60">
+                  {canPermAsManager && !canPerm ? 'DEPARTMENT PERMISSIONS · ' : 'PERMISSION REQUESTS · '}{perms.length}
+                </h3>
+                {canPermAsManager && perms.filter(r => r.stage === 'pending_manager').length >= 2 && (
+                  <button
+                    type="button"
+                    onClick={bulkApprovePerms}
+                    disabled={busyId === 'bulk-perms'}
+                    className="text-[11px] px-3 py-1.5 rounded-full inline-flex items-center gap-1.5 disabled:opacity-50"
+                    style={{ background: 'var(--evergreen-500)', color: 'var(--paper)' }}
+                    title="Approve every pending permission request in your queue"
+                  >
+                    {busyId === 'bulk-perms'
+                      ? <><Loader2 className="w-3 h-3 animate-spin" /> Approving…</>
+                      : <><CheckCircle2 className="w-3 h-3" /> Approve all ({perms.filter(r => r.stage === 'pending_manager').length})</>}
+                  </button>
+                )}
+              </div>
               {perms.length === 0 ? (
                 <EmptyState text={canPermAsManager && !canPerm
                   ? 'No pending permission requests from your direct reports.'
@@ -370,10 +438,26 @@ export default function ReviewerPanel({ me }) {
 
           {canLeave && (
             <section>
-              <h3 className="text-[10px] tracking-[0.25em] opacity-60 mb-3">
-                {isHrReviewer && !isAdmin ? 'HR FINAL APPROVAL · ' : isDeptManager ? 'DEPARTMENT APPROVAL · ' : 'LEAVE REQUESTS · '}
-                {leave.length}
-              </h3>
+              <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+                <h3 className="text-[10px] tracking-[0.25em] opacity-60">
+                  {isHrReviewer && !isAdmin ? 'HR FINAL APPROVAL · ' : isDeptManager ? 'DEPARTMENT APPROVAL · ' : 'LEAVE REQUESTS · '}
+                  {leave.length}
+                </h3>
+                {isDeptManager && leave.filter(r => r.stage === 'pending_manager').length >= 2 && (
+                  <button
+                    type="button"
+                    onClick={bulkApproveLeave}
+                    disabled={busyId === 'bulk-leave'}
+                    className="text-[11px] px-3 py-1.5 rounded-full inline-flex items-center gap-1.5 disabled:opacity-50"
+                    style={{ background: 'var(--evergreen-500)', color: 'var(--paper)' }}
+                    title="Approve every pending leave request from your direct reports"
+                  >
+                    {busyId === 'bulk-leave'
+                      ? <><Loader2 className="w-3 h-3 animate-spin" /> Approving…</>
+                      : <><CheckCircle2 className="w-3 h-3" /> Approve all ({leave.filter(r => r.stage === 'pending_manager').length})</>}
+                  </button>
+                )}
+              </div>
               {leave.length === 0 ? (
                 <EmptyState text="No pending leave requests." />
               ) : (
