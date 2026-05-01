@@ -1,13 +1,33 @@
-// Generates the bilingual EN/AR Vacation Form as a single-page A4 .docx Blob,
-// plus the matching approval email draft. Uses the 'docx' npm library.
-// Layout fits ONE A4 page when printed. Arabic text uses Arial (cs/complex-script
-// font set explicitly) so it renders consistently across Word/LibreOffice/Pages.
+// Vacation (leave) form — bilingual A4 form, Leave Desk brand styling.
+//
+// Style mirrors permissionLetter.js exactly (cream paper, copper italic
+// accents, brand-green section banners, Tahoma EVERGREEN LINE wordmark,
+// QR footer, ✓ APPROVED stamp, 4-column main signature grid). Helpers
+// are duplicated in this file rather than imported from permissionLetter
+// so that future changes to one form can't accidentally break the other.
+//
+// CRITICAL RENDERING RULES (mirrored from permissionLetter.js):
+//   • Every Table and TableCell uses WidthType.DXA — never PERCENTAGE.
+//     Mixing them confuses Word's renderer and produces dark fallback
+//     fills.
+//   • columnWidths array is set on every Table and sums to the cell
+//     widths exactly.
+//   • Borders use SINGLE only — no DASHED/DOTTED on table cells.
+//   • Cell margins always specified (top/bottom/left/right).
+//   • ShadingType.CLEAR not SOLID — SOLID renders as black in Word.
 
 import {
-  Document, Packer, Paragraph, TextRun,
+  Document, Packer, Paragraph, TextRun, ImageRun,
   Table, TableRow, TableCell,
-  AlignmentType, WidthType, BorderStyle,
+  Header, Footer,
+  AlignmentType, WidthType, BorderStyle, HeightRule,
+  VerticalAlign, ShadingType,
 } from 'docx';
+import QRCode from 'qrcode';
+
+const VERIFY_BASE_URL = (typeof window !== 'undefined' && window.location?.origin)
+  ? window.location.origin
+  : 'https://esauhr.netlify.app';
 
 // ─── lookups ──────────────────────────────────────────────────────────────────
 const DEPT_NAMES = {
@@ -19,384 +39,32 @@ const DEPT_NAMES = {
   'RYD OFFICE': 'Riyadh Office',
 };
 const LOCATION_NAMES = { DMM: 'Dammam', JED: 'Jeddah', RYD: 'Riyadh' };
-const LEAVE_TYPE_NAMES = {
-  annual:      'Annual Leave',
-  sick:        'Sick Leave',
-  emergency:   'Emergency Leave',
-  hajj:        'Hajj Leave',
-  maternity:   'Maternity Leave',
-  paternity:   'Paternity Leave',
-  marriage:    'Marriage Leave',
-  bereavement: 'Bereavement Leave',
-  iddah:       'Iddah Leave',
-  unpaid:      'Unpaid Leave',
-  other:       'Other',
+
+// Bilingual leave types — used for the type-checkbox row and the title strip.
+// Must include every leave_type_id the app may set.
+const LEAVE_TYPE = {
+  annual:      { en: 'Annual',      ar: 'سنوية' },
+  sick:        { en: 'Sick',        ar: 'مرضية' },
+  emergency:   { en: 'Emergency',   ar: 'طارئة' },
+  hajj:        { en: 'Hajj',        ar: 'حج' },
+  maternity:   { en: 'Maternity',   ar: 'وضع' },
+  paternity:   { en: 'Paternity',   ar: 'أبوة' },
+  marriage:    { en: 'Marriage',    ar: 'زواج' },
+  bereavement: { en: 'Bereavement', ar: 'وفاة' },
+  iddah:       { en: 'Iddah',       ar: 'عدة' },
+  unpaid:      { en: 'Unpaid',      ar: 'بدون راتب' },
+  other:       { en: 'Other',       ar: 'أخرى' },
 };
+// Subset shown as inline checkboxes on the form. Kept short enough to
+// fit on one row without wrapping awkwardly. "Other" is the catch-all
+// for any type not listed.
+const TYPE_CHECKBOX_ORDER = ['annual', 'sick', 'emergency', 'hajj', 'maternity', 'paternity', 'marriage', 'bereavement', 'unpaid', 'other'];
 
-// CEO / Country Head — fixed signatories on every approved form
-const CEO_NAME = 'JOHN HO';
-const CEO_TITLE_EN = 'Country Head / CEO';
-const CEO_TITLE_AR = 'الرئيس التنفيذي';
-
-// ─── colour palette ───────────────────────────────────────────────────────────
-const C_DARK   = '2D5F3F';
-const C_TEXT   = '1F2937';
-const C_MUTED  = '6B7280';
-const C_BORDER = 'D1D5DB';
-const C_ACCENT = '15803D';
-
-// ─── font configuration — fixes Arabic rendering ──────────────────────────────
-// English: Calibri ascii/hAnsi. Arabic (complex-script): Arial cs.
-// Setting font.cs explicitly is what stops Word/LibreOffice from substituting
-// random fonts for Arabic glyphs at print time.
-const FONT_EN = { ascii: 'Calibri', hAnsi: 'Calibri', cs: 'Arial' };
-const FONT_AR = { ascii: 'Arial',   hAnsi: 'Arial',   cs: 'Arial' };
-
-const fmtDate = (iso) => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-};
-
-const yearsOfService = (joinDate) => {
-  if (!joinDate) return '';
-  const join = new Date(joinDate);
-  const now = new Date();
-  let y = now.getFullYear() - join.getFullYear();
-  let m = now.getMonth() - join.getMonth();
-  if (m < 0) { y--; m += 12; }
-  return `${y} year${y === 1 ? '' : 's'} ${m} month${m === 1 ? '' : 's'}`;
-};
-
-const thinAll = (color = C_BORDER) => ({
-  top:    { style: BorderStyle.SINGLE, size: 4, color },
-  bottom: { style: BorderStyle.SINGLE, size: 4, color },
-  left:   { style: BorderStyle.SINGLE, size: 4, color },
-  right:  { style: BorderStyle.SINGLE, size: 4, color },
-});
-const noBorders = {
-  top:    { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-  bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-  left:   { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-  right:  { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-};
-
-// Compact key/value cells used in the info tables
-const lbl = (en, ar) => new TableCell({
-  width: { size: 18, type: WidthType.PERCENTAGE },
-  borders: thinAll(),
-  margins: { top: 40, bottom: 40, left: 80, right: 80 },
-  children: [new Paragraph({
-    spacing: { before: 0, after: 0 },
-    children: [
-      new TextRun({ text: en, bold: true, color: C_DARK, size: 16, font: FONT_EN }),
-      new TextRun({ text: '  ' + ar, color: C_DARK, size: 14, rightToLeft: true, font: FONT_AR }),
-    ],
-  })],
-});
-
-const val = (text) => new TableCell({
-  width: { size: 32, type: WidthType.PERCENTAGE },
-  borders: thinAll(),
-  margins: { top: 40, bottom: 40, left: 80, right: 80 },
-  children: [new Paragraph({
-    spacing: { before: 0, after: 0 },
-    children: [new TextRun({
-      text: String(text == null || text === '' ? '—' : text),
-      size: 18, color: C_TEXT, font: FONT_EN,
-    })],
-  })],
-});
-
-const hd = (en, ar) => new Paragraph({
-  spacing: { before: 140, after: 60 },
-  border: { bottom: { color: C_DARK, space: 1, style: BorderStyle.SINGLE, size: 6 } },
-  children: [
-    new TextRun({ text: en, bold: true, color: C_DARK, size: 18, font: FONT_EN }),
-    new TextRun({ text: '   ', size: 14, font: FONT_EN }),
-    new TextRun({ text: ar, color: C_DARK, size: 16, rightToLeft: true, font: FONT_AR }),
-  ],
-});
-
-// ─── main API ─────────────────────────────────────────────────────────────────
-export async function generateVacationFormBlob({ employee, request, manager, hrApprover, substitutes = [] }) {
-  const today = new Date().toISOString().split('T')[0];
-  const refNum = `LEAVE-${today}-${employee.id}`;
-  const dept = DEPT_NAMES[employee.department] || employee.department || '';
-  const loc  = LOCATION_NAMES[employee.location]  || employee.location  || '';
-  const leaveTypeLabel = LEAVE_TYPE_NAMES[request.leave_type_id] || request.leave_type_id || 'Annual Leave';
-  const designation = employee.designation || 'Department Member';
-  const daysLabel = `${request.days} day${request.days === 1 ? '' : 's'}${request.is_half_day ? ' (half day)' : ''}`;
-
-  // ── Letterhead — 2 lines ──
-  const letterhead = [
-    new Paragraph({
-      alignment: AlignmentType.CENTER,
-      spacing: { before: 0, after: 40 },
-      children: [
-        new TextRun({ text: 'EVERGREEN SHIPPING AGENCY SAUDI', bold: true, size: 24, color: C_DARK, font: FONT_EN }),
-        new TextRun({ text: '   ', size: 18, font: FONT_EN }),
-        new TextRun({ text: 'وكالة إيفرغرين للملاحة السعودية', size: 18, color: C_DARK, rightToLeft: true, font: FONT_AR }),
-      ],
-    }),
-    new Paragraph({
-      alignment: AlignmentType.CENTER,
-      spacing: { before: 0, after: 100 },
-      children: [
-        new TextRun({ text: 'EMPLOYEE LEAVE APPLICATION', bold: true, size: 22, color: C_TEXT, font: FONT_EN }),
-        new TextRun({ text: '   ', size: 18, font: FONT_EN }),
-        new TextRun({ text: 'طلب إجازة موظف', bold: true, size: 18, color: C_TEXT, rightToLeft: true, font: FONT_AR }),
-      ],
-    }),
-  ];
-
-  // ── Date / Reference row ──
-  const dateRefRow = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [new TableRow({
-      children: [
-        new TableCell({
-          borders: noBorders,
-          children: [new Paragraph({
-            spacing: { before: 0, after: 0 },
-            children: [
-              new TextRun({ text: 'Date / ', bold: true, size: 14, color: C_MUTED, font: FONT_EN }),
-              new TextRun({ text: 'التاريخ', bold: true, size: 14, color: C_MUTED, rightToLeft: true, font: FONT_AR }),
-              new TextRun({ text: ': ', bold: true, size: 14, color: C_MUTED, font: FONT_EN }),
-              new TextRun({ text: fmtDate(today), size: 16, color: C_TEXT, font: FONT_EN }),
-            ],
-          })],
-        }),
-        new TableCell({
-          borders: noBorders,
-          children: [new Paragraph({
-            alignment: AlignmentType.RIGHT,
-            spacing: { before: 0, after: 0 },
-            children: [
-              new TextRun({ text: 'Reference / ', bold: true, size: 14, color: C_MUTED, font: FONT_EN }),
-              new TextRun({ text: 'المرجع', bold: true, size: 14, color: C_MUTED, rightToLeft: true, font: FONT_AR }),
-              new TextRun({ text: ': ', bold: true, size: 14, color: C_MUTED, font: FONT_EN }),
-              new TextRun({ text: refNum, size: 16, color: C_TEXT, font: FONT_EN }),
-            ],
-          })],
-        }),
-      ],
-    })],
-  });
-
-  // ── Applicant table — 2-column compact layout ──
-  const applicantTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [
-      new TableRow({ children: [
-        lbl('Full Name', 'الاسم الكامل'), val(employee.name),
-        lbl('PSN',       'الرقم الوظيفي'), val(employee.id),
-      ]}),
-      new TableRow({ children: [
-        lbl('Department','القسم'),       val(dept),
-        lbl('Location',  'الموقع'),       val(loc),
-      ]}),
-      new TableRow({ children: [
-        lbl('Designation','المسمى الوظيفي'), val(designation),
-        lbl('Years of Service', 'سنوات الخدمة'), val(yearsOfService(employee.join_date)),
-      ]}),
-    ],
-  });
-
-  // ── Leave details table ──
-  const leaveTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [
-      new TableRow({ children: [
-        lbl('Type of Leave', 'نوع الإجازة'), val(leaveTypeLabel),
-        lbl('Number of Days','عدد الأيام'),    val(daysLabel),
-      ]}),
-      new TableRow({ children: [
-        lbl('Start Date',  'تاريخ البداية'), val(fmtDate(request.start_date)),
-        lbl('End Date',    'تاريخ النهاية'), val(fmtDate(request.end_date)),
-      ]}),
-      new TableRow({ children: [
-        lbl('Reason / Notes', 'السبب'),
-        new TableCell({
-          width: { size: 82, type: WidthType.PERCENTAGE },
-          columnSpan: 3,
-          borders: thinAll(),
-          margins: { top: 40, bottom: 40, left: 80, right: 80 },
-          children: [new Paragraph({
-            spacing: { before: 0, after: 0 },
-            children: [new TextRun({ text: request.reason || '—', size: 18, color: C_TEXT, font: FONT_EN })],
-          })],
-        }),
-      ]}),
-    ],
-  });
-
-  // ── Coverage table ──
-  const subRows = (substitutes && substitutes.length > 0)
-    ? substitutes.map((s, idx) => new TableRow({
-        children: [
-          new TableCell({
-            width: { size: 8, type: WidthType.PERCENTAGE },
-            borders: thinAll(),
-            margins: { top: 30, bottom: 30, left: 60, right: 60 },
-            children: [new Paragraph({
-              alignment: AlignmentType.CENTER,
-              spacing: { before: 0, after: 0 },
-              children: [new TextRun({ text: String(idx + 1), bold: true, color: C_MUTED, size: 16, font: FONT_EN })],
-            })],
-          }),
-          new TableCell({
-            width: { size: 92, type: WidthType.PERCENTAGE },
-            borders: thinAll(),
-            margins: { top: 30, bottom: 30, left: 80, right: 80 },
-            children: [new Paragraph({
-              spacing: { before: 0, after: 0 },
-              children: [
-                new TextRun({ text: s.name || '', size: 18, color: C_TEXT, font: FONT_EN }),
-                new TextRun({ text: `   ${s.id || ''}`, size: 14, color: C_MUTED, font: FONT_EN }),
-                new TextRun({ text: '   ✓ Confirmed', size: 14, color: C_ACCENT, font: FONT_EN }),
-              ],
-            })],
-          }),
-        ],
-      }))
-    : [new TableRow({ children: [new TableCell({
-        width: { size: 100, type: WidthType.PERCENTAGE },
-        borders: thinAll(),
-        margins: { top: 40, bottom: 40, left: 80, right: 80 },
-        children: [new Paragraph({
-          spacing: { before: 0, after: 0 },
-          children: [new TextRun({ text: 'No substitutes designated.', italics: true, size: 16, color: C_MUTED, font: FONT_EN })],
-        })],
-      })]})];
-  const substitutesTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: subRows,
-  });
-
-  // ── Authorisations: 3 cells side-by-side — Manager | HR | CEO ──
-  const sigCell = (titleEn, titleAr, name, when, status) => new TableCell({
-    width: { size: 33, type: WidthType.PERCENTAGE },
-    borders: thinAll(),
-    margins: { top: 60, bottom: 60, left: 80, right: 80 },
-    children: [
-      new Paragraph({
-        spacing: { before: 0, after: 30 },
-        children: [
-          new TextRun({ text: titleEn, bold: true, color: C_DARK, size: 14, font: FONT_EN }),
-          new TextRun({ text: '   ' + titleAr, color: C_DARK, size: 12, rightToLeft: true, font: FONT_AR }),
-        ],
-      }),
-      new Paragraph({
-        spacing: { before: 0, after: 20 },
-        children: [new TextRun({ text: name || '—', size: 16, color: C_TEXT, bold: true, font: FONT_EN })],
-      }),
-      new Paragraph({
-        spacing: { before: 0, after: 30 },
-        children: [
-          new TextRun({
-            text: status === 'Approved' ? '✓ ' + (when || 'Approved') : (when || 'Pending'),
-            color: status === 'Approved' ? C_ACCENT : C_MUTED,
-            size: 12, font: FONT_EN,
-          }),
-        ],
-      }),
-      new Paragraph({
-        alignment: AlignmentType.CENTER,
-        spacing: { before: 30, after: 0 },
-        children: [new TextRun({ text: '_____________________', size: 14, color: C_BORDER, font: FONT_EN })],
-      }),
-      new Paragraph({
-        alignment: AlignmentType.CENTER,
-        spacing: { before: 0, after: 0 },
-        children: [
-          new TextRun({ text: 'Signature / ', italics: true, color: C_MUTED, size: 11, font: FONT_EN }),
-          new TextRun({ text: 'التوقيع', italics: true, color: C_MUTED, size: 11, rightToLeft: true, font: FONT_AR }),
-        ],
-      }),
-    ],
-  });
-
-  const signatureTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [new TableRow({ children: [
-      sigCell(
-        'Department Manager', 'رئيس القسم',
-        manager?.name || '',
-        request.manager_decided_at ? `Approved ${fmtDate(request.manager_decided_at)}` : '',
-        request.manager_decided_at ? 'Approved' : 'Pending'
-      ),
-      sigCell(
-        'HR Department', 'إدارة الموارد البشرية',
-        hrApprover?.name || '',
-        request.hr_decided_at ? `Approved ${fmtDate(request.hr_decided_at)}` : '',
-        request.hr_decided_at ? 'Approved' : 'Pending'
-      ),
-      sigCell(
-        CEO_TITLE_EN, CEO_TITLE_AR,
-        CEO_NAME,
-        '',
-        'Pending'
-      ),
-    ]})],
-  });
-
-  // ── Footer — single italic line ──
-  const footer = [
-    new Paragraph({
-      alignment: AlignmentType.CENTER,
-      spacing: { before: 160, after: 0 },
-      children: [
-        new TextRun({
-          text: 'This leave is granted subject to ESAU policy and operational requirements.   ',
-          italics: true, color: C_MUTED, size: 12, font: FONT_EN,
-        }),
-        new TextRun({
-          text: 'تمنح هذه الإجازة وفقاً لسياسة الشركة ومتطلبات العمل.',
-          italics: true, color: C_MUTED, size: 12, rightToLeft: true, font: FONT_AR,
-        }),
-      ],
-    }),
-  ];
-
-  // ── Document with explicit A4 size and tight margins ──
-  const doc = new Document({
-    styles: {
-      default: { document: { run: { font: FONT_EN, size: 18, color: C_TEXT } } },
-    },
-    sections: [{
-      properties: {
-        page: {
-          size: { width: 11906, height: 16838, orientation: 'portrait' },
-          margin: { top: 540, right: 540, bottom: 540, left: 540 },
-        },
-      },
-      children: [
-        ...letterhead,
-        dateRefRow,
-        hd('APPLICANT INFORMATION', 'معلومات الموظف'),
-        applicantTable,
-        hd('LEAVE DETAILS', 'تفاصيل الإجازة'),
-        leaveTable,
-        hd('COVERAGE DURING ABSENCE', 'الاستبدال أثناء الغياب'),
-        substitutesTable,
-        hd('AUTHORIZATIONS', 'الموافقات'),
-        signatureTable,
-        ...footer,
-      ],
-    }],
-  });
-
-  return await Packer.toBlob(doc);
-}
-
-// ─── email draft ──────────────────────────────────────────────────────────────
+const CEO_NAME      = 'JOHN HO';
+const CEO_TITLE_EN  = 'Country Head / CEO';
 const CEO_EMAIL          = 'johnho@evergreen-shipping.com.sa';
 const COUNTRY_HEAD_EMAIL = 'jamesliu@evergreen-shipping.com.sa';
 
-// HR signature block — kept identical to the one in permissionLetter.js so
-// every approval email Bashaier sends shares the same closing. If the org
-// changes the HR signatory, update both files.
 const HR_SIGNATURE = {
   name:    'BASHAIER ALI',
   company: 'Evergreen Shipping Agency Saudi Co.,(L.L.C)',
@@ -407,22 +75,863 @@ const HR_SIGNATURE = {
   email:   'bashaier.alsubaie@evergreen-shipping.com.sa',
 };
 
-export function buildEmailDraft({ employee, request, manager, hrApprover, substitutes = [] }) {
-  const leaveTypeLabel = LEAVE_TYPE_NAMES[request.leave_type_id] || 'Annual Leave';
-  const dateRange = `${fmtDate(request.start_date)} - ${fmtDate(request.end_date)}`;
+// KSA Labor Law summary — printed in the policy table at the bottom of
+// the form so anyone reviewing the printed copy has the rules at hand.
+const POLICY_BULLETS = [
+  {
+    en: 'Annual leave: 21 calendar days per year after 1 year of service; 30 days after 5 years.',
+    ar: 'الإجازة السنوية: 21 يومًا في السنة بعد سنة من الخدمة، و30 يومًا بعد 5 سنوات.',
+  },
+  {
+    en: 'Annual leave should be requested at least 14 days in advance.',
+    ar: 'تُقدَّم طلبات الإجازة السنوية قبل 14 يومًا على الأقل.',
+  },
+  {
+    en: 'Sick leave requires a valid medical certificate from an approved facility.',
+    ar: 'تتطلب الإجازة المرضية شهادة طبية معتمدة من جهة معتمدة.',
+  },
+];
 
-  const to = [employee.email].filter(Boolean).join(',');
+// ─── brand palette ────────────────────────────────────────────────────────────
+const C_TEXT      = '1F1B16';
+const C_MUTED     = '5C4406';
+const C_COPPER    = '9D6B53';
+const C_BRAND     = '2D5F3F';
+const C_BORDER    = 'C9B894';
+const C_BANNER    = 'F4EEDF';
+const C_LABEL_BG  = 'FBF6E9';
+
+const FONT_BRAND = 'Tahoma';
+const FONT_BODY  = 'Calibri';
+const FONT_AR    = 'Arial';
+
+// ─── A4 page geometry ────────────────────────────────────────────────────────
+// A4: 11906 × 16838 DXA. With 540 DXA margins all sides, usable width =
+// 11906 - 1080 = 10826 DXA. Every table sums to this exact width.
+
+const PAGE_W      = 10826;
+
+const LABEL_W     = 2400;
+const VALUE_W     = PAGE_W - LABEL_W;       // 8426
+
+const HALF_W      = Math.floor(PAGE_W / 2); // 5413
+
+const SIG_W       = Math.floor(PAGE_W / 4); // 2706
+const SIG_W_LAST  = PAGE_W - (SIG_W * 3);   // remainder absorber
+
+const HEADER_LOGO = 1400;
+const HEADER_TXT  = PAGE_W - HEADER_LOGO - 2400;
+const HEADER_REF  = 2400;
+
+// Substitute signature row: index | name | sign-line | date-line
+// Sums to PAGE_W exactly.
+const SUB_W_IDX   = 700;
+const SUB_W_NAME  = 3500;
+const SUB_W_SIGN  = 4500;
+const SUB_W_DATE  = PAGE_W - SUB_W_IDX - SUB_W_NAME - SUB_W_SIGN; // 2126
+
+// ─── formatters ──────────────────────────────────────────────────────────────
+const fmtDateMed = (iso) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+};
+const fmtDateLong = (iso) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+};
+const fmtDateShort = (iso) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' });
+};
+const fmtDateTime = (iso) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return `${d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}  ·  ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
+};
+const fmtStampCompact = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} · ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
+};
+
+const yearsOfService = (joinDate) => {
+  if (!joinDate) return '—';
+  const join = new Date(joinDate);
+  const now = new Date();
+  let y = now.getFullYear() - join.getFullYear();
+  let m = now.getMonth() - join.getMonth();
+  if (m < 0) { y--; m += 12; }
+  if (y === 0 && m === 0) return 'Less than a month';
+  if (y === 0) return `${m} month${m === 1 ? '' : 's'}`;
+  return `${y} year${y === 1 ? '' : 's'}${m > 0 ? `, ${m} month${m === 1 ? '' : 's'}` : ''}`;
+};
+
+// ─── docx primitives ─────────────────────────────────────────────────────────
+const run = (text, opts = {}) => new TextRun({
+  text: String(text ?? ''),
+  font: opts.font || FONT_BODY,
+  size: opts.size ?? 20,
+  color: opts.color ?? C_TEXT,
+  bold: !!opts.bold,
+  italics: !!opts.italics,
+});
+
+const arRun = (text, opts = {}) => new TextRun({
+  text: String(text ?? ''),
+  font: { name: FONT_AR, cs: FONT_AR },
+  size: opts.size ?? 18,
+  color: opts.color ?? C_MUTED,
+  bold: !!opts.bold,
+  rightToLeft: true,
+});
+
+const FORM_BORDER = {
+  top:    { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
+  bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
+  left:   { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
+  right:  { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
+};
+
+const NO_BORDER = {
+  top:    { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+  bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+  left:   { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+  right:  { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+};
+
+// CRITICAL: ShadingType.CLEAR not SOLID — SOLID renders as black in Word.
+const shading = (fill) => ({ type: ShadingType.CLEAR, fill, color: 'auto' });
+
+const spacer = (after = 100) => new Paragraph({ children: [run('')], spacing: { after } });
+
+// ─── section banner ──────────────────────────────────────────────────────────
+function sectionBanner(en, ar) {
+  return new Table({
+    width: { size: PAGE_W, type: WidthType.DXA },
+    columnWidths: [HALF_W, PAGE_W - HALF_W],
+    rows: [new TableRow({
+      children: [
+        new TableCell({
+          children: [new Paragraph({
+            children: [run(en, { bold: true, size: 18 })],
+          })],
+          width: { size: HALF_W, type: WidthType.DXA },
+          margins: { top: 50, bottom: 50, left: 200, right: 100 },
+          shading: shading(C_BANNER),
+          borders: {
+            top:    { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
+            bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
+            left:   { style: BorderStyle.SINGLE, size: 24, color: C_BRAND },
+            right:  { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+          },
+        }),
+        new TableCell({
+          children: [new Paragraph({
+            children: [arRun(ar, { bold: true, size: 18, color: C_COPPER })],
+            alignment: AlignmentType.RIGHT,
+            bidirectional: true,
+          })],
+          width: { size: PAGE_W - HALF_W, type: WidthType.DXA },
+          margins: { top: 50, bottom: 50, left: 100, right: 200 },
+          shading: shading(C_BANNER),
+          borders: {
+            top:    { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
+            bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
+            left:   { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+            right:  { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
+          },
+        }),
+      ],
+    })],
+  });
+}
+
+// ─── form table cells ────────────────────────────────────────────────────────
+function labelCell(en, ar) {
+  return new TableCell({
+    children: [
+      new Paragraph({
+        children: [run(en, { bold: true, size: 17 })],
+        spacing: { after: 20 },
+      }),
+      new Paragraph({
+        children: [arRun(ar, { size: 14, color: C_COPPER })],
+      }),
+    ],
+    width: { size: LABEL_W, type: WidthType.DXA },
+    margins: { top: 30, bottom: 30, left: 180, right: 100 },
+    shading: shading(C_LABEL_BG),
+    borders: FORM_BORDER,
+    verticalAlign: VerticalAlign.CENTER,
+  });
+}
+
+function valueCell(text, opts = {}) {
+  return new TableCell({
+    children: [new Paragraph({
+      children: [run(text, { size: 21, bold: !!opts.bold, color: opts.color || C_TEXT })],
+    })],
+    width: { size: VALUE_W, type: WidthType.DXA },
+    margins: { top: 30, bottom: 30, left: 200, right: 160 },
+    borders: FORM_BORDER,
+    verticalAlign: VerticalAlign.CENTER,
+  });
+}
+
+function valueCellRuns(children) {
+  return new TableCell({
+    children: [new Paragraph({ children })],
+    width: { size: VALUE_W, type: WidthType.DXA },
+    margins: { top: 30, bottom: 30, left: 200, right: 160 },
+    borders: FORM_BORDER,
+    verticalAlign: VerticalAlign.CENTER,
+  });
+}
+
+function formRow(en, ar, value, opts = {}) {
+  return new TableRow({
+    children: [
+      labelCell(en, ar),
+      typeof value === 'string'
+        ? valueCell(value, opts)
+        : valueCellRuns(value),
+    ],
+  });
+}
+
+const cbRun = (checked, label) => [
+  run(checked ? '☑ ' : '☐ ', { size: 22, bold: true }),
+  run(label + '     ', { size: 19 }),
+];
+
+// ─── signature cell (single combined cell — atomic so the whole 4-column
+//      grid never splits across pages) ────────────────────────────────────
+// Each column is a single TableCell containing 4 stacked paragraphs:
+//   1. Cream-banner title row (label EN + AR)
+//   2. Empty space for wet signature (above the line)
+//   3. Printed name, centered
+//   4. Footer line — italic timestamp + bold label, separated by a thin rule
+function sigCombinedCell(en, ar, name, footerLeft, footerRight, width) {
+  return new TableCell({
+    children: [
+      // 1. Title strip — bold EN + Arabic, top divider and bottom divider
+      //    to read as the cream banner row.
+      new Paragraph({
+        children: [
+          run(en + '   ', { bold: true, size: 13 }),
+          arRun(ar, { size: 13, color: C_COPPER }),
+        ],
+        spacing: { before: 0, after: 0 },
+        shading: shading(C_BANNER),
+        border: {
+          bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER, space: 6 },
+        },
+      }),
+      // 2. Empty signature area
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [run(' ', { size: 16 })],
+        spacing: { before: 60, after: 0 },
+      }),
+      // 3. Printed name, centered
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [run(name || '', { size: 18, bold: true })],
+        spacing: { before: 0, after: 40 },
+      }),
+      // 4. Footer line
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [
+          run(footerLeft || ' ', { size: 12, italics: true, color: C_COPPER }),
+          run('     ', { size: 12 }),
+          run(footerRight, { size: 12, bold: true }),
+        ],
+        spacing: { before: 40, after: 0 },
+        border: {
+          top: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER, space: 6 },
+        },
+      }),
+    ],
+    width: { size: width, type: WidthType.DXA },
+    margins: { top: 40, bottom: 40, left: 140, right: 140 },
+    borders: FORM_BORDER,
+    verticalAlign: VerticalAlign.TOP,
+  });
+}
+
+// ─── substitute coverage row ─────────────────────────────────────────────────
+// Each substitute gets one row with their PSN + name and a wet-signature
+// + date line. The "✓ Confirmed online" tag (when substitute_ids was used
+// to digitally accept coverage in the portal) is shown next to the name —
+// the wet signature line then exists for traditional paper sign-off.
+function substituteSigRow(idx, name, psn, isConfirmed) {
+  const idxCell = new TableCell({
+    width: { size: SUB_W_IDX, type: WidthType.DXA },
+    borders: FORM_BORDER,
+    margins: { top: 50, bottom: 50, left: 100, right: 100 },
+    shading: shading(C_LABEL_BG),
+    verticalAlign: VerticalAlign.CENTER,
+    children: [new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [run(String(idx), { bold: true, color: C_COPPER, size: 20 })],
+    })],
+  });
+
+  const nameRuns = [
+    run(name || '—', { bold: true, size: 19 }),
+  ];
+  if (psn) {
+    nameRuns.push(run(`   ${psn}`, { size: 14, color: C_MUTED }));
+  }
+  if (isConfirmed) {
+    nameRuns.push(run('   ✓ Confirmed online', { size: 12, italics: true, color: C_BRAND }));
+  }
+  const nameCell = new TableCell({
+    width: { size: SUB_W_NAME, type: WidthType.DXA },
+    borders: FORM_BORDER,
+    margins: { top: 50, bottom: 50, left: 200, right: 100 },
+    verticalAlign: VerticalAlign.CENTER,
+    children: [new Paragraph({ children: nameRuns })],
+  });
+
+  // Signature cell — empty paragraph with bottom border = sign line, with
+  // a small caption beneath ("Signature / التوقيع").
+  const signCell = new TableCell({
+    width: { size: SUB_W_SIGN, type: WidthType.DXA },
+    borders: FORM_BORDER,
+    margins: { top: 50, bottom: 30, left: 160, right: 160 },
+    verticalAlign: VerticalAlign.BOTTOM,
+    children: [
+      new Paragraph({
+        children: [run(' ', { size: 14 })],
+        border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: C_BORDER, space: 4 } },
+      }),
+      new Paragraph({
+        children: [
+          run('Signature  ', { size: 11, italics: true, color: C_COPPER }),
+          arRun('التوقيع', { size: 11, color: C_COPPER }),
+        ],
+        spacing: { before: 20, after: 0 },
+      }),
+    ],
+  });
+
+  // Date cell — same pattern.
+  const dateCell = new TableCell({
+    width: { size: SUB_W_DATE, type: WidthType.DXA },
+    borders: FORM_BORDER,
+    margins: { top: 50, bottom: 30, left: 160, right: 160 },
+    verticalAlign: VerticalAlign.BOTTOM,
+    children: [
+      new Paragraph({
+        children: [run(' ', { size: 14 })],
+        border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: C_BORDER, space: 4 } },
+      }),
+      new Paragraph({
+        children: [
+          run('Date  ', { size: 11, italics: true, color: C_COPPER }),
+          arRun('التاريخ', { size: 11, color: C_COPPER }),
+        ],
+        spacing: { before: 20, after: 0 },
+      }),
+    ],
+  });
+
+  return new TableRow({
+    cantSplit: true,
+    children: [idxCell, nameCell, signCell, dateCell],
+  });
+}
+
+function substituteHeaderRow() {
+  const cell = (text, ar, width) => new TableCell({
+    width: { size: width, type: WidthType.DXA },
+    borders: FORM_BORDER,
+    margins: { top: 50, bottom: 50, left: 140, right: 140 },
+    shading: shading(C_LABEL_BG),
+    verticalAlign: VerticalAlign.CENTER,
+    children: [new Paragraph({
+      children: [
+        run(text + '  ', { bold: true, size: 13, color: C_COPPER }),
+        arRun(ar, { size: 13, color: C_MUTED, bold: true }),
+      ],
+    })],
+  });
+  return new TableRow({
+    children: [
+      cell('#', '', SUB_W_IDX),
+      cell('SUBSTITUTE', 'البديل', SUB_W_NAME),
+      cell('SIGNATURE', 'التوقيع', SUB_W_SIGN),
+      cell('DATE', 'التاريخ', SUB_W_DATE),
+    ],
+  });
+}
+
+// ─── helpers ─────────────────────────────────────────────────────────────────
+async function loadLogoBytes() {
+  try {
+    const res = await fetch('/evergreen-logo.jpg');
+    if (!res.ok) return null;
+    return await res.arrayBuffer();
+  } catch {
+    return null;
+  }
+}
+
+async function generateQrPng(text, sizePx = 220) {
+  try {
+    const dataUrl = await QRCode.toDataURL(text, {
+      errorCorrectionLevel: 'M',
+      margin: 1,
+      width: sizePx,
+      color: { dark: '#1F4530', light: '#FFFFFF' },
+    });
+    const base64 = dataUrl.split(',')[1];
+    if (typeof atob !== 'undefined') {
+      const bin = atob(base64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return bytes.buffer;
+    }
+    return Buffer.from(base64, 'base64');
+  } catch (err) {
+    console.warn('[vacation form] QR generation failed:', err);
+    return null;
+  }
+}
+
+// ─── main generator ──────────────────────────────────────────────────────────
+export async function generateVacationFormBlob({ employee, request, manager, hrApprover, substitutes = [] }) {
+  const ltKey  = LEAVE_TYPE[request.leave_type_id] ? request.leave_type_id : 'annual';
+  const ltBoth = LEAVE_TYPE[ltKey];
+
+  const dept = DEPT_NAMES[employee?.department] || employee?.department || '—';
+  const loc  = LOCATION_NAMES[employee?.location] || employee?.location || '—';
+  const designation = employee?.designation || 'Department Member';
+  const today = new Date().toISOString();
+  const isApproved = request.stage === 'approved';
+
+  // Notice classification — Planned ≥14 days advance, Urgent <14.
+  const submitted14d = request.requested_at && request.start_date
+    ? (new Date(request.start_date).getTime() - new Date(request.requested_at).getTime()) >= 14 * 24 * 3600 * 1000
+    : null;
+  const noticePlanned = submitted14d === true;
+  const noticeUrgent  = submitted14d === false;
+
+  const dayCount = Number(request.days || 0);
+  const daysLabel = `${dayCount} day${dayCount === 1 ? '' : 's'}${request.is_half_day ? '   (half day)' : ''}`;
+
+  const periodValue = request.start_date === request.end_date
+    ? fmtDateLong(request.start_date)
+    : `${fmtDateLong(request.start_date)}  →  ${fmtDateLong(request.end_date)}`;
+
+  const logoBytes = await loadLogoBytes();
+
+  // ── HEADER ────────────────────────────────────────────────────────────────
+  const headerRow = new Table({
+    width: { size: PAGE_W, type: WidthType.DXA },
+    columnWidths: [HEADER_LOGO, HEADER_TXT, HEADER_REF],
+    rows: [new TableRow({
+      children: [
+        new TableCell({
+          children: [
+            logoBytes
+              ? new Paragraph({
+                  children: [new ImageRun({
+                    data: logoBytes,
+                    transformation: { width: 56, height: 56 },
+                    type: 'jpg',
+                  })],
+                })
+              : new Paragraph({
+                  children: [run('EVR', { bold: true, size: 28, color: C_BRAND, font: FONT_BRAND })],
+                }),
+          ],
+          width: { size: HEADER_LOGO, type: WidthType.DXA },
+          margins: { top: 0, bottom: 0, left: 0, right: 100 },
+          borders: NO_BORDER,
+          verticalAlign: VerticalAlign.CENTER,
+        }),
+        new TableCell({
+          children: [
+            new Paragraph({
+              children: [run('EVERGREEN LINE', { bold: true, size: 32, color: C_BRAND, font: FONT_BRAND })],
+            }),
+            new Paragraph({
+              children: [run(
+                'Evergreen Shipping Agency Saudi Co. (L.L.C)  ·  ESAU SADMN SUP / HR Dept',
+                { size: 14, color: C_MUTED },
+              )],
+              spacing: { before: 50 },
+            }),
+          ],
+          width: { size: HEADER_TXT, type: WidthType.DXA },
+          margins: { top: 0, bottom: 0, left: 0, right: 0 },
+          borders: NO_BORDER,
+          verticalAlign: VerticalAlign.CENTER,
+        }),
+        new TableCell({
+          children: [
+            new Paragraph({
+              children: [
+                run('Date: ', { bold: true, color: C_MUTED, size: 14 }),
+                run(fmtDateMed(today), { size: 14 }),
+              ],
+              alignment: AlignmentType.RIGHT,
+            }),
+            new Paragraph({
+              children: [
+                run('Ref:  ', { bold: true, color: C_MUTED, size: 14 }),
+                run(`LV-${String(request.id).padStart(5, '0')}`, { bold: true, size: 14 }),
+              ],
+              alignment: AlignmentType.RIGHT,
+              spacing: { before: 40 },
+            }),
+          ],
+          width: { size: HEADER_REF, type: WidthType.DXA },
+          margins: { top: 0, bottom: 0, left: 0, right: 0 },
+          borders: NO_BORDER,
+          verticalAlign: VerticalAlign.CENTER,
+        }),
+      ],
+    })],
+  });
+
+  const headerRule = new Paragraph({
+    children: [run('')],
+    border: { bottom: { style: BorderStyle.SINGLE, size: 14, color: C_BRAND, space: 1 } },
+    spacing: { before: 80, after: 0 },
+  });
+  const headerRuleCopper = new Paragraph({
+    children: [run('')],
+    border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: C_COPPER, space: 1 } },
+    spacing: { before: 30, after: 80 },
+  });
+
+  // ── TITLE ─────────────────────────────────────────────────────────────────
+  const titleStrip = new Paragraph({
+    children: [
+      run('Leave Application — ', { bold: true, size: 24, color: C_TEXT }),
+      run(`${ltBoth.en} Leave`, { bold: true, italics: true, size: 24, color: C_COPPER }),
+    ],
+    spacing: { before: 80, after: 30 },
+  });
+  const titleStripAr = new Paragraph({
+    children: [arRun(`طلب إجازة · إجازة ${ltBoth.ar}`, { bold: true, size: 16, color: C_BRAND })],
+    bidirectional: true,
+    alignment: AlignmentType.LEFT,
+    spacing: { before: 0, after: 60 },
+    border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER, space: 4 } },
+  });
+
+  // ── EMPLOYEE INFORMATION ──────────────────────────────────────────────────
+  const empTable = new Table({
+    width: { size: PAGE_W, type: WidthType.DXA },
+    columnWidths: [LABEL_W, VALUE_W],
+    rows: [
+      formRow('Employee name',  'اسم الموظف',     employee?.name || '—', { bold: true }),
+      formRow('PSN ID',          'الرقم الوظيفي',  employee?.id || '—'),
+      formRow('Department',      'القسم',          `${dept}  ·  ${loc}`),
+      formRow('Designation',     'المسمى الوظيفي', designation),
+      formRow('Joined / Tenure', 'الالتحاق / المدة', `${fmtDateMed(employee?.join_date)}   ·   ${yearsOfService(employee?.join_date)}`),
+    ],
+  });
+
+  // ── LEAVE DETAILS ─────────────────────────────────────────────────────────
+  const typeChecks = TYPE_CHECKBOX_ORDER.flatMap(k =>
+    cbRun(ltKey === k, LEAVE_TYPE[k].en)
+  );
+  const noticeChecks = [
+    ...cbRun(noticePlanned, 'Planned (≥14 days)'),
+    ...cbRun(noticeUrgent,  'Urgent (<14 days)'),
+  ];
+  const halfDayChecks = [
+    run(daysLabel, { size: 21, bold: true, color: C_BRAND }),
+    run('     ·     ', { size: 21, color: C_MUTED }),
+    ...cbRun(!!request.is_half_day, 'Half day'),
+  ];
+
+  const detailsTable = new Table({
+    width: { size: PAGE_W, type: WidthType.DXA },
+    columnWidths: [LABEL_W, VALUE_W],
+    rows: [
+      formRow('Leave type',      'نوع الإجازة',       typeChecks),
+      formRow('Period',          'الفترة',            periodValue, { bold: true, color: C_BRAND }),
+      formRow('Duration',        'المدة',             halfDayChecks),
+      formRow('Notice',          'الإشعار',           noticeChecks),
+      formRow('Reason / details','السبب / التفاصيل',  request.reason || '—'),
+      formRow('Submitted',       'تاريخ التقديم',     fmtDateTime(request.requested_at || today)),
+    ],
+  });
+
+  // ── SUBSTITUTE COVERAGE ───────────────────────────────────────────────────
+  // Each substitute gets a row with name + wet-signature line + date line.
+  // If the portal already captured digital confirmation (substitute_ids on
+  // the request), we tag the row with "✓ Confirmed online" to indicate the
+  // wet signature is the second factor, not the first.
+  const subRows = (substitutes && substitutes.length > 0)
+    ? substitutes.map((s, idx) => substituteSigRow(idx + 1, s.name, s.id, true))
+    : [
+        new TableRow({
+          children: [new TableCell({
+            columnSpan: 4,
+            width: { size: PAGE_W, type: WidthType.DXA },
+            borders: FORM_BORDER,
+            margins: { top: 80, bottom: 80, left: 200, right: 200 },
+            children: [new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [run('No substitutes designated for this leave.', { italics: true, size: 17, color: C_MUTED })],
+            })],
+          })],
+        }),
+      ];
+
+  const substitutesTable = new Table({
+    width: { size: PAGE_W, type: WidthType.DXA },
+    columnWidths: [SUB_W_IDX, SUB_W_NAME, SUB_W_SIGN, SUB_W_DATE],
+    rows: substitutes && substitutes.length > 0
+      ? [substituteHeaderRow(), ...subRows]
+      : subRows,
+  });
+
+  // ── POLICY ────────────────────────────────────────────────────────────────
+  const policyTable = new Table({
+    width: { size: PAGE_W, type: WidthType.DXA },
+    columnWidths: [HALF_W, PAGE_W - HALF_W],
+    rows: [
+      // Header row
+      new TableRow({
+        children: [
+          new TableCell({
+            children: [new Paragraph({
+              children: [run('LEAVE POLICY · KSA LABOR LAW', { bold: true, size: 13, color: C_COPPER })],
+            })],
+            width: { size: HALF_W, type: WidthType.DXA },
+            margins: { top: 50, bottom: 40, left: 180, right: 100 },
+            shading: shading(C_LABEL_BG),
+            borders: FORM_BORDER,
+          }),
+          new TableCell({
+            children: [new Paragraph({
+              children: [arRun('سياسة الإجازات · نظام العمل السعودي', { bold: true, size: 14, color: C_MUTED })],
+              alignment: AlignmentType.RIGHT,
+              bidirectional: true,
+            })],
+            width: { size: PAGE_W - HALF_W, type: WidthType.DXA },
+            margins: { top: 50, bottom: 40, left: 100, right: 180 },
+            shading: shading(C_LABEL_BG),
+            borders: FORM_BORDER,
+          }),
+        ],
+      }),
+      // Bullet rows
+      ...POLICY_BULLETS.map((b, i) => new TableRow({
+        children: [
+          new TableCell({
+            children: [new Paragraph({
+              children: [
+                run(`${String(i + 1).padStart(2, '0')}.   `, { bold: true, size: 14, color: C_COPPER }),
+                run(b.en, { size: 17 }),
+              ],
+            })],
+            width: { size: HALF_W, type: WidthType.DXA },
+            margins: { top: 30, bottom: 30, left: 180, right: 100 },
+            shading: shading(C_LABEL_BG),
+            borders: FORM_BORDER,
+            verticalAlign: VerticalAlign.CENTER,
+          }),
+          new TableCell({
+            children: [new Paragraph({
+              children: [arRun(b.ar, { size: 16, color: C_MUTED })],
+              alignment: AlignmentType.RIGHT,
+              bidirectional: true,
+            })],
+            width: { size: PAGE_W - HALF_W, type: WidthType.DXA },
+            margins: { top: 30, bottom: 30, left: 100, right: 180 },
+            shading: shading(C_LABEL_BG),
+            borders: FORM_BORDER,
+            verticalAlign: VerticalAlign.CENTER,
+          }),
+        ],
+      })),
+    ],
+  });
+
+  // ── APPROVAL SIGNATURES (4-column main grid) ──────────────────────────────
+  const sigCols = [
+    { en: 'EMPLOYEE',  ar: 'الموظف',          name: employee?.name || '',
+      footerLeft:  request.requested_at ? `Submitted ${fmtStampCompact(request.requested_at)}` : '',
+      footerRight: 'Signature' },
+    { en: 'DEPT MGR',  ar: 'مدير القسم',       name: manager?.name || '',
+      footerLeft:  request.manager_decided_at ? `Approved ${fmtStampCompact(request.manager_decided_at)}` : '',
+      footerRight: 'Signature' },
+    { en: 'ESAU SUP',  ar: 'الموارد البشرية',   name: hrApprover?.name || HR_SIGNATURE.name,
+      footerLeft:  request.hr_decided_at ? `Approved ${fmtStampCompact(request.hr_decided_at)}` : '',
+      footerRight: 'Signature' },
+    { en: 'ESAU MGT',  ar: 'الإدارة',          name: CEO_NAME,
+      footerLeft:  CEO_TITLE_EN, footerRight: 'HQ Stamp' },
+  ];
+
+  const sigWidths = [SIG_W, SIG_W, SIG_W, SIG_W_LAST];
+
+  const sigTable = new Table({
+    width: { size: PAGE_W, type: WidthType.DXA },
+    columnWidths: sigWidths,
+    rows: [
+      new TableRow({
+        cantSplit: true,
+        height: { value: 1100, rule: HeightRule.ATLEAST },
+        children: sigCols.map((c, i) =>
+          sigCombinedCell(c.en, c.ar, c.name, c.footerLeft, c.footerRight, sigWidths[i])),
+      }),
+    ],
+  });
+
+  // ── FOOTER ────────────────────────────────────────────────────────────────
+  const generatedAt = new Date().toLocaleString('en-GB', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  });
+  const verifyUrl = `${VERIFY_BASE_URL}/verify-leave/${request.id}`;
+  const qrBytes = await generateQrPng(verifyUrl, 220);
+
+  const footerBlock = new Table({
+    width: { size: PAGE_W, type: WidthType.DXA },
+    columnWidths: [PAGE_W - 1100, 1100],
+    rows: [new TableRow({
+      children: [
+        new TableCell({
+          children: [
+            new Paragraph({
+              children: [
+                run(`Generated on ${generatedAt} GMT+3  ·  ${hrApprover?.name || HR_SIGNATURE.name}`,
+                    { size: 12, italics: true, color: C_COPPER }),
+              ],
+              alignment: AlignmentType.LEFT,
+              spacing: { before: 60, after: 20 },
+            }),
+            new Paragraph({
+              children: [
+                run('Verify online: ', { size: 11, color: C_MUTED }),
+                run(verifyUrl, { size: 11, color: C_BRAND }),
+              ],
+              alignment: AlignmentType.LEFT,
+              spacing: { before: 0, after: 0 },
+            }),
+          ],
+          width: { size: PAGE_W - 1100, type: WidthType.DXA },
+          borders: NO_BORDER,
+          margins: { top: 0, bottom: 0, left: 0, right: 100 },
+          verticalAlign: VerticalAlign.CENTER,
+        }),
+        new TableCell({
+          children: qrBytes
+            ? [
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  children: [new ImageRun({
+                    data: qrBytes,
+                    transformation: { width: 52, height: 52 },
+                    type: 'png',
+                  })],
+                  spacing: { before: 0, after: 10 },
+                }),
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  children: [run('SCAN TO VERIFY', { size: 9, bold: true, color: C_COPPER })],
+                  spacing: { before: 0, after: 0 },
+                }),
+              ]
+            : [new Paragraph({ children: [run('', { size: 10 })] })],
+          width: { size: 1100, type: WidthType.DXA },
+          borders: NO_BORDER,
+          margins: { top: 0, bottom: 0, left: 100, right: 0 },
+          verticalAlign: VerticalAlign.CENTER,
+        }),
+      ],
+    })],
+  });
+
+  // ── APPROVED STAMP ───────────────────────────────────────────────────────
+  // Only shown when the request has reached final-approved stage. Pinned
+  // to top-right via section header so it doesn't displace body content.
+  const approvedStamp = new Header({
+    children: [
+      new Paragraph({
+        alignment: AlignmentType.RIGHT,
+        children: [
+          new TextRun({
+            text: isApproved ? '✓ APPROVED' : '',
+            font: FONT_BRAND,
+            size: 24,
+            bold: true,
+            color: '2D5F3F',
+          }),
+        ],
+        spacing: { before: 0, after: 0 },
+      }),
+    ],
+  });
+
+  const doc = new Document({
+    styles: { default: { document: { run: { font: FONT_BODY } } } },
+    sections: [{
+      properties: {
+        page: {
+          size:    { width: 11906, height: 16838 },
+          margin:  { top: 540, right: 540, bottom: 540, left: 540 },
+        },
+      },
+      headers: { default: approvedStamp },
+      footers: { default: new Footer({ children: [footerBlock] }) },
+      children: [
+        headerRow,
+        headerRule,
+        headerRuleCopper,
+        titleStrip,
+        titleStripAr,
+        spacer(40),
+        sectionBanner('EMPLOYEE INFORMATION', 'معلومات الموظف'),
+        empTable,
+        spacer(30),
+        sectionBanner('LEAVE DETAILS', 'تفاصيل الإجازة'),
+        detailsTable,
+        spacer(30),
+        sectionBanner('SUBSTITUTE COVERAGE', 'البديل أثناء الغياب'),
+        substitutesTable,
+        spacer(30),
+        policyTable,
+        spacer(30),
+        sigTable,
+      ],
+    }],
+  });
+
+  return await Packer.toBlob(doc);
+}
+
+// ─── email draft ──────────────────────────────────────────────────────────────
+export function buildEmailDraft({ employee, request, manager, hrApprover, substitutes = [] }) {
+  const ltKey = LEAVE_TYPE[request.leave_type_id] ? request.leave_type_id : 'annual';
+  const leaveTypeLabel = `${LEAVE_TYPE[ltKey].en} Leave`;
+  const dateRange = `${fmtDateMed(request.start_date)} - ${fmtDateMed(request.end_date)}`;
+
+  const to = [employee?.email].filter(Boolean).join(',');
   const ccList = [
     manager?.email,
     CEO_EMAIL,
     COUNTRY_HEAD_EMAIL,
   ].filter(Boolean);
-  const cc = ccList.join(',');
+  const cc = Array.from(new Set(ccList.filter(e => e !== to))).join(',');
 
-  const subject = `Leave approved · ${employee.name} · ${dateRange}`;
+  const subject = `Leave approved · ${employee?.name || ''} · ${dateRange}`;
 
   const body = [
-    `Dear ${employee.name?.split(' ')[0] || 'Colleague'},`,
+    `Dear ${(employee?.name || '').split(' ')[0] || 'Colleague'},`,
     '',
     `Your ${leaveTypeLabel.toLowerCase()} request from ${dateRange} (${request.days} day${request.days === 1 ? '' : 's'}${request.is_half_day ? ' — half day' : ''}) has been approved.`,
     '',
@@ -433,7 +942,7 @@ export function buildEmailDraft({ employee, request, manager, hrApprover, substi
       ? substitutes.map(s => `  • ${s.name} (${s.id})`)
       : ['  • —']),
     '',
-    `The signed vacation form is attached for your records, kindly print it and get it signed by your manager and submit hard copy to HR office.`,
+    `The signed vacation form is attached for your records — kindly print, get it signed by your manager and substitute(s), and submit a hard copy to the HR office.`,
     '',
     `If you have any questions, please contact HR.`,
     '',
@@ -448,9 +957,6 @@ export function buildEmailDraft({ employee, request, manager, hrApprover, substi
     `Email: ${HR_SIGNATURE.email}`,
   ].join('\n');
 
-  // URLSearchParams encodes spaces as '+'; replace with %20 so the body
-  // reads correctly in Outlook / Apple Mail / Gmail web. Mirrors the
-  // permission email mailto encoding.
   const params = new URLSearchParams();
   if (cc) params.set('cc', cc);
   params.set('subject', subject);
@@ -460,7 +966,7 @@ export function buildEmailDraft({ employee, request, manager, hrApprover, substi
   return { to, cc, subject, body, mailto };
 }
 
-// ─── helper: download a Blob as a file ────────────────────────────────────────
+// ─── helpers ──────────────────────────────────────────────────────────────────
 export function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -472,18 +978,13 @@ export function downloadBlob(blob, filename) {
   URL.revokeObjectURL(url);
 }
 
-// ─── helper: regenerate + download for any approved request ───────────────────
-// Looks up employee/manager/HR approver/substitutes from the supplied empMap and
-// delegates to generateVacationFormBlob. Used to re-download the form for any
-// past application from anywhere in the app (personal dashboard, requests view,
-// employee history modal, etc).
-// Resolve a stored 'decided_by' value to an employee. The DB stores either a
-// PSN (e.g. 'H94076') OR an auth_user_id (UUID), depending on which code path
-// wrote it. Try the empMap key lookup first, then fall back to scanning the
-// directory for a matching auth_user_id. Returns null if not found.
+// Resolve a stored 'decided_by' value to an employee. The DB stores either
+// a PSN (e.g. 'H94076') OR an auth_user_id (UUID), depending on which code
+// path wrote it. Try the empMap key lookup first, then fall back to scanning
+// the directory for a matching auth_user_id. Returns null if not found.
 function resolveApprover(decidedBy, empMap) {
   if (!decidedBy) return null;
-  if (empMap[decidedBy]) return empMap[decidedBy]; // direct PSN hit
+  if (empMap[decidedBy]) return empMap[decidedBy];
   const directory = Object.values(empMap);
   return directory.find((e) => e.auth_user_id === decidedBy) || null;
 }
