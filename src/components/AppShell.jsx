@@ -90,7 +90,7 @@ function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, me }) {
     const insertIdx = base.findIndex(t => t.id === 'calendar');
     base.splice(insertIdx >= 0 ? insertIdx + 1 : base.length, 0, { id: 'attendance', label: 'Attendance', icon: Clock });
   }
-  if (isAdmin) {
+  if (isAdmin || isHrReviewer) {
     base.splice(5, 0, { id: 'admin', label: 'Admin', icon: ShieldCheck });
   }
   return base;
@@ -635,7 +635,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
         {tab === 'diagnostics' && isAdmin && (
           <ConnectivityTest />
         )}
-        {tab === 'admin' && isAdmin && (
+        {tab === 'admin' && (isAdmin || isHrReviewer) && (
           <AdminPanel session={session} me={me} onRefreshMe={onRefreshMe} />
         )}
       </main>
