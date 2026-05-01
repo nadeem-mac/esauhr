@@ -48,8 +48,39 @@ export default function PersonalDashboard({
 
   useEffect(() => { load(); }, [load]);
 
-  // Realtime subscription removed — it was wedging the supabase-js client. Users
-  // can refresh the page or it will reload when they navigate back to the dashboard.
+  // Realtime — re-run load whenever leave_requests OR permission_requests
+  // change anywhere in the table. The previous version of this code
+  // wedged the supabase-js client, but we've since standardised on this
+  // lighter pattern (see PendingSubstitutionsCard) which works reliably:
+  //   • Channel keyed on me.id so multiple tabs don't collide
+  //   • One subscription per table, both wired to the same load()
+  //   • Cleanup via removeChannel on unmount/me change
+  // Filtering is done client-side rather than via filter:'employee_id=eq…'
+  // because the latter has occasionally dropped events in our testing —
+  // load() already filters server-side via directGet's eq on me.id, so
+  // an extra refetch when someone else's row changes is cheap and safe.
+  useEffect(() => {
+    if (!me?.id) return undefined;
+    const channels = [
+      supabase
+        .channel(`pd-leaves-${me.id}`)
+        .on('postgres_changes',
+            { event: '*', schema: 'public', table: 'leave_requests' },
+            () => { load(); })
+        .subscribe(),
+      supabase
+        .channel(`pd-perms-${me.id}`)
+        .on('postgres_changes',
+            { event: '*', schema: 'public', table: 'permission_requests' },
+            () => { load(); })
+        .subscribe(),
+    ];
+    return () => {
+      for (const c of channels) {
+        try { supabase.removeChannel(c); } catch {}
+      }
+    };
+  }, [me?.id, load]);
 
   if (loading) {
     return (
