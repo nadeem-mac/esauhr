@@ -464,10 +464,20 @@ export default function AppShell({ session, me, onRefreshMe }) {
                   new Promise(res => setTimeout(() => { console.warn('refresh subtask timed out after ' + ms + 'ms'); res(null); }, ms)),
                 ]);
 
+                // Minimum overlay hold — keeps the ship animation visible
+                // for at least 3 seconds even when the underlying fetch
+                // resolves in <1s. Without this the overlay just flashes
+                // on a fast connection and the user can't tell anything
+                // happened. Race with the actual work + timeouts so the
+                // overlay closes when BOTH the data is ready AND 3 seconds
+                // have elapsed, whichever is later.
+                const minHold = new Promise(res => setTimeout(res, 3000));
+
                 try {
                   await Promise.all([
                     withTimeout(typeof onRefreshMe === 'function' ? onRefreshMe() : Promise.resolve(), 10000),
                     withTimeout(loadAll({ silent: true }), 12000),
+                    minHold,
                   ]);
                 } finally {
                   setRefreshing(false);
