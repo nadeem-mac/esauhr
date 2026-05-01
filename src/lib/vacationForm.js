@@ -119,9 +119,12 @@ const HALF_W      = Math.floor(PAGE_W / 2); // 5413
 const SIG_W       = Math.floor(PAGE_W / 4); // 2706
 const SIG_W_LAST  = PAGE_W - (SIG_W * 3);   // remainder absorber
 
-const HEADER_LOGO = 1400;
-const HEADER_TXT  = PAGE_W - HEADER_LOGO - 2400;
-const HEADER_REF  = 2400;
+// Header: 4-column strip — logo | wordmark | date+ref | QR. QR moved
+// here from the footer so verification is visible at-a-glance up top.
+const HEADER_LOGO  = 1100;
+const HEADER_QR    = 1500;
+const HEADER_REF   = 2000;
+const HEADER_TXT   = PAGE_W - HEADER_LOGO - HEADER_QR - HEADER_REF;
 
 // Substitute signature row: index | name | sign-line | date-line
 // Sums to PAGE_W exactly.
@@ -156,6 +159,22 @@ const fmtStampCompact = (iso) => {
   const d = new Date(iso);
   return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} · ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
 };
+
+// Short, human-readable reference for the printed letter. Handles both
+// UUID-style ids (long hex+dashes) — uses the first 8 hex chars, since
+// that's collision-safe within a single tenant — and legacy numeric ids
+// (zero-padded to 5 digits like 'LV-00012').
+//   UUID  '79dc3f36-4b16-46bd-9e71-5d0931b86e2b'  →  'LV-79DC3F36'
+//   nbr   12                                       →  'LV-00012'
+function shortRef(id) {
+  const s = String(id ?? '');
+  // Strip dashes so UUIDs read as solid hex, then take the first 8 chars.
+  const hex = s.replace(/-/g, '');
+  if (hex.length > 8 && /^[0-9a-f]+$/i.test(hex)) {
+    return `LV-${hex.slice(0, 8).toUpperCase()}`;
+  }
+  return `LV-${s.padStart(5, '0')}`;
+}
 
 const yearsOfService = (joinDate) => {
   if (!joinDate) return '—';
@@ -364,11 +383,17 @@ function sigCombinedCell(en, ar, name, footerLeft, footerRight, width) {
 }
 
 // ─── substitute coverage row ─────────────────────────────────────────────────
-// Each substitute gets one row with their PSN + name and a wet-signature
-// + date line. The "✓ Confirmed online" tag (when substitute_ids was used
-// to digitally accept coverage in the portal) is shown next to the name —
-// the wet signature line then exists for traditional paper sign-off.
-function substituteSigRow(idx, name, psn, isConfirmed) {
+// Each substitute row reads request.substitute_decisions[psn] and pre-
+// fills the sign + date cells with the digital-acceptance proof:
+//   sign cell:  "✓ Accepted online" (brand green)
+//   date cell:  "29 Apr 2026 · 14:23"
+// If the substitute hasn't accepted yet, the cells fall back to blank
+// signature + date lines so they can still be signed by hand.
+function substituteSigRow(idx, name, psn, decision) {
+  const accepted = decision && (typeof decision === 'object' ? decision.decision === 'accepted' : decision === 'accepted');
+  const declined = decision && (typeof decision === 'object' ? decision.decision === 'declined' : decision === 'declined');
+  const acceptedAt = (decision && typeof decision === 'object' && decision.at) ? decision.at : null;
+
   const idxCell = new TableCell({
     width: { size: SUB_W_IDX, type: WidthType.DXA },
     borders: FORM_BORDER,
@@ -381,15 +406,8 @@ function substituteSigRow(idx, name, psn, isConfirmed) {
     })],
   });
 
-  const nameRuns = [
-    run(name || '—', { bold: true, size: 19 }),
-  ];
-  if (psn) {
-    nameRuns.push(run(`   ${psn}`, { size: 14, color: C_MUTED }));
-  }
-  if (isConfirmed) {
-    nameRuns.push(run('   ✓ Confirmed online', { size: 12, italics: true, color: C_BRAND }));
-  }
+  const nameRuns = [run(name || '—', { bold: true, size: 19 })];
+  if (psn) nameRuns.push(run(`   ${psn}`, { size: 14, color: C_MUTED }));
   const nameCell = new TableCell({
     width: { size: SUB_W_NAME, type: WidthType.DXA },
     borders: FORM_BORDER,
@@ -398,14 +416,44 @@ function substituteSigRow(idx, name, psn, isConfirmed) {
     children: [new Paragraph({ children: nameRuns })],
   });
 
-  // Signature cell — empty paragraph with bottom border = sign line, with
-  // a small caption beneath ("Signature / التوقيع").
-  const signCell = new TableCell({
-    width: { size: SUB_W_SIGN, type: WidthType.DXA },
-    borders: FORM_BORDER,
-    margins: { top: 50, bottom: 30, left: 160, right: 160 },
-    verticalAlign: VerticalAlign.BOTTOM,
-    children: [
+  // Signature cell — pre-filled with the online-acceptance status when
+  // available. Falls back to a wet-signature line if the substitute has
+  // not yet acted on the request.
+  let signCellChildren;
+  if (accepted) {
+    signCellChildren = [
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [run('✓ Accepted online', { bold: true, size: 16, color: C_BRAND })],
+        spacing: { before: 0, after: 20 },
+      }),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [
+          run('Signature  ', { size: 11, italics: true, color: C_COPPER }),
+          arRun('التوقيع', { size: 11, color: C_COPPER }),
+        ],
+        spacing: { before: 0, after: 0 },
+      }),
+    ];
+  } else if (declined) {
+    signCellChildren = [
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [run('✗ Declined', { bold: true, size: 16, color: 'B83A2E' })],
+        spacing: { before: 0, after: 20 },
+      }),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [
+          run('Signature  ', { size: 11, italics: true, color: C_COPPER }),
+          arRun('التوقيع', { size: 11, color: C_COPPER }),
+        ],
+        spacing: { before: 0, after: 0 },
+      }),
+    ];
+  } else {
+    signCellChildren = [
       new Paragraph({
         children: [run(' ', { size: 14 })],
         border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: C_BORDER, space: 4 } },
@@ -417,16 +465,37 @@ function substituteSigRow(idx, name, psn, isConfirmed) {
         ],
         spacing: { before: 20, after: 0 },
       }),
-    ],
-  });
+    ];
+  }
 
-  // Date cell — same pattern.
-  const dateCell = new TableCell({
-    width: { size: SUB_W_DATE, type: WidthType.DXA },
+  const signCell = new TableCell({
+    width: { size: SUB_W_SIGN, type: WidthType.DXA },
     borders: FORM_BORDER,
     margins: { top: 50, bottom: 30, left: 160, right: 160 },
-    verticalAlign: VerticalAlign.BOTTOM,
-    children: [
+    verticalAlign: VerticalAlign.CENTER,
+    children: signCellChildren,
+  });
+
+  // Date cell — pre-filled with the acceptance timestamp when available.
+  let dateCellChildren;
+  if (acceptedAt) {
+    dateCellChildren = [
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [run(fmtDateTime(acceptedAt), { bold: true, size: 14, color: C_TEXT })],
+        spacing: { before: 0, after: 20 },
+      }),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [
+          run('Accepted online  ', { size: 11, italics: true, color: C_COPPER }),
+          arRun('قُبل إلكترونياً', { size: 11, color: C_COPPER }),
+        ],
+        spacing: { before: 0, after: 0 },
+      }),
+    ];
+  } else {
+    dateCellChildren = [
       new Paragraph({
         children: [run(' ', { size: 14 })],
         border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: C_BORDER, space: 4 } },
@@ -438,7 +507,15 @@ function substituteSigRow(idx, name, psn, isConfirmed) {
         ],
         spacing: { before: 20, after: 0 },
       }),
-    ],
+    ];
+  }
+
+  const dateCell = new TableCell({
+    width: { size: SUB_W_DATE, type: WidthType.DXA },
+    borders: FORM_BORDER,
+    margins: { top: 50, bottom: 30, left: 160, right: 160 },
+    verticalAlign: VerticalAlign.CENTER,
+    children: dateCellChildren,
   });
 
   return new TableRow({
@@ -531,10 +608,16 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
 
   const logoBytes = await loadLogoBytes();
 
+  // Verify URL + QR are now in the top header (was footer in the previous
+  // version). Generated up front so the header table can embed the QR
+  // image directly.
+  const verifyUrl = `${VERIFY_BASE_URL}/verify-leave/${request.id}`;
+  const qrBytes = await generateQrPng(verifyUrl, 220);
+
   // ── HEADER ────────────────────────────────────────────────────────────────
   const headerRow = new Table({
     width: { size: PAGE_W, type: WidthType.DXA },
-    columnWidths: [HEADER_LOGO, HEADER_TXT, HEADER_REF],
+    columnWidths: [HEADER_LOGO, HEADER_TXT, HEADER_REF, HEADER_QR],
     rows: [new TableRow({
       children: [
         new TableCell({
@@ -586,14 +669,40 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
             new Paragraph({
               children: [
                 run('Ref:  ', { bold: true, color: C_MUTED, size: 14 }),
-                run(`LV-${String(request.id).padStart(5, '0')}`, { bold: true, size: 14 }),
+                run(shortRef(request.id), { bold: true, size: 14 }),
               ],
               alignment: AlignmentType.RIGHT,
               spacing: { before: 40 },
             }),
           ],
           width: { size: HEADER_REF, type: WidthType.DXA },
-          margins: { top: 0, bottom: 0, left: 0, right: 0 },
+          margins: { top: 0, bottom: 0, left: 0, right: 100 },
+          borders: NO_BORDER,
+          verticalAlign: VerticalAlign.CENTER,
+        }),
+        // QR cell — top-right of header. Caption stays inside the cell
+        // so the QR + label read as a single unit.
+        new TableCell({
+          children: qrBytes
+            ? [
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  children: [new ImageRun({
+                    data: qrBytes,
+                    transformation: { width: 54, height: 54 },
+                    type: 'png',
+                  })],
+                  spacing: { before: 0, after: 30 },
+                }),
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  children: [run('SCAN TO VERIFY', { size: 9, bold: true, color: C_COPPER })],
+                  spacing: { before: 0, after: 0 },
+                }),
+              ]
+            : [new Paragraph({ children: [run('', { size: 10 })] })],
+          width: { size: HEADER_QR, type: WidthType.DXA },
+          margins: { top: 0, bottom: 0, left: 100, right: 0 },
           borders: NO_BORDER,
           verticalAlign: VerticalAlign.CENTER,
         }),
@@ -673,8 +782,9 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
   // If the portal already captured digital confirmation (substitute_ids on
   // the request), we tag the row with "✓ Confirmed online" to indicate the
   // wet signature is the second factor, not the first.
+  const subDecisions = request.substitute_decisions || {};
   const subRows = (substitutes && substitutes.length > 0)
-    ? substitutes.map((s, idx) => substituteSigRow(idx + 1, s.name, s.id, true))
+    ? substitutes.map((s, idx) => substituteSigRow(idx + 1, s.name, s.id, subDecisions[s.id]))
     : [
         new TableRow({
           children: [new TableCell({
@@ -708,50 +818,50 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
         children: [
           new TableCell({
             children: [new Paragraph({
-              children: [run('LEAVE POLICY · KSA LABOR LAW', { bold: true, size: 13, color: C_COPPER })],
+              children: [run('LEAVE POLICY · KSA LABOR LAW', { bold: true, size: 12, color: C_COPPER })],
             })],
             width: { size: HALF_W, type: WidthType.DXA },
-            margins: { top: 50, bottom: 40, left: 180, right: 100 },
+            margins: { top: 40, bottom: 30, left: 180, right: 100 },
             shading: shading(C_LABEL_BG),
             borders: FORM_BORDER,
           }),
           new TableCell({
             children: [new Paragraph({
-              children: [arRun('سياسة الإجازات · نظام العمل السعودي', { bold: true, size: 14, color: C_MUTED })],
+              children: [arRun('سياسة الإجازات · نظام العمل السعودي', { bold: true, size: 12, color: C_MUTED })],
               alignment: AlignmentType.RIGHT,
               bidirectional: true,
             })],
             width: { size: PAGE_W - HALF_W, type: WidthType.DXA },
-            margins: { top: 50, bottom: 40, left: 100, right: 180 },
+            margins: { top: 40, bottom: 30, left: 100, right: 180 },
             shading: shading(C_LABEL_BG),
             borders: FORM_BORDER,
           }),
         ],
       }),
-      // Bullet rows
+      // Bullet rows — body text 5.5pt (size: 11) per request, kept tight
       ...POLICY_BULLETS.map((b, i) => new TableRow({
         children: [
           new TableCell({
             children: [new Paragraph({
               children: [
-                run(`${String(i + 1).padStart(2, '0')}.   `, { bold: true, size: 14, color: C_COPPER }),
-                run(b.en, { size: 17 }),
+                run(`${String(i + 1).padStart(2, '0')}.   `, { bold: true, size: 11, color: C_COPPER }),
+                run(b.en, { size: 11 }),
               ],
             })],
             width: { size: HALF_W, type: WidthType.DXA },
-            margins: { top: 30, bottom: 30, left: 180, right: 100 },
+            margins: { top: 20, bottom: 20, left: 180, right: 100 },
             shading: shading(C_LABEL_BG),
             borders: FORM_BORDER,
             verticalAlign: VerticalAlign.CENTER,
           }),
           new TableCell({
             children: [new Paragraph({
-              children: [arRun(b.ar, { size: 16, color: C_MUTED })],
+              children: [arRun(b.ar, { size: 12, color: C_MUTED })],
               alignment: AlignmentType.RIGHT,
               bidirectional: true,
             })],
             width: { size: PAGE_W - HALF_W, type: WidthType.DXA },
-            margins: { top: 30, bottom: 30, left: 100, right: 180 },
+            margins: { top: 20, bottom: 20, left: 100, right: 180 },
             shading: shading(C_LABEL_BG),
             borders: FORM_BORDER,
             verticalAlign: VerticalAlign.CENTER,
@@ -784,7 +894,9 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
     rows: [
       new TableRow({
         cantSplit: true,
-        height: { value: 1100, rule: HeightRule.ATLEAST },
+        // 3.54 cm row height (2007 dxa) per spec — gives generous space
+        // for ink signatures + HQ stamp on the right.
+        height: { value: 2007, rule: HeightRule.ATLEAST },
         children: sigCols.map((c, i) =>
           sigCombinedCell(c.en, c.ar, c.name, c.footerLeft, c.footerRight, sigWidths[i])),
       }),
@@ -792,68 +904,23 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
   });
 
   // ── FOOTER ────────────────────────────────────────────────────────────────
+  // QR moved to the top header — footer is now just the generation
+  // stamp and verify URL on two lines.
   const generatedAt = new Date().toLocaleString('en-GB', {
     day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
-  const verifyUrl = `${VERIFY_BASE_URL}/verify-leave/${request.id}`;
-  const qrBytes = await generateQrPng(verifyUrl, 220);
 
-  const footerBlock = new Table({
-    width: { size: PAGE_W, type: WidthType.DXA },
-    columnWidths: [PAGE_W - 1100, 1100],
-    rows: [new TableRow({
-      children: [
-        new TableCell({
-          children: [
-            new Paragraph({
-              children: [
-                run(`Generated on ${generatedAt} GMT+3  ·  ${hrApprover?.name || HR_SIGNATURE.name}`,
-                    { size: 12, italics: true, color: C_COPPER }),
-              ],
-              alignment: AlignmentType.LEFT,
-              spacing: { before: 60, after: 20 },
-            }),
-            new Paragraph({
-              children: [
-                run('Verify online: ', { size: 11, color: C_MUTED }),
-                run(verifyUrl, { size: 11, color: C_BRAND }),
-              ],
-              alignment: AlignmentType.LEFT,
-              spacing: { before: 0, after: 0 },
-            }),
-          ],
-          width: { size: PAGE_W - 1100, type: WidthType.DXA },
-          borders: NO_BORDER,
-          margins: { top: 0, bottom: 0, left: 0, right: 100 },
-          verticalAlign: VerticalAlign.CENTER,
-        }),
-        new TableCell({
-          children: qrBytes
-            ? [
-                new Paragraph({
-                  alignment: AlignmentType.CENTER,
-                  children: [new ImageRun({
-                    data: qrBytes,
-                    transformation: { width: 52, height: 52 },
-                    type: 'png',
-                  })],
-                  spacing: { before: 0, after: 10 },
-                }),
-                new Paragraph({
-                  alignment: AlignmentType.CENTER,
-                  children: [run('SCAN TO VERIFY', { size: 9, bold: true, color: C_COPPER })],
-                  spacing: { before: 0, after: 0 },
-                }),
-              ]
-            : [new Paragraph({ children: [run('', { size: 10 })] })],
-          width: { size: 1100, type: WidthType.DXA },
-          borders: NO_BORDER,
-          margins: { top: 0, bottom: 0, left: 100, right: 0 },
-          verticalAlign: VerticalAlign.CENTER,
-        }),
-      ],
-    })],
+  const footerBlock = new Paragraph({
+    children: [
+      run(`Generated on ${generatedAt} GMT+3  ·  ${hrApprover?.name || HR_SIGNATURE.name}`,
+          { size: 12, italics: true, color: C_COPPER }),
+      run('     ·     ', { size: 11, color: C_MUTED }),
+      run('Verify online: ', { size: 11, color: C_MUTED }),
+      run(verifyUrl, { size: 11, color: C_BRAND }),
+    ],
+    alignment: AlignmentType.LEFT,
+    spacing: { before: 40, after: 0 },
   });
 
   // ── APPROVED STAMP ───────────────────────────────────────────────────────
@@ -887,7 +954,6 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
         },
       },
       headers: { default: approvedStamp },
-      footers: { default: new Footer({ children: [footerBlock] }) },
       children: [
         headerRow,
         headerRule,
@@ -907,6 +973,7 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
         policyTable,
         spacer(30),
         sigTable,
+        footerBlock,
       ],
     }],
   });
