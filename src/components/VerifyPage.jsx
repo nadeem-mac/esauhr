@@ -188,6 +188,20 @@ function LeaveRequestCard({ request }) {
       <Row label="Submitted">{fmtDateTime(request.requested_at)}</Row>
       {request.manager_decided_at && <Row label="Manager decided">{fmtDateTime(request.manager_decided_at)}</Row>}
       {request.hr_decided_at && <Row label="HR decided">{fmtDateTime(request.hr_decided_at)}</Row>}
+      {request.actual_return_date && (
+        <Row label="Returned">
+          <span style={{ color: '#0F4C2A', fontWeight: 600 }}>
+            ✓ {fmtDate(request.actual_return_date)}
+          </span>
+        </Row>
+      )}
+      {request.return_status && request.return_status !== 'pending' && request.return_status !== 'returned' && (
+        <Row label="Return status">
+          <span style={{ color: request.return_status === 'no_show' ? '#B83A2E' : '#8B6914', fontWeight: 600 }}>
+            {request.return_status.replace('_', ' ').toUpperCase()}
+          </span>
+        </Row>
+      )}
 
       <div className="mt-5 pt-4 text-xs opacity-70" style={{ borderTop: '1px dashed var(--border-soft, #E5E0D5)' }}>
         ✓ This leave was formally approved and recorded.

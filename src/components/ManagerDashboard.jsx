@@ -7,6 +7,7 @@ import {
 import { fmtDate, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 import { PERMISSION_TYPES } from '../lib/permissionLogic.js';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
+import PendingReturnsCard from './PendingReturnsCard.jsx';
 
 // ────────────────────────────────────────────────────────────────────────────
 // ManagerDashboard
@@ -229,6 +230,11 @@ export default function ManagerDashboard({ me, employees, onGoToReviews, onGoToR
           member picks them as a substitute. Card hides itself when
           there's nothing to act on. */}
       <PendingSubstitutionsCard me={me} empMap={empMap} />
+
+      {/* Pending return-from-leave confirmations — direct reports whose
+          approved leave end_date has passed without a returned_at on
+          file. Card hides itself when there's nothing to act on. */}
+      <PendingReturnsCard me={me} employees={employees} scope="manager" />
 
       {/* Greeting */}
       <div>

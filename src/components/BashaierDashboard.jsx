@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { fmtDate } from '../lib/leaveLogic.js';
 import { PERMISSION_QUOTA, summariseMonth } from '../lib/permissionLogic.js';
+import PendingReturnsCard from './PendingReturnsCard.jsx';
 
 // BASHAIER OVERSIGHT DASHBOARD
 // ─────────────────────────────
@@ -75,6 +76,11 @@ export default function BashaierDashboard({ me, employees, leaveTypes, requests 
 
   return (
     <div className="space-y-6">
+      {/* Pending return-from-leave confirmations — company-wide HR fallback
+          view. Manager has primary responsibility but if they haven't
+          confirmed, Bashaier can. Hides itself when there's nothing pending. */}
+      <PendingReturnsCard me={me} employees={employees} scope="hr" />
+
       {/* HERO */}
       <section>
         <div className="text-[10px] tracking-[0.3em] opacity-50 mb-2 flex items-center gap-2">
