@@ -98,15 +98,27 @@ export default function App() {
 
   if (!supabaseConfigured) return <ConfigMissing />;
 
-  // Public verify route — anyone with the printed letter (and the QR
-  // code on it) lands here. No auth needed; the page does a
-  // permission_requests select on the request id and shows the
-  // current state. Bypasses session/loading flow entirely.
+  // Public verify routes — anyone with the printed letter (and the QR
+  // code on it) lands here. No auth needed; the page does a sanitized
+  // RPC lookup on the request id and shows the current state. Bypasses
+  // session/loading flow entirely.
+  //
+  //   /verify/<integer>          permission_requests (integer id)
+  //   /verify-leave/<uuid>       leave_requests       (uuid id)
+  //
+  // Both render the same VerifyPage component, which branches on `mode`
+  // for the RPC name, ref label, and field set.
   const verifyMatch = typeof window !== 'undefined'
     ? window.location.pathname.match(/^\/verify\/(\d+)\/?$/)
     : null;
   if (verifyMatch) {
-    return <VerifyPage requestId={Number(verifyMatch[1])} />;
+    return <VerifyPage requestId={Number(verifyMatch[1])} mode="permission" />;
+  }
+  const verifyLeaveMatch = typeof window !== 'undefined'
+    ? window.location.pathname.match(/^\/verify-leave\/([0-9a-f-]{8,36})\/?$/i)
+    : null;
+  if (verifyLeaveMatch) {
+    return <VerifyPage requestId={verifyLeaveMatch[1]} mode="leave" />;
   }
 
   if (!ready) return <SplashLoader />;
