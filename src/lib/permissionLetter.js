@@ -346,21 +346,24 @@ function sigHeaderCell(en, ar, width) {
 function sigCombinedBodyCell(name, footerLeft, footerRight, width) {
   return new TableCell({
     children: [
-      // Top — printed name, centered
+      // Printed name — centered. Sits just above the timestamp/label
+      // line at the bottom of the cell. Wet signature goes in the
+      // empty space ABOVE the name.
       new Paragraph({
         alignment: AlignmentType.CENTER,
         children: [run(name || '', { size: 18, bold: true })],
-        spacing: { before: 60, after: 120 },
+        spacing: { before: 0, after: 80 },
       }),
-      // Bottom — timestamp left + label right, with a top border that
-      // visually replaces the previous footer band's separator line.
+      // Timestamp + label — also centered, with a thin top border
+      // separating it from the name.
       new Paragraph({
+        alignment: AlignmentType.CENTER,
         children: [
           run(footerLeft || ' ', { size: 12, italics: true, color: C_COPPER }),
           run('     ', { size: 12 }),
           run(footerRight, { size: 12, bold: true }),
         ],
-        spacing: { before: 0, after: 0 },
+        spacing: { before: 80, after: 0 },
         border: {
           top: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER, space: 6 },
         },
@@ -369,7 +372,7 @@ function sigCombinedBodyCell(name, footerLeft, footerRight, width) {
     width: { size: width, type: WidthType.DXA },
     margins: { top: 50, bottom: 50, left: 140, right: 140 },
     borders: FORM_BORDER,
-    verticalAlign: VerticalAlign.TOP,
+    verticalAlign: VerticalAlign.BOTTOM,
   });
 }
 
