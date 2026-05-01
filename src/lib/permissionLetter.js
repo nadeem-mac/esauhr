@@ -62,7 +62,7 @@ const DEPT_NAMES = {
   CSD: 'Customer Service',
   FIN: 'Finance',
   LOG: 'Logistics',
-  SUP: 'Support',
+  SUP: 'Supervisory',
   'RYD OFFICE': 'Riyadh Office',
 };
 const LOCATION_NAMES = { DMM: 'Dammam', JED: 'Jeddah', RYD: 'Riyadh' };
