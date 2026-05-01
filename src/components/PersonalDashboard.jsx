@@ -9,6 +9,7 @@ import { summariseMonth, PERMISSION_QUOTA } from '../lib/permissionLogic.js';
 import PermissionStatusCard from './PermissionStatusCard.jsx';
 import StaffShiftStatusCard from './StaffShiftStatusCard.jsx';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
+import LeaveSubstituteWaitCard from './LeaveSubstituteWaitCard.jsx';
 import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
 import { Download } from 'lucide-react';
 
@@ -236,6 +237,13 @@ export default function PersonalDashboard({
           (who land on different dashboard variants) also see this when
           they're picked as substitutes. */}
       <PendingSubstitutionsCard me={me} empMap={empMap} />
+
+      {/* MY REQUESTS WAITING FOR SUBSTITUTES — when I submit a leave
+          request that needs substitute coverage, this card shows the
+          progress (per-substitute accepted/declined/pending) so I can
+          see who I'm waiting on without having to ask them. Hides
+          itself once the trigger advances the stage to pending_manager. */}
+      <LeaveSubstituteWaitCard requests={requests} empMap={empMap} />
 
       {/* RECENT */}
       <section className="rounded-2xl border bg-white p-5" style={{ borderColor:'var(--border-soft)' }}>

@@ -58,6 +58,31 @@ export default function PendingSubstitutionsCard({ me, empMap }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Realtime — listen for any leave_requests row change and re-run load.
+  // This catches three cases that all matter to the substitute:
+  //   1. A new pending_substitutes row was inserted with this user in
+  //      substitute_ids (card needs to appear).
+  //   2. Another co-substitute already accepted/declined (the card
+  //      itself doesn't change visually but the load filter is
+  //      idempotent — keeps things in sync).
+  //   3. The trigger advanced the stage to pending_manager or
+  //      rejected_by_substitute — the card should disappear because
+  //      the row no longer matches stage='pending_substitutes'.
+  // Channel name is keyed on the user id so multiple tabs don't
+  // collide. Cleanup removes the channel on unmount/me change.
+  useEffect(() => {
+    if (!me?.id) return undefined;
+    const channel = supabase
+      .channel(`subs-${me.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'leave_requests' },
+        () => { load(); },
+      )
+      .subscribe();
+    return () => { try { supabase.removeChannel(channel); } catch {} };
+  }, [me?.id, load]);
+
   const respond = useCallback(async (request, decision) => {
     if (!me?.id) return;
     setBusyId(request.id);
