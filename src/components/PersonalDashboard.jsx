@@ -6,11 +6,8 @@ import {
 } from 'lucide-react';
 import { fmtDate, calculateBalance, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 import { summariseMonth, PERMISSION_QUOTA } from '../lib/permissionLogic.js';
-import PermissionStatusCard from './PermissionStatusCard.jsx';
-import StaffShiftStatusCard from './StaffShiftStatusCard.jsx';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
-import LeaveSubstituteWaitCard from './LeaveSubstituteWaitCard.jsx';
-import LeaveTimelineModal from './LeaveTimelineModal.jsx';
+import MyApplicationsCard from './MyApplicationsCard.jsx';
 import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
 import { Download } from 'lucide-react';
 
@@ -27,8 +24,6 @@ export default function PersonalDashboard({
   const [requests,    setRequests]    = useState([]);
   const [permissions, setPermissions] = useState([]);
   const [loading,     setLoading]     = useState(true);
-  // Selected leave row for the approval-progress modal. null = closed.
-  const [timelineRequest, setTimelineRequest] = useState(null);
 
   const load = useCallback(async () => {
     if (!me?.id) return;
@@ -219,99 +214,32 @@ export default function PersonalDashboard({
         </section>
       )}
 
-      {/* SHIFT STATUS — recent activity card. Renders only when the staff
-          member has accepted or declined any shift in the last 30 days, so
-          they can track the status of decisions they've already made (e.g.
-          accepted shift waiting for SUP final approval, or declined shift
-          waiting for manager follow-up). The card itself decides whether
-          to render based on its own data fetch — pass-through here is
-          deliberately minimal. */}
-      {/* Permission application history — sits ABOVE the shift status card
-          because permissions are the more frequent staff-side activity
-          (multiple applications per month vs. shifts which are mostly
-          weekly). Self-hides when the staff has no permission activity in
-          the last 30 days. */}
-      <PermissionStatusCard me={me} />
-
-      <StaffShiftStatusCard me={me} />
-
       {/* SUBSTITUTION REQUESTS — colleagues asking ME to cover for them.
-          Extracted to a shared component so admins, HR, and managers
-          (who land on different dashboard variants) also see this when
-          they're picked as substitutes. */}
+          Stays on its own (yellow card) because it's an action surface
+          for OTHERS' requests, not a status readout of my own. */}
       <PendingSubstitutionsCard me={me} empMap={empMap} />
 
-      {/* MY REQUESTS WAITING FOR SUBSTITUTES — when I submit a leave
-          request that needs substitute coverage, this card shows the
-          progress (per-substitute accepted/declined/pending) so I can
-          see who I'm waiting on without having to ask them. Hides
-          itself once the trigger advances the stage to pending_manager. */}
-      <LeaveSubstituteWaitCard requests={requests} empMap={empMap} />
-
-      {/* RECENT */}
-      <section className="rounded-2xl border bg-white p-5" style={{ borderColor:'var(--border-soft)' }}>
-        <div className="flex items-center justify-between mb-3">
-          <div className="text-[10px] tracking-[0.3em] opacity-60">RECENT LEAVE REQUESTS</div>
-          <button onClick={onOpenNewRequest}
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs"
-            style={{ background:'var(--ink)', color:'var(--paper)' }}>
-            <Plus className="w-3 h-3" /> Request leave
-          </button>
-        </div>
-        {recent.length === 0 ? (
-          <div className="text-sm opacity-60 py-3 text-center">No leave requests yet.</div>
-        ) : (
-          <ul className="divide-y" style={{ borderColor:'var(--border-soft)' }}>
-            {recent.map(r => {
-              const isApproved = r.status === 'approved' || r.stage === 'approved';
-              const canDownload = isApproved && empMap;
-              return (
-              <li key={r.id}
-                  className="flex items-center justify-between gap-3 py-2.5 px-2 -mx-2 rounded-lg cursor-pointer hover:bg-black/5 transition-colors"
-                  style={{ borderColor:'var(--border-soft)' }}
-                  onClick={() => setTimelineRequest(r)}
-                  title="See approval progress">
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium">{labelForType(r.leave_type_id, leaveTypes)}</div>
-                  <div className="text-xs opacity-60">
-                    {fmtDate(new Date(r.start_date))} — {fmtDate(new Date(r.end_date))} · {r.days} day{r.days !== 1 ? 's' : ''}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <StatusPill status={r.status} />
-                  {canDownload && (
-                    <button
-                      onClick={async (e) => {
-                        // Stop propagation so clicking 'Form' doesn't
-                        // also open the timeline modal — both want the
-                        // same row but the buttons should compose.
-                        e.stopPropagation();
-                        try {
-                          await downloadVacationFormForRequest(r, empMap);
-                        } catch (err) {
-                          alert('Could not generate the form: ' + (err?.message || err));
-                        }
-                      }}
-                      title="Download approved vacation form"
-                      className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg"
-                      style={{ background: 'rgba(45,95,63,0.08)', color: '#2D5F3F', border: '1px solid rgba(45,95,63,0.25)' }}>
-                      <Download className="w-3 h-3" /> Form
-                    </button>
-                  )}
-                </div>
-              </li>
-            );})}
-          </ul>
-        )}
-      </section>
-      {timelineRequest && (
-        <LeaveTimelineModal
-          request={timelineRequest}
-          empMap={empMap}
-          leaveTypes={leaveTypes}
-          onClose={() => setTimelineRequest(null)}
-        />
-      )}
+      {/* YOUR APPLICATIONS — unified card replacing four previous cards
+          (PermissionStatusCard 'Your applications', StaffShiftStatusCard
+          'Recent activity', LeaveSubstituteWaitCard, and the legacy
+          RECENT LEAVE REQUESTS list). One row per item, leave or
+          permission, with inline status pill and per-substitute progress
+          where relevant. Click any row to open the matching timeline
+          modal. */}
+      <div className="flex justify-end -mb-2">
+        <button onClick={onOpenNewRequest}
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs"
+          style={{ background:'var(--ink)', color:'var(--paper)' }}>
+          <Plus className="w-3 h-3" /> Request leave
+        </button>
+      </div>
+      <MyApplicationsCard
+        me={me}
+        requests={requests}
+        permissions={permissions}
+        empMap={empMap}
+        leaveTypes={leaveTypes}
+      />
     </div>
   );
 }
