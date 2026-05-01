@@ -3,7 +3,7 @@ import {
   LayoutDashboard, ClipboardList, Users, Calendar as CalIcon, Settings,
   Plus, LogOut, Activity, ShieldCheck, RefreshCw
 , Clock , BarChart3 } from 'lucide-react';
-import { supabase, directGet } from '../supabaseClient.js';
+import { supabase, directGet, directPatch } from '../supabaseClient.js';
 import Dashboard from './Dashboard.jsx';
 import Requests from './Requests.jsx';
 import ManagerShiftCard from './ManagerShiftCard.jsx';
@@ -183,6 +183,35 @@ export default function AppShell({ session, me, onRefreshMe }) {
       setBalances(Array.isArray(b) ? b : []);
       setHolidays(Array.isArray(h) ? h : []);
       setPermissions(Array.isArray(p) ? p : []);
+
+      // ── Auto-expire stale pending permissions ─────────────────────────
+      // Rows still in pending_manager / pending_hr whose permission_date
+      // is in the past can never be acted on — mark them 'expired' so
+      // the dashboards stop counting them and the queue stays clean.
+      // Sweeps quietly in the background; failures are non-blocking.
+      try {
+        const today = new Date().toISOString().slice(0, 10);
+        const stale = (Array.isArray(p) ? p : []).filter(row =>
+          (row.stage === 'pending_manager' || row.stage === 'pending_hr')
+          && row.permission_date && row.permission_date < today
+        );
+        if (stale.length) {
+          await Promise.allSettled(stale.map(row => directPatch(
+            'permission_requests', 'id', row.id,
+            { stage: 'expired', status: 'expired' },
+            { timeoutMs: 8000 },
+          )));
+          // Patch the in-memory list too so the UI reflects it
+          // immediately without waiting for the next reload.
+          setPermissions(prev => prev.map(row => stale.some(s => s.id === row.id)
+            ? { ...row, stage: 'expired', status: 'expired' }
+            : row,
+          ));
+          console.log(`[expire-sweep] marked ${stale.length} stale permission(s) as expired`);
+        }
+      } catch (err) {
+        console.warn('[expire-sweep] failed (non-blocking):', err);
+      }
     } catch (err) {
       setError(err.message || 'Failed to load data');
     } finally {

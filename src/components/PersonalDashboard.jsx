@@ -294,6 +294,12 @@ export default function PersonalDashboard({
           <Plus className="w-3 h-3" /> Request leave
         </button>
       </div>
+      <TodayBanner
+        me={me}
+        requests={requests}
+        permissions={permissions}
+        leaveTypes={leaveTypes}
+      />
       <MyApplicationsCard
         me={me}
         requests={requests}
@@ -301,6 +307,66 @@ export default function PersonalDashboard({
         empMap={empMap}
         leaveTypes={leaveTypes}
       />
+    </div>
+  );
+}
+
+/* === Today banner — day-of reminder for approved permission/leave === */
+// Surfaces a friendly reminder the morning of an approved permission or
+// the first day of an approved leave, so the staff member doesn't forget.
+// Auto-hides if there's nothing relevant for today.
+function TodayBanner({ me, requests, permissions, leaveTypes }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const todayPerms = (permissions || []).filter(p =>
+    p.employee_id === me?.id
+    && p.stage === 'approved'
+    && p.permission_date === today,
+  );
+  const todayLeave = (requests || []).filter(r =>
+    r.employee_id === me?.id
+    && r.stage === 'approved'
+    && r.start_date === today,
+  );
+  if (todayPerms.length === 0 && todayLeave.length === 0) return null;
+
+  const ltMap = Object.fromEntries((leaveTypes || []).map(t => [t.code, t]));
+
+  return (
+    <div className="esau-card p-4" style={{
+      background: 'linear-gradient(180deg, rgba(45,95,63,0.06) 0%, var(--paper) 100%)',
+      borderLeft: '4px solid var(--evergreen-500, #2D5F3F)',
+    }}>
+      <div className="flex items-baseline gap-2 mb-2">
+        <span className="text-[10px] tracking-[0.2em] font-semibold" style={{ color: 'var(--evergreen-700, #1F4530)' }}>TODAY</span>
+        <span className="text-xs opacity-60">·</span>
+        <span className="text-xs opacity-70">friendly reminder</span>
+      </div>
+      <div className="space-y-2 text-sm">
+        {todayPerms.map(p => (
+          <div key={`p-${p.id}`}>
+            <span className="font-semibold">
+              {p.type === 'late_arrival' ? 'Late Arrival' : 'Early Departure'}
+            </span>
+            <span className="opacity-70"> approved for </span>
+            {p.time_from && p.time_to
+              ? <span className="font-mono text-xs">{p.time_from}–{p.time_to}</span>
+              : <span className="opacity-60">today</span>}
+            {p.reason && <span className="opacity-60 text-xs"> · {p.reason}</span>}
+          </div>
+        ))}
+        {todayLeave.map(r => {
+          const lt = ltMap[r.leave_type];
+          return (
+            <div key={`l-${r.id}`}>
+              <span className="font-semibold">{lt?.name || r.leave_type}</span>
+              <span className="opacity-70"> starts today</span>
+              {r.end_date && r.end_date !== r.start_date && (
+                <span className="opacity-60 text-xs"> · through {r.end_date}</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
