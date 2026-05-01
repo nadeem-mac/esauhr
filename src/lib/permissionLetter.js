@@ -654,7 +654,7 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
       }),
       new TableRow({
         cantSplit: true,
-        height: { value: 700, rule: HeightRule.ATLEAST },
+        height: { value: 2007, rule: HeightRule.ATLEAST },
         children: sigCols.map((c, i) =>
           sigCombinedBodyCell(c.name, c.footerLeft, c.footerRight, sigWidths[i])),
       }),
