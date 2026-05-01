@@ -1,53 +1,57 @@
 // Permission letter — bilingual A4 form, Leave Desk brand styling.
 //
-// CRITICAL RENDERING RULES (learned from earlier dark-background bugs):
-//   • Every Table and TableCell uses WidthType.DXA — never PERCENTAGE.
-//     Mixing the two confuses Word's renderer and produces dark
-//     fallback fills.
-//   • columnWidths array is set on every Table and sums to the cell
-//     widths exactly.
-//   • Borders use SINGLE only — no DASHED/DOTTED on table cells, those
-//     occasionally render solid black in Word.
-//   • Cell margins always specified (top/bottom/left/right).
-//   • No nested tables in tight-width cells. Inline runs only.
+// Produces a PDF Blob using pdfmake (browser-side, no server). Same
+// design as the previous docx version: cream paper, copper accents,
+// Tahoma EVERGREEN LINE wordmark, brand colors, QR verify code,
+// ✓ APPROVED stamp top-right, 4-column signature grid, KSA leave
+// policy bullets, bilingual EN/AR throughout.
+//
+// Public exports (unchanged signatures so callers don't break):
+//   • generatePermissionLetterBlob(...)   → PDF Blob
+//   • resolveExecCcEmails(...)
+//   • buildPermissionEmailDraft(...)
+//   • downloadPermissionLetter(...)        → triggers .pdf download
 
-import {
-  Document, Packer, Paragraph, TextRun, ImageRun,
-  Table, TableRow, TableCell,
-  Header, Footer,
-  AlignmentType, WidthType, BorderStyle, HeightRule,
-  VerticalAlign, ShadingType,
-} from 'docx';
 import QRCode from 'qrcode';
+import pdfMake, { ensureFontsLoaded } from './pdfFontLoader.js';
 import { downloadBlob } from './vacationForm.js';
 
 // Verification URL base — staff scan the QR in the printed letter to
-// hit a public read-only page that confirms the request status from
-// the live database. Rendered as a small ImageRun beside the footer.
+// hit a public read-only page that confirms the request status.
 const VERIFY_BASE_URL = (typeof window !== 'undefined' && window.location?.origin)
   ? window.location.origin
   : 'https://esauhr.netlify.app';
 
-async function generateQrPng(text, sizePx = 220) {
+// QR generator — returns a data URL. pdfmake accepts data URLs in
+// `image` fields directly.
+async function generateQrDataUrl(text, sizePx = 220) {
   try {
-    const dataUrl = await QRCode.toDataURL(text, {
+    return await QRCode.toDataURL(text, {
       errorCorrectionLevel: 'M',
       margin: 1,
       width: sizePx,
       color: { dark: '#1F4530', light: '#FFFFFF' },
     });
-    // Strip data URL prefix and convert to ArrayBuffer for ImageRun.
-    const base64 = dataUrl.split(',')[1];
-    if (typeof atob !== 'undefined') {
-      const bin = atob(base64);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      return bytes.buffer;
-    }
-    // Node fallback
-    return Buffer.from(base64, 'base64');
   } catch (err) {
     console.warn('[permission letter] QR generation failed:', err);
+    return null;
+  }
+}
+
+// Logo loader — fetches /evergreen-logo.jpg and returns a data URL
+// suitable for pdfmake's `image` field.
+async function loadLogoDataUrl() {
+  try {
+    const res = await fetch('/evergreen-logo.jpg');
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch {
     return null;
   }
 }
@@ -68,9 +72,6 @@ const TYPE = {
 };
 
 const EXEC_CC = [
-  // Direct email — bypasses employees-table lookup. Used for execs
-  // whose names may not match the employees roster reliably (or who
-  // are not in the roster at all).
   { name: 'john ho', email: 'johnho@evergreen-shipping.com.sa' },
   { name: 'james' },
   { name: 'fahad hussain' },
@@ -124,35 +125,15 @@ function categoryFor(reason) {
 }
 
 // ─── brand palette ────────────────────────────────────────────────────────────
-const C_TEXT      = '1F1B16';
-const C_MUTED     = '5C4406';
-const C_COPPER    = '9D6B53';
-const C_BRAND     = '2D5F3F';
-const C_BORDER    = 'C9B894';
-const C_BANNER    = 'F4EEDF';
-const C_LABEL_BG  = 'FBF6E9';
-
-const FONT_BRAND = 'Tahoma';
-const FONT_BODY  = 'Calibri';
-const FONT_AR    = 'Arial';
-
-// ─── A4 page geometry ────────────────────────────────────────────────────────
-// A4: 11906 × 16838 DXA. With 540 DXA margins all sides, usable width =
-// 11906 - 1080 = 10826 DXA. Every table sums to this exact width.
-
-const PAGE_W      = 10826;
-
-const LABEL_W     = 2400;
-const VALUE_W     = PAGE_W - LABEL_W;       // 8426
-
-const HALF_W      = Math.floor(PAGE_W / 2); // 5413
-const SIG_W       = Math.floor(PAGE_W / 4); // 2706 ; 4 cells × 2706 = 10824 (close enough)
-// Re-balance: 4 sig cells should sum exactly to PAGE_W
-const SIG_W_LAST  = PAGE_W - (SIG_W * 3);   // absorbs the remainder
-
-const HEADER_LOGO = 1400;
-const HEADER_TXT  = PAGE_W - HEADER_LOGO - 2400;  // text takes most of the bar
-const HEADER_REF  = 2400;
+const C_TEXT      = '#1F1B16';
+const C_MUTED     = '#5C4406';
+const C_COPPER    = '#9D6B53';
+const C_BRAND     = '#2D5F3F';
+const C_BRAND_DK  = '#1F4530';
+const C_BORDER    = '#C9B894';
+const C_BANNER    = '#F4EEDF';
+const C_LABEL_BG  = '#FBF6E9';
+const C_PAPER     = '#FFFDF7';
 
 // ─── formatters ──────────────────────────────────────────────────────────────
 const fmtDateMed = (iso) => {
@@ -181,221 +162,232 @@ const fmtStampCompact = (iso) => {
   return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} · ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
 };
 
-// ─── docx primitives ─────────────────────────────────────────────────────────
-const run = (text, opts = {}) => new TextRun({
-  text: String(text ?? ''),
-  font: opts.font || FONT_BODY,
-  size: opts.size ?? 20,
-  color: opts.color ?? C_TEXT,
-  bold: !!opts.bold,
-  italics: !!opts.italics,
-});
+// ─── pdfmake building blocks ─────────────────────────────────────────────────
 
-const arRun = (text, opts = {}) => new TextRun({
-  text: String(text ?? ''),
-  font: { name: FONT_AR, cs: FONT_AR },
-  size: opts.size ?? 18,
-  color: opts.color ?? C_MUTED,
-  bold: !!opts.bold,
-  rightToLeft: true,
-});
-
-// Standard form border — every cell uses this. SINGLE style only,
-// 4 twip width, soft warm color.
-const FORM_BORDER = {
-  top:    { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-  bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-  left:   { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-  right:  { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-};
-
-const NO_BORDER = {
-  top:    { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-  bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-  left:   { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-  right:  { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-};
-
-// CRITICAL: ShadingType.CLEAR not SOLID — SOLID renders as black in Word.
-const shading = (fill) => ({ type: ShadingType.CLEAR, fill, color: 'auto' });
-
-const spacer = (after = 100) => new Paragraph({ children: [run('')], spacing: { after } });
-
-// ─── section banner ──────────────────────────────────────────────────────────
-function sectionBanner(en, ar) {
-  return new Table({
-    width: { size: PAGE_W, type: WidthType.DXA },
-    columnWidths: [HALF_W, PAGE_W - HALF_W],
-    rows: [new TableRow({
-      children: [
-        new TableCell({
-          children: [new Paragraph({
-            children: [run(en, { bold: true, size: 18 })],
-          })],
-          width: { size: HALF_W, type: WidthType.DXA },
-          margins: { top: 80, bottom: 80, left: 200, right: 100 },
-          shading: shading(C_BANNER),
-          borders: {
-            top:    { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-            bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-            left:   { style: BorderStyle.SINGLE, size: 24, color: C_BRAND },
-            right:  { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-          },
-        }),
-        new TableCell({
-          children: [new Paragraph({
-            children: [arRun(ar, { bold: true, size: 18, color: C_COPPER })],
-            alignment: AlignmentType.RIGHT,
-            bidirectional: true,
-          })],
-          width: { size: PAGE_W - HALF_W, type: WidthType.DXA },
-          margins: { top: 80, bottom: 80, left: 100, right: 200 },
-          shading: shading(C_BANNER),
-          borders: {
-            top:    { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-            bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-            left:   { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-            right:  { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-          },
-        }),
-      ],
-    })],
-  });
-}
-
-// ─── form table cells ────────────────────────────────────────────────────────
+// A label cell (left column of form rows) — bilingual EN above AR.
 function labelCell(en, ar) {
-  return new TableCell({
-    children: [
-      new Paragraph({
-        children: [run(en, { bold: true, size: 17 })],
-        spacing: { after: 20 },
-      }),
-      new Paragraph({
-        children: [arRun(ar, { size: 14, color: C_COPPER })],
-      }),
+  return {
+    stack: [
+      { text: en, bold: true, fontSize: 9, color: C_TEXT },
+      { text: ar, font: 'Amiri', fontSize: 9, color: C_COPPER, alignment: 'left', margin: [0, 2, 0, 0] },
     ],
-    width: { size: LABEL_W, type: WidthType.DXA },
-    margins: { top: 50, bottom: 50, left: 180, right: 100 },
-    shading: shading(C_LABEL_BG),
-    borders: FORM_BORDER,
-    verticalAlign: VerticalAlign.CENTER,
-  });
+    fillColor: C_LABEL_BG,
+    margin: [8, 6, 6, 6],
+  };
 }
 
+// A value cell (right column).
 function valueCell(text, opts = {}) {
-  return new TableCell({
-    children: [new Paragraph({
-      children: [run(text, { size: 21, bold: !!opts.bold, color: opts.color || C_TEXT })],
-    })],
-    width: { size: VALUE_W, type: WidthType.DXA },
-    margins: { top: 50, bottom: 50, left: 200, right: 160 },
-    borders: FORM_BORDER,
-    verticalAlign: VerticalAlign.CENTER,
-  });
+  return {
+    text: String(text ?? '—'),
+    fontSize: 11,
+    bold: !!opts.bold,
+    color: opts.color || C_TEXT,
+    margin: [10, 6, 8, 6],
+  };
 }
 
-function valueCellRuns(children) {
-  return new TableCell({
-    children: [new Paragraph({ children })],
-    width: { size: VALUE_W, type: WidthType.DXA },
-    margins: { top: 50, bottom: 50, left: 200, right: 160 },
-    borders: FORM_BORDER,
-    verticalAlign: VerticalAlign.CENTER,
-  });
+// A value cell with mixed runs (for things like APPROVED + timestamp).
+function valueCellRich(content) {
+  return { stack: content, margin: [10, 6, 8, 6] };
 }
 
-function formRow(en, ar, value, opts = {}) {
-  return new TableRow({
-    children: [
-      labelCell(en, ar),
-      typeof value === 'string'
-        ? valueCell(value, opts)
-        : valueCellRuns(value),
-    ],
-  });
-}
-
-const cbRun = (checked, label) => [
-  run(checked ? '☑ ' : '☐ ', { size: 22, bold: true }),
-  run(label + '     ', { size: 19 }),
-];
-
-// ─── signature cells ─────────────────────────────────────────────────────────
-function sigHeaderCell(en, ar, width) {
-  return new TableCell({
-    children: [new Paragraph({
-      children: [
-        run(en + '   ', { bold: true, size: 13 }),
-        arRun(ar, { size: 13, color: C_COPPER }),
-      ],
-    })],
-    width: { size: width, type: WidthType.DXA },
-    margins: { top: 60, bottom: 60, left: 140, right: 140 },
-    shading: shading(C_BANNER),
-    borders: FORM_BORDER,
-    verticalAlign: VerticalAlign.CENTER,
-  });
-}
-
-// Combined body + footer cell — printed name on top, timestamp + label
-// at the bottom of the SAME cell. Replaces the old separate body and
-// footer cells. The advantage: Word can't split a cell mid-content
-// across pages, so the sig table becomes a 2-row block (header band +
-// combined body) that always renders as a unit.
-function sigCombinedBodyCell(name, footerLeft, footerRight, width) {
-  return new TableCell({
-    children: [
-      // Printed name — centered. Sits just above the timestamp/label
-      // line at the bottom of the cell. Wet signature goes in the
-      // empty space ABOVE the name.
-      new Paragraph({
-        alignment: AlignmentType.CENTER,
-        children: [run(name || '', { size: 18, bold: true })],
-        spacing: { before: 0, after: 80 },
-      }),
-      // Timestamp + label — also centered, with a thin top border
-      // separating it from the name.
-      new Paragraph({
-        alignment: AlignmentType.CENTER,
-        children: [
-          run(footerLeft || ' ', { size: 12, italics: true, color: C_COPPER }),
-          run('     ', { size: 12 }),
-          run(footerRight, { size: 12, bold: true }),
-        ],
-        spacing: { before: 80, after: 0 },
-        border: {
-          top: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER, space: 6 },
+// Section banner — copper text on cream, with green left rail.
+function sectionBanner(en, ar) {
+  return {
+    table: {
+      widths: ['*', '*'],
+      body: [[
+        {
+          text: en,
+          bold: true, fontSize: 9, color: C_TEXT,
+          fillColor: C_BANNER,
+          margin: [10, 6, 6, 6],
+          // left border comes from the outer layout function
         },
-      }),
-    ],
-    width: { size: width, type: WidthType.DXA },
-    margins: { top: 50, bottom: 50, left: 140, right: 140 },
-    borders: FORM_BORDER,
-    verticalAlign: VerticalAlign.BOTTOM,
-  });
+        {
+          text: ar,
+          font: 'Amiri', bold: true, fontSize: 10, color: C_COPPER,
+          fillColor: C_BANNER,
+          alignment: 'right',
+          margin: [6, 6, 10, 6],
+        },
+      ]],
+    },
+    layout: {
+      hLineWidth: () => 0.5,
+      vLineWidth: (i) => i === 0 ? 4 : 0,  // 4pt green left rail
+      hLineColor: () => C_BORDER,
+      vLineColor: (i) => i === 0 ? C_BRAND : C_BORDER,
+      paddingLeft:   () => 0,
+      paddingRight:  () => 0,
+      paddingTop:    () => 0,
+      paddingBottom: () => 0,
+    },
+    margin: [0, 0, 0, 0],
+  };
 }
 
-// ─── logo loader ─────────────────────────────────────────────────────────────
-async function loadLogoBytes() {
-  try {
-    const res = await fetch('/evergreen-logo.jpg');
-    if (!res.ok) return null;
-    return await res.arrayBuffer();
-  } catch {
-    return null;
-  }
+// Form table (label + value rows). Pass an array of [labelCell, valueCell] pairs.
+function formTable(rows) {
+  return {
+    table: {
+      widths: [110, '*'],
+      body: rows,
+    },
+    layout: {
+      hLineWidth: () => 0.5,
+      vLineWidth: () => 0.5,
+      hLineColor: () => C_BORDER,
+      vLineColor: () => C_BORDER,
+      paddingLeft:   () => 0,
+      paddingRight:  () => 0,
+      paddingTop:    () => 0,
+      paddingBottom: () => 0,
+    },
+  };
+}
+
+// Policy table — bilingual bullets in cream-bg cells.
+function policyTable(headerEn, headerAr, bullets) {
+  return {
+    table: {
+      widths: ['*', '*'],
+      body: [
+        [
+          { text: headerEn, bold: true, fontSize: 7.5, color: C_MUTED, fillColor: C_LABEL_BG, margin: [10, 5, 5, 5] },
+          { text: headerAr, font: 'Amiri', bold: true, fontSize: 8, color: C_MUTED, fillColor: C_LABEL_BG, alignment: 'right', margin: [5, 5, 10, 5] },
+        ],
+        ...bullets.map((b, i) => [
+          {
+            text: [
+              { text: `${String(i + 1).padStart(2, '0')}.   `, bold: true, fontSize: 8, color: C_COPPER },
+              { text: b.en, fontSize: 8.5, color: C_TEXT },
+            ],
+            fillColor: C_LABEL_BG,
+            margin: [10, 5, 5, 5],
+          },
+          {
+            text: b.ar,
+            font: 'Amiri', fontSize: 9.5, color: C_MUTED,
+            fillColor: C_LABEL_BG,
+            alignment: 'right',
+            margin: [5, 5, 10, 5],
+          },
+        ]),
+      ],
+    },
+    layout: {
+      hLineWidth: () => 0.5,
+      vLineWidth: () => 0.5,
+      hLineColor: () => C_BORDER,
+      vLineColor: () => C_BORDER,
+      paddingLeft:   () => 0,
+      paddingRight:  () => 0,
+      paddingTop:    () => 0,
+      paddingBottom: () => 0,
+    },
+  };
+}
+
+// Signature column cell — combines header + name + footer in a single
+// cell so pdfmake doesn't split across rows.
+function sigCell({ en, ar, name, footerLeft, footerRight }) {
+  return {
+    stack: [
+      // Header band
+      {
+        table: {
+          widths: ['*'],
+          body: [[
+            {
+              text: [
+                { text: en + '   ', bold: true, fontSize: 7.5, color: C_TEXT },
+                { text: ar, font: 'Amiri', fontSize: 8, color: C_COPPER },
+              ],
+              fillColor: C_BANNER,
+              margin: [6, 5, 6, 5],
+            },
+          ]],
+        },
+        layout: {
+          hLineWidth: () => 0.5,
+          vLineWidth: () => 0.5,
+          hLineColor: () => C_BORDER,
+          vLineColor: () => C_BORDER,
+          paddingLeft:   () => 0, paddingRight: () => 0,
+          paddingTop:    () => 0, paddingBottom: () => 0,
+        },
+      },
+      // Body — name centered with breathing room, then a thin top
+      // border separating the footer line.
+      {
+        table: {
+          widths: ['*'],
+          body: [[
+            {
+              stack: [
+                { text: ' ', fontSize: 9 },
+                { text: ' ', fontSize: 9 },
+                { text: name || ' ', alignment: 'center', bold: true, fontSize: 10, color: C_TEXT, margin: [0, 0, 0, 4] },
+                {
+                  canvas: [{ type: 'line', x1: 0, y1: 0, x2: 100, y2: 0, lineWidth: 0.5, lineColor: C_BORDER }],
+                  alignment: 'center',
+                  margin: [0, 6, 0, 4],
+                },
+                {
+                  alignment: 'center',
+                  text: [
+                    { text: footerLeft || ' ', italics: true, fontSize: 7, color: C_COPPER },
+                    { text: '     ', fontSize: 7 },
+                    { text: footerRight, bold: true, fontSize: 7, color: C_TEXT },
+                  ],
+                },
+              ],
+              fillColor: C_PAPER,
+              margin: [4, 4, 4, 4],
+            },
+          ]],
+        },
+        layout: {
+          hLineWidth: () => 0.5,
+          vLineWidth: () => 0.5,
+          hLineColor: () => C_BORDER,
+          vLineColor: () => C_BORDER,
+          paddingLeft:   () => 0, paddingRight: () => 0,
+          paddingTop:    () => 0, paddingBottom: () => 0,
+        },
+      },
+    ],
+    unbreakable: true,
+  };
+}
+
+// 4-column signature grid.
+function signatureGrid(cols) {
+  return {
+    table: {
+      widths: ['*', '*', '*', '*'],
+      body: [cols.map(c => sigCell(c))],
+    },
+    layout: 'noBorders',
+  };
 }
 
 // ─── main generator ──────────────────────────────────────────────────────────
 export async function generatePermissionLetterBlob({ employee, manager, hrApprover, request }) {
+  await ensureFontsLoaded();
+
   const typeKey  = TYPE[request.type] ? request.type : 'late_arrival';
   const typeBoth = TYPE[typeKey];
 
   const dept = DEPT_NAMES[employee?.department] || employee?.department || '—';
   const loc  = LOCATION_NAMES[employee?.location] || employee?.location || '—';
   const today = new Date().toISOString();
-  const dur  = (() => {
+  const isApproved = request.stage === 'approved';
+
+  // Duration in minutes — derived from time_from/time_to if present, else hours
+  const dur = (() => {
     if (request.time_from && request.time_to) {
       const toMin = (s) => {
         const m = /^(\d{1,2}):(\d{2})$/.exec(s || '');
@@ -406,406 +398,202 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
     }
     return Math.round(Number(request.hours || 0) * 60);
   })();
+  const durLabel = `${dur} min${dur === 1 ? '' : 's'}`;
+
   const cat = categoryFor(request.reason);
+  const catLabel = REASON_CATEGORIES.find(c => c.id === cat)?.en || 'Other';
+
   const submittedSoon = request.requested_at && request.permission_date
     ? (new Date(request.permission_date).getTime() - new Date(request.requested_at).getTime()) >= 24 * 3600 * 1000
     : null;
   const noticePlanned = submittedSoon === true;
-  const noticeUrgent  = submittedSoon === false;
+  const noticeLabel = noticePlanned ? 'Planned (≥24h notice)' : (submittedSoon === false ? 'Urgent (<24h notice)' : '—');
 
-  const logoBytes = await loadLogoBytes();
+  const verifyUrl = `${VERIFY_BASE_URL}/verify/${request.id}`;
+  const [logoDataUrl, qrDataUrl] = await Promise.all([
+    loadLogoDataUrl(),
+    generateQrDataUrl(verifyUrl, 220),
+  ]);
 
-  // ── HEADER ────────────────────────────────────────────────────────────────
-  const headerRow = new Table({
-    width: { size: PAGE_W, type: WidthType.DXA },
-    columnWidths: [HEADER_LOGO, HEADER_TXT, HEADER_REF],
-    rows: [new TableRow({
-      children: [
-        new TableCell({
-          children: [
-            logoBytes
-              ? new Paragraph({
-                  children: [new ImageRun({
-                    data: logoBytes,
-                    transformation: { width: 56, height: 56 },
-                    type: 'jpg',
-                  })],
-                })
-              : new Paragraph({
-                  children: [run('EVR', { bold: true, size: 28, color: C_BRAND, font: FONT_BRAND })],
-                }),
-          ],
-          width: { size: HEADER_LOGO, type: WidthType.DXA },
-          margins: { top: 0, bottom: 0, left: 0, right: 100 },
-          borders: NO_BORDER,
-          verticalAlign: VerticalAlign.CENTER,
-        }),
-        new TableCell({
-          children: [
-            new Paragraph({
-              children: [run('EVERGREEN LINE', { bold: true, size: 32, color: C_BRAND, font: FONT_BRAND })],
-            }),
-            new Paragraph({
-              children: [run(
-                'Evergreen Shipping Agency Saudi Co. (L.L.C)  ·  ESAU SADMN SUP / HR Dept',
-                { size: 14, color: C_MUTED },
-              )],
-              spacing: { before: 50 },
-            }),
-          ],
-          width: { size: HEADER_TXT, type: WidthType.DXA },
-          margins: { top: 0, bottom: 0, left: 0, right: 0 },
-          borders: NO_BORDER,
-          verticalAlign: VerticalAlign.CENTER,
-        }),
-        new TableCell({
-          children: [
-            new Paragraph({
-              children: [
-                run('Date: ', { bold: true, color: C_MUTED, size: 14 }),
-                run(fmtDateMed(today), { size: 14 }),
-              ],
-              alignment: AlignmentType.RIGHT,
-            }),
-            new Paragraph({
-              children: [
-                run('Ref:  ', { bold: true, color: C_MUTED, size: 14 }),
-                run(`PR-${String(request.id).padStart(5, '0')}`, { bold: true, size: 14 }),
-              ],
-              alignment: AlignmentType.RIGHT,
-              spacing: { before: 40 },
-            }),
-          ],
-          width: { size: HEADER_REF, type: WidthType.DXA },
-          margins: { top: 0, bottom: 0, left: 0, right: 0 },
-          borders: NO_BORDER,
-          verticalAlign: VerticalAlign.CENTER,
-        }),
-      ],
-    })],
-  });
-
-  const headerRule = new Paragraph({
-    children: [run('')],
-    border: { bottom: { style: BorderStyle.SINGLE, size: 14, color: C_BRAND, space: 1 } },
-    spacing: { before: 80, after: 0 },
-  });
-  const headerRuleCopper = new Paragraph({
-    children: [run('')],
-    border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: C_COPPER, space: 1 } },
-    spacing: { before: 30, after: 80 },
-  });
-
-  // ── TITLE ─────────────────────────────────────────────────────────────────
-  const titleStrip = new Paragraph({
-    children: [
-      run('Permission Request — ', { bold: true, size: 24, color: C_TEXT }),
-      run(typeBoth.en, { bold: true, italics: true, size: 24, color: C_COPPER }),
-    ],
-    spacing: { before: 80, after: 30 },
-  });
-  const titleStripAr = new Paragraph({
-    children: [arRun(`طلب استئذان · ${typeBoth.ar}`, { bold: true, size: 16, color: C_BRAND })],
-    bidirectional: true,
-    alignment: AlignmentType.LEFT,
-    spacing: { before: 0, after: 120 },
-    border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER, space: 4 } },
-  });
-
-  // ── EMPLOYEE INFORMATION ──────────────────────────────────────────────────
-  const empTable = new Table({
-    width: { size: PAGE_W, type: WidthType.DXA },
-    columnWidths: [LABEL_W, VALUE_W],
-    rows: [
-      formRow('Employee name',  'اسم الموظف',   employee?.name || '—', { bold: true }),
-      formRow('PSN ID',         'الرقم الوظيفي', employee?.id || '—'),
-      formRow('Department',     'القسم',         `${dept}  ·  ${loc}`),
-      formRow('Submitted',      'تاريخ التقديم', fmtDateTime(request.requested_at || today)),
-    ],
-  });
-
-  // ── PERMISSION DETAILS ────────────────────────────────────────────────────
-  const typeChecks = [
-    ...cbRun(typeKey === 'late_arrival', 'Late Arrival'),
-    ...cbRun(typeKey === 'early_leave',  'Early Departure'),
-  ];
-  const noticeChecks = [
-    ...cbRun(noticePlanned, 'Planned (≥24h)'),
-    ...cbRun(noticeUrgent,  'Urgent (<24h)'),
-  ];
-  const reasonChecks = REASON_CATEGORIES.map(c =>
-    cbRun(cat === c.id, c.en)
-  ).flat();
-
-  const timeRuns = [
-    run(`${request.time_from || '—'}  →  ${request.time_to || '—'}`, { bold: true, size: 21, color: C_BRAND }),
-    run('   ·   ', { size: 21, color: C_MUTED }),
-    run(`Duration: ${dur} mins`, { size: 21 }),
-  ];
-
-  const summaryHours = Number(request.hours || 0);
-  const usageQuantity = `${summaryHours} hour${summaryHours === 1 ? '' : 's'} of 3 allowed`;
-  const usageStatus   = request.exceeds_quota ? 'Quota exceeded' : 'within monthly quota';
-  const usageRuns = [
-    run(usageQuantity, { size: 21, bold: true, color: 'B83A2E' }),
-    run('   ·   ', { size: 21, color: C_MUTED }),
-    run(usageStatus, { size: 21 }),
-  ];
-
-  const detailsTable = new Table({
-    width: { size: PAGE_W, type: WidthType.DXA },
-    columnWidths: [LABEL_W, VALUE_W],
-    rows: [
-      formRow('Type',             'النوع',           typeChecks),
-      formRow('Permission date',  'تاريخ الاستئذان', fmtDateLong(request.permission_date), { bold: true, color: C_BRAND }),
-      formRow('Time window',      'الوقت',           timeRuns),
-      formRow('Monthly usage',    'الاستخدام الشهري', usageRuns),
-      formRow('Notice',           'الإشعار',         noticeChecks),
-      formRow('Reason category',  'فئة السبب',       reasonChecks),
-      formRow('Reason details',   'السبب',           request.reason || '—'),
-    ],
-  });
-
-  // ── POLICY ────────────────────────────────────────────────────────────────
-  const policyTable = new Table({
-    width: { size: PAGE_W, type: WidthType.DXA },
-    columnWidths: [HALF_W, PAGE_W - HALF_W],
-    rows: [
-      // Policy header row
-      new TableRow({
-        children: [
-          new TableCell({
-            children: [new Paragraph({
-              children: [run('COMPANY POLICY · MONTHLY QUOTA', { bold: true, size: 13, color: C_COPPER })],
-            })],
-            width: { size: HALF_W, type: WidthType.DXA },
-            margins: { top: 80, bottom: 60, left: 180, right: 100 },
-            shading: shading(C_LABEL_BG),
-            borders: FORM_BORDER,
-          }),
-          new TableCell({
-            children: [new Paragraph({
-              children: [arRun('سياسة الشركة · الحصة الشهرية', { bold: true, size: 14, color: C_MUTED })],
-              alignment: AlignmentType.RIGHT,
-              bidirectional: true,
-            })],
-            width: { size: PAGE_W - HALF_W, type: WidthType.DXA },
-            margins: { top: 80, bottom: 60, left: 100, right: 180 },
-            shading: shading(C_LABEL_BG),
-            borders: FORM_BORDER,
-          }),
-        ],
-      }),
-      // Policy bullet rows
-      ...POLICY_BULLETS.map((b, i) => new TableRow({
-        children: [
-          new TableCell({
-            children: [new Paragraph({
-              children: [
-                run(`${String(i + 1).padStart(2, '0')}.   `, { bold: true, size: 14, color: C_COPPER }),
-                run(b.en, { size: 17 }),
-              ],
-            })],
-            width: { size: HALF_W, type: WidthType.DXA },
-            margins: { top: 50, bottom: 50, left: 180, right: 100 },
-            shading: shading(C_LABEL_BG),
-            borders: FORM_BORDER,
-            verticalAlign: VerticalAlign.CENTER,
-          }),
-          new TableCell({
-            children: [new Paragraph({
-              children: [arRun(b.ar, { size: 16, color: C_MUTED })],
-              alignment: AlignmentType.RIGHT,
-              bidirectional: true,
-            })],
-            width: { size: PAGE_W - HALF_W, type: WidthType.DXA },
-            margins: { top: 50, bottom: 50, left: 100, right: 180 },
-            shading: shading(C_LABEL_BG),
-            borders: FORM_BORDER,
-            verticalAlign: VerticalAlign.CENTER,
-          }),
-        ],
-      })),
-    ],
-  });
-
-  // ── SIGNATURES ────────────────────────────────────────────────────────────
-  const sigCols = [
-    { en: 'EMPLOYEE',  ar: 'الموظف',          name: employee?.name || '',
-      footerLeft:  request.requested_at ? `Submitted ${fmtStampCompact(request.requested_at)}` : '',
-      footerRight: 'Signature' },
-    { en: 'DEPT MGR',  ar: 'مدير القسم',       name: manager?.name || '',
-      footerLeft:  request.manager_decided_at ? `Approved ${fmtStampCompact(request.manager_decided_at)}` : '',
-      footerRight: 'HQ Stamp' },
-    { en: 'ESAU SUP',  ar: 'الموارد البشرية',   name: hrApprover?.name || HR_SIGNATURE.name,
-      footerLeft:  request.hr_decided_at ? `Approved ${fmtStampCompact(request.hr_decided_at)}` : '',
-      footerRight: 'Signature' },
-    { en: 'ESAU MGT',  ar: 'الإدارة',          name: '',
-      footerLeft:  '', footerRight: 'HQ Stamp' },
-  ];
-
-  // 4 cell widths summing to PAGE_W exactly.
-  const sigWidths = [SIG_W, SIG_W, SIG_W, SIG_W_LAST];
-
-  const sigTable = new Table({
-    width: { size: PAGE_W, type: WidthType.DXA },
-    columnWidths: sigWidths,
-    rows: [
-      new TableRow({
-        cantSplit: true,
-        children: sigCols.map((c, i) => sigHeaderCell(c.en, c.ar, sigWidths[i])),
-      }),
-      new TableRow({
-        cantSplit: true,
-        height: { value: 2007, rule: HeightRule.ATLEAST },
-        children: sigCols.map((c, i) =>
-          sigCombinedBodyCell(c.name, c.footerLeft, c.footerRight, sigWidths[i])),
-      }),
-    ],
-  });
-
-  // ── FOOTER ────────────────────────────────────────────────────────────────
-  // Two-column footer:
-  //   Left  — generated-on stamp + approver name (italic copper)
-  //   Right — QR code + 'Verify online' caption pointing to the public
-  //           verification page for this request
-  // The QR encodes the verify URL: <origin>/verify/<request_id>. Anyone
-  // with the printed letter can scan it to confirm the request is real
-  // and current.
   const generatedAt = new Date().toLocaleString('en-GB', {
     day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
-  const verifyUrl = `${VERIFY_BASE_URL}/verify/${request.id}`;
-  const qrBytes = await generateQrPng(verifyUrl, 220);
 
-  const footerBlock = new Table({
-    width: { size: PAGE_W, type: WidthType.DXA },
-    columnWidths: [PAGE_W - 1100, 1100],
-    rows: [new TableRow({
-      children: [
-        // Left — generation stamp + verify URL on one line each
-        new TableCell({
-          children: [
-            new Paragraph({
-              children: [
-                run(`Generated on ${generatedAt} GMT+3  ·  ${hrApprover?.name || HR_SIGNATURE.name}`,
-                    { size: 12, italics: true, color: C_COPPER }),
-              ],
-              alignment: AlignmentType.LEFT,
-              spacing: { before: 60, after: 20 },
-            }),
-            new Paragraph({
-              children: [
-                run('Verify online: ', { size: 11, color: C_MUTED }),
-                run(verifyUrl, { size: 11, color: C_BRAND }),
-              ],
-              alignment: AlignmentType.LEFT,
-              spacing: { before: 0, after: 0 },
-            }),
-          ],
-          width: { size: PAGE_W - 1100, type: WidthType.DXA },
-          borders: NO_BORDER,
-          margins: { top: 0, bottom: 0, left: 0, right: 100 },
-          verticalAlign: VerticalAlign.CENTER,
-        }),
-        // Right — QR + caption (compact)
-        new TableCell({
-          children: qrBytes
-            ? [
-                new Paragraph({
-                  alignment: AlignmentType.CENTER,
-                  children: [new ImageRun({
-                    data: qrBytes,
-                    transformation: { width: 52, height: 52 },
-                    type: 'png',
-                  })],
-                  spacing: { before: 0, after: 10 },
-                }),
-                new Paragraph({
-                  alignment: AlignmentType.CENTER,
-                  children: [run('SCAN TO VERIFY', { size: 9, bold: true, color: C_COPPER })],
-                  spacing: { before: 0, after: 0 },
-                }),
-              ]
-            : [new Paragraph({ children: [run('', { size: 10 })] })],
-          width: { size: 1100, type: WidthType.DXA },
-          borders: NO_BORDER,
-          margins: { top: 0, bottom: 0, left: 100, right: 0 },
-          verticalAlign: VerticalAlign.CENTER,
-        }),
-      ],
-    })],
-  });
+  // ── Build content array ──
+  const content = [];
 
-  // ── DOCUMENT ──────────────────────────────────────────────────────────────
-  // ── APPROVED STAMP ───────────────────────────────────────────────────────
-  // Small "APPROVED" stamp pinned to top-right corner via section header.
-  // Sized to fit within the existing top margin so it does not displace
-  // body content. Border + brand colour make it read as an approval
-  // mark rather than a giant watermark across the page.
-  const approvedStamp = new Header({
-    children: [
-      new Paragraph({
-        alignment: AlignmentType.RIGHT,
-        children: [
-          new TextRun({
-            text: '✓ APPROVED',
-            font: FONT_BRAND,
-            size: 24,           // 12pt
-            bold: true,
-            color: '2D5F3F',    // brand green
-          }),
+  // HEADER ROW: logo + EVERGREEN LINE wordmark + Date/Ref
+  content.push({
+    columns: [
+      logoDataUrl
+        ? { image: logoDataUrl, width: 42, margin: [0, 0, 0, 0] }
+        : { text: 'EVR', bold: true, fontSize: 16, color: C_BRAND, width: 42 },
+      {
+        stack: [
+          { text: 'EVERGREEN LINE', bold: true, fontSize: 19, color: C_BRAND },
+          { text: 'Evergreen Shipping Agency Saudi Co. (L.L.C)  ·  ESAU SADMN SUP / HR Dept', fontSize: 7.5, color: C_MUTED, margin: [0, 2, 0, 0] },
         ],
-        spacing: { before: 0, after: 0 },
-      }),
-    ],
-  });
-
-  const doc = new Document({
-    styles: { default: { document: { run: { font: FONT_BODY } } } },
-    sections: [{
-      properties: {
-        page: {
-          size:    { width: 11906, height: 16838 },
-          margin:  { top: 540, right: 540, bottom: 540, left: 540 },
-        },
+        margin: [4, 4, 0, 0],
       },
-      headers: { default: approvedStamp },
-      footers: { default: new Footer({ children: [footerBlock] }) },
-      children: [
-        headerRow,
-        headerRule,
-        headerRuleCopper,
-        titleStrip,
-        titleStripAr,
-        spacer(40),
-        sectionBanner('EMPLOYEE INFORMATION', 'معلومات الموظف'),
-        empTable,
-        spacer(60),
-        sectionBanner('PERMISSION DETAILS', 'تفاصيل الاستئذان'),
-        detailsTable,
-        spacer(60),
-        policyTable,
-        spacer(40),
-        sigTable,
-      ],
-    }],
+      {
+        width: 130,
+        stack: [
+          { text: [{ text: 'Date: ', bold: true, color: C_MUTED }, { text: fmtDateMed(today) }], alignment: 'right', fontSize: 8 },
+          { text: [{ text: 'Ref:  ', bold: true, color: C_MUTED }, { text: `PR-${String(request.id).padStart(5, '0')}`, bold: true }], alignment: 'right', fontSize: 8, margin: [0, 2, 0, 0] },
+        ],
+        margin: [0, 4, 0, 0],
+      },
+    ],
+    columnGap: 8,
   });
 
-  return await Packer.toBlob(doc);
+  // Green double rule
+  content.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1.4, lineColor: C_BRAND }], margin: [0, 6, 0, 0] });
+  content.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.4, lineColor: C_COPPER }], margin: [0, 2, 0, 6] });
+
+  // TITLE
+  content.push({
+    text: [
+      { text: 'Permission Request — ', bold: true, fontSize: 13, color: C_TEXT },
+      { text: typeBoth.en, bold: true, italics: true, fontSize: 13, color: C_COPPER },
+    ],
+    margin: [0, 4, 0, 2],
+  });
+  content.push({
+    text: `طلب استئذان · ${typeBoth.ar}`,
+    font: 'Amiri',
+    bold: true,
+    fontSize: 9,
+    color: C_BRAND,
+    margin: [0, 0, 0, 8],
+  });
+
+  // EMPLOYEE INFORMATION banner + table
+  content.push(sectionBanner('EMPLOYEE INFORMATION', 'معلومات الموظف'));
+  content.push(formTable([
+    [labelCell('Employee name',  'اسم الموظف'),     valueCell(employee?.name, { bold: true })],
+    [labelCell('PSN ID',          'الرقم الوظيفي'),  valueCell(employee?.id)],
+    [labelCell('Department',      'القسم'),         valueCell(`${dept}  ·  ${loc}`)],
+    [labelCell('Designation',     'المسمى الوظيفي'), valueCell(employee?.designation || 'Department Member')],
+  ]));
+
+  content.push({ text: ' ', fontSize: 4 });
+
+  // PERMISSION DETAILS banner + table
+  content.push(sectionBanner('PERMISSION DETAILS', 'تفاصيل الاستئذان'));
+  const timeLine = (request.time_from && request.time_to)
+    ? `${request.time_from} → ${request.time_to}  ·  ${durLabel}`
+    : durLabel;
+  content.push(formTable([
+    [labelCell('Type',     'النوع'),         valueCell(typeBoth.en, { bold: true, color: C_BRAND })],
+    [labelCell('Date',     'التاريخ'),       valueCell(fmtDateLong(request.permission_date), { bold: true, color: C_BRAND })],
+    [labelCell('Time',     'الوقت'),         valueCell(timeLine, { bold: true })],
+    [labelCell('Category', 'الفئة'),         valueCell(catLabel)],
+    [labelCell('Reason',   'السبب'),         valueCell(request.reason || '—')],
+    [labelCell('Notice',   'الإشعار'),       valueCell(noticeLabel)],
+    [labelCell('Submitted','تاريخ التقديم',), valueCell(fmtStampCompact(request.requested_at) || '—')],
+  ]));
+
+  content.push({ text: ' ', fontSize: 4 });
+
+  // POLICY
+  content.push(policyTable(
+    'COMPANY POLICY · 3 PERMISSIONS / MONTH',
+    'سياسة الشركة · 3 استئذانات / شهر',
+    POLICY_BULLETS,
+  ));
+
+  content.push({ text: ' ', fontSize: 6 });
+
+  // SIGNATURE GRID
+  content.push(signatureGrid([
+    {
+      en: 'EMPLOYEE',  ar: 'الموظف',
+      name: employee?.name || '—',
+      footerLeft:  request.requested_at ? `Submitted ${fmtStampCompact(request.requested_at)}` : '',
+      footerRight: 'Signature',
+    },
+    {
+      en: 'DEPT MGR', ar: 'مدير القسم',
+      name: manager?.name || '—',
+      footerLeft:  request.manager_decided_at ? `Approved ${fmtStampCompact(request.manager_decided_at)}` : '',
+      footerRight: 'Signature',
+    },
+    {
+      en: 'ESAU SUP',  ar: 'الموارد البشرية',
+      name: hrApprover?.name || HR_SIGNATURE.name,
+      footerLeft:  request.hr_decided_at ? `Approved ${fmtStampCompact(request.hr_decided_at)}` : '',
+      footerRight: 'Signature',
+    },
+    {
+      en: 'EXEC CC',  ar: 'الإدارة التنفيذية',
+      name: 'JOHN HO',
+      footerLeft:  'Country Head / CEO',
+      footerRight: 'HQ Stamp',
+    },
+  ]));
+
+  // ── Build document definition ──
+  const docDef = {
+    pageSize: 'A4',
+    pageMargins: [40, 40, 40, 80], // bottom space for footer
+    info: {
+      title: `Permission Letter ${employee?.name || ''} ${request.permission_date}`,
+      author: 'ESAU HR · Leave Desk',
+    },
+    defaultStyle: { font: 'Roboto', fontSize: 10, color: C_TEXT },
+    background: () => ({
+      canvas: [{ type: 'rect', x: 0, y: 0, w: 595.28, h: 841.89, color: C_PAPER }],
+    }),
+
+    // Header — APPROVED stamp top-right when approved
+    header: () => isApproved
+      ? { text: '✓ APPROVED', bold: true, fontSize: 12, color: C_BRAND, alignment: 'right', margin: [0, 18, 40, 0] }
+      : null,
+
+    // Footer — generated stamp + verify URL on left, QR + label on right
+    footer: () => ({
+      columns: [
+        {
+          stack: [
+            { text: `Generated on ${generatedAt} GMT+3  ·  ${hrApprover?.name || HR_SIGNATURE.name}`, italics: true, fontSize: 7, color: C_COPPER },
+            { text: [
+                { text: 'Verify online: ', fontSize: 6.5, color: C_MUTED },
+                { text: verifyUrl, fontSize: 6.5, color: C_BRAND },
+              ], margin: [0, 2, 0, 0] },
+          ],
+          margin: [40, 8, 0, 0],
+        },
+        {
+          width: 70,
+          stack: qrDataUrl ? [
+            { image: qrDataUrl, width: 36, alignment: 'center' },
+            { text: 'SCAN TO VERIFY', alignment: 'center', bold: true, fontSize: 5.5, color: C_COPPER, margin: [0, 2, 0, 0] },
+          ] : [{ text: '' }],
+          margin: [0, 4, 30, 0],
+        },
+      ],
+    }),
+
+    content,
+  };
+
+  // Generate PDF blob
+  return await new Promise((resolve, reject) => {
+    try {
+      pdfMake.createPdf(docDef).getBlob((blob) => resolve(blob));
+    } catch (err) {
+      reject(err);
+    }
+  });
 }
 
 // ─── email draft ─────────────────────────────────────────────────────────────
 export function resolveExecCcEmails(employees = []) {
   const emails = new Set();
   for (const entry of EXEC_CC) {
-    // Direct email always added — bypasses any roster lookup.
     if (entry.email) emails.add(entry.email);
-
-    // Roster fuzzy match as a supplement (covers cases where the
-    // person is in the employees table with a different email format,
-    // or where additional matches are valid).
     const matches = (employees || []).filter(e => {
       if (!e?.email) return false;
       const nameOK = (e.name || '').toLowerCase().includes(entry.name);
@@ -887,8 +675,9 @@ function buildMailto({ to, cc, subject, body }) {
   return `mailto:${encodeURIComponent(to)}?${params.toString().replace(/\+/g, '%20')}`;
 }
 
+// ─── download ────────────────────────────────────────────────────────────────
 export async function downloadPermissionLetter({ employee, manager, hrApprover, request }) {
   const blob = await generatePermissionLetterBlob({ employee, manager, hrApprover, request });
-  const fname = `Permission_${(employee?.name || 'staff').replace(/\s+/g, '_')}_${request.permission_date}.docx`;
+  const fname = `Permission_${(employee?.name || 'staff').replace(/\s+/g, '_')}_${request.permission_date}.pdf`;
   downloadBlob(blob, fname);
 }
