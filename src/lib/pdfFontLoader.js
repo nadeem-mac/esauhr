@@ -1,29 +1,22 @@
 // pdfmake browser font setup — synchronous, no network.
 //
-// We import Roboto from pdfmake's built-in vfs_fonts and Amiri from
-// pre-encoded base64 modules in ./fonts/. Everything is wired up at
-// module load time, so by the time any caller runs createPdf(),
-// pdfMake.vfs and pdfMake.fonts are guaranteed populated.
-//
-// Why pre-encoded instead of fetch:
-//   • No 404 risk if Netlify caching or a service worker misbehaves.
-//   • No async race between font fetch and createPdf().
-//   • The TTFs sit inside the main JS bundle — gzip squeezes the
-//     base64 well, and they're only loaded the first time HR opens
-//     a page that imports a letter generator.
+// Wires Roboto (from pdfmake's bundled vfs_fonts) and Amiri (from
+// pre-encoded base64 modules in ./fonts/) into pdfmake at module
+// load time, so any caller that runs createPdf() after this module
+// is imported is guaranteed to have working fonts.
 
 import pdfMake from 'pdfmake/build/pdfmake';
 import pdfFonts from 'pdfmake/build/vfs_fonts';
 import { AMIRI_REGULAR_BASE64 } from './fonts/amiriRegular.js';
 import { AMIRI_BOLD_BASE64 }    from './fonts/amiriBold.js';
 
-// --- VFS normalization across pdfmake versions ---
+// --- VFS shape normalization ---
 //
-// pdfmake 0.2.20's vfs_fonts.js ends with `module.exports = vfs`, so the
-// default ES-module import gives us the VFS *object itself* — a flat
+// pdfmake 0.2.20's vfs_fonts.js ends with `module.exports = vfs`, so
+// the default ESM import gives us the VFS object directly — a flat
 // map { "Roboto-Regular.ttf": "<base64>", ... }. Older builds wrapped
-// it as { pdfMake: { vfs } } or { vfs }. We accept every shape so a
-// future pdfmake bump won't silently break things.
+// it as { pdfMake: { vfs } } or { vfs }. Accept every shape so a
+// future pdfmake bump won't break us silently.
 function resolveRobotoVfs(mod) {
   if (!mod) return null;
   if (mod.pdfMake?.vfs) return mod.pdfMake.vfs;
@@ -35,18 +28,37 @@ function resolveRobotoVfs(mod) {
   return null;
 }
 
-const robotoVfs = resolveRobotoVfs(pdfFonts);
+const robotoVfs = resolveRobotoVfs(pdfFonts) || {};
 
-// Always materialize a real, writable VFS object.
-if (!pdfMake.vfs || typeof pdfMake.vfs !== 'object') {
-  pdfMake.vfs = {};
-}
-if (robotoVfs && typeof robotoVfs === 'object') {
-  Object.assign(pdfMake.vfs, robotoVfs);
-}
-pdfMake.vfs['Amiri-Regular.ttf'] = AMIRI_REGULAR_BASE64;
-pdfMake.vfs['Amiri-Bold.ttf']    = AMIRI_BOLD_BASE64;
+// --- The crucial bit: use addVirtualFileSystem, NOT pdfMake.vfs ---
+//
+// In pdfmake 0.2.20 there's an internal VirtualFileSystem object with
+// its own `dataSystem` map. createPdf() reads from THAT, not from
+// pdfMake.vfs. Setting pdfMake.vfs = { ... } looks correct but pdfmake
+// never consults it — getBlob then hangs/rejects with
+// "File 'Amiri-Regular.ttf' not found in virtual file system".
+//
+// The actual API is pdfMake.addVirtualFileSystem(combinedVfs), which
+// stores the map in the internal globalVfs and passes it to bindFS()
+// when createPdf runs. The auto-init at the bottom of vfs_fonts.js
+// would do this for us — but only if window.pdfMake is defined when
+// the module loads, which doesn't happen in an ESM build because
+// `import pdfMake` binds locally instead of going through window.
+const combinedVfs = {
+  ...robotoVfs,
+  'Amiri-Regular.ttf': AMIRI_REGULAR_BASE64,
+  'Amiri-Bold.ttf':    AMIRI_BOLD_BASE64,
+};
 
+if (typeof pdfMake.addVirtualFileSystem === 'function') {
+  pdfMake.addVirtualFileSystem(combinedVfs);
+} else {
+  // Pre-0.2 fallback — set pdfMake.vfs and hope for the best.
+  pdfMake.vfs = combinedVfs;
+}
+
+// pdfMake.fonts is read by createPdf() directly (not via the VFS),
+// so plain assignment is correct here.
 pdfMake.fonts = {
   Roboto: {
     normal:      'Roboto-Regular.ttf',
@@ -62,31 +74,24 @@ pdfMake.fonts = {
 
 // Sanity self-check at load time — surfaced once via console so any
 // future regression shows up in dev tools instead of a silent hang.
-if (!pdfMake.vfs['Roboto-Regular.ttf']) {
+if (!combinedVfs['Roboto-Regular.ttf']) {
   // eslint-disable-next-line no-console
-  console.error('[pdfFontLoader] Roboto VFS missing — pdfmake will hang on createPdf().');
+  console.error('[pdfFontLoader] Roboto VFS missing — pdfmake will fail.');
 }
-if (!pdfMake.vfs['Amiri-Regular.ttf']) {
+if (!combinedVfs['Amiri-Regular.ttf']) {
   // eslint-disable-next-line no-console
-  console.error('[pdfFontLoader] Amiri VFS missing — Arabic text will fail to render.');
+  console.error('[pdfFontLoader] Amiri VFS missing — Arabic text will fail.');
 }
 
 // Kept as a no-op for backwards compatibility with the old async API.
-// Existing callers do `await ensureFontsLoaded()` before createPdf();
-// the await now resolves immediately because everything is already
-// wired synchronously above.
 export async function ensureFontsLoaded() {
   return pdfMake;
 }
 
 // Wrap pdfmake's callback-style getBlob in a Promise with a timeout.
-//
-// pdfmake 0.2.x has a long-standing failure mode where, if anything
-// goes sideways during PDF rendering (font reference mismatch, bad
-// image data URL, malformed docDef), the getBlob callback is silently
-// never invoked. The download button then sits on "Generating…"
-// forever. A 30-second timeout converts that hang into a thrown
-// error the calling modal can show to the user.
+// pdfmake 0.2.x can silently never invoke the callback if anything
+// goes sideways during PDF rendering. A 30s timeout converts that
+// hang into a thrown error the calling modal can show to the user.
 export function createPdfBlob(docDef, { timeoutMs = 30000 } = {}) {
   return new Promise((resolve, reject) => {
     let settled = false;
