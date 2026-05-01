@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { supabase, directGet } from '../supabaseClient.js';
 import {
   Calendar, Clock, Plus, AlertTriangle, Sun, Sunrise, Sunset,
@@ -16,14 +16,36 @@ export default function PersonalDashboard({
   me,
   leaveTypes,
   empMap,
+  // Optional — when AppShell passes these in, we use them directly so
+  // the global refresh button and realtime sub on AppShell propagate
+  // straight into MyApplicationsCard. When NOT passed (older callers),
+  // we fall back to the local fetch below.
+  requests:    requestsProp,
+  permissions: permissionsProp,
   pendingShifts,        // employee_shifts rows with status='pending' for me
   onOpenShiftAck,       // callback that opens the ShiftAcknowledgmentModal
   onOpenNewRequest,
 }) {
   const [adjustments, setAdjustments] = useState({});
-  const [requests,    setRequests]    = useState([]);
-  const [permissions, setPermissions] = useState([]);
+  // Local fetch state used only when the parent didn't pass the data in.
+  // When AppShell DOES pass requests/permissions, these slots stay [].
+  const [localRequests,    setLocalRequests]    = useState([]);
+  const [localPermissions, setLocalPermissions] = useState([]);
   const [loading,     setLoading]     = useState(true);
+
+  // The arrays we actually render with — props win when present, scoped
+  // to me.id because AppShell hands us the whole table. Server-side
+  // filtering happens in directGet for the local-fetch fallback path,
+  // but we filter again here defensively in case AppShell passes an
+  // unscoped global list.
+  const requests = useMemo(() => {
+    const src = Array.isArray(requestsProp) ? requestsProp : localRequests;
+    return src.filter(r => r.employee_id === me?.id);
+  }, [requestsProp, localRequests, me?.id]);
+  const permissions = useMemo(() => {
+    const src = Array.isArray(permissionsProp) ? permissionsProp : localPermissions;
+    return src.filter(p => p.employee_id === me?.id);
+  }, [permissionsProp, localPermissions, me?.id]);
 
   const load = useCallback(async () => {
     if (!me?.id) return;
@@ -33,18 +55,26 @@ export default function PersonalDashboard({
       const month = new Date().toISOString().slice(0, 7);
       // directGet (raw fetch + timeout) avoids supabase-js wedge after sign-in.
       const safe = (p) => p.catch((err) => { console.warn('PD load failed:', err); return null; });
+      // Skip the leaves/permissions fetch when the parent passed them
+      // in — AppShell is the source of truth for those, and re-fetching
+      // here would just waste round-trips. We always need balances
+      // because AppShell doesn't load those.
+      const skipLeaves = Array.isArray(requestsProp);
+      const skipPerms  = Array.isArray(permissionsProp);
       const [bal, reqs, perms] = await Promise.all([
         safe(directGet('leave_balances',     `select=*&employee_id=eq.${me.id}&year=eq.${year}&leave_type_id=eq.annual&limit=1`, { timeoutMs: 10000 })),
-        safe(directGet('leave_requests',     `select=*&employee_id=eq.${me.id}&order=start_date.desc&limit=20`,                    { timeoutMs: 10000 })),
-        safe(directGet('permission_requests',`select=*&employee_id=eq.${me.id}&permission_date=gte.${month}-01&order=permission_date.desc`, { timeoutMs: 10000 })),
+        skipLeaves ? Promise.resolve(null) :
+          safe(directGet('leave_requests',     `select=*&employee_id=eq.${me.id}&order=start_date.desc&limit=20`, { timeoutMs: 10000 })),
+        skipPerms ? Promise.resolve(null) :
+          safe(directGet('permission_requests',`select=*&employee_id=eq.${me.id}&permission_date=gte.${month}-01&order=permission_date.desc`, { timeoutMs: 10000 })),
       ]);
       setAdjustments(Array.isArray(bal) && bal.length > 0 ? bal[0] : {});
-      setRequests(Array.isArray(reqs) ? reqs : []);
-      setPermissions(Array.isArray(perms) ? perms : []);
+      if (!skipLeaves) setLocalRequests(Array.isArray(reqs) ? reqs : []);
+      if (!skipPerms)  setLocalPermissions(Array.isArray(perms) ? perms : []);
     } catch (err) {
       console.warn('PersonalDashboard load failed:', err);
     } finally { setLoading(false); }
-  }, [me?.id]);
+  }, [me?.id, requestsProp, permissionsProp]);
 
   useEffect(() => { load(); }, [load]);
 

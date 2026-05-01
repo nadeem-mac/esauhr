@@ -570,6 +570,13 @@ export default function AppShell({ session, me, onRefreshMe }) {
               me={me}
               leaveTypes={leaveTypes}
               empMap={empMap}
+              // Pass AppShell's authoritative requests + permissions so
+              // the refresh button + realtime subscription on AppShell
+              // propagate to MyApplicationsCard. Without this, the card
+              // reads PersonalDashboard's local fetch state which only
+              // updates on mount.
+              requests={requests}
+              permissions={permissions}
               pendingShifts={pendingShifts}
               onOpenShiftAck={() => setShiftAckOpen(true)}
               onOpenNewRequest={() => setShowNewRequest(true)}
