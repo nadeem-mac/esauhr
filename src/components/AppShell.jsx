@@ -24,6 +24,7 @@ import ManagerDashboard  from './ManagerDashboard.jsx';
 import ReviewerPanel from './ReviewerPanel.jsx';
 import EvergreenLogo from './EvergreenLogo.jsx';
 import AttendanceView from './AttendanceView.jsx';
+import RefreshOverlay from './RefreshOverlay.jsx';
 import { logAction } from '../lib/audit.js';
 import { fmtDate } from '../lib/leaveLogic.js';
 
@@ -399,6 +400,14 @@ export default function AppShell({ session, me, onRefreshMe }) {
 
   return (
     <div className="min-h-screen">
+      {/* Refresh overlay — fades in over the whole UI while the global
+          refresh button is in flight. Shows the Evergreen ship animation
+          + 'Refreshing your dashboard…' caption so the user has clear
+          feedback that data is being pulled (and that they're NOT being
+          signed out). Driven entirely by AppShell's `refreshing` state
+          so the overlay's lifecycle exactly matches the data fetch. */}
+      <RefreshOverlay open={refreshing} />
+
       {/* Header */}
       <header className="border-b" style={{ borderColor: 'var(--border-soft)', background: 'var(--paper)' }}>
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
