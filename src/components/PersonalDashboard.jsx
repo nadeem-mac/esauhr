@@ -10,6 +10,7 @@ import PermissionStatusCard from './PermissionStatusCard.jsx';
 import StaffShiftStatusCard from './StaffShiftStatusCard.jsx';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
 import LeaveSubstituteWaitCard from './LeaveSubstituteWaitCard.jsx';
+import LeaveTimelineModal from './LeaveTimelineModal.jsx';
 import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
 import { Download } from 'lucide-react';
 
@@ -26,6 +27,8 @@ export default function PersonalDashboard({
   const [requests,    setRequests]    = useState([]);
   const [permissions, setPermissions] = useState([]);
   const [loading,     setLoading]     = useState(true);
+  // Selected leave row for the approval-progress modal. null = closed.
+  const [timelineRequest, setTimelineRequest] = useState(null);
 
   const load = useCallback(async () => {
     if (!me?.id) return;
@@ -263,8 +266,11 @@ export default function PersonalDashboard({
               const isApproved = r.status === 'approved' || r.stage === 'approved';
               const canDownload = isApproved && empMap;
               return (
-              <li key={r.id} className="flex items-center justify-between gap-3 py-2.5"
-                  style={{ borderColor:'var(--border-soft)' }}>
+              <li key={r.id}
+                  className="flex items-center justify-between gap-3 py-2.5 px-2 -mx-2 rounded-lg cursor-pointer hover:bg-black/5 transition-colors"
+                  style={{ borderColor:'var(--border-soft)' }}
+                  onClick={() => setTimelineRequest(r)}
+                  title="See approval progress">
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium">{labelForType(r.leave_type_id, leaveTypes)}</div>
                   <div className="text-xs opacity-60">
@@ -275,7 +281,11 @@ export default function PersonalDashboard({
                   <StatusPill status={r.status} />
                   {canDownload && (
                     <button
-                      onClick={async () => {
+                      onClick={async (e) => {
+                        // Stop propagation so clicking 'Form' doesn't
+                        // also open the timeline modal — both want the
+                        // same row but the buttons should compose.
+                        e.stopPropagation();
                         try {
                           await downloadVacationFormForRequest(r, empMap);
                         } catch (err) {
@@ -294,6 +304,14 @@ export default function PersonalDashboard({
           </ul>
         )}
       </section>
+      {timelineRequest && (
+        <LeaveTimelineModal
+          request={timelineRequest}
+          empMap={empMap}
+          leaveTypes={leaveTypes}
+          onClose={() => setTimelineRequest(null)}
+        />
+      )}
     </div>
   );
 }

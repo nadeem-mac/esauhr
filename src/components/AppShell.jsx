@@ -560,8 +560,23 @@ export default function AppShell({ session, me, onRefreshMe }) {
         })()}
         {tab === 'requests' && (
           <Requests
-            requests={requests} leaveTypes={leaveTypes}
+            // Strict isolation per role:
+            //   • admin (Nadeem) — sees the full company table; needed
+            //     for cross-team auditing, payroll exports, the
+            //     'reassign manager' surface that exists in AdminPanel
+            //   • everyone else (regular staff, managers, HR) — sees
+            //     ONLY their own requests in this tab
+            //
+            // Reviewers don't lose visibility into team activity — that
+            // moves to the dedicated Reviews tab where it belongs (with
+            // approve/reject actions, pending-stage filters, and the
+            // letter/email surface). Mixing 'my own' and 'my team' in
+            // one list was confusing and leaked staff requests across
+            // peers.
+            requests={isAdmin ? requests : requests.filter(r => r.employee_id === me.id)}
+            leaveTypes={leaveTypes}
             typeMap={typeMap} empMap={empMap}
+            me={me}
             onDecide={decideRequest} onDelete={deleteRequest}
             onNewRequest={() => setShowNewRequest(true)}
           />

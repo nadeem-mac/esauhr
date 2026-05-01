@@ -3,11 +3,15 @@ import { Search, Download, Plus, Check, X, ClipboardList } from 'lucide-react';
 import { fmtDateShort, todayISO } from '../lib/leaveLogic.js';
 import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
 import { Card, Avatar, Pill, Empty } from './Dashboard.jsx';
+import LeaveTimelineModal from './LeaveTimelineModal.jsx';
 
-export default function Requests({ requests, leaveTypes, typeMap, empMap, onDecide, onDelete, onNewRequest }) {
+export default function Requests({ requests, leaveTypes, typeMap, empMap, me, onDecide, onDelete, onNewRequest }) {
   const [filter, setFilter] = useState('pending');
   const [search, setSearch] = useState('');
   const [busyId, setBusyId] = useState(null);
+  // Selected row for the read-only approval-progress modal. Click any
+  // request row to open it. null = closed.
+  const [timelineRequest, setTimelineRequest] = useState(null);
 
   const filtered = useMemo(() => {
     return requests
@@ -120,8 +124,10 @@ export default function Requests({ requests, leaveTypes, typeMap, empMap, onDeci
             if (!emp) return null;
             const isBusy = busyId === r.id;
             return (
-              <div key={r.id} className="rounded-xl border p-4 flex flex-wrap items-center gap-4"
-                   style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}>
+              <div key={r.id} className="rounded-xl border p-4 flex flex-wrap items-center gap-4 cursor-pointer hover:shadow-sm transition-shadow"
+                   style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}
+                   onClick={() => setTimelineRequest(r)}
+                   title="Click to see approval progress">
                 <Avatar id={emp.id} name={emp.name} size="lg"/>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -147,7 +153,7 @@ export default function Requests({ requests, leaveTypes, typeMap, empMap, onDeci
                     <strong>Note:</strong> {r.decision_note}
                   </div>
                 )}
-                <div className="flex gap-2 w-full sm:w-auto">
+                <div className="flex gap-2 w-full sm:w-auto" onClick={(e) => e.stopPropagation()}>
                   {r.status === 'pending' ? (
                     // Per the access-control overhaul: every approval must go through
                     // the multi-stage flow in the Reviews tab (manager step → HR step
@@ -186,6 +192,14 @@ export default function Requests({ requests, leaveTypes, typeMap, empMap, onDeci
             );
           })}
         </div>
+      )}
+      {timelineRequest && (
+        <LeaveTimelineModal
+          request={timelineRequest}
+          empMap={empMap}
+          leaveTypes={leaveTypes}
+          onClose={() => setTimelineRequest(null)}
+        />
       )}
     </div>
   );
