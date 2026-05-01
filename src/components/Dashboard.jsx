@@ -1,7 +1,8 @@
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
-import { Check, ArrowRight, Palmtree, Calendar, KeyRound, Mail, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
+import { Check, ArrowRight, Palmtree, Calendar, KeyRound, Mail, AlertCircle, AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 import { supabase } from '../supabaseClient.js';
 import { todayISO, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
+import { summariseMonth } from '../lib/permissionLogic.js';
 import BashaierTasksCard from './BashaierTasksCard.jsx';
 import PendingShiftApprovalsCard from './PendingShiftApprovalsCard.jsx';
 import ManagerShiftCard from './ManagerShiftCard.jsx';
@@ -294,6 +295,10 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
         </p>
       </div>
       )}
+
+      {/* Weekly digest — HR/admin only, summary of trailing 7 days
+          with an Email digest button to forward to leadership. */}
+      <WeeklyDigestCard me={me} requests={requests} permissions={permissions} />
 
       {/* Stat cards — Professional Badge style (matches headcount badges below).
            Each card has a colored gradient side rail, a count pill in the top-right,
@@ -987,5 +992,158 @@ function PinRequestsCard({ me, employees, onCountChange }) {
         </ul>
       )}
     </Card>
+  );
+}
+
+// =============================================================================
+// WEEKLY DIGEST CARD — HR-only summary of the trailing 7 days
+// =============================================================================
+function WeeklyDigestCard({ me, requests = [], permissions = [] }) {
+  // HR-only — no-op render for non-HR users.
+  if (!me?.is_admin && !me?.is_hr_reviewer) return null;
+
+  const stats = useMemo(() => {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 7);
+    const cutoffMs = cutoff.getTime();
+    const inWindow = (iso) => iso ? new Date(iso).getTime() >= cutoffMs : false;
+
+    const permsThisWeek = (permissions || []).filter(p =>
+      inWindow(p.hr_decided_at) && (p.stage === 'approved' || p.stage === 'rejected_by_hr'),
+    );
+    const leavesThisWeek = (requests || []).filter(r =>
+      inWindow(r.hr_decided_at) && (r.stage === 'approved' || r.stage === 'rejected_by_hr'),
+    );
+
+    const permApproved  = permsThisWeek.filter(p => p.stage === 'approved').length;
+    const permRejected  = permsThisWeek.filter(p => p.stage === 'rejected_by_hr').length;
+    const leaveApproved = leavesThisWeek.filter(r => r.stage === 'approved').length;
+    const leaveRejected = leavesThisWeek.filter(r => r.stage === 'rejected_by_hr').length;
+
+    const now = new Date();
+    const currentYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const monthPerms = (permissions || []).filter(p =>
+      p.permission_date?.startsWith(currentYM)
+      && (p.stage === 'approved' || p.stage === 'pending_manager' || p.stage === 'pending_hr'),
+    );
+    const byEmp = {};
+    for (const p of monthPerms) {
+      if (!byEmp[p.employee_id]) byEmp[p.employee_id] = [];
+      byEmp[p.employee_id].push(p);
+    }
+    const quotaSummaries = Object.values(byEmp).map(rows => summariseMonth(rows));
+    const atQuota   = quotaSummaries.filter(s => s.atQuota && !s.overQuota).length;
+    const overQuota = quotaSummaries.filter(s => s.overQuota).length;
+
+    const reasonBuckets = {};
+    for (const p of permsThisWeek.filter(p => p.stage === 'approved')) {
+      const r = (p.reason || '').toLowerCase();
+      let cat = 'Other';
+      if (/medical|doctor|clinic|hospital|sick/.test(r))                 cat = 'Medical';
+      else if (/government|iqama|bank|financial|paperwork|official/.test(r)) cat = 'Government / Bank';
+      else if (/family|emergency|urgent|personal/.test(r))                cat = 'Family / Emergency';
+      else if (/school|child|pickup|drop[\s-]?off/.test(r))               cat = 'School / Childcare';
+      else if (/traffic|transport|road|commute/.test(r))                  cat = 'Traffic / Transport';
+      reasonBuckets[cat] = (reasonBuckets[cat] || 0) + 1;
+    }
+    const topReasons = Object.entries(reasonBuckets).sort((a, b) => b[1] - a[1]).slice(0, 3);
+
+    return {
+      permApproved, permRejected, leaveApproved, leaveRejected,
+      atQuota, overQuota, topReasons,
+      windowStart: cutoff, windowEnd: now,
+    };
+  }, [requests, permissions]);
+
+  const buildEmailBody = useCallback(() => {
+    const fmt = (d) => d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    const lines = [
+      `Weekly HR digest — ${fmt(stats.windowStart)} to ${fmt(stats.windowEnd)}`, '',
+      'Approvals this week',
+      `  • Permissions: ${stats.permApproved} approved, ${stats.permRejected} rejected`,
+      `  • Leave: ${stats.leaveApproved} approved, ${stats.leaveRejected} rejected`, '',
+      'Quota status (current month)',
+      `  • At quota cap (3h used): ${stats.atQuota} staff`,
+      `  • Over quota: ${stats.overQuota} staff`, '',
+    ];
+    if (stats.topReasons.length > 0) {
+      lines.push('Top reasons for permission this week');
+      stats.topReasons.forEach(([label, count]) => lines.push(`  • ${label}: ${count}`));
+      lines.push('');
+    }
+    lines.push('— ESAU HR · Leave Desk');
+    lines.push('https://esauhr.netlify.app');
+    return lines.join('\n');
+  }, [stats]);
+
+  const openEmailDraft = useCallback(() => {
+    const subject = `HR weekly digest · ${stats.windowEnd.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`;
+    const params = new URLSearchParams();
+    params.set('subject', subject);
+    params.set('body', buildEmailBody());
+    window.location.href = `mailto:?${params.toString().replace(/\+/g, '%20')}`;
+  }, [stats, buildEmailBody]);
+
+  const totalDecisions = stats.permApproved + stats.permRejected + stats.leaveApproved + stats.leaveRejected;
+
+  // Always render for HR — even on quiet weeks. Better to show "0
+  // decisions this week" so Bashaier knows the card is alive than to
+  // hide it and have her think it's broken.
+
+  return (
+    <section className="rounded-2xl border bg-white p-4 sm:p-5"
+             style={{ borderColor: 'var(--border-soft)' }}>
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+        <div>
+          <div className="text-[10px] tracking-[0.25em] opacity-60">WEEKLY DIGEST · LAST 7 DAYS</div>
+          <div className="text-xs opacity-70 mt-0.5">
+            {totalDecisions} decision{totalDecisions === 1 ? '' : 's'} acted on
+            {stats.overQuota > 0 && (
+              <span className="ml-2 inline-flex items-center gap-1" style={{ color: '#B83A2E' }}>
+                · <AlertTriangle className="w-3 h-3" /> {stats.overQuota} over quota
+              </span>
+            )}
+          </div>
+        </div>
+        <button type="button" onClick={openEmailDraft}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs"
+          style={{ background: 'var(--ink)', color: 'var(--paper)' }}
+          title="Open an email draft with this digest pre-filled">
+          <Mail className="w-3 h-3" /> Email digest
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <DigestStat label="Permissions" primary={`${stats.permApproved} approved`} secondary={`${stats.permRejected} rejected`} color="#2D5F3F" />
+        <DigestStat label="Leave"       primary={`${stats.leaveApproved} approved`} secondary={`${stats.leaveRejected} rejected`} color="#5A8A9A" />
+        <DigestStat label="At quota"    primary={`${stats.atQuota} staff`}  secondary="3h used this month" color="#9D6B53" />
+        <DigestStat label="Over quota"  primary={`${stats.overQuota} staff`} secondary={stats.overQuota > 0 ? 'Needs follow-up' : 'All within limits'} color={stats.overQuota > 0 ? '#B83A2E' : '#737373'} />
+      </div>
+
+      {stats.topReasons.length > 0 && (
+        <div className="mt-4 pt-4 border-t" style={{ borderColor: 'var(--border-soft)' }}>
+          <div className="text-[10px] tracking-[0.2em] opacity-60 mb-2">TOP REASONS THIS WEEK</div>
+          <div className="flex flex-wrap gap-2">
+            {stats.topReasons.map(([label, count]) => (
+              <span key={label} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px]"
+                    style={{ background: 'rgba(45,95,63,0.08)', color: '#1F1B16' }}>
+                <span className="font-semibold">{count}</span>
+                <span className="opacity-80">{label}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DigestStat({ label, primary, secondary, color }) {
+  return (
+    <div className="rounded-xl p-3" style={{ background: 'var(--paper-soft, #F4F4EE)' }}>
+      <div className="text-[10px] tracking-[0.2em] opacity-60 mb-1">{label.toUpperCase()}</div>
+      <div className="text-sm font-semibold" style={{ color }}>{primary}</div>
+      <div className="text-[10px] opacity-60 mt-0.5">{secondary}</div>
+    </div>
   );
 }
