@@ -188,18 +188,28 @@ function LeaveRequestCard({ request }) {
       <Row label="Submitted">{fmtDateTime(request.requested_at)}</Row>
       {request.manager_decided_at && <Row label="Manager decided">{fmtDateTime(request.manager_decided_at)}</Row>}
       {request.hr_decided_at && <Row label="HR decided">{fmtDateTime(request.hr_decided_at)}</Row>}
-      {request.actual_return_date && (
+      {request.return_stage === 'approved' && request.actual_return_date && (
         <Row label="Returned">
           <span style={{ color: '#0F4C2A', fontWeight: 600 }}>
             ✓ {fmtDate(request.actual_return_date)}
           </span>
         </Row>
       )}
-      {request.return_status && request.return_status !== 'pending' && request.return_status !== 'returned' && (
-        <Row label="Return status">
-          <span style={{ color: request.return_status === 'no_show' ? '#B83A2E' : '#8B6914', fontWeight: 600 }}>
-            {request.return_status.replace('_', ' ').toUpperCase()}
+      {request.return_stage && request.return_stage !== 'approved' && (
+        <Row label="Rejoining">
+          <span style={{
+            color: request.return_stage.startsWith('rejected') ? '#B91C1C'
+                 : request.return_stage === 'pending_hr'        ? '#0F4C2A'
+                 : '#8B6914',
+            fontWeight: 600,
+          }}>
+            {request.return_stage.replace(/_/g, ' ').toUpperCase()}
           </span>
+        </Row>
+      )}
+      {request.return_status && request.return_status === 'no_show' && (
+        <Row label="Return status">
+          <span style={{ color: '#B83A2E', fontWeight: 600 }}>NO SHOW</span>
         </Row>
       )}
 

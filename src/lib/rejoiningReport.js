@@ -495,24 +495,33 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
       formRow('Actual return date', 'تاريخ العودة الفعلي', actualReturn ? fmtDateLong(actualReturn) : '—', { bold: true, color: C_BRAND }),
       formRow('Return status',      'حالة العودة',          returnStatus.replace('_', ' '), { bold: true, color: statusColor }),
       formRow('Punctuality',        'الالتزام بالموعد',     diffLabel),
-      formRow('Notes',              'ملاحظات',              request.return_notes || '—'),
-      formRow('Confirmed by',       'تم التأكيد بواسطة',    returnConfirmer?.name || (request.return_confirmed_by || '—')),
-      formRow('Confirmed at',       'وقت التأكيد',          returnedAt ? fmtDateTime(returnedAt) : '—'),
+      formRow('Notes from staff',   'ملاحظات الموظف',       request.return_notes || '—'),
+      formRow('Submitted by staff', 'تقديم الموظف',         request.return_submitted_at ? fmtDateTime(request.return_submitted_at) : '—'),
+      formRow('Manager approved',   'اعتماد المدير',        request.return_manager_decided_at ? fmtDateTime(request.return_manager_decided_at) : '—'),
+      formRow('HR approved',        'اعتماد الموارد',       request.return_hr_decided_at ? fmtDateTime(request.return_hr_decided_at) : '—'),
     ],
   });
 
   // ── 3-COLUMN APPROVAL SIGNATURES ──────────────────────────────────────────
+  // Stamps reflect each step of the 3-step rejoining workflow:
+  //   Employee  →  return_submitted_at  ('Submitted DD MMM · HH:MM')
+  //   Dept Mgr  →  return_manager_decided_at  ('Approved DD MMM · HH:MM')
+  //   ESAU SUP  →  return_hr_decided_at  ('Approved DD MMM · HH:MM')
   const sigCols = [
     { en: 'EMPLOYEE', ar: 'الموظف',         name: employee?.name || '',
-      footerLeft: returnedAt ? `Returned ${fmtStampCompact(returnedAt)}` : '',
+      footerLeft: request.return_submitted_at
+                  ? `Submitted ${fmtStampCompact(request.return_submitted_at)}`
+                  : (returnedAt ? `Returned ${fmtStampCompact(returnedAt)}` : ''),
       footerRight: 'Signature' },
     { en: 'DEPT MGR', ar: 'مدير القسم',     name: manager?.name || '',
-      footerLeft: request.return_confirmed_by === manager?.id && returnedAt
-                  ? `Confirmed ${fmtStampCompact(returnedAt)}` : '',
+      footerLeft: request.return_manager_decided_at
+                  ? `Approved ${fmtStampCompact(request.return_manager_decided_at)}`
+                  : '',
       footerRight: 'Signature' },
     { en: 'ESAU SUP', ar: 'الموارد البشرية', name: hrApprover?.name || HR_SIGNATURE_NAME,
-      footerLeft: request.return_confirmed_by === hrApprover?.id && returnedAt
-                  ? `Confirmed ${fmtStampCompact(returnedAt)}` : '',
+      footerLeft: request.return_hr_decided_at
+                  ? `Approved ${fmtStampCompact(request.return_hr_decided_at)}`
+                  : '',
       footerRight: 'Signature' },
   ];
   const sigWidths = [SIG3_W, SIG3_W, SIG3_W_LAST];
@@ -548,7 +557,8 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
   });
 
   // ── REJOINED STAMP ────────────────────────────────────────────────────────
-  const isReturned = returnStatus === 'RETURNED';
+  // Shows only when the 3-step workflow has reached HR final approval.
+  const isReturned = request.return_stage === 'approved';
   const stampHeader = new Header({
     children: [
       new Paragraph({
