@@ -92,7 +92,7 @@ function RequestCard({ request }) {
       <Row label="Permission date">{fmtDate(request.permission_date)}</Row>
       <Row label="Time window">
         {request.time_from && request.time_to
-          ? `${request.time_from.slice(0, 5)} → ${request.time_to.slice(0, 5)}`
+          ? `${request.time_from} → ${request.time_to}`
           : '—'}
       </Row>
       <Row label="Employee">{request.employee_name || request.employee_id}</Row>
