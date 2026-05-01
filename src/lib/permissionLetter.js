@@ -64,8 +64,8 @@ const POLICY_BULLETS = [
     ar: 'ولا يُسمح بأن تتجاوز مدة كل استئذان 60 دقيقة تحت أي ظرف.',
   },
   {
-    en: 'Any employee exceeding this limit may face disciplinary action.',
-    ar: 'أي موظف يتجاوز هذا الحد قد يتعرض لإجراء تأديبي.',
+    en: 'Exceeding this limit may be subject to review by the HR department.',
+    ar: 'تجاوز هذا الحد قد يستوجب المراجعة مع إدارة الموارد البشرية.',
   },
   {
     en: "It is the employee's responsibility to ensure adherence to this policy.",
@@ -197,37 +197,60 @@ const sectionBanner = (en, ar) => new Table({
   })],
 });
 
-const labelCell = (en, ar) => new TableCell({
-  children: [
-    new Paragraph({
-      children: [run(en, { bold: true, size: 16 })],
-    }),
-    new Paragraph({
-      children: [arRun(ar, { size: 14, color: C_MUTED })],
-      alignment: AlignmentType.RIGHT,
-      bidirectional: true,
-    }),
-  ],
-  width: { size: 32, type: WidthType.PERCENTAGE },
-  margins: { top: 80, bottom: 80, left: 140, right: 100 },
-  shading: { fill: C_LABEL_BG },
-  borders: formBorder(),
-});
+// Label cell — EN bold flush left, AR muted flush right, one line.
+// Uses a borderless 2-column inner table so the alignment is reliable
+// regardless of label length (tab stops in narrow cells were unreliable
+// before — same issue as the signature bands).
+const labelCell = (en, ar) => {
+  const inner = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [new TableRow({
+      children: [
+        new TableCell({
+          children: [new Paragraph({ children: [run(en, { bold: true, size: 16 })] })],
+          width: { size: 60, type: WidthType.PERCENTAGE },
+          margins: { top: 0, bottom: 0, left: 0, right: 0 },
+          borders: noBorder(),
+        }),
+        new TableCell({
+          children: [new Paragraph({
+            children: [arRun(ar, { size: 14, color: C_MUTED })],
+            alignment: AlignmentType.RIGHT,
+            bidirectional: true,
+          })],
+          width: { size: 40, type: WidthType.PERCENTAGE },
+          margins: { top: 0, bottom: 0, left: 0, right: 0 },
+          borders: noBorder(),
+        }),
+      ],
+    })],
+  });
+  return new TableCell({
+    children: [inner],
+    width: { size: 30, type: WidthType.PERCENTAGE },
+    margins: { top: 70, bottom: 70, left: 120, right: 120 },
+    shading: { fill: C_LABEL_BG },
+    borders: formBorder(),
+    verticalAlign: VerticalAlign.CENTER,
+  });
+};
 
 const valueCell = (text, opts = {}) => new TableCell({
   children: [new Paragraph({
-    children: [run(text, { size: 20, bold: !!opts.bold, color: opts.color || C_TEXT })],
+    children: [run(text, { size: 22, bold: !!opts.bold, color: opts.color || C_TEXT })],
   })],
-  width: { size: 68, type: WidthType.PERCENTAGE },
-  margins: { top: 80, bottom: 80, left: 140, right: 100 },
+  width: { size: 70, type: WidthType.PERCENTAGE },
+  margins: { top: 70, bottom: 70, left: 140, right: 120 },
   borders: formBorder(),
+  verticalAlign: VerticalAlign.CENTER,
 });
 
 const valueCellRuns = (children) => new TableCell({
   children: [new Paragraph({ children })],
-  width: { size: 68, type: WidthType.PERCENTAGE },
-  margins: { top: 80, bottom: 80, left: 140, right: 100 },
+  width: { size: 70, type: WidthType.PERCENTAGE },
+  margins: { top: 70, bottom: 70, left: 140, right: 120 },
   borders: formBorder(),
+  verticalAlign: VerticalAlign.CENTER,
 });
 
 const formRow = (en, ar, value, opts = {}) => new TableRow({
@@ -453,6 +476,9 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
   // Date / Ref pushed to a smaller right column. The previous version
   // wrapped because EN at 22pt + the AR phrase exceeded the 65% column
   // width.
+  const titleEnMain = `PERMISSION REQUEST — ${typeBoth.en.toUpperCase()}`;
+  const titleArMain = `طلب استئذان — ${typeBoth.ar}`;
+
   const titleBar = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [new TableRow({
@@ -461,10 +487,14 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
           children: [
             new Paragraph({
               children: [
-                run('PERMISSION REQUEST FORM', { bold: true, size: 20 }),
-                run('   \u00B7   ', { color: C_MUTED, size: 20 }),
-                arRun('نموذج طلب استئذان', { size: 20, color: C_BRAND, bold: true }),
+                run(titleEnMain, { bold: true, size: 22 }),
               ],
+            }),
+            new Paragraph({
+              children: [
+                arRun(titleArMain, { size: 18, color: C_BRAND, bold: true }),
+              ],
+              spacing: { before: 30 },
             }),
           ],
           width: { size: 70, type: WidthType.PERCENTAGE },
@@ -524,11 +554,11 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
   ]).flat();
 
   const timeText = (request.time_from && request.time_to)
-    ? `From  ${request.time_from}    →    To  ${request.time_to}        Duration:  ${dur} mins  (≤ 60)`
-    : `Duration:  ${dur} mins                                             Time window not recorded`;
+    ? `${request.time_from}  →  ${request.time_to}   ·   Duration: ${dur} mins`
+    : `Duration: ${dur} mins`;
 
   const summaryHours = Number(request.hours || 0);
-  const usageText = `${summaryHours} hour${summaryHours === 1 ? '' : 's'} of 3 hours allowed  ·  this is occurrence ${request.exceeds_quota ? '4+' : 'within bucket'}`;
+  const usageText = `${summaryHours} hour${summaryHours === 1 ? '' : 's'} of 3 allowed   ·   ${request.exceeds_quota ? 'Quota exceeded' : 'Within monthly quota'}`;
 
   const detailsTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
@@ -609,11 +639,11 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
       new TableRow({
         children: sigCols.map(c => sigHeaderCell(c.en, c.ar)),
       }),
-      // Body — open signing area. HeightRule.ATLEAST 1400 = ~70pt, plenty
-      // of room for a wet signature between the printed name and the
-      // bottom band.
+      // Body — open signing area. HeightRule.ATLEAST 2400 (~120pt /
+      // ~4.2cm) gives a generous wet-signature area that uses the empty
+      // A4 space below — the previous 1400 left a lot of unused page.
       new TableRow({
-        height: { value: 1400, rule: HeightRule.ATLEAST },
+        height: { value: 2400, rule: HeightRule.ATLEAST },
         children: sigCols.map(c => sigBodyCell(c.name)),
       }),
       // Footer band — single shaded row with timestamp + role label.
