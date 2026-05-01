@@ -18,7 +18,39 @@ import {
   AlignmentType, WidthType, BorderStyle, HeightRule,
   VerticalAlign, ShadingType,
 } from 'docx';
+import QRCode from 'qrcode';
 import { downloadBlob } from './vacationForm.js';
+
+// Verification URL base — staff scan the QR in the printed letter to
+// hit a public read-only page that confirms the request status from
+// the live database. Rendered as a small ImageRun beside the footer.
+const VERIFY_BASE_URL = (typeof window !== 'undefined' && window.location?.origin)
+  ? window.location.origin
+  : 'https://esauhr.netlify.app';
+
+async function generateQrPng(text, sizePx = 220) {
+  try {
+    const dataUrl = await QRCode.toDataURL(text, {
+      errorCorrectionLevel: 'M',
+      margin: 1,
+      width: sizePx,
+      color: { dark: '#1F4530', light: '#FFFDF7' },
+    });
+    // Strip data URL prefix and convert to ArrayBuffer for ImageRun.
+    const base64 = dataUrl.split(',')[1];
+    if (typeof atob !== 'undefined') {
+      const bin = atob(base64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return bytes.buffer;
+    }
+    // Node fallback
+    return Buffer.from(base64, 'base64');
+  } catch (err) {
+    console.warn('[permission letter] QR generation failed:', err);
+    return null;
+  }
+}
 
 // ─── lookups ──────────────────────────────────────────────────────────────────
 const DEPT_NAMES = {
@@ -570,7 +602,7 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
               ],
             })],
             width: { size: HALF_W, type: WidthType.DXA },
-            margins: { top: 80, bottom: 80, left: 180, right: 100 },
+            margins: { top: 50, bottom: 50, left: 180, right: 100 },
             shading: shading(C_LABEL_BG),
             borders: FORM_BORDER,
             verticalAlign: VerticalAlign.CENTER,
@@ -582,7 +614,7 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
               bidirectional: true,
             })],
             width: { size: PAGE_W - HALF_W, type: WidthType.DXA },
-            margins: { top: 80, bottom: 80, left: 100, right: 180 },
+            margins: { top: 50, bottom: 50, left: 100, right: 180 },
             shading: shading(C_LABEL_BG),
             borders: FORM_BORDER,
             verticalAlign: VerticalAlign.CENTER,
@@ -615,30 +647,93 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
     columnWidths: sigWidths,
     rows: [
       new TableRow({
+        cantSplit: true,
         children: sigCols.map((c, i) => sigHeaderCell(c.en, c.ar, sigWidths[i])),
       }),
       new TableRow({
-        height: { value: 1300, rule: HeightRule.ATLEAST },
+        cantSplit: true,
+        height: { value: 800, rule: HeightRule.ATLEAST },
         children: sigCols.map((c, i) => sigBodyCell(c.name, sigWidths[i])),
       }),
       new TableRow({
+        cantSplit: true,
         children: sigCols.map((c, i) => sigFooterCell(c.footerLeft, c.footerRight, sigWidths[i])),
       }),
     ],
   });
 
   // ── FOOTER ────────────────────────────────────────────────────────────────
+  // Two-column footer:
+  //   Left  — generated-on stamp + approver name (italic copper)
+  //   Right — QR code + 'Verify online' caption pointing to the public
+  //           verification page for this request
+  // The QR encodes the verify URL: <origin>/verify/<request_id>. Anyone
+  // with the printed letter can scan it to confirm the request is real
+  // and current.
   const generatedAt = new Date().toLocaleString('en-GB', {
     day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
-  const footerLine = new Paragraph({
-    children: [
-      run(`Generated on ${generatedAt} GMT+3  ·  ${hrApprover?.name || HR_SIGNATURE.name}`,
-          { size: 12, italics: true, color: C_COPPER }),
-    ],
-    alignment: AlignmentType.RIGHT,
-    spacing: { before: 100, after: 0 },
+  const verifyUrl = `${VERIFY_BASE_URL}/verify/${request.id}`;
+  const qrBytes = await generateQrPng(verifyUrl, 220);
+
+  const footerBlock = new Table({
+    width: { size: PAGE_W, type: WidthType.DXA },
+    columnWidths: [PAGE_W - 1100, 1100],
+    rows: [new TableRow({
+      children: [
+        // Left — generation stamp + verify URL on one line each
+        new TableCell({
+          children: [
+            new Paragraph({
+              children: [
+                run(`Generated on ${generatedAt} GMT+3  ·  ${hrApprover?.name || HR_SIGNATURE.name}`,
+                    { size: 12, italics: true, color: C_COPPER }),
+              ],
+              alignment: AlignmentType.LEFT,
+              spacing: { before: 60, after: 20 },
+            }),
+            new Paragraph({
+              children: [
+                run('Verify online: ', { size: 11, color: C_MUTED }),
+                run(verifyUrl, { size: 11, color: C_BRAND }),
+              ],
+              alignment: AlignmentType.LEFT,
+              spacing: { before: 0, after: 0 },
+            }),
+          ],
+          width: { size: PAGE_W - 1100, type: WidthType.DXA },
+          borders: NO_BORDER,
+          margins: { top: 0, bottom: 0, left: 0, right: 100 },
+          verticalAlign: VerticalAlign.CENTER,
+        }),
+        // Right — QR + caption (compact)
+        new TableCell({
+          children: qrBytes
+            ? [
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  children: [new ImageRun({
+                    data: qrBytes,
+                    transformation: { width: 52, height: 52 },
+                    type: 'png',
+                  })],
+                  spacing: { before: 0, after: 10 },
+                }),
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  children: [run('SCAN TO VERIFY', { size: 9, bold: true, color: C_COPPER })],
+                  spacing: { before: 0, after: 0 },
+                }),
+              ]
+            : [new Paragraph({ children: [run('', { size: 10 })] })],
+          width: { size: 1100, type: WidthType.DXA },
+          borders: NO_BORDER,
+          margins: { top: 0, bottom: 0, left: 100, right: 0 },
+          verticalAlign: VerticalAlign.CENTER,
+        }),
+      ],
+    })],
   });
 
   // ── DOCUMENT ──────────────────────────────────────────────────────────────
@@ -681,6 +776,7 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
         },
       },
       headers: { default: approvedStamp },
+      footers: { default: new Footer({ children: [footerBlock] }) },
       children: [
         headerRow,
         headerRule,
@@ -695,9 +791,8 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
         detailsTable,
         spacer(60),
         policyTable,
-        spacer(80),
+        spacer(40),
         sigTable,
-        footerLine,
       ],
     }],
   });

@@ -6,6 +6,7 @@ import Auth from './components/Auth.jsx';
 import AppShell from './components/AppShell.jsx';
 import ConfigMissing from './components/ConfigMissing.jsx';
 import EvergreenLogo from './components/EvergreenLogo.jsx';
+import VerifyPage from './components/VerifyPage.jsx';
 
 export default function App() {
   const [session, setSession] = useState(null);
@@ -96,6 +97,18 @@ export default function App() {
   }, [resolveMe]);
 
   if (!supabaseConfigured) return <ConfigMissing />;
+
+  // Public verify route — anyone with the printed letter (and the QR
+  // code on it) lands here. No auth needed; the page does a
+  // permission_requests select on the request id and shows the
+  // current state. Bypasses session/loading flow entirely.
+  const verifyMatch = typeof window !== 'undefined'
+    ? window.location.pathname.match(/^\/verify\/(\d+)\/?$/)
+    : null;
+  if (verifyMatch) {
+    return <VerifyPage requestId={Number(verifyMatch[1])} />;
+  }
+
   if (!ready) return <SplashLoader />;
 
   // Signed in → app shell. Signed out → straight to sign-in (no marketing landing).
