@@ -109,10 +109,16 @@ export default function RefreshOverlay({ open, message = 'Refreshing your dashbo
           40%           { opacity: 1;   transform: scale(1.1); }
         }
 
-        /* Sun glow — slow pulse. */
+        /* Sun glow — gentle pulse on opacity. */
         @keyframes esau-sun-glow {
-          0%, 100% { opacity: 0.45; }
-          50%      { opacity: 0.8; }
+          0%, 100% { opacity: 0.85; }
+          50%      { opacity: 1; }
+        }
+
+        /* Sun rays — slow rotation around the disc. */
+        @keyframes esau-sun-rotate {
+          from { transform: rotate(0deg); }
+          to   { transform: rotate(360deg); }
         }
       `}</style>
 
@@ -124,8 +130,10 @@ export default function RefreshOverlay({ open, message = 'Refreshing your dashbo
           position: 'fixed',
           inset: 0,
           zIndex: 200,
-          // Warm cream gradient — sky at top fading to sea at bottom
-          background: `linear-gradient(180deg, ${SKY_TINT} 0%, ${PAPER} 55%, #F0E9D7 100%)`,
+          // Soft sky-to-sea gradient — a touch of blue at the top so
+          // white clouds and the gold sun read crisply against it,
+          // fading down to the warm cream paper colour at sea level.
+          background: `linear-gradient(180deg, #DCEAF2 0%, #EFE6D2 45%, ${PAPER} 65%, #F0E9D7 100%)`,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -146,6 +154,12 @@ export default function RefreshOverlay({ open, message = 'Refreshing your dashbo
             aria-hidden="true"
           >
             <defs>
+              {/* Sun radial gradient — bright warm core fading to a soft halo */}
+              <radialGradient id="sun-grad" cx="50%" cy="50%" r="50%">
+                <stop offset="0%"  stopColor="#FFE08A" />
+                <stop offset="55%" stopColor="#F4B860" />
+                <stop offset="100%" stopColor="#E89A45" stopOpacity="0.0" />
+              </radialGradient>
               {/* Wave pattern — soft serif curve, copper-toned */}
               <pattern id="wave-pat" x="0" y="0" width="80" height="14" patternUnits="userSpaceOnUse">
                 <path
@@ -171,10 +185,26 @@ export default function RefreshOverlay({ open, message = 'Refreshing your dashbo
               </linearGradient>
             </defs>
 
-            {/* Sun — soft glowing disc top-right */}
-            <g style={{ animation: 'esau-sun-glow 4.2s ease-in-out infinite' }}>
-              <circle cx="450" cy="50" r="22" fill="#F2D8B0" opacity="0.5" />
-              <circle cx="450" cy="50" r="14" fill="#E8C997" opacity="0.85" />
+            {/* Sun — warm gold disc with halo and 8 radiating rays.
+                Rays slowly rotate around the sun centre while the disc
+                pulses, so the sun feels alive without being distracting. */}
+            <g style={{ transformOrigin: '450px 50px', animation: 'esau-sun-rotate 28s linear infinite' }}>
+              {/* 8 rays at 45° intervals */}
+              {[0, 45, 90, 135, 180, 225, 270, 315].map((deg) => (
+                <line
+                  key={deg}
+                  x1="450" y1="50" x2="450" y2="22"
+                  stroke="#F4B860" strokeWidth="1.6" strokeLinecap="round" opacity="0.55"
+                  transform={`rotate(${deg} 450 50)`}
+                />
+              ))}
+            </g>
+            <g style={{ transformOrigin: '450px 50px', animation: 'esau-sun-glow 4.2s ease-in-out infinite' }}>
+              {/* Outer halo */}
+              <circle cx="450" cy="50" r="22" fill="url(#sun-grad)" />
+              {/* Bright core */}
+              <circle cx="450" cy="50" r="13" fill="#FFD970" />
+              <circle cx="450" cy="50" r="9"  fill="#FFE9A8" />
             </g>
 
             {/* Clouds — three soft cumulus puffs drifting. The clip-path
@@ -366,9 +396,13 @@ export default function RefreshOverlay({ open, message = 'Refreshing your dashbo
 function Cloud({ x, y, scale = 1 }) {
   return (
     <g transform={`translate(${x},${y}) scale(${scale})`}>
-      <ellipse cx="14" cy="6"  rx="14" ry="6"  fill="#FFFFFF" opacity="0.85" />
-      <ellipse cx="6"  cy="9"  rx="7"  ry="5"  fill="#FFFFFF" opacity="0.85" />
-      <ellipse cx="22" cy="9"  rx="9"  ry="5"  fill="#FFFFFF" opacity="0.85" />
+      {/* Soft shadow under the cloud — gives a hint of depth */}
+      <ellipse cx="14" cy="13" rx="18" ry="3" fill="#A9B5C0" opacity="0.22" />
+      {/* Main cloud body — overlapping ellipses for a fluffy silhouette */}
+      <ellipse cx="14" cy="6" rx="16" ry="7"  fill="#FFFFFF" opacity="0.96" />
+      <ellipse cx="5"  cy="9" rx="8"  ry="6"  fill="#FFFFFF" opacity="0.96" />
+      <ellipse cx="24" cy="9" rx="11" ry="6"  fill="#FFFFFF" opacity="0.96" />
+      <ellipse cx="14" cy="3" rx="9"  ry="4"  fill="#FFFFFF" opacity="0.96" />
     </g>
   );
 }

@@ -478,18 +478,17 @@ export default function AppShell({ session, me, onRefreshMe }) {
               onClick={async () => {
                 // Hard refresh — reload the page so the user always gets
                 // the latest deployed bundle. Steps:
-                //   1. Show the overlay (so the user sees the refresh
-                //      starting before the navigation kicks in)
-                //   2. Unregister any service workers (avoids cached
-                //      bundles being served from sw.js after a deploy)
-                //   3. Clear the Cache Storage entries (PWA caches)
+                //   1. Show the overlay
+                //   2. Run cleanup (SW + caches) in background
+                //   3. Hold for at least 3 seconds so the user can enjoy
+                //      the ship animation (it's beautiful, give it space)
                 //   4. Reload with cache bypass
                 if (refreshing) return;
                 setRefreshing(true);
-                try {
-                  // Best-effort SW + cache cleanup. Failures are
-                  // non-blocking — the location.reload below will still
-                  // run and pull a fresh copy via cache-bust.
+
+                // Cleanup runs in parallel with the 3-second hold.
+                // Failures are non-blocking — the reload below still runs.
+                const cleanup = (async () => {
                   if ('serviceWorker' in navigator) {
                     try {
                       const regs = await navigator.serviceWorker.getRegistrations();
@@ -502,14 +501,21 @@ export default function AppShell({ session, me, onRefreshMe }) {
                       await Promise.all(keys.map(k => caches.delete(k).catch(() => {})));
                     } catch {}
                   }
-                } finally {
-                  // Append a cache-bust query so the browser must
-                  // re-fetch index.html (and consequently the latest
-                  // hashed asset bundles).
-                  const url = new URL(window.location.href);
-                  url.searchParams.set('_r', Date.now().toString());
-                  window.location.replace(url.toString());
-                }
+                })();
+
+                // Minimum 3-second hold so the ship animation is visible.
+                const minHold = new Promise(r => setTimeout(r, 3000));
+
+                // Wait for whichever finishes LAST — cleanup OR the 3s
+                // hold — so we never reload before the animation has had
+                // its moment.
+                await Promise.all([cleanup, minHold]);
+
+                // Cache-bust query so the browser must re-fetch index.html
+                // and pull the newest hashed asset bundles.
+                const url = new URL(window.location.href);
+                url.searchParams.set('_r', Date.now().toString());
+                window.location.replace(url.toString());
               }}
               disabled={refreshing}
               className="p-2.5 rounded-full border esau-refresh-btn disabled:opacity-60"
