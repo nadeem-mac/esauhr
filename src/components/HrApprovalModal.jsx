@@ -53,7 +53,7 @@ export default function HrApprovalModal({ request, employee, manager, substitute
     try {
       const blob = await generateVacationFormBlob({ request, employee, manager, hrApprover: me, substitutes });
       const safeName = (employee?.name || request.employee_id).replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '');
-      const filename = `Vacation_Form_${safeName}_${request.start_date}.pdf`;
+      const filename = `Vacation_Form_${safeName}_${request.start_date}.docx`;
       downloadBlob(blob, filename);
       setDownloaded(true);
     } catch (err) {

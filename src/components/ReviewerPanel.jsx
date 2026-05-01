@@ -313,7 +313,7 @@ export default function ReviewerPanel({ me }) {
         details: { stage: nextStage, action, exceeds_quota: req.exceeds_quota },
       });
       // Final HR approval — open the post-approval modal so Bashaier can
-      // download the printable .pdf letter and open the prefilled email
+      // download the printable .docx letter and open the prefilled email
       // draft (To: staff, CC: manager + executives). The patched fields
       // are merged onto the row so the modal shows the just-stamped
       // hr_decided_at without waiting for the next load() pass.
@@ -640,7 +640,7 @@ export default function ReviewerPanel({ me }) {
                 • See her own approvals after she clicks Approve (the
                   request leaves the queue but appears here immediately)
                 • Search by employee name to find a past approval
-                • Re-download the .pdf letter or re-open the email
+                • Re-download the .docx letter or re-open the email
                   draft for any approved row
               Hidden for managers (their volume is too small to need it). */}
           {canPerm && (recentDecisions.length > 0 || recentLeaveDecisions.length > 0) && (

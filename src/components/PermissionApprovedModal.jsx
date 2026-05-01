@@ -13,12 +13,12 @@ import {
 // Triggered automatically after Bashaier issues the FINAL HR approval on a
 // permission request (manager already approved → HR approved → done).
 // Two actions:
-//   1. Download permission letter — single-page A4 .pdf with employee
+//   1. Download permission letter — single-page A4 .docx with employee
 //      details, approval chain, signatures
 //   2. Open email — mailto: link prefilled with To = staff,
 //      CC = manager + executive list (John, James, Fahad Hussain, Badria,
 //      Jaffar, looked up by name from employees.email). User adds the
-//      downloaded .pdf as an attachment and sends.
+//      downloaded .docx as an attachment and sends.
 //
 // Read-only — submission/decision actions happen elsewhere; this is the
 // post-decision artifact handoff.
@@ -56,7 +56,7 @@ export default function PermissionApprovedModal({ request, employee, manager, hr
 
   function handleOpenEmail() {
     // mailto: link opens the default email client. The user attaches the
-    // downloaded .pdf manually before sending — mailto: doesn't carry
+    // downloaded .docx manually before sending — mailto: doesn't carry
     // attachments. We deliberately don't try to use the FileSystem Access
     // API or Web Share for this because Outlook/Gmail desktop clients
     // don't accept those.
@@ -150,7 +150,7 @@ export default function PermissionApprovedModal({ request, employee, manager, hr
               ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</>
               : downloaded
                 ? <><CheckCircle2 className="w-4 h-4" style={{ color: '#047857' }} /> Letter downloaded</>
-                : <><Download className="w-4 h-4" /> Download letter (.pdf)</>
+                : <><Download className="w-4 h-4" /> Download letter (.docx)</>
             }
           </button>
           <button
@@ -175,7 +175,7 @@ export default function PermissionApprovedModal({ request, employee, manager, hr
 
         {/* Tip */}
         <div className="px-5 pb-5 text-[11px]" style={{ color: '#1F1B16', opacity: 0.7 }}>
-          Tip: download the letter first, then open the email draft and attach the .pdf before sending. Email attachments cannot be pre-filled by the browser.
+          Tip: download the letter first, then open the email draft and attach the .docx before sending. Email attachments cannot be pre-filled by the browser.
         </div>
       </div>
     </div>,
