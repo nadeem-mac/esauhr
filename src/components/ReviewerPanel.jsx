@@ -27,6 +27,13 @@ export default function ReviewerPanel({ me }) {
   const [recentDecisions, setRecentDecisions] = useState([]);
   const [recentLeaveDecisions, setRecentLeaveDecisions] = useState([]);
   const [historyQuery, setHistoryQuery] = useState('');
+  // Delegation: which staff in my queue belong to an absent manager
+  // (one of my direct reports who is themselves a manager and on
+  // approved leave covering today). Used to render a 'DELEGATED' pill
+  // on those rows so the acting manager knows the request isn't from
+  // someone they directly manage.
+  const [delegatedStaffIds, setDelegatedStaffIds] = useState(new Set());
+  const [absentManagerNames, setAbsentManagerNames] = useState([]);
   const [isManager, setIsManager]     = useState(false);
   const [loading, setLoading]         = useState(true);
   const [busyId, setBusyId]           = useState(null);
@@ -74,13 +81,52 @@ export default function ReviewerPanel({ me }) {
       // whose manager_id === me.id. This is more accurate than the old
       // department-based filter and matches the org-chart definition of
       // "his own staff".
-      const deptStaffIds = (emps || [])
+      const directReportIds = (emps || [])
         .filter(e => e.manager_id === me?.id)
         .map(e => e.id);
+
+      // Delegation — when a direct report of mine is themselves a
+      // manager AND they're on approved leave that covers today, their
+      // own direct reports' pending requests need to go somewhere. They
+      // route to me (the absent manager's manager). Without this the
+      // requests would sit until the original manager returns.
+      //
+      // Find: managers M where M.manager_id === me.id, AND M has an
+      // approved leave row whose [start_date, end_date] covers today.
+      // Then add M's direct reports' PSNs to the queue.
+      const today = new Date().toISOString().slice(0, 10);
+      const absentManagerIds = new Set();
+      try {
+        const myDirectReportManagerIds = directReportIds.filter(id =>
+          (emps || []).some(e => e.manager_id === id),
+        );
+        if (myDirectReportManagerIds.length) {
+          const leavesQ = `select=employee_id,start_date,end_date,stage&stage=eq.approved&employee_id=in.(${myDirectReportManagerIds.join(',')})&start_date=lte.${today}&end_date=gte.${today}`;
+          const onLeave = await directGet('leave_requests', leavesQ, { timeoutMs: 8000 });
+          (onLeave || []).forEach(l => absentManagerIds.add(l.employee_id));
+        }
+      } catch (err) {
+        console.warn('[delegation] absent-manager lookup failed:', err);
+      }
+
+      // Staff IDs from absent managers (the people whose pending
+      // requests now route up to me)
+      const delegatedStaffIds = (emps || [])
+        .filter(e => absentManagerIds.has(e.manager_id))
+        .map(e => e.id);
+
+      // Combined dept set: my direct reports PLUS the staff of any
+      // absent direct-report manager.
+      const deptStaffIds = Array.from(new Set([...directReportIds, ...delegatedStaffIds]));
+
       // Mirror the derived isManager flag at component scope so other parts
       // of the panel (button gating, decideLeave's stage check) can read it.
       const hasDirectReports = deptStaffIds.length > 0;
       setIsManager(hasDirectReports);
+      setDelegatedStaffIds(new Set(delegatedStaffIds));
+      setAbsentManagerNames(
+        Array.from(absentManagerIds).map(id => map[id]?.name || id),
+      );
       const localIsDeptManager = hasDirectReports && !isHrReviewer && !isAdmin;
 
       // Build the leave queue query string based on role.
@@ -352,6 +398,34 @@ export default function ReviewerPanel({ me }) {
         </button>
       </div>
 
+      {/* Delegation banner — surfaces when one of my direct-report
+          managers is on approved leave today and their team's pending
+          requests are routing to me. Without this banner the acting
+          manager could be confused why staff they don't directly
+          manage are appearing in their queue. */}
+      {absentManagerNames.length > 0 && (
+        <div className="rounded-xl px-4 py-3 border flex items-start gap-3"
+             style={{
+               background: 'rgba(157,107,83,0.08)',
+               borderColor: 'rgba(157,107,83,0.3)',
+               color: '#1F1B16',
+             }}>
+          <Plane className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: '#9D6B53' }} />
+          <div className="text-xs flex-1">
+            <div className="font-semibold mb-0.5">
+              Acting on behalf of {absentManagerNames.join(', ')}
+            </div>
+            <div className="opacity-70">
+              {absentManagerNames.length === 1 ? 'They are' : 'They are'} on
+              approved leave today, so their team's pending requests are routing
+              to you. Rows below tagged <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider"
+                    style={{ background: '#9D6B53', color: '#FFFDF7' }}>DELEGATED</span> belong
+              to that team.
+            </div>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="opacity-60 text-sm flex items-center gap-2">
           <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading queue…
@@ -398,9 +472,15 @@ export default function ReviewerPanel({ me }) {
                           <div className="flex items-center gap-3 flex-1 min-w-0">
                             <TypeIcon className="w-4 h-4 flex-shrink-0 opacity-70" />
                             <div className="flex-1 min-w-0">
-                              <div className="text-sm">
-                                <span className="opacity-50 font-mono mr-2">{req.employee_id}</span>
-                                {emp?.name || '(unknown)'}
+                              <div className="text-sm flex items-center gap-2 flex-wrap">
+                                <span className="opacity-50 font-mono">{req.employee_id}</span>
+                                <span>{emp?.name || '(unknown)'}</span>
+                                {delegatedStaffIds.has(req.employee_id) && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded font-bold tracking-wider"
+                                        style={{ background: '#9D6B53', color: '#FFFDF7' }}>
+                                    DELEGATED
+                                  </span>
+                                )}
                               </div>
                               <div className="text-xs opacity-70 mt-0.5">
                                 {PERMISSION_TYPES[req.type]?.label} · {fmtDate(new Date(req.permission_date))} · {req.hours}h
@@ -473,6 +553,12 @@ export default function ReviewerPanel({ me }) {
                             <div className="text-sm flex items-center gap-2 flex-wrap">
                               <span className="opacity-50 font-mono">{req.employee_id}</span>
                               <span>{emp?.name || '(unknown)'}</span>
+                              {delegatedStaffIds.has(req.employee_id) && (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded font-bold tracking-wider"
+                                      style={{ background: '#9D6B53', color: '#FFFDF7' }}>
+                                  DELEGATED
+                                </span>
+                              )}
                               {req.stage === 'pending_manager' && (
                                 <span className="text-[10px] tracking-wider px-2 py-0.5 rounded-full"
                                       style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}>
