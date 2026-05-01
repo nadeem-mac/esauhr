@@ -257,78 +257,79 @@ async function loadLogoBytes() {
   }
 }
 
-// ─── signature cell ───────────────────────────────────────────────────────────
+// ─── signature row builders ──────────────────────────────────────────────────
 //
-// Builds a 3-row nested table inside one outer cell so we get the
-// banner/free-space/banner layout. Outer cell has the form border; the
-// inner rows get only top/bottom horizontal rules between sections (no
-// double-border doubling on the outer edges).
-function signatureColumn({ titleEn, titleAr, name, footerLeft, footerRight }) {
-  const innerRow = (children, fill) => new TableRow({
-    children: [new TableCell({
-      children,
-      shading: fill ? { fill } : undefined,
-      margins: { top: 40, bottom: 40, left: 120, right: 120 },
-      borders: noBorder(),
-    })],
-  });
+// The signature footer is built as ONE outer 3-row × 4-column table:
+//   Row 1 (header band)  — 4 cells, shaded, role title EN + AR
+//   Row 2 (body)         — 4 cells, name + open signing space
+//   Row 3 (footer band)  — 4 cells, shaded, timestamp + label
+//
+// This maps directly to how Word renders tables — no nested tables, no
+// tab-stops drifting against narrow column widths, no row-height
+// surprises. The HTML draft has the same structure so docx output and
+// preview look the same.
+//
+// Tab stop position: each column is roughly 25% of usable A4 width
+// (11906 - 540*2 margin = 10826 twips; 25% = ~2700 twips; minus internal
+// cell margin = ~2200 twips usable). Tab stops live at 2200 so the
+// right-aligned text sits at the cell's right edge.
 
-  const headerRow = innerRow([
-    new Paragraph({
-      tabStops: [{ type: 'right', position: 9000 }],
-      children: [
-        run(titleEn.toUpperCase(), { bold: true, size: 14, spacing: 40 }),
-        run('\t', {}),
-        arRun(titleAr, { size: 14, color: C_MUTED }),
-      ],
-    }),
-  ], C_BANNER);
+const SIG_TAB = 2200;          // right-tab position for left/right layout in a 25% cell
+const SIG_BAND_PAD  = { top: 60,  bottom: 60,  left: 100, right: 100 };
+const SIG_BODY_PAD  = { top: 100, bottom: 100, left: 100, right: 100 };
 
-  // Middle band — name + open vertical space for the wet signature.
-  // We use a paragraph with `before:120` to push it down and create
-  // breathing room above where the wet signature lands.
-  const bodyRow = innerRow([
-    new Paragraph({
-      children: [run(name || '', { size: 16 })],
-      spacing: { before: 60, after: 240 },
-    }),
-  ]);
-
-  // Footer band — left-aligned timestamp with right-aligned label, on
-  // the same line via a tab stop. White-space stays on one line because
-  // we use compact formatters (e.g. '1 May · 12:43').
-  const footerRow = innerRow([
-    new Paragraph({
-      tabStops: [{ type: 'right', position: 9000 }],
-      children: [
-        run(footerLeft || '', { size: 13, italics: true, color: C_MUTED }),
-        run('\t', {}),
-        run(footerRight, { size: 13, bold: true, spacing: 30 }),
-      ],
-    }),
-  ], C_BANNER);
-
-  // Wrap the three rows in a borderless inner table; the outer TableCell
-  // (created by the caller) provides the 4-col layout border.
-  const inner = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [headerRow, bodyRow, footerRow],
-    borders: {
-      top:    { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-      bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-      left:   { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-      right:  { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-      insideHorizontal: { style: BorderStyle.SINGLE, size: 3, color: C_BORDER_2 },
-      insideVertical:   { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-    },
-  });
-
+function sigHeaderCell(en, ar) {
   return new TableCell({
-    children: [inner],
-    width: { size: 25, type: WidthType.PERCENTAGE },
-    margins: { top: 0, bottom: 0, left: 0, right: 0 },
-    borders: formBorder(),
+    children: [
+      new Paragraph({
+        tabStops: [{ type: 'right', position: SIG_TAB }],
+        children: [
+          run(en, { bold: true, size: 14, spacing: 40 }),
+          run('\t', {}),
+          arRun(ar, { size: 14, color: C_MUTED }),
+        ],
+      }),
+    ],
+    width:    { size: 25, type: WidthType.PERCENTAGE },
+    margins:  SIG_BAND_PAD,
+    shading:  { fill: C_BANNER },
+    borders:  formBorder(),
+    verticalAlign: VerticalAlign.CENTER,
+  });
+}
+
+function sigBodyCell(name) {
+  return new TableCell({
+    children: [
+      new Paragraph({
+        children: [run(name || '', { size: 16 })],
+        spacing: { before: 60, after: 0 },
+      }),
+    ],
+    width:    { size: 25, type: WidthType.PERCENTAGE },
+    margins:  SIG_BODY_PAD,
+    borders:  formBorder(),
     verticalAlign: VerticalAlign.TOP,
+  });
+}
+
+function sigFooterCell(leftText, rightLabel) {
+  return new TableCell({
+    children: [
+      new Paragraph({
+        tabStops: [{ type: 'right', position: SIG_TAB }],
+        children: [
+          run(leftText || '', { size: 13, italics: true, color: C_MUTED }),
+          run('\t', {}),
+          run(rightLabel, { size: 13, bold: true, spacing: 30 }),
+        ],
+      }),
+    ],
+    width:    { size: 25, type: WidthType.PERCENTAGE },
+    margins:  SIG_BAND_PAD,
+    shading:  { fill: C_BANNER },
+    borders:  formBorder(),
+    verticalAlign: VerticalAlign.CENTER,
   });
 }
 
@@ -413,10 +414,9 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
         new TableCell({
           children: [
             new Paragraph({
-              tabStops: [{ type: 'left', position: 4500 }],
               children: [
                 run('PERMISSION REQUEST FORM', { bold: true, size: 22, spacing: 60 }),
-                run('\t', {}),
+                run('     ·     ', { color: C_MUTED, size: 22 }),
                 arRun('نموذج طلب استئذان', { size: 22, color: C_BRAND, bold: true }),
               ],
             }),
@@ -525,47 +525,56 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
   });
 
   // ── SIGNATURES ────────────────────────────────────────────────────────────
-  // 4-column signature table. Each column built via signatureColumn() which
-  // produces a 3-region inner stack: header band, free signature space,
-  // footer band with timestamp + label.
+  // 4-column × 3-row signature table. Header band on top (shaded), open
+  // signing space in the middle, footer band on bottom (shaded). Each
+  // band is a real table row of 4 cells — Word renders this exactly as
+  // designed, no nested-table surprises.
+  const sigCols = [
+    {
+      en: 'EMPLOYEE',     ar: 'الموظف',
+      name: employee?.name || '',
+      footerLeft:  request.requested_at ? `Submitted ${fmtStampCompact(request.requested_at)}` : '',
+      footerRight: 'Signature & Date',
+    },
+    {
+      en: 'DEPT MANAGER', ar: 'مدير القسم',
+      name: manager?.name || '',
+      footerLeft:  request.manager_decided_at ? `Approved ${fmtStampCompact(request.manager_decided_at)}` : '',
+      footerRight: 'HQ Stamp / Date',
+    },
+    {
+      en: 'ESAU SUP',     ar: 'إدارة الموارد البشرية',
+      name: hrApprover?.name || HR_SIGNATURE.name,
+      footerLeft:  request.hr_decided_at ? `Approved ${fmtStampCompact(request.hr_decided_at)}` : '',
+      footerRight: 'Signature & Date',
+    },
+    {
+      en: 'ESAU MGT',     ar: 'الإدارة',
+      name: '',
+      footerLeft:  '',
+      footerRight: 'HQ Stamp / Date',
+    },
+  ];
+
   const sigTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [new TableRow({
-      // Force a comfortable signing area height (~80pt). HeightRule.AT_LEAST
-      // lets the row grow if a name wraps; in practice all four labels are
-      // short enough that this is the floor, not the ceiling.
-      height: { value: 1600, rule: HeightRule.ATLEAST },
-      children: [
-        signatureColumn({
-          titleEn: 'EMPLOYEE',
-          titleAr: 'الموظف',
-          name: employee?.name || '',
-          footerLeft: request.requested_at ? `Submitted ${fmtStampCompact(request.requested_at)}` : '',
-          footerRight: 'Signature & Date',
-        }),
-        signatureColumn({
-          titleEn: 'DEPT MANAGER',
-          titleAr: 'مدير القسم',
-          name: manager?.name || '',
-          footerLeft: request.manager_decided_at ? `Approved ${fmtStampCompact(request.manager_decided_at)}` : '',
-          footerRight: 'HQ Stamp / Date',
-        }),
-        signatureColumn({
-          titleEn: 'ESAU SUP',
-          titleAr: 'إدارة الموارد البشرية',
-          name: hrApprover?.name || HR_SIGNATURE.name,
-          footerLeft: request.hr_decided_at ? `Approved ${fmtStampCompact(request.hr_decided_at)}` : '',
-          footerRight: 'Signature & Date',
-        }),
-        signatureColumn({
-          titleEn: 'ESAU MGT',
-          titleAr: 'الإدارة',
-          name: '',
-          footerLeft: '',
-          footerRight: 'HQ Stamp / Date',
-        }),
-      ],
-    })],
+    rows: [
+      // Header band — single shaded row of role titles.
+      new TableRow({
+        children: sigCols.map(c => sigHeaderCell(c.en, c.ar)),
+      }),
+      // Body — open signing area. HeightRule.ATLEAST 1400 = ~70pt, plenty
+      // of room for a wet signature between the printed name and the
+      // bottom band.
+      new TableRow({
+        height: { value: 1400, rule: HeightRule.ATLEAST },
+        children: sigCols.map(c => sigBodyCell(c.name)),
+      }),
+      // Footer band — single shaded row with timestamp + role label.
+      new TableRow({
+        children: sigCols.map(c => sigFooterCell(c.footerLeft, c.footerRight)),
+      }),
+    ],
   });
 
   // ── FOOTER ────────────────────────────────────────────────────────────────
