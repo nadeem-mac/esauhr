@@ -17,6 +17,19 @@ const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct
 const MONTH_FULL   = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 // Status helpers ────────────────────────────────────────────────────────────
+// String-match a free-form reason field against six fixed categories.
+// Same pattern as the permission-letter generator so the dashboard
+// breakdown matches what's printed on the letters.
+function categoriseReason(reason) {
+  const r = (reason || '').toLowerCase();
+  if (/medical|doctor|clinic|hospital|sick/.test(r))                return 'medical';
+  if (/government|iqama|bank|financial|paperwork|official/.test(r)) return 'gov_bank';
+  if (/family|emergency|urgent|personal/.test(r))                    return 'family';
+  if (/school|child|pickup|drop[\s-]?off/.test(r))                   return 'school';
+  if (/traffic|transport|road|commute/.test(r))                      return 'traffic';
+  return 'other';
+}
+
 function utilisationStatus(used, ent) {
   if (!ent) return { label: 'No data', color: '#9CA3AF', bg: '#F3F4F6', tone: 'neutral' };
   const pct = (used / ent) * 100;
@@ -239,6 +252,40 @@ export default function InsightsView({ me, employees, leaveTypes, requests, bala
     () => [...permRows].sort((a, b) => b.totalCount - a.totalCount).filter(r => r.totalCount > 0).slice(0, 5),
     [permRows]
   );
+
+  // Reason-category breakdown for the active scope (current month if
+  // isMonthMode, otherwise the full year). Uses the same pattern
+  // categoriseReason() helper from the permission-letter generator —
+  // string-matches keywords against six fixed categories.
+  const reasonBreakdown = useMemo(() => {
+    const empIds = new Set(filteredEmps.map(e => e.id));
+    let scope = (permissions || []).filter(p =>
+      (p.status === 'approved' || p.status === 'pending') &&
+      new Date(p.permission_date).getFullYear() === year &&
+      empIds.has(p.employee_id)
+    );
+    if (isMonthMode) {
+      const ms = String(monthNum).padStart(2, '0');
+      scope = scope.filter(p => p.permission_date?.startsWith(`${year}-${ms}`));
+    }
+    const buckets = {
+      medical:  { id: 'medical',  label: 'Medical',           count: 0, color: '#B83A2E' },
+      gov_bank: { id: 'gov_bank', label: 'Government / Bank', count: 0, color: '#9D6B53' },
+      family:   { id: 'family',   label: 'Family / Emergency', count: 0, color: '#2D5F3F' },
+      school:   { id: 'school',   label: 'School / Childcare', count: 0, color: '#6B5BA8' },
+      traffic:  { id: 'traffic',  label: 'Traffic / Transport', count: 0, color: '#5A8A9A' },
+      other:    { id: 'other',    label: 'Other',             count: 0, color: '#92400E' },
+    };
+    for (const p of scope) {
+      const cat = categoriseReason(p.reason);
+      if (buckets[cat]) buckets[cat].count += 1;
+    }
+    const total = Object.values(buckets).reduce((s, b) => s + b.count, 0);
+    const arr = Object.values(buckets)
+      .map(b => ({ ...b, pct: total > 0 ? (b.count / total) * 100 : 0 }))
+      .sort((a, b) => b.count - a.count);
+    return { rows: arr, total };
+  }, [permissions, year, filteredEmps, isMonthMode, monthNum]);
 
   const deptBreakdown = useMemo(() => {
     if (isMonthMode) return [];
@@ -598,6 +645,7 @@ export default function InsightsView({ me, employees, leaveTypes, requests, bala
           year={year} monthLabel={monthLabel} isMonthMode={isMonthMode}
           permRows={permRows} permAgg={permAgg}
           monthlyCounts={monthlyCounts} topUsers={topUsers}
+          reasonBreakdown={reasonBreakdown}
           permLoading={permLoading}
           onSetMonth={(m) => setMonth(String(m))}
           onSelectEmp={setViewedEmpId}
@@ -836,7 +884,7 @@ function LeaveSummary({ year, monthLabel, isMonthMode, leaveRows, leaveAgg, dept
 // =============================================================================
 // PERMISSIONS SUMMARY
 // =============================================================================
-function PermissionsSummary({ year, monthLabel, isMonthMode, permRows, permAgg, monthlyCounts, topUsers, permLoading, onSetMonth, onSelectEmp }) {
+function PermissionsSummary({ year, monthLabel, isMonthMode, permRows, permAgg, monthlyCounts, topUsers, reasonBreakdown, permLoading, onSetMonth, onSelectEmp }) {
   const maxCount = Math.max(1, ...monthlyCounts);
   const currentMonth = new Date().getMonth();
   const isCurrentYear = year === new Date().getFullYear();
@@ -945,6 +993,53 @@ function PermissionsSummary({ year, monthLabel, isMonthMode, permRows, permAgg, 
                 ))}
               </ul>
             )}
+          </div>
+        </div>
+      )}
+
+      {reasonBreakdown && reasonBreakdown.total > 0 && (
+        <div className="rounded-2xl border bg-white p-4 sm:p-5 mb-5"
+             style={{ borderColor: 'var(--border-soft)' }}>
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <div>
+              <div className="text-[10px] tracking-[0.25em] opacity-60">REASON BREAKDOWN</div>
+              <div className="text-xs opacity-70 mt-0.5">
+                Why staff are requesting permission · {isMonthMode ? monthLabel : `${year}`}
+                <span className="opacity-60"> · {reasonBreakdown.total} request{reasonBreakdown.total === 1 ? '' : 's'}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Stacked horizontal bar — one segment per category */}
+          <div className="rounded-lg overflow-hidden flex h-6 mb-4"
+               style={{ background: 'var(--paper-soft, #F4F4EE)' }}>
+            {reasonBreakdown.rows.filter(r => r.count > 0).map(r => (
+              <div
+                key={r.id}
+                title={`${r.label}: ${r.count} (${r.pct.toFixed(0)}%)`}
+                style={{
+                  width: `${r.pct}%`,
+                  background: r.color,
+                  minWidth: '2px',
+                }}
+              />
+            ))}
+          </div>
+
+          {/* Legend grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2">
+            {reasonBreakdown.rows.map(r => (
+              <div key={r.id} className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: r.color }} />
+                  <span className="text-xs truncate" style={{ color: '#1F1B16' }}>{r.label}</span>
+                </div>
+                <div className="text-xs tabular-nums flex items-baseline gap-1.5 flex-shrink-0">
+                  <span className="font-semibold">{r.count}</span>
+                  <span className="opacity-60 text-[10px]">{r.pct.toFixed(0)}%</span>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
