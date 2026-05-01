@@ -326,42 +326,41 @@ const cbRun = (checked, label) => [
   run(label + '     ', { size: 19 }),
 ];
 
-// ─── signature cell (single combined cell — atomic so the whole 4-column
-//      grid never splits across pages) ────────────────────────────────────
-// Each column is a single TableCell containing 4 stacked paragraphs:
-//   1. Cream-banner title row (label EN + AR)
-//   2. Empty space for wet signature (above the line)
-//   3. Printed name, centered
-//   4. Footer line — italic timestamp + bold label, separated by a thin rule
-function sigCombinedCell(en, ar, name, footerLeft, footerRight, width) {
+// ─── signature cells: 2-row pattern (header band + body) so the name +
+//      timestamp footer anchor to the BOTTOM of each box. Mirrors the
+//      permission-letter pattern exactly. cantSplit on each row keeps the
+//      band locked to its body, and the body's verticalAlign:BOTTOM
+//      pushes the printed name + timestamp + 'Signature' line to the
+//      bottom edge regardless of cell height.
+function sigHeaderCell(en, ar, width) {
+  return new TableCell({
+    children: [new Paragraph({
+      children: [
+        run(en + '   ', { bold: true, size: 13 }),
+        arRun(ar, { size: 13, color: C_COPPER }),
+      ],
+    })],
+    width: { size: width, type: WidthType.DXA },
+    margins: { top: 60, bottom: 60, left: 140, right: 140 },
+    shading: shading(C_BANNER),
+    borders: FORM_BORDER,
+    verticalAlign: VerticalAlign.CENTER,
+  });
+}
+
+function sigBodyCell(name, footerLeft, footerRight, width) {
   return new TableCell({
     children: [
-      // 1. Title strip — bold EN + Arabic, top divider and bottom divider
-      //    to read as the cream banner row.
-      new Paragraph({
-        children: [
-          run(en + '   ', { bold: true, size: 13 }),
-          arRun(ar, { size: 13, color: C_COPPER }),
-        ],
-        spacing: { before: 0, after: 0 },
-        shading: shading(C_BANNER),
-        border: {
-          bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER, space: 6 },
-        },
-      }),
-      // 2. Empty signature area
-      new Paragraph({
-        alignment: AlignmentType.CENTER,
-        children: [run(' ', { size: 16 })],
-        spacing: { before: 60, after: 0 },
-      }),
-      // 3. Printed name, centered
+      // Printed name — sits at the bottom of the cell because the cell
+      // is verticalAlign:BOTTOM. The empty space above is the wet
+      // signature area.
       new Paragraph({
         alignment: AlignmentType.CENTER,
         children: [run(name || '', { size: 18, bold: true })],
-        spacing: { before: 0, after: 40 },
+        spacing: { before: 0, after: 60 },
       }),
-      // 4. Footer line
+      // Footer line — italic timestamp on the left, bold label on the
+      // right, separated from the name by a thin top border.
       new Paragraph({
         alignment: AlignmentType.CENTER,
         children: [
@@ -369,16 +368,16 @@ function sigCombinedCell(en, ar, name, footerLeft, footerRight, width) {
           run('     ', { size: 12 }),
           run(footerRight, { size: 12, bold: true }),
         ],
-        spacing: { before: 40, after: 0 },
+        spacing: { before: 60, after: 0 },
         border: {
           top: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER, space: 6 },
         },
       }),
     ],
     width: { size: width, type: WidthType.DXA },
-    margins: { top: 40, bottom: 40, left: 140, right: 140 },
+    margins: { top: 50, bottom: 50, left: 140, right: 140 },
     borders: FORM_BORDER,
-    verticalAlign: VerticalAlign.TOP,
+    verticalAlign: VerticalAlign.BOTTOM,
   });
 }
 
@@ -894,11 +893,16 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
     rows: [
       new TableRow({
         cantSplit: true,
-        // 3.54 cm row height (2007 dxa) per spec — gives generous space
-        // for ink signatures + HQ stamp on the right.
+        children: sigCols.map((c, i) => sigHeaderCell(c.en, c.ar, sigWidths[i])),
+      }),
+      new TableRow({
+        cantSplit: true,
+        // 3.54 cm body row (2007 dxa) — generous space for ink
+        // signatures + HQ stamp. Body cell verticalAlign:BOTTOM
+        // anchors the printed name + timestamp to the bottom edge.
         height: { value: 2007, rule: HeightRule.ATLEAST },
         children: sigCols.map((c, i) =>
-          sigCombinedCell(c.en, c.ar, c.name, c.footerLeft, c.footerRight, sigWidths[i])),
+          sigBodyCell(c.name, c.footerLeft, c.footerRight, sigWidths[i])),
       }),
     ],
   });
@@ -915,9 +919,6 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
     children: [
       run(`Generated on ${generatedAt} GMT+3  ·  ${hrApprover?.name || HR_SIGNATURE.name}`,
           { size: 12, italics: true, color: C_COPPER }),
-      run('     ·     ', { size: 11, color: C_MUTED }),
-      run('Verify online: ', { size: 11, color: C_MUTED }),
-      run(verifyUrl, { size: 11, color: C_BRAND }),
     ],
     alignment: AlignmentType.LEFT,
     spacing: { before: 40, after: 0 },
