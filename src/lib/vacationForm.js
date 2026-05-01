@@ -13,7 +13,7 @@
 //   • downloadVacationFormForRequest(...)  → triggers .pdf download
 
 import QRCode from 'qrcode';
-import pdfMake, { ensureFontsLoaded } from './pdfFontLoader.js';
+import pdfMake, { ensureFontsLoaded, createPdfBlob } from './pdfFontLoader.js';
 
 const VERIFY_BASE_URL = (typeof window !== 'undefined' && window.location?.origin)
   ? window.location.origin
@@ -520,13 +520,7 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
     content,
   };
 
-  return await new Promise((resolve, reject) => {
-    try {
-      pdfMake.createPdf(docDef).getBlob((blob) => resolve(blob));
-    } catch (err) {
-      reject(err);
-    }
-  });
+  return createPdfBlob(docDef);
 }
 
 // ─── EMAIL DRAFT ─────────────────────────────────────────────────────────────

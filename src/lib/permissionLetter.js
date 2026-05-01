@@ -13,7 +13,7 @@
 //   • downloadPermissionLetter(...)        → triggers .pdf download
 
 import QRCode from 'qrcode';
-import pdfMake, { ensureFontsLoaded } from './pdfFontLoader.js';
+import pdfMake, { ensureFontsLoaded, createPdfBlob } from './pdfFontLoader.js';
 import { downloadBlob } from './vacationForm.js';
 
 // Verification URL base — staff scan the QR in the printed letter to
@@ -580,13 +580,7 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
   };
 
   // Generate PDF blob
-  return await new Promise((resolve, reject) => {
-    try {
-      pdfMake.createPdf(docDef).getBlob((blob) => resolve(blob));
-    } catch (err) {
-      reject(err);
-    }
-  });
+  return createPdfBlob(docDef);
 }
 
 // ─── email draft ─────────────────────────────────────────────────────────────
