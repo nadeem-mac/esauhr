@@ -89,21 +89,6 @@ const HR_SIGNATURE = {
   email:   'bashaier.alsubaie@evergreen-shipping.com.sa',
 };
 
-const POLICY_BULLETS = [
-  {
-    en: 'Employees with 1+ year of service are entitled to 21 calendar days of paid annual leave; 30 days after 5 years.',
-    ar: 'يستحق الموظف بعد سنة من الخدمة 21 يومًا إجازة سنوية مدفوعة، و30 يومًا بعد 5 سنوات خدمة.',
-  },
-  {
-    en: 'Annual leave should be requested 14 days in advance; sick leave requires a valid medical certificate.',
-    ar: 'تقدم طلبات الإجازة السنوية قبل 14 يومًا؛ وتتطلب الإجازة المرضية شهادة طبية معتمدة.',
-  },
-  {
-    en: 'Substitute coverage must be arranged and accepted before the leave start date.',
-    ar: 'يجب ترتيب وقبول البديل المعتمد قبل تاريخ بدء الإجازة.',
-  },
-];
-
 // ─── brand palette ────────────────────────────────────────────────────────────
 const C_TEXT      = '#1F1B16';
 const C_MUTED     = '#5C4406';
@@ -150,10 +135,10 @@ function labelCell(en, ar) {
   return {
     stack: [
       { text: en, bold: true, fontSize: 9, color: C_TEXT },
-      { text: ar, font: 'Amiri', fontSize: 9, color: C_COPPER, alignment: 'left', margin: [0, 2, 0, 0] },
+      { text: ar, font: 'Amiri', fontSize: 9, color: C_COPPER, alignment: 'left', margin: [0, 1, 0, 0] },
     ],
     fillColor: C_LABEL_BG,
-    margin: [8, 6, 6, 6],
+    margin: [8, 4, 6, 4],
   };
 }
 
@@ -163,7 +148,7 @@ function valueCell(text, opts = {}) {
     fontSize: 11,
     bold: !!opts.bold,
     color: opts.color || C_TEXT,
-    margin: [10, 6, 8, 6],
+    margin: [10, 4, 8, 4],
   };
 }
 
@@ -216,45 +201,6 @@ function formTable(rows) {
   };
 }
 
-function policyTable(headerEn, headerAr, bullets) {
-  return {
-    table: {
-      widths: ['*', '*'],
-      body: [
-        [
-          { text: headerEn, bold: true, fontSize: 7.5, color: C_MUTED, fillColor: C_LABEL_BG, margin: [10, 5, 5, 5] },
-          { text: headerAr, font: 'Amiri', bold: true, fontSize: 8, color: C_MUTED, fillColor: C_LABEL_BG, alignment: 'right', margin: [5, 5, 10, 5] },
-        ],
-        ...bullets.map((b, i) => [
-          {
-            text: [
-              { text: `${String(i + 1).padStart(2, '0')}.   `, bold: true, fontSize: 8, color: C_COPPER },
-              { text: b.en, fontSize: 8.5, color: C_TEXT },
-            ],
-            fillColor: C_LABEL_BG,
-            margin: [10, 5, 5, 5],
-          },
-          {
-            text: b.ar,
-            font: 'Amiri', fontSize: 9.5, color: C_MUTED,
-            fillColor: C_LABEL_BG,
-            alignment: 'right',
-            margin: [5, 5, 10, 5],
-          },
-        ]),
-      ],
-    },
-    layout: {
-      hLineWidth: () => 0.5,
-      vLineWidth: () => 0.5,
-      hLineColor: () => C_BORDER,
-      vLineColor: () => C_BORDER,
-      paddingLeft:   () => 0, paddingRight: () => 0,
-      paddingTop:    () => 0, paddingBottom: () => 0,
-    },
-  };
-}
-
 function sigCell({ en, ar, name, footerLeft, footerRight }) {
   return {
     stack: [
@@ -287,25 +233,24 @@ function sigCell({ en, ar, name, footerLeft, footerRight }) {
           body: [[
             {
               stack: [
-                { text: ' ', fontSize: 9 },
-                { text: ' ', fontSize: 9 },
-                { text: name || ' ', alignment: 'center', bold: true, fontSize: 10, color: C_TEXT, margin: [0, 0, 0, 4] },
+                { text: ' ', fontSize: 12 },
+                { text: name || ' ', alignment: 'center', bold: true, fontSize: 9.5, color: C_TEXT, margin: [0, 0, 0, 2] },
                 {
                   canvas: [{ type: 'line', x1: 0, y1: 0, x2: 100, y2: 0, lineWidth: 0.5, lineColor: C_BORDER }],
                   alignment: 'center',
-                  margin: [0, 6, 0, 4],
+                  margin: [0, 4, 0, 3],
                 },
                 {
                   alignment: 'center',
                   text: [
-                    { text: footerLeft || ' ', italics: true, fontSize: 7, color: C_COPPER },
-                    { text: '     ', fontSize: 7 },
-                    { text: footerRight, bold: true, fontSize: 7, color: C_TEXT },
+                    { text: footerLeft || ' ', italics: true, fontSize: 6.5, color: C_COPPER },
+                    { text: '     ', fontSize: 6.5 },
+                    { text: footerRight, bold: true, fontSize: 6.5, color: C_TEXT },
                   ],
                 },
               ],
               fillColor: C_PAPER,
-              margin: [4, 4, 4, 4],
+              margin: [4, 3, 4, 3],
             },
           ]],
         },
@@ -319,7 +264,6 @@ function sigCell({ en, ar, name, footerLeft, footerRight }) {
         },
       },
     ],
-    unbreakable: true,
   };
 }
 
@@ -328,8 +272,10 @@ function signatureGrid(cols) {
     table: {
       widths: ['*', '*', '*', '*'],
       body: [cols.map(c => sigCell(c))],
+      dontBreakRows: true,
     },
     layout: 'noBorders',
+    unbreakable: true,
   };
 }
 
@@ -411,7 +357,7 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
     bold: true,
     fontSize: 9,
     color: C_BRAND,
-    margin: [0, 0, 0, 8],
+    margin: [0, 0, 0, 4],
   });
 
   // EMPLOYEE INFORMATION
@@ -439,15 +385,6 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
   ]));
 
   content.push({ text: ' ', fontSize: 4 });
-
-  // POLICY
-  content.push(policyTable(
-    'LEAVE POLICY · KSA LABOR LAW',
-    'سياسة الإجازات · نظام العمل السعودي',
-    POLICY_BULLETS,
-  ));
-
-  content.push({ text: ' ', fontSize: 6 });
 
   // SIGNATURES
   content.push(signatureGrid([
@@ -480,7 +417,7 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
   // ── Document definition ──
   const docDef = {
     pageSize: 'A4',
-    pageMargins: [40, 40, 40, 80],
+    pageMargins: [40, 40, 40, 56],
     info: {
       title: `Vacation Form ${employee?.name || ''} ${request.start_date}`,
       author: 'ESAU HR · Leave Desk',
