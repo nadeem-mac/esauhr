@@ -338,36 +338,38 @@ function sigHeaderCell(en, ar, width) {
   });
 }
 
-function sigBodyCell(name, width) {
+// Combined body + footer cell — printed name on top, timestamp + label
+// at the bottom of the SAME cell. Replaces the old separate body and
+// footer cells. The advantage: Word can't split a cell mid-content
+// across pages, so the sig table becomes a 2-row block (header band +
+// combined body) that always renders as a unit.
+function sigCombinedBodyCell(name, footerLeft, footerRight, width) {
   return new TableCell({
     children: [
+      // Top — printed name, centered, takes most of the vertical space
       new Paragraph({
         alignment: AlignmentType.CENTER,
         children: [run(name || '', { size: 18, bold: true })],
-        spacing: { before: 120, after: 0 },
+        spacing: { before: 120, after: 240 },
+      }),
+      // Bottom — timestamp left + label right, with a top border that
+      // visually replaces the previous footer band's separator line.
+      new Paragraph({
+        children: [
+          run(footerLeft || ' ', { size: 12, italics: true, color: C_COPPER }),
+          run('     ', { size: 12 }),
+          run(footerRight, { size: 12, bold: true }),
+        ],
+        spacing: { before: 0, after: 0 },
+        border: {
+          top: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER, space: 6 },
+        },
       }),
     ],
     width: { size: width, type: WidthType.DXA },
-    margins: { top: 80, bottom: 80, left: 100, right: 100 },
+    margins: { top: 80, bottom: 80, left: 140, right: 140 },
     borders: FORM_BORDER,
     verticalAlign: VerticalAlign.TOP,
-  });
-}
-
-function sigFooterCell(leftText, rightLabel, width) {
-  return new TableCell({
-    children: [new Paragraph({
-      children: [
-        run(leftText || ' ', { size: 12, italics: true, color: C_COPPER }),
-        run('     ', { size: 12 }),
-        run(rightLabel, { size: 12, bold: true }),
-      ],
-    })],
-    width: { size: width, type: WidthType.DXA },
-    margins: { top: 100, bottom: 100, left: 140, right: 140 },
-    shading: shading(C_LABEL_BG),
-    borders: FORM_BORDER,
-    verticalAlign: VerticalAlign.CENTER,
   });
 }
 
@@ -652,12 +654,9 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
       }),
       new TableRow({
         cantSplit: true,
-        height: { value: 800, rule: HeightRule.ATLEAST },
-        children: sigCols.map((c, i) => sigBodyCell(c.name, sigWidths[i])),
-      }),
-      new TableRow({
-        cantSplit: true,
-        children: sigCols.map((c, i) => sigFooterCell(c.footerLeft, c.footerRight, sigWidths[i])),
+        height: { value: 1100, rule: HeightRule.ATLEAST },
+        children: sigCols.map((c, i) =>
+          sigCombinedBodyCell(c.name, c.footerLeft, c.footerRight, sigWidths[i])),
       }),
     ],
   });
