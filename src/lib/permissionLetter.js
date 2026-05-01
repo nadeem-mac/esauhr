@@ -140,7 +140,6 @@ const run = (text, opts = {}) => new TextRun({
   color: opts.color ?? C_TEXT,
   bold: !!opts.bold,
   italics: !!opts.italics,
-  ...(opts.spacing != null ? { characterSpacing: opts.spacing } : {}),
 });
 const arRun = (text, opts = {}) => new TextRun({
   text: String(text ?? ''),
@@ -176,7 +175,7 @@ const sectionBanner = (en, ar) => new Table({
     children: [
       new TableCell({
         children: [new Paragraph({
-          children: [run(en, { bold: true, size: 18, spacing: 60 })],
+          children: [run(en, { bold: true, size: 18 })],
         })],
         width: { size: 60, type: WidthType.PERCENTAGE },
         margins: { top: 60, bottom: 60, left: 140, right: 100 },
@@ -201,7 +200,7 @@ const sectionBanner = (en, ar) => new Table({
 const labelCell = (en, ar) => new TableCell({
   children: [
     new Paragraph({
-      children: [run(en, { bold: true, size: 16, spacing: 30 })],
+      children: [run(en, { bold: true, size: 16 })],
     }),
     new Paragraph({
       children: [arRun(ar, { size: 14, color: C_MUTED })],
@@ -279,17 +278,38 @@ const SIG_BAND_PAD  = { top: 60,  bottom: 60,  left: 100, right: 100 };
 const SIG_BODY_PAD  = { top: 100, bottom: 100, left: 100, right: 100 };
 
 function sigHeaderCell(en, ar) {
+  // Same 2-column inner-table approach as sigFooterCell — tab stops
+  // were unreliable inside the narrow 25% column, so this guarantees
+  // the EN title sits flush left and AR sits flush right.
+  const innerLayout = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [new TableRow({
+      children: [
+        new TableCell({
+          children: [new Paragraph({
+            children: [run(en, { bold: true, size: 14 })],
+            alignment: AlignmentType.LEFT,
+          })],
+          width:   { size: 55, type: WidthType.PERCENTAGE },
+          margins: { top: 0, bottom: 0, left: 0, right: 0 },
+          borders: noBorder(),
+        }),
+        new TableCell({
+          children: [new Paragraph({
+            children: [arRun(ar, { size: 14, color: C_MUTED })],
+            alignment: AlignmentType.RIGHT,
+            bidirectional: true,
+          })],
+          width:   { size: 45, type: WidthType.PERCENTAGE },
+          margins: { top: 0, bottom: 0, left: 0, right: 0 },
+          borders: noBorder(),
+        }),
+      ],
+    })],
+  });
+
   return new TableCell({
-    children: [
-      new Paragraph({
-        tabStops: [{ type: 'right', position: SIG_TAB }],
-        children: [
-          run(en, { bold: true, size: 14, spacing: 40 }),
-          run('\t', {}),
-          arRun(ar, { size: 14, color: C_MUTED }),
-        ],
-      }),
-    ],
+    children: [innerLayout],
     width:    { size: 25, type: WidthType.PERCENTAGE },
     margins:  SIG_BAND_PAD,
     shading:  { fill: C_BANNER },
@@ -314,17 +334,39 @@ function sigBodyCell(name) {
 }
 
 function sigFooterCell(leftText, rightLabel) {
+  // Left/right layout via a borderless 2-column inner table. This is far
+  // more reliable in Word than a tab stop in a narrow cell — tab stops
+  // were collapsing here, causing 'Submitted 1 May · 13:48Signature &
+  // Date' (concatenated, no separator) in the docx output even though
+  // the HTML draft renders correctly with flexbox justify-between.
+  const innerLayout = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [new TableRow({
+      children: [
+        new TableCell({
+          children: [new Paragraph({
+            children: [run(leftText || '', { size: 13, italics: true, color: C_MUTED })],
+            alignment: AlignmentType.LEFT,
+          })],
+          width:   { size: 60, type: WidthType.PERCENTAGE },
+          margins: { top: 0, bottom: 0, left: 0, right: 0 },
+          borders: noBorder(),
+        }),
+        new TableCell({
+          children: [new Paragraph({
+            children: [run(rightLabel, { size: 13, bold: true })],
+            alignment: AlignmentType.RIGHT,
+          })],
+          width:   { size: 40, type: WidthType.PERCENTAGE },
+          margins: { top: 0, bottom: 0, left: 0, right: 0 },
+          borders: noBorder(),
+        }),
+      ],
+    })],
+  });
+
   return new TableCell({
-    children: [
-      new Paragraph({
-        tabStops: [{ type: 'right', position: SIG_TAB }],
-        children: [
-          run(leftText || '', { size: 13, italics: true, color: C_MUTED }),
-          run('\t', {}),
-          run(rightLabel, { size: 13, bold: true, spacing: 30 }),
-        ],
-      }),
-    ],
+    children: [innerLayout],
     width:    { size: 25, type: WidthType.PERCENTAGE },
     margins:  SIG_BAND_PAD,
     shading:  { fill: C_BANNER },
@@ -385,7 +427,7 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
         }),
         new TableCell({
           children: [
-            new Paragraph({ children: [run('EVERGREEN LINE', { bold: true, size: 30, color: C_BRAND, spacing: 60 })] }),
+            new Paragraph({ children: [run('EVERGREEN LINE', { bold: true, size: 30, color: C_BRAND })] }),
             new Paragraph({
               children: [run(`${HR_SIGNATURE.company}  ·  ${HR_SIGNATURE.unit}  ·  Dammam, K.S.A`, { size: 14, color: C_MUTED })],
               spacing: { before: 30 },
@@ -407,6 +449,10 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
   });
 
   // ── TITLE BAR — EN + AR on one row, Date/Ref right-aligned ────────────────
+  // Sized to keep both EN + AR on a single line in the title cell, with
+  // Date / Ref pushed to a smaller right column. The previous version
+  // wrapped because EN at 22pt + the AR phrase exceeded the 65% column
+  // width.
   const titleBar = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [new TableRow({
@@ -415,13 +461,13 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
           children: [
             new Paragraph({
               children: [
-                run('PERMISSION REQUEST FORM', { bold: true, size: 22, spacing: 60 }),
-                run('     ·     ', { color: C_MUTED, size: 22 }),
-                arRun('نموذج طلب استئذان', { size: 22, color: C_BRAND, bold: true }),
+                run('PERMISSION REQUEST FORM', { bold: true, size: 20 }),
+                run('   \u00B7   ', { color: C_MUTED, size: 20 }),
+                arRun('نموذج طلب استئذان', { size: 20, color: C_BRAND, bold: true }),
               ],
             }),
           ],
-          width: { size: 65, type: WidthType.PERCENTAGE },
+          width: { size: 70, type: WidthType.PERCENTAGE },
           borders: noBorder(),
           margins: { top: 0, bottom: 0, left: 0, right: 0 },
           verticalAlign: VerticalAlign.CENTER,
@@ -432,14 +478,14 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
               children: [
                 run('Date: ',  { bold: true, color: C_MUTED, size: 16 }),
                 run(fmtDateMed(today), { size: 16 }),
-                run('   ·   ', { color: C_MUTED, size: 16 }),
+                run('   \u00B7   ', { color: C_MUTED, size: 16 }),
                 run('Ref: ',   { bold: true, color: C_MUTED, size: 16 }),
                 run(`PR-${String(request.id).padStart(5, '0')}`, { bold: true, size: 16 }),
               ],
               alignment: AlignmentType.RIGHT,
             }),
           ],
-          width: { size: 35, type: WidthType.PERCENTAGE },
+          width: { size: 30, type: WidthType.PERCENTAGE },
           borders: noBorder(),
           margins: { top: 0, bottom: 0, left: 0, right: 0 },
           verticalAlign: VerticalAlign.CENTER,
