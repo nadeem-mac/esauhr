@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { supabase, directPatch, directGet } from '../supabaseClient.js';
-import { CheckCircle2, XCircle, Clock, Loader2, AlertTriangle, Sunrise, Sunset, Calendar, RefreshCw } from 'lucide-react';
+import { CheckCircle2, XCircle, Clock, Loader2, AlertTriangle, Sunrise, Sunset, Calendar, RefreshCw, Search, Plane, FileDown } from 'lucide-react';
 import { logAction } from '../lib/audit.js';
 import HrApprovalModal from './HrApprovalModal.jsx';
+import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
 import PermissionApprovedModal from './PermissionApprovedModal.jsx';
 import { fmtDate } from '../lib/leaveLogic.js';
 import { PERMISSION_TYPES, summariseMonth } from '../lib/permissionLogic.js';
@@ -24,6 +25,8 @@ export default function ReviewerPanel({ me }) {
   // own decisions, re-open the timeline for context, and re-download
   // the letter / re-open the email draft if she missed it the first time.
   const [recentDecisions, setRecentDecisions] = useState([]);
+  const [recentLeaveDecisions, setRecentLeaveDecisions] = useState([]);
+  const [historyQuery, setHistoryQuery] = useState('');
   const [isManager, setIsManager]     = useState(false);
   const [loading, setLoading]         = useState(true);
   const [busyId, setBusyId]           = useState(null);
@@ -108,24 +111,47 @@ export default function ReviewerPanel({ me }) {
       setLeave(lr || []);
       setPerms(pr || []);
 
-      // History pull — only HR/admin reviewers (managers don't get a
-      // 'recent decisions' view because their volume is tiny per person
-      // and the manager dashboard already surfaces it via Pending
-      // approvals card). 30-day window keyed by hr_decided_at, includes
-      // both approved and rejected_by_hr rows.
+      // History pull — HR/admin reviewers see everything they've decided
+      // in the last 90 days, both leave AND permissions. Managers don't
+      // get this section (their volume is too small to warrant it; the
+      // ManagerDashboard's Pending approvals card already surfaces their
+      // recent activity).
+      //
+      // The hr_decided_by column has historically been stamped with EITHER
+      // the PSN (e.g. 'H94830') or the auth_user_id UUID, depending on
+      // which code path wrote it (HrApprovalModal uses UUID, ReviewerPanel
+      // for permissions uses PSN). The query below uses an OR filter to
+      // catch both.
       if (canPerm) {
         const cutoff = new Date();
-        cutoff.setDate(cutoff.getDate() - 30);
+        cutoff.setDate(cutoff.getDate() - 90);
         const cutoffISO = cutoff.toISOString();
-        const histQs = `select=*&hr_decided_by=eq.${encodeURIComponent(me.id)}&hr_decided_at=gte.${cutoffISO}&order=hr_decided_at.desc`;
+        const psn = encodeURIComponent(me.id);
+        const auth = me.auth_user_id ? encodeURIComponent(me.auth_user_id) : null;
+        const orFilter = auth
+          ? `(hr_decided_by.eq.${psn},hr_decided_by.eq.${auth})`
+          : `(hr_decided_by.eq.${psn})`;
+
+        // Permission decisions
+        const permHistQs = `select=*&or=${orFilter}&hr_decided_at=gte.${cutoffISO}&order=hr_decided_at.desc`;
         try {
-          const hist = await directGet('permission_requests', histQs, { timeoutMs: 10000 });
+          const hist = await directGet('permission_requests', permHistQs, { timeoutMs: 10000 });
           setRecentDecisions(Array.isArray(hist) ? hist : []);
         } catch {
           setRecentDecisions([]);
         }
+
+        // Leave decisions
+        const leaveHistQs = `select=*&or=${orFilter}&hr_decided_at=gte.${cutoffISO}&order=hr_decided_at.desc`;
+        try {
+          const lhist = await directGet('leave_requests', leaveHistQs, { timeoutMs: 10000 });
+          setRecentLeaveDecisions(Array.isArray(lhist) ? lhist : []);
+        } catch {
+          setRecentLeaveDecisions([]);
+        }
       } else {
         setRecentDecisions([]);
+        setRecentLeaveDecisions([]);
       }
     } catch (err) {
       console.warn('ReviewerPanel load failed:', err);
@@ -438,75 +464,25 @@ export default function ReviewerPanel({ me }) {
             </section>
           )}
 
-          {/* HR-only — recent decisions made by this reviewer in the last
-              30 days. Lets Bashaier see what she's already acted on,
-              re-open the timeline for context, and re-trigger the
-              download letter / email draft if she missed it. Hidden for
-              managers (their volume is too small to warrant a separate
-              section, and ManagerDashboard's Pending approvals already
-              shows their recent activity). */}
-          {canPerm && recentDecisions.length > 0 && (
-            <section>
-              <h3 className="text-[10px] tracking-[0.25em] opacity-60 mb-3">
-                MY RECENT DECISIONS · {recentDecisions.length}
-              </h3>
-              <ul className="space-y-2">
-                {recentDecisions.map(req => {
-                  const emp = empMap[req.employee_id];
-                  const TypeIcon = req.type === 'late_arrival' ? Sunrise : Sunset;
-                  const wasApproved = req.stage === 'approved';
-                  return (
-                    <li key={req.id} className="rounded-xl px-4 py-2.5 border flex items-center gap-3"
-                      style={{ background: '#FFFDF7', borderColor: 'var(--border-soft)' }}>
-                      <div
-                        className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
-                        style={{ background: req.type === 'early_leave' ? '#FCE7F3' : '#FEF3C7',
-                                 color:      req.type === 'early_leave' ? '#BE185D' : '#A16207' }}>
-                        <TypeIcon className="w-4 h-4" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-medium" style={{ color: '#1F1B16' }}>
-                            {emp?.name || req.employee_id}
-                          </span>
-                          <span className="text-[11px]" style={{ color: '#1F1B16', opacity: 0.6 }}>
-                            · {PERMISSION_TYPES[req.type]?.label} · {Number(req.hours)}h · {fmtDate(req.permission_date)}
-                          </span>
-                          <span
-                            className="text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1"
-                            style={{
-                              background: wasApproved ? '#ECFDF5' : '#FEE2E2',
-                              color:      wasApproved ? '#0F4C2A' : '#B91C1C',
-                              fontWeight: 700, letterSpacing: '0.1em',
-                            }}>
-                            {wasApproved
-                              ? <><CheckCircle2 className="w-2.5 h-2.5" /> APPROVED</>
-                              : <><XCircle className="w-2.5 h-2.5" /> REJECTED</>}
-                          </span>
-                        </div>
-                        <div className="text-[10px] mt-0.5" style={{ color: '#1F1B16', opacity: 0.6 }}>
-                          Decided {new Date(req.hr_decided_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                      </div>
-                      {/* Re-open the post-approval modal so Bashaier can
-                          re-download the .docx letter or re-open the
-                          email draft. Only useful for approved rows. */}
-                      {wasApproved && (
-                        <button
-                          type="button"
-                          onClick={() => setApprovedPermission(req)}
-                          className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap"
-                          style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
-                          title="Re-open letter and email draft"
-                        >
-                          Letter / email
-                        </button>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
+          {/* HR-only — searchable history of every decision this reviewer
+              has made in the last 90 days, across BOTH leave and
+              permission requests. Lets Bashaier:
+                • See her own approvals after she clicks Approve (the
+                  request leaves the queue but appears here immediately)
+                • Search by employee name to find a past approval
+                • Re-download the .docx letter or re-open the email
+                  draft for any approved row
+              Hidden for managers (their volume is too small to need it). */}
+          {canPerm && (recentDecisions.length > 0 || recentLeaveDecisions.length > 0) && (
+            <HistorySection
+              recentLeaveDecisions={recentLeaveDecisions}
+              recentDecisions={recentDecisions}
+              empMap={empMap}
+              query={historyQuery}
+              setQuery={setHistoryQuery}
+              setApprovedPermission={setApprovedPermission}
+              isAdmin={isAdmin}
+            />
           )}
         </>
       )}
@@ -541,5 +517,169 @@ function EmptyState({ text }) {
       <Clock className="w-4 h-4 mx-auto mb-2 opacity-50" />
       {text}
     </div>
+  );
+}
+
+// ─── History (recent decisions) ──────────────────────────────────────────────
+// Combined searchable history of leave + permission decisions made by this
+// reviewer in the last 90 days. Surfaces immediately after Bashaier approves
+// something — the row leaves the queue but appears here on the same load.
+function HistorySection({
+  recentLeaveDecisions, recentDecisions,
+  empMap, query, setQuery, setApprovedPermission,
+}) {
+  // Tag each row with kind so the unified list can render appropriately.
+  const all = [
+    ...recentLeaveDecisions.map(r => ({ ...r, _kind: 'leave' })),
+    ...recentDecisions.map(r => ({ ...r, _kind: 'permission' })),
+  ].sort((a, b) =>
+    new Date(b.hr_decided_at || 0).getTime() - new Date(a.hr_decided_at || 0).getTime(),
+  );
+
+  const q = (query || '').trim().toLowerCase();
+  const filtered = q
+    ? all.filter(r => {
+        const emp = empMap[r.employee_id];
+        const name = (emp?.name || '').toLowerCase();
+        const psn  = (r.employee_id || '').toLowerCase();
+        const dept = (emp?.department || '').toLowerCase();
+        return name.includes(q) || psn.includes(q) || dept.includes(q);
+      })
+    : all;
+
+  const leaveCount = filtered.filter(r => r._kind === 'leave').length;
+  const permCount  = filtered.filter(r => r._kind === 'permission').length;
+
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+        <h3 className="text-[10px] tracking-[0.25em] opacity-60">
+          MY RECENT DECISIONS · LAST 90 DAYS · {filtered.length}
+          {filtered.length > 0 && (
+            <span className="ml-2 opacity-70 font-normal lowercase tracking-normal">
+              ({leaveCount} leave · {permCount} permission)
+            </span>
+          )}
+        </h3>
+        <div className="relative" style={{ width: 220, maxWidth: '100%' }}>
+          <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 opacity-50" />
+          <input
+            type="text"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search by name, PSN, or department"
+            className="w-full pl-9 pr-3 py-1.5 rounded-full border text-xs"
+            style={{ background: '#FFFDF7', borderColor: 'var(--border-soft)', color: '#1F1B16' }}
+          />
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <EmptyState text={q ? `No matches for "${query}".` : 'No decisions yet in the last 90 days.'} />
+      ) : (
+        <ul className="space-y-2">
+          {filtered.map(req => (
+            <HistoryItem
+              key={`${req._kind}-${req.id}`}
+              req={req}
+              empMap={empMap}
+              onReopenPermission={() => setApprovedPermission(req)}
+            />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function HistoryItem({ req, empMap, onReopenPermission }) {
+  const emp = empMap[req.employee_id];
+  const wasApproved = req.stage === 'approved';
+  const isLeave = req._kind === 'leave';
+
+  // Icon: Plane for leave, Sunrise/Sunset for permission types
+  const Icon = isLeave
+    ? Plane
+    : (req.type === 'late_arrival' ? Sunrise : Sunset);
+
+  const iconBg    = isLeave ? '#E0F2FE' : (req.type === 'early_leave' ? '#FCE7F3' : '#FEF3C7');
+  const iconColor = isLeave ? '#0369A1' : (req.type === 'early_leave' ? '#BE185D' : '#A16207');
+
+  // Summary line varies by kind
+  const summary = isLeave
+    ? `Leave · ${fmtDate(req.start_date)}${req.end_date && req.end_date !== req.start_date ? ` → ${fmtDate(req.end_date)}` : ''}${req.days ? ` · ${req.days}d` : ''}`
+    : `${PERMISSION_TYPES[req.type]?.label || req.type} · ${Number(req.hours)}h · ${fmtDate(req.permission_date)}`;
+
+  async function downloadLeaveLetter() {
+    try {
+      await downloadVacationFormForRequest(req, empMap);
+    } catch (err) {
+      console.warn('letter download failed:', err);
+      alert('Could not download letter: ' + (err.message || err));
+    }
+  }
+
+  return (
+    <li className="rounded-xl px-4 py-2.5 border flex items-center gap-3"
+        style={{ background: '#FFFDF7', borderColor: 'var(--border-soft)' }}>
+      <div
+        className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+        style={{ background: iconBg, color: iconColor }}>
+        <Icon className="w-4 h-4" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-medium" style={{ color: '#1F1B16' }}>
+            {emp?.name || req.employee_id}
+          </span>
+          {emp?.department && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded"
+                  style={{ background: 'rgba(0,0,0,0.04)', color: '#1F1B16' }}>
+              {emp.department}
+            </span>
+          )}
+          <span className="text-[11px]" style={{ color: '#1F1B16', opacity: 0.6 }}>
+            · {summary}
+          </span>
+          <span
+            className="text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1"
+            style={{
+              background: wasApproved ? '#ECFDF5' : '#FEE2E2',
+              color:      wasApproved ? '#0F4C2A' : '#B91C1C',
+              fontWeight: 700, letterSpacing: '0.1em',
+            }}>
+            {wasApproved
+              ? <><CheckCircle2 className="w-2.5 h-2.5" /> APPROVED</>
+              : <><XCircle className="w-2.5 h-2.5" /> REJECTED</>}
+          </span>
+        </div>
+        <div className="text-[10px] mt-0.5" style={{ color: '#1F1B16', opacity: 0.6 }}>
+          Decided {new Date(req.hr_decided_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+        </div>
+      </div>
+
+      {wasApproved && isLeave && (
+        <button
+          type="button"
+          onClick={downloadLeaveLetter}
+          className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap inline-flex items-center gap-1"
+          style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
+          title="Re-download the leave application form"
+        >
+          <FileDown className="w-3 h-3" /> Form
+        </button>
+      )}
+      {wasApproved && !isLeave && (
+        <button
+          type="button"
+          onClick={onReopenPermission}
+          className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap"
+          style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
+          title="Re-open letter and email draft"
+        >
+          Letter / email
+        </button>
+      )}
+    </li>
   );
 }
