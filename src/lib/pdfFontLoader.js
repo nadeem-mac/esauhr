@@ -4,24 +4,42 @@
 // Amiri TTFs from /public/fonts/ at runtime, convert to base64, and
 // inject into pdfMake.vfs. Cached after first fetch so subsequent
 // letter generations are instant.
-//
-// Why this pattern:
-//   • Keeps the main JS bundle small — Amiri is ~600KB total, only
-//     loaded when an HR user actually generates a letter.
-//   • No build-time TTF embedding needed (Vite handles /public/ as
-//     static assets).
-//   • Browser caches the TTF after first fetch, so even cross-session
-//     loads are fast.
 
 import pdfMake from 'pdfmake/build/pdfmake';
 import pdfFonts from 'pdfmake/build/vfs_fonts';
 
-// Wire up Roboto VFS that ships with pdfmake.
-// vfs_fonts exports the VFS object directly in 0.2.x.
-if (pdfFonts?.pdfMake?.vfs) {
-  pdfMake.vfs = pdfFonts.pdfMake.vfs;
-} else if (pdfFonts?.vfs) {
-  pdfMake.vfs = pdfFonts.vfs;
+// --- VFS normalization across pdfmake versions ---
+//
+// pdfmake 0.2.20's vfs_fonts.js ends with `module.exports = vfs`, so the
+// default ES-module import gives us the VFS *object itself* — a flat
+// map like { "Roboto-Regular.ttf": "<base64>", ... }.
+//
+// Older builds wrapped it as { pdfMake: { vfs: {...} } } or { vfs: {...} },
+// and some bundlers put the real export under `.default`. We accept all
+// shapes so a future pdfmake bump doesn't silently break letter
+// generation again.
+function resolveRobotoVfs(mod) {
+  if (!mod) return null;
+  if (mod.pdfMake?.vfs) return mod.pdfMake.vfs;       // legacy wrapper
+  if (mod.vfs) return mod.vfs;                         // some builds
+  if (mod.default?.pdfMake?.vfs) return mod.default.pdfMake.vfs;
+  if (mod.default?.vfs) return mod.default.vfs;
+  if (mod.default && typeof mod.default === 'object') return mod.default;
+  if (typeof mod === 'object') return mod;             // 0.2.20 — mod IS the vfs
+  return null;
+}
+
+const robotoVfs = resolveRobotoVfs(pdfFonts);
+
+// Make sure pdfMake.vfs exists as a real, writable object before
+// anyone tries to mutate it. The original bug: pdfMake.vfs was
+// undefined and writing pdfMake.vfs['Amiri-Regular.ttf'] threw
+// "_s.vfs is undefined".
+if (!pdfMake.vfs || typeof pdfMake.vfs !== 'object') {
+  pdfMake.vfs = {};
+}
+if (robotoVfs && typeof robotoVfs === 'object') {
+  Object.assign(pdfMake.vfs, robotoVfs);
 }
 
 let amiriPromise = null;
@@ -29,18 +47,40 @@ let amiriPromise = null;
 async function loadAmiri() {
   if (amiriPromise) return amiriPromise;
   amiriPromise = (async () => {
+    const fetchTtf = async (url) => {
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error(`Failed to fetch ${url}: ${res.status} ${res.statusText}`);
+      }
+      return res.arrayBuffer();
+    };
+
     const [reg, bold] = await Promise.all([
-      fetch('/fonts/Amiri-Regular.ttf').then(r => r.arrayBuffer()),
-      fetch('/fonts/Amiri-Bold.ttf').then(r => r.arrayBuffer()),
+      fetchTtf('/fonts/Amiri-Regular.ttf'),
+      fetchTtf('/fonts/Amiri-Bold.ttf'),
     ]);
+
     const toBase64 = (buf) => {
       const bytes = new Uint8Array(buf);
       let bin = '';
-      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      // Chunk to avoid call-stack overflow on large TTFs (~300KB each)
+      const CHUNK = 0x8000;
+      for (let i = 0; i < bytes.length; i += CHUNK) {
+        bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+      }
       return btoa(bin);
     };
+
+    // Final guard — if some other module reset pdfMake.vfs between
+    // top-level init and now, recreate it.
+    if (!pdfMake.vfs || typeof pdfMake.vfs !== 'object') {
+      pdfMake.vfs = {};
+      if (robotoVfs) Object.assign(pdfMake.vfs, robotoVfs);
+    }
+
     pdfMake.vfs['Amiri-Regular.ttf'] = toBase64(reg);
     pdfMake.vfs['Amiri-Bold.ttf']    = toBase64(bold);
+
     pdfMake.fonts = {
       Roboto: {
         normal:      'Roboto-Regular.ttf',
@@ -54,6 +94,11 @@ async function loadAmiri() {
       },
     };
   })();
+
+  // If loading fails, clear the cache so the next click retries
+  // instead of permanently rejecting with the stale error.
+  amiriPromise.catch(() => { amiriPromise = null; });
+
   return amiriPromise;
 }
 
