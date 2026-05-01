@@ -507,6 +507,15 @@ export default function InsightsView({ me, employees, leaveTypes, requests, bala
             : { background: 'transparent', color: 'var(--ink)' }}>
           <Coffee className="w-4 h-4" /> Permissions Summary
         </button>
+        {(me?.is_admin || me?.is_hr_reviewer) && (
+          <button onClick={() => setView('decisions')}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all"
+            style={view === 'decisions'
+              ? { background: 'linear-gradient(135deg, #2D5F3F 0%, #1F4530 100%)', color: '#fff' }
+              : { background: 'transparent', color: 'var(--ink)' }}>
+            <Clock className="w-4 h-4" /> Decision Times
+          </button>
+        )}
       </div>
 
       <div className="rounded-2xl border bg-white px-4 py-3 mb-5 flex flex-wrap items-center gap-3"
@@ -584,7 +593,7 @@ export default function InsightsView({ me, employees, leaveTypes, requests, bala
           leaveRows={leaveRows} leaveAgg={leaveAgg} deptBreakdown={deptBreakdown}
           onSelectEmp={setViewedEmpId}
         />
-      ) : (
+      ) : view === 'permissions' ? (
         <PermissionsSummary
           year={year} monthLabel={monthLabel} isMonthMode={isMonthMode}
           permRows={permRows} permAgg={permAgg}
@@ -592,6 +601,12 @@ export default function InsightsView({ me, employees, leaveTypes, requests, bala
           permLoading={permLoading}
           onSetMonth={(m) => setMonth(String(m))}
           onSelectEmp={setViewedEmpId}
+        />
+      ) : (
+        <DecisionTimesView
+          requests={requests}
+          permissions={permissions}
+          empMap={empMap}
         />
       )}
 
@@ -1557,6 +1572,197 @@ function EmptyState({ text, icon }) {
     <div className="px-5 py-10 text-center text-xs opacity-60 flex flex-col items-center gap-2">
       <div className="opacity-50">{icon}</div>
       <div>{text}</div>
+    </div>
+  );
+}
+
+// =============================================================================
+// DECISION TIMES (admin/HR only)
+// =============================================================================
+//
+// Surfaces how long each manager (and HR reviewer) takes to act on
+// requests. Two sections — managers and HR — each showing per-person
+// stats over the last 90 days, sorted slowest-first so the people who
+// need a nudge bubble to the top.
+//
+// Metrics per person:
+//   • Decisions   — count of leave + permission rows decided
+//   • Avg time    — mean of (decided_at - prev_stage_timestamp) in hours
+//   • P90 time    — 90th-percentile decision time (catches outliers)
+//   • Slowest     — single longest decision in the window
+//
+// Manager stage uses (manager_decided_at - requested_at) as the wait.
+// HR stage uses (hr_decided_at - manager_decided_at) when both are
+// present; if a request skipped pending_hr (e.g. HR self-approval),
+// the row counts for the manager but not for HR.
+//
+// The decided_by field on a row matches both formats (PSN or
+// auth_user_id) — the UI tries both via the empMap lookup.
+
+function DecisionTimesView({ requests, permissions, empMap }) {
+  const stats = React.useMemo(() => {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 90);
+    const cutoffMs = cutoff.getTime();
+
+    // Combined rows from both leave + permissions.
+    const allRows = [
+      ...(requests || []).map(r => ({ ...r, _kind: 'leave' })),
+      ...(permissions || []).map(r => ({ ...r, _kind: 'permission' })),
+    ];
+
+    // Per-person buckets: { byPsn: { id: { name, dept, decisions: [hrs] } } }
+    const managerBucket = {};
+    const hrBucket = {};
+
+    function resolvePsn(decidedBy) {
+      if (!decidedBy) return null;
+      if (empMap[decidedBy]) return decidedBy;
+      const directory = Object.values(empMap);
+      const match = directory.find(e => e.auth_user_id === decidedBy);
+      return match?.id || null;
+    }
+
+    for (const r of allRows) {
+      // Manager-stage decision
+      if (r.manager_decided_at && r.manager_decided_by) {
+        const decidedAt = new Date(r.manager_decided_at).getTime();
+        if (decidedAt >= cutoffMs && r.requested_at) {
+          const reqAt = new Date(r.requested_at).getTime();
+          const hours = (decidedAt - reqAt) / (1000 * 60 * 60);
+          if (hours >= 0 && hours <= 24 * 90) {
+            const psn = resolvePsn(r.manager_decided_by);
+            if (psn) {
+              if (!managerBucket[psn]) managerBucket[psn] = { decisions: [] };
+              managerBucket[psn].decisions.push({ hours, kind: r._kind });
+            }
+          }
+        }
+      }
+      // HR-stage decision
+      if (r.hr_decided_at && r.hr_decided_by && r.manager_decided_at) {
+        const decidedAt = new Date(r.hr_decided_at).getTime();
+        if (decidedAt >= cutoffMs) {
+          const prevAt = new Date(r.manager_decided_at).getTime();
+          const hours = (decidedAt - prevAt) / (1000 * 60 * 60);
+          if (hours >= 0 && hours <= 24 * 90) {
+            const psn = resolvePsn(r.hr_decided_by);
+            if (psn) {
+              if (!hrBucket[psn]) hrBucket[psn] = { decisions: [] };
+              hrBucket[psn].decisions.push({ hours, kind: r._kind });
+            }
+          }
+        }
+      }
+    }
+
+    function summarise(bucket) {
+      return Object.entries(bucket).map(([psn, { decisions }]) => {
+        const sorted = decisions.map(d => d.hours).sort((a, b) => a - b);
+        const sum = sorted.reduce((a, b) => a + b, 0);
+        const avg = sum / sorted.length;
+        const p90Idx = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.9));
+        const p90 = sorted[p90Idx];
+        const slowest = sorted[sorted.length - 1];
+        const emp = empMap[psn];
+        return {
+          psn,
+          name: emp?.name || psn,
+          dept: emp?.department || '—',
+          count: sorted.length,
+          avg, p90, slowest,
+          leaveCount: decisions.filter(d => d.kind === 'leave').length,
+          permCount: decisions.filter(d => d.kind === 'permission').length,
+        };
+      }).sort((a, b) => b.avg - a.avg);
+    }
+
+    return { manager: summarise(managerBucket), hr: summarise(hrBucket) };
+  }, [requests, permissions, empMap]);
+
+  const fmtH = (h) => {
+    if (h == null || isNaN(h)) return '—';
+    if (h < 1) return `${Math.round(h * 60)}m`;
+    if (h < 24) return `${h.toFixed(1)}h`;
+    return `${(h / 24).toFixed(1)}d`;
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-2xl border bg-white p-4 sm:p-5"
+           style={{ borderColor: 'var(--border-soft)' }}>
+        <div className="text-[11px] tracking-[0.2em] opacity-60 mb-1">DECISION TIMES · LAST 90 DAYS</div>
+        <div className="text-xs opacity-70">
+          How long each reviewer takes to act on a request, measured from the
+          previous stage's timestamp. Sorted slowest first so bottlenecks bubble up.
+        </div>
+      </div>
+
+      <DecisionTable
+        title="Manager decisions"
+        subtitle="Wait time between submission and manager approval/rejection"
+        rows={stats.manager}
+        fmtH={fmtH}
+      />
+
+      <DecisionTable
+        title="HR decisions"
+        subtitle="Wait time between manager approval and HR approval/rejection"
+        rows={stats.hr}
+        fmtH={fmtH}
+      />
+    </div>
+  );
+}
+
+function DecisionTable({ title, subtitle, rows, fmtH }) {
+  return (
+    <div className="rounded-2xl border bg-white"
+         style={{ borderColor: 'var(--border-soft)' }}>
+      <div className="px-4 sm:px-5 py-3 border-b" style={{ borderColor: 'var(--border-soft)' }}>
+        <div className="text-sm font-semibold" style={{ color: '#1F1B16' }}>{title}</div>
+        <div className="text-xs opacity-60 mt-0.5">{subtitle}</div>
+      </div>
+      {rows.length === 0 ? (
+        <EmptyState text="No decisions in the last 90 days." icon={<Clock className="w-6 h-6" />} />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left opacity-60 tracking-[0.15em] text-[10px]">
+                <th className="px-4 sm:px-5 py-2 font-semibold">REVIEWER</th>
+                <th className="px-3 py-2 font-semibold">DEPT</th>
+                <th className="px-3 py-2 font-semibold text-right">DECISIONS</th>
+                <th className="px-3 py-2 font-semibold text-right">AVG</th>
+                <th className="px-3 py-2 font-semibold text-right">P90</th>
+                <th className="px-4 sm:px-5 py-2 font-semibold text-right">SLOWEST</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={r.psn} style={{
+                  borderTop: i === 0 ? 'none' : '1px solid var(--border-soft)',
+                  background: i === 0 && r.avg > 24 ? 'rgba(184,58,46,0.05)' : 'transparent',
+                }}>
+                  <td className="px-4 sm:px-5 py-2.5">
+                    <div className="font-medium" style={{ color: '#1F1B16' }}>{r.name}</div>
+                    <div className="text-[10px] opacity-60 mt-0.5">
+                      {r.leaveCount} leave · {r.permCount} permission
+                    </div>
+                  </td>
+                  <td className="px-3 py-2.5 opacity-70">{r.dept}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums font-medium">{r.count}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums" style={{ color: r.avg > 24 ? '#B83A2E' : '#1F1B16' }}>
+                    {fmtH(r.avg)}
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums opacity-70">{fmtH(r.p90)}</td>
+                  <td className="px-4 sm:px-5 py-2.5 text-right tabular-nums opacity-70">{fmtH(r.slowest)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
