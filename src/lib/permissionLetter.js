@@ -34,7 +34,7 @@ async function generateQrPng(text, sizePx = 220) {
       errorCorrectionLevel: 'M',
       margin: 1,
       width: sizePx,
-      color: { dark: '#1F4530', light: '#FFFDF7' },
+      color: { dark: '#1F4530', light: '#FFFFFF' },
     });
     // Strip data URL prefix and convert to ArrayBuffer for ImageRun.
     const base64 = dataUrl.split(',')[1];
