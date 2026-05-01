@@ -14,6 +14,7 @@
 import {
   Document, Packer, Paragraph, TextRun, ImageRun,
   Table, TableRow, TableCell,
+  Header, Footer,
   AlignmentType, WidthType, BorderStyle, HeightRule,
   VerticalAlign, ShadingType,
 } from 'docx';
@@ -617,7 +618,7 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
         children: sigCols.map((c, i) => sigHeaderCell(c.en, c.ar, sigWidths[i])),
       }),
       new TableRow({
-        height: { value: 1700, rule: HeightRule.ATLEAST },
+        height: { value: 1300, rule: HeightRule.ATLEAST },
         children: sigCols.map((c, i) => sigBodyCell(c.name, sigWidths[i])),
       }),
       new TableRow({
@@ -641,6 +642,35 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
   });
 
   // ── DOCUMENT ──────────────────────────────────────────────────────────────
+  // ── APPROVED STAMP ───────────────────────────────────────────────────────
+  // Small "APPROVED" stamp pinned to top-right corner via section header.
+  // Sized to fit within the existing top margin so it does not displace
+  // body content. Border + brand colour make it read as an approval
+  // mark rather than a giant watermark across the page.
+  const approvedStamp = new Header({
+    children: [
+      new Paragraph({
+        alignment: AlignmentType.RIGHT,
+        children: [
+          new TextRun({
+            text: ' ✓ APPROVED ',
+            font: FONT_BRAND,
+            size: 22,           // 11pt
+            bold: true,
+            color: '2D5F3F',    // brand green
+          }),
+        ],
+        border: {
+          top:    { style: BorderStyle.SINGLE, size: 8, color: '2D5F3F', space: 4 },
+          bottom: { style: BorderStyle.SINGLE, size: 8, color: '2D5F3F', space: 4 },
+          left:   { style: BorderStyle.SINGLE, size: 8, color: '2D5F3F', space: 4 },
+          right:  { style: BorderStyle.SINGLE, size: 8, color: '2D5F3F', space: 4 },
+        },
+        spacing: { before: 0, after: 0 },
+      }),
+    ],
+  });
+
   const doc = new Document({
     styles: { default: { document: { run: { font: FONT_BODY } } } },
     sections: [{
@@ -650,21 +680,22 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
           margin:  { top: 540, right: 540, bottom: 540, left: 540 },
         },
       },
+      headers: { default: approvedStamp },
       children: [
         headerRow,
         headerRule,
         headerRuleCopper,
         titleStrip,
         titleStripAr,
-        spacer(60),
+        spacer(40),
         sectionBanner('EMPLOYEE INFORMATION', 'معلومات الموظف'),
         empTable,
-        spacer(80),
+        spacer(60),
         sectionBanner('PERMISSION DETAILS', 'تفاصيل الاستئذان'),
         detailsTable,
-        spacer(80),
+        spacer(60),
         policyTable,
-        spacer(100),
+        spacer(80),
         sigTable,
         footerLine,
       ],

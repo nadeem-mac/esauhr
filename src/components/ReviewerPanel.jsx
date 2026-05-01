@@ -85,7 +85,7 @@ export default function ReviewerPanel({ me }) {
       if (isAdmin) {
         leaveQs = 'select=*&stage=in.(pending_manager,pending_hr)&order=requested_at.desc';
       } else if (isHrReviewer) {
-        leaveQs = 'select=*&stage=eq.pending_hr&order=requested_at.desc';
+        leaveQs = `select=*&stage=eq.pending_hr&employee_id=neq.${encodeURIComponent(me.id)}&order=requested_at.desc`;
       } else if (localIsDeptManager) {
         leaveQs = `select=*&stage=eq.pending_manager&employee_id=in.(${deptStaffIds.join(',')})&order=requested_at.desc`;
       }
@@ -97,7 +97,7 @@ export default function ReviewerPanel({ me }) {
       // already cleared the manager step.
       let permQs = null;
       if (canPerm) {
-        permQs = 'select=*&stage=eq.pending_hr&order=requested_at.desc';
+        permQs = `select=*&stage=eq.pending_hr&employee_id=neq.${encodeURIComponent(me.id)}&order=requested_at.desc`;
       } else if (localIsDeptManager) {
         permQs = `select=*&stage=eq.pending_manager&employee_id=in.(${deptStaffIds.join(',')})&order=requested_at.desc`;
       }
@@ -148,7 +148,18 @@ export default function ReviewerPanel({ me }) {
     let nextStage, patch = {};
 
     if (req.stage === 'pending_manager') {
-      nextStage = action === 'approved' ? 'pending_hr' : 'rejected_by_manager';
+      // Self-approval guard (see decidePerm above for full rationale)
+      const requester = empMap[req.employee_id];
+      const requesterIsHr = !!requester?.is_hr_reviewer;
+      if (action === 'approved') {
+        nextStage = requesterIsHr ? 'approved' : 'pending_hr';
+        if (requesterIsHr) {
+          patch.hr_decided_at = now;
+          patch.hr_decided_by = me.auth_user_id || null;
+        }
+      } else {
+        nextStage = 'rejected_by_manager';
+      }
       patch.manager_decided_at = now;
       patch.manager_decided_by = me.auth_user_id || null;
     } else if (req.stage === 'pending_hr') {
@@ -183,7 +194,26 @@ export default function ReviewerPanel({ me }) {
     let nextStage, patch = {};
 
     if (req.stage === 'pending_manager') {
-      nextStage = action === 'approved' ? 'pending_hr' : 'rejected_by_manager';
+      // Self-approval guard: if the requester is themselves an HR
+      // reviewer (e.g. Bashaier requesting time off, approved by her
+      // manager John Ho), skip the pending_hr stage. Otherwise the
+      // request would be stuck — Bashaier can't approve her own request,
+      // and the HR queue filter excludes her own rows.
+      const requester = empMap[req.employee_id];
+      const requesterIsHr = !!requester?.is_hr_reviewer;
+      if (action === 'approved') {
+        nextStage = requesterIsHr ? 'approved' : 'pending_hr';
+        if (requesterIsHr) {
+          // John approving Bashaier's request finalises it. Stamp the
+          // hr_decided_* fields with the manager's own id so the
+          // approval letter footer + audit trail still record an HR
+          // approver — semantically John is acting in the HR role here.
+          patch.hr_decided_at = now;
+          patch.hr_decided_by = me.id;
+        }
+      } else {
+        nextStage = 'rejected_by_manager';
+      }
       patch.manager_decided_at = now;
       patch.manager_decided_by = me.id;
     } else if (req.stage === 'pending_hr') {
