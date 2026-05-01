@@ -260,7 +260,16 @@ export default function AppShell({ session, me, onRefreshMe }) {
   const typeMap = useMemo(() => Object.fromEntries(leaveTypes.map(t => [t.id, t])), [leaveTypes]);
   const empMap  = useMemo(() => Object.fromEntries(employees.map(e => [e.id, e])), [employees]);
 
-  const pendingCount = useMemo(() => requests.filter(r => r.status === 'pending').length, [requests]);
+  // Pending badge in the Requests tab — same scope as the tab content
+  // itself (per the access-control overhaul, regular staff/managers/HR
+  // see only their own rows in Requests; admin sees the full table).
+  // Without this scoping the badge counts every pending row in the
+  // database including peers' requests, which leaks 'something is
+  // happening somewhere' to users who shouldn't have visibility.
+  const pendingCount = useMemo(() => {
+    const scoped = isAdmin ? requests : requests.filter(r => r.employee_id === me?.id);
+    return scoped.filter(r => r.status === 'pending').length;
+  }, [requests, isAdmin, me?.id]);
 
   const signOut = async () => {
     // Bulletproof sign-out: clear local/session storage, race the supabase API
