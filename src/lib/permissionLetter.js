@@ -276,7 +276,7 @@ function labelCell(en, ar) {
       }),
     ],
     width: { size: LABEL_W, type: WidthType.DXA },
-    margins: { top: 100, bottom: 100, left: 180, right: 100 },
+    margins: { top: 50, bottom: 50, left: 180, right: 100 },
     shading: shading(C_LABEL_BG),
     borders: FORM_BORDER,
     verticalAlign: VerticalAlign.CENTER,
@@ -289,7 +289,7 @@ function valueCell(text, opts = {}) {
       children: [run(text, { size: 21, bold: !!opts.bold, color: opts.color || C_TEXT })],
     })],
     width: { size: VALUE_W, type: WidthType.DXA },
-    margins: { top: 100, bottom: 100, left: 200, right: 160 },
+    margins: { top: 50, bottom: 50, left: 200, right: 160 },
     borders: FORM_BORDER,
     verticalAlign: VerticalAlign.CENTER,
   });
@@ -299,7 +299,7 @@ function valueCellRuns(children) {
   return new TableCell({
     children: [new Paragraph({ children })],
     width: { size: VALUE_W, type: WidthType.DXA },
-    margins: { top: 100, bottom: 100, left: 200, right: 160 },
+    margins: { top: 50, bottom: 50, left: 200, right: 160 },
     borders: FORM_BORDER,
     verticalAlign: VerticalAlign.CENTER,
   });
@@ -331,7 +331,7 @@ function sigHeaderCell(en, ar, width) {
       ],
     })],
     width: { size: width, type: WidthType.DXA },
-    margins: { top: 100, bottom: 100, left: 140, right: 140 },
+    margins: { top: 60, bottom: 60, left: 140, right: 140 },
     shading: shading(C_BANNER),
     borders: FORM_BORDER,
     verticalAlign: VerticalAlign.CENTER,
@@ -346,11 +346,11 @@ function sigHeaderCell(en, ar, width) {
 function sigCombinedBodyCell(name, footerLeft, footerRight, width) {
   return new TableCell({
     children: [
-      // Top — printed name, centered, takes most of the vertical space
+      // Top — printed name, centered
       new Paragraph({
         alignment: AlignmentType.CENTER,
         children: [run(name || '', { size: 18, bold: true })],
-        spacing: { before: 120, after: 240 },
+        spacing: { before: 60, after: 120 },
       }),
       // Bottom — timestamp left + label right, with a top border that
       // visually replaces the previous footer band's separator line.
@@ -367,7 +367,7 @@ function sigCombinedBodyCell(name, footerLeft, footerRight, width) {
       }),
     ],
     width: { size: width, type: WidthType.DXA },
-    margins: { top: 80, bottom: 80, left: 140, right: 140 },
+    margins: { top: 50, bottom: 50, left: 140, right: 140 },
     borders: FORM_BORDER,
     verticalAlign: VerticalAlign.TOP,
   });
@@ -654,7 +654,7 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
       }),
       new TableRow({
         cantSplit: true,
-        height: { value: 1100, rule: HeightRule.ATLEAST },
+        height: { value: 700, rule: HeightRule.ATLEAST },
         children: sigCols.map((c, i) =>
           sigCombinedBodyCell(c.name, c.footerLeft, c.footerRight, sigWidths[i])),
       }),
