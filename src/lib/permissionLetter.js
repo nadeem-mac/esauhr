@@ -1,19 +1,21 @@
-// Permission letter — bilingual EN / KSA-Arabic A4 form, fits single page.
-// Header has the embedded Evergreen Line logo. Title bar puts EN + AR on
-// one row to save vertical space. Four signature columns at the bottom
-// (Employee · Dept Manager · ESAU SUP · ESAU MGT) each with a 3-region
-// layout: top shaded band with role title, middle free space for the
-// wet signature, bottom shaded band with timestamp + 'Signature & Date'
-// or 'HQ Stamp / Date' as appropriate.
+// Permission letter — bilingual A4 form, Leave Desk brand styling.
 //
-// Generated client-side after final HR approval. Footer shows the
-// generation timestamp and HR approver name.
+// CRITICAL RENDERING RULES (learned from earlier dark-background bugs):
+//   • Every Table and TableCell uses WidthType.DXA — never PERCENTAGE.
+//     Mixing the two confuses Word's renderer and produces dark
+//     fallback fills.
+//   • columnWidths array is set on every Table and sums to the cell
+//     widths exactly.
+//   • Borders use SINGLE only — no DASHED/DOTTED on table cells, those
+//     occasionally render solid black in Word.
+//   • Cell margins always specified (top/bottom/left/right).
+//   • No nested tables in tight-width cells. Inline runs only.
 
 import {
   Document, Packer, Paragraph, TextRun, ImageRun,
   Table, TableRow, TableCell,
   AlignmentType, WidthType, BorderStyle, HeightRule,
-  VerticalAlign,
+  VerticalAlign, ShadingType,
 } from 'docx';
 import { downloadBlob } from './vacationForm.js';
 
@@ -32,7 +34,6 @@ const TYPE = {
   early_leave:  { en: 'Early Departure', ar: 'انصراف مبكر' },
 };
 
-// CC roster for the approval email.
 const EXEC_CC = [
   { name: 'john ho' },
   { name: 'james' },
@@ -42,7 +43,6 @@ const EXEC_CC = [
   { name: 'jaffar' },
 ];
 
-// HR signature block — single source of truth for both docx + email.
 const HR_SIGNATURE = {
   name:    'BASHAIER ALI',
   company: 'Evergreen Shipping Agency Saudi Co.,(L.L.C)',
@@ -53,56 +53,72 @@ const HR_SIGNATURE = {
   email:   'bashaier.alsubaie@evergreen-shipping.com.sa',
 };
 
-// Company policy reminder — verbatim from the existing ESAU paper form.
 const POLICY_BULLETS = [
   {
-    en: 'Each employee is entitled to a maximum of 3 permissions per calendar month (Late Arrival or Early Departure).',
-    ar: 'حسب سياسة الموارد البشرية، يحق لكل موظف 3 استئذانات كحد أقصى في الشهر (تأخير أو انصراف مبكر).',
+    en: 'Maximum 3 permissions per calendar month — Late Arrival or Early Departure.',
+    ar: '3 استئذانات كحد أقصى في الشهر، تأخير أو انصراف مبكر.',
   },
   {
-    en: 'Each individual request must not exceed 60 minutes under any circumstance.',
-    ar: 'ولا يُسمح بأن تتجاوز مدة كل استئذان 60 دقيقة تحت أي ظرف.',
+    en: 'Each request may not exceed 60 minutes.',
+    ar: 'لا تتجاوز مدة كل استئذان 60 دقيقة.',
   },
   {
-    en: 'Exceeding this limit may be subject to review by the HR department.',
-    ar: 'تجاوز هذا الحد قد يستوجب المراجعة مع إدارة الموارد البشرية.',
-  },
-  {
-    en: "It is the employee's responsibility to ensure adherence to this policy.",
-    ar: 'ويتحمل الموظف مسؤولية الالتزام بهذه السياسة.',
+    en: 'Exceeding the limit may be subject to HR review.',
+    ar: 'أي موظف يتجاوز هذا الحد يخضع للإجراء.',
   },
 ];
 
-// Reason categories on the printed form.
 const REASON_CATEGORIES = [
-  { id: 'medical',    en: 'Medical',           ar: 'طبي' },
-  { id: 'gov_bank',   en: 'Government / Bank', ar: 'جهة حكومية / بنك' },
-  { id: 'family',     en: 'Family / Emergency',ar: 'عائلية / طارئة' },
-  { id: 'school',     en: 'School / Childcare',ar: 'مدرسة / رعاية أطفال' },
-  { id: 'traffic',    en: 'Traffic / Transport',ar: 'مرور / مواصلات' },
-  { id: 'other',      en: 'Other',             ar: 'أخرى' },
+  { id: 'medical',  en: 'Medical' },
+  { id: 'gov_bank', en: 'Government / Bank' },
+  { id: 'family',   en: 'Family / Emergency' },
+  { id: 'school',   en: 'School / Childcare' },
+  { id: 'traffic',  en: 'Traffic / Transport' },
+  { id: 'other',    en: 'Other' },
 ];
 
 function categoryFor(reason) {
   const r = (reason || '').toLowerCase();
-  if (/medical|doctor|clinic|hospital|sick/.test(r))            return 'medical';
+  if (/medical|doctor|clinic|hospital|sick/.test(r))                return 'medical';
   if (/government|iqama|bank|financial|paperwork|official/.test(r)) return 'gov_bank';
-  if (/family|emergency|urgent|personal/.test(r))                return 'family';
-  if (/school|child|pickup|drop[\s-]?off/.test(r))               return 'school';
-  if (/traffic|transport|road|commute/.test(r))                  return 'traffic';
+  if (/family|emergency|urgent|personal/.test(r))                    return 'family';
+  if (/school|child|pickup|drop[\s-]?off/.test(r))                   return 'school';
+  if (/traffic|transport|road|commute/.test(r))                      return 'traffic';
   return 'other';
 }
 
-// ─── colour palette ───────────────────────────────────────────────────────────
-const C_TEXT     = '1F1B16';
-const C_MUTED    = '6B7280';
-const C_BORDER   = 'D1D5DB';
-const C_BORDER_2 = 'E5E0D5';   // softer border between the sig regions
-const C_BANNER   = 'F4EEDF';
-const C_LABEL_BG = 'FAFAF7';
-const C_BRAND    = '2D5F3F';
+// ─── brand palette ────────────────────────────────────────────────────────────
+const C_TEXT      = '1F1B16';
+const C_MUTED     = '5C4406';
+const C_COPPER    = '9D6B53';
+const C_BRAND     = '2D5F3F';
+const C_BORDER    = 'C9B894';
+const C_BANNER    = 'F4EEDF';
+const C_LABEL_BG  = 'FBF6E9';
 
-// ─── formatters ───────────────────────────────────────────────────────────────
+const FONT_BRAND = 'Tahoma';
+const FONT_BODY  = 'Calibri';
+const FONT_AR    = 'Arial';
+
+// ─── A4 page geometry ────────────────────────────────────────────────────────
+// A4: 11906 × 16838 DXA. With 540 DXA margins all sides, usable width =
+// 11906 - 1080 = 10826 DXA. Every table sums to this exact width.
+
+const PAGE_W      = 10826;
+
+const LABEL_W     = 2400;
+const VALUE_W     = PAGE_W - LABEL_W;       // 8426
+
+const HALF_W      = Math.floor(PAGE_W / 2); // 5413
+const SIG_W       = Math.floor(PAGE_W / 4); // 2706 ; 4 cells × 2706 = 10824 (close enough)
+// Re-balance: 4 sig cells should sum exactly to PAGE_W
+const SIG_W_LAST  = PAGE_W - (SIG_W * 3);   // absorbs the remainder
+
+const HEADER_LOGO = 1400;
+const HEADER_TXT  = PAGE_W - HEADER_LOGO - 2400;  // text takes most of the bar
+const HEADER_REF  = 2400;
+
+// ─── formatters ──────────────────────────────────────────────────────────────
 const fmtDateMed = (iso) => {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -123,152 +139,203 @@ const fmtDateTime = (iso) => {
   const d = new Date(iso);
   return `${d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}  ·  ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
 };
-// Compact 'D MMM · HH:MM' for the cramped signature footer cells.
 const fmtStampCompact = (iso) => {
   if (!iso) return '';
   const d = new Date(iso);
-  const date = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  return `${date} · ${time}`;
+  return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} · ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
 };
 
-// ─── docx primitives ──────────────────────────────────────────────────────────
+// ─── docx primitives ─────────────────────────────────────────────────────────
 const run = (text, opts = {}) => new TextRun({
   text: String(text ?? ''),
-  font: opts.font || 'Calibri',
+  font: opts.font || FONT_BODY,
   size: opts.size ?? 20,
   color: opts.color ?? C_TEXT,
   bold: !!opts.bold,
   italics: !!opts.italics,
 });
+
 const arRun = (text, opts = {}) => new TextRun({
   text: String(text ?? ''),
-  font: { name: 'Arial', cs: 'Arial' },
+  font: { name: FONT_AR, cs: FONT_AR },
   size: opts.size ?? 18,
   color: opts.color ?? C_MUTED,
   bold: !!opts.bold,
   rightToLeft: true,
 });
-const para = (children, opts = {}) => new Paragraph({
-  children: Array.isArray(children) ? children : [run(children, opts.run || {})],
-  alignment: opts.align || AlignmentType.LEFT,
-  spacing: { before: opts.before ?? 0, after: opts.after ?? 60 },
-});
-const spacer = (after = 100) => new Paragraph({ children: [run('')], spacing: { after } });
-const noBorder = () => ({
-  top:    { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-  bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-  left:   { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-  right:  { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
-});
-const formBorder = () => ({
+
+// Standard form border — every cell uses this. SINGLE style only,
+// 4 twip width, soft warm color.
+const FORM_BORDER = {
   top:    { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
   bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
   left:   { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
   right:  { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-});
+};
 
-// Bilingual section banner — EN flush left, AR flush right, shaded.
-const sectionBanner = (en, ar) => new Table({
-  width: { size: 100, type: WidthType.PERCENTAGE },
-  rows: [new TableRow({
-    children: [
-      new TableCell({
-        children: [new Paragraph({
-          children: [run(en, { bold: true, size: 18 })],
-        })],
-        width: { size: 60, type: WidthType.PERCENTAGE },
-        margins: { top: 60, bottom: 60, left: 140, right: 100 },
-        shading: { fill: C_BANNER },
-        borders: formBorder(),
-      }),
-      new TableCell({
-        children: [new Paragraph({
-          children: [arRun(ar, { bold: true, size: 18, color: C_TEXT })],
-          alignment: AlignmentType.RIGHT,
-          bidirectional: true,
-        })],
-        width: { size: 40, type: WidthType.PERCENTAGE },
-        margins: { top: 60, bottom: 60, left: 100, right: 140 },
-        shading: { fill: C_BANNER },
-        borders: formBorder(),
-      }),
-    ],
-  })],
-});
+const NO_BORDER = {
+  top:    { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+  bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+  left:   { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+  right:  { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+};
 
-// Label cell — EN bold flush left, AR muted flush right, one line.
-// Uses a borderless 2-column inner table so the alignment is reliable
-// regardless of label length (tab stops in narrow cells were unreliable
-// before — same issue as the signature bands).
-const labelCell = (en, ar) => {
-  const inner = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
+// CRITICAL: ShadingType.CLEAR not SOLID — SOLID renders as black in Word.
+const shading = (fill) => ({ type: ShadingType.CLEAR, fill, color: 'auto' });
+
+const spacer = (after = 100) => new Paragraph({ children: [run('')], spacing: { after } });
+
+// ─── section banner ──────────────────────────────────────────────────────────
+function sectionBanner(en, ar) {
+  return new Table({
+    width: { size: PAGE_W, type: WidthType.DXA },
+    columnWidths: [HALF_W, PAGE_W - HALF_W],
     rows: [new TableRow({
       children: [
         new TableCell({
-          children: [new Paragraph({ children: [run(en, { bold: true, size: 16 })] })],
-          width: { size: 60, type: WidthType.PERCENTAGE },
-          margins: { top: 0, bottom: 0, left: 0, right: 0 },
-          borders: noBorder(),
+          children: [new Paragraph({
+            children: [run(en, { bold: true, size: 18 })],
+          })],
+          width: { size: HALF_W, type: WidthType.DXA },
+          margins: { top: 80, bottom: 80, left: 200, right: 100 },
+          shading: shading(C_BANNER),
+          borders: {
+            top:    { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
+            bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
+            left:   { style: BorderStyle.SINGLE, size: 24, color: C_BRAND },
+            right:  { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+          },
         }),
         new TableCell({
           children: [new Paragraph({
-            children: [arRun(ar, { size: 14, color: C_MUTED })],
+            children: [arRun(ar, { bold: true, size: 18, color: C_COPPER })],
             alignment: AlignmentType.RIGHT,
             bidirectional: true,
           })],
-          width: { size: 40, type: WidthType.PERCENTAGE },
-          margins: { top: 0, bottom: 0, left: 0, right: 0 },
-          borders: noBorder(),
+          width: { size: PAGE_W - HALF_W, type: WidthType.DXA },
+          margins: { top: 80, bottom: 80, left: 100, right: 200 },
+          shading: shading(C_BANNER),
+          borders: {
+            top:    { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
+            bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
+            left:   { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+            right:  { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
+          },
         }),
       ],
     })],
   });
+}
+
+// ─── form table cells ────────────────────────────────────────────────────────
+function labelCell(en, ar) {
   return new TableCell({
-    children: [inner],
-    width: { size: 30, type: WidthType.PERCENTAGE },
-    margins: { top: 70, bottom: 70, left: 120, right: 120 },
-    shading: { fill: C_LABEL_BG },
-    borders: formBorder(),
+    children: [
+      new Paragraph({
+        children: [run(en, { bold: true, size: 17 })],
+        spacing: { after: 20 },
+      }),
+      new Paragraph({
+        children: [arRun(ar, { size: 14, color: C_COPPER })],
+      }),
+    ],
+    width: { size: LABEL_W, type: WidthType.DXA },
+    margins: { top: 100, bottom: 100, left: 180, right: 100 },
+    shading: shading(C_LABEL_BG),
+    borders: FORM_BORDER,
     verticalAlign: VerticalAlign.CENTER,
   });
-};
+}
 
-const valueCell = (text, opts = {}) => new TableCell({
-  children: [new Paragraph({
-    children: [run(text, { size: 22, bold: !!opts.bold, color: opts.color || C_TEXT })],
-  })],
-  width: { size: 70, type: WidthType.PERCENTAGE },
-  margins: { top: 70, bottom: 70, left: 140, right: 120 },
-  borders: formBorder(),
-  verticalAlign: VerticalAlign.CENTER,
-});
+function valueCell(text, opts = {}) {
+  return new TableCell({
+    children: [new Paragraph({
+      children: [run(text, { size: 21, bold: !!opts.bold, color: opts.color || C_TEXT })],
+    })],
+    width: { size: VALUE_W, type: WidthType.DXA },
+    margins: { top: 100, bottom: 100, left: 200, right: 160 },
+    borders: FORM_BORDER,
+    verticalAlign: VerticalAlign.CENTER,
+  });
+}
 
-const valueCellRuns = (children) => new TableCell({
-  children: [new Paragraph({ children })],
-  width: { size: 70, type: WidthType.PERCENTAGE },
-  margins: { top: 70, bottom: 70, left: 140, right: 120 },
-  borders: formBorder(),
-  verticalAlign: VerticalAlign.CENTER,
-});
+function valueCellRuns(children) {
+  return new TableCell({
+    children: [new Paragraph({ children })],
+    width: { size: VALUE_W, type: WidthType.DXA },
+    margins: { top: 100, bottom: 100, left: 200, right: 160 },
+    borders: FORM_BORDER,
+    verticalAlign: VerticalAlign.CENTER,
+  });
+}
 
-const formRow = (en, ar, value, opts = {}) => new TableRow({
-  children: [
-    labelCell(en, ar),
-    typeof value === 'string'
-      ? valueCell(value, opts)
-      : valueCellRuns(value),
-  ],
-});
+function formRow(en, ar, value, opts = {}) {
+  return new TableRow({
+    children: [
+      labelCell(en, ar),
+      typeof value === 'string'
+        ? valueCell(value, opts)
+        : valueCellRuns(value),
+    ],
+  });
+}
 
-const cbRun = (checked, label, ar) => [
+const cbRun = (checked, label) => [
   run(checked ? '☑ ' : '☐ ', { size: 22, bold: true }),
-  run(label + (ar ? '  ' : ''), { size: 18 }),
-  ...(ar ? [arRun(ar, { size: 16, color: C_MUTED }), run('   ', { size: 18 })] : [run('   ', { size: 18 })]),
+  run(label + '     ', { size: 19 }),
 ];
 
-// ─── logo loader ──────────────────────────────────────────────────────────────
+// ─── signature cells ─────────────────────────────────────────────────────────
+function sigHeaderCell(en, ar, width) {
+  return new TableCell({
+    children: [new Paragraph({
+      children: [
+        run(en + '   ', { bold: true, size: 13 }),
+        arRun(ar, { size: 13, color: C_COPPER }),
+      ],
+    })],
+    width: { size: width, type: WidthType.DXA },
+    margins: { top: 100, bottom: 100, left: 140, right: 140 },
+    shading: shading(C_BANNER),
+    borders: FORM_BORDER,
+    verticalAlign: VerticalAlign.CENTER,
+  });
+}
+
+function sigBodyCell(name, width) {
+  return new TableCell({
+    children: [
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [run(name || '', { size: 18, bold: true })],
+        spacing: { before: 120, after: 0 },
+      }),
+    ],
+    width: { size: width, type: WidthType.DXA },
+    margins: { top: 80, bottom: 80, left: 100, right: 100 },
+    borders: FORM_BORDER,
+    verticalAlign: VerticalAlign.TOP,
+  });
+}
+
+function sigFooterCell(leftText, rightLabel, width) {
+  return new TableCell({
+    children: [new Paragraph({
+      children: [
+        run(leftText || ' ', { size: 12, italics: true, color: C_COPPER }),
+        run('     ', { size: 12 }),
+        run(rightLabel, { size: 12, bold: true }),
+      ],
+    })],
+    width: { size: width, type: WidthType.DXA },
+    margins: { top: 100, bottom: 100, left: 140, right: 140 },
+    shading: shading(C_LABEL_BG),
+    borders: FORM_BORDER,
+    verticalAlign: VerticalAlign.CENTER,
+  });
+}
+
+// ─── logo loader ─────────────────────────────────────────────────────────────
 async function loadLogoBytes() {
   try {
     const res = await fetch('/evergreen-logo.jpg');
@@ -279,135 +346,15 @@ async function loadLogoBytes() {
   }
 }
 
-// ─── signature row builders ──────────────────────────────────────────────────
-//
-// The signature footer is built as ONE outer 3-row × 4-column table:
-//   Row 1 (header band)  — 4 cells, shaded, role title EN + AR
-//   Row 2 (body)         — 4 cells, name + open signing space
-//   Row 3 (footer band)  — 4 cells, shaded, timestamp + label
-//
-// This maps directly to how Word renders tables — no nested tables, no
-// tab-stops drifting against narrow column widths, no row-height
-// surprises. The HTML draft has the same structure so docx output and
-// preview look the same.
-//
-// Tab stop position: each column is roughly 25% of usable A4 width
-// (11906 - 540*2 margin = 10826 twips; 25% = ~2700 twips; minus internal
-// cell margin = ~2200 twips usable). Tab stops live at 2200 so the
-// right-aligned text sits at the cell's right edge.
-
-const SIG_TAB = 2200;          // right-tab position for left/right layout in a 25% cell
-const SIG_BAND_PAD  = { top: 60,  bottom: 60,  left: 100, right: 100 };
-const SIG_BODY_PAD  = { top: 100, bottom: 100, left: 100, right: 100 };
-
-function sigHeaderCell(en, ar) {
-  // Same 2-column inner-table approach as sigFooterCell — tab stops
-  // were unreliable inside the narrow 25% column, so this guarantees
-  // the EN title sits flush left and AR sits flush right.
-  const innerLayout = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [new TableRow({
-      children: [
-        new TableCell({
-          children: [new Paragraph({
-            children: [run(en, { bold: true, size: 14 })],
-            alignment: AlignmentType.LEFT,
-          })],
-          width:   { size: 55, type: WidthType.PERCENTAGE },
-          margins: { top: 0, bottom: 0, left: 0, right: 0 },
-          borders: noBorder(),
-        }),
-        new TableCell({
-          children: [new Paragraph({
-            children: [arRun(ar, { size: 14, color: C_MUTED })],
-            alignment: AlignmentType.RIGHT,
-            bidirectional: true,
-          })],
-          width:   { size: 45, type: WidthType.PERCENTAGE },
-          margins: { top: 0, bottom: 0, left: 0, right: 0 },
-          borders: noBorder(),
-        }),
-      ],
-    })],
-  });
-
-  return new TableCell({
-    children: [innerLayout],
-    width:    { size: 25, type: WidthType.PERCENTAGE },
-    margins:  SIG_BAND_PAD,
-    shading:  { fill: C_BANNER },
-    borders:  formBorder(),
-    verticalAlign: VerticalAlign.CENTER,
-  });
-}
-
-function sigBodyCell(name) {
-  return new TableCell({
-    children: [
-      new Paragraph({
-        children: [run(name || '', { size: 16 })],
-        spacing: { before: 60, after: 0 },
-      }),
-    ],
-    width:    { size: 25, type: WidthType.PERCENTAGE },
-    margins:  SIG_BODY_PAD,
-    borders:  formBorder(),
-    verticalAlign: VerticalAlign.TOP,
-  });
-}
-
-function sigFooterCell(leftText, rightLabel) {
-  // Left/right layout via a borderless 2-column inner table. This is far
-  // more reliable in Word than a tab stop in a narrow cell — tab stops
-  // were collapsing here, causing 'Submitted 1 May · 13:48Signature &
-  // Date' (concatenated, no separator) in the docx output even though
-  // the HTML draft renders correctly with flexbox justify-between.
-  const innerLayout = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [new TableRow({
-      children: [
-        new TableCell({
-          children: [new Paragraph({
-            children: [run(leftText || '', { size: 13, italics: true, color: C_MUTED })],
-            alignment: AlignmentType.LEFT,
-          })],
-          width:   { size: 60, type: WidthType.PERCENTAGE },
-          margins: { top: 0, bottom: 0, left: 0, right: 0 },
-          borders: noBorder(),
-        }),
-        new TableCell({
-          children: [new Paragraph({
-            children: [run(rightLabel, { size: 13, bold: true })],
-            alignment: AlignmentType.RIGHT,
-          })],
-          width:   { size: 40, type: WidthType.PERCENTAGE },
-          margins: { top: 0, bottom: 0, left: 0, right: 0 },
-          borders: noBorder(),
-        }),
-      ],
-    })],
-  });
-
-  return new TableCell({
-    children: [innerLayout],
-    width:    { size: 25, type: WidthType.PERCENTAGE },
-    margins:  SIG_BAND_PAD,
-    shading:  { fill: C_BANNER },
-    borders:  formBorder(),
-    verticalAlign: VerticalAlign.CENTER,
-  });
-}
-
-// ─── main generator ───────────────────────────────────────────────────────────
-
+// ─── main generator ──────────────────────────────────────────────────────────
 export async function generatePermissionLetterBlob({ employee, manager, hrApprover, request }) {
-  const typeKey   = TYPE[request.type] ? request.type : 'late_arrival';
-  const typeBoth  = TYPE[typeKey];
+  const typeKey  = TYPE[request.type] ? request.type : 'late_arrival';
+  const typeBoth = TYPE[typeKey];
 
-  const dept      = DEPT_NAMES[employee?.department] || employee?.department || '—';
-  const loc       = LOCATION_NAMES[employee?.location] || employee?.location || '—';
-  const today     = new Date().toISOString();
-  const dur       = (() => {
+  const dept = DEPT_NAMES[employee?.department] || employee?.department || '—';
+  const loc  = LOCATION_NAMES[employee?.location] || employee?.location || '—';
+  const today = new Date().toISOString();
+  const dur  = (() => {
     if (request.time_from && request.time_to) {
       const toMin = (s) => {
         const m = /^(\d{1,2}):(\d{2})$/.exec(s || '');
@@ -418,7 +365,7 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
     }
     return Math.round(Number(request.hours || 0) * 60);
   })();
-  const cat       = categoryFor(request.reason);
+  const cat = categoryFor(request.reason);
   const submittedSoon = request.requested_at && request.permission_date
     ? (new Date(request.permission_date).getTime() - new Date(request.requested_at).getTime()) >= 24 * 3600 * 1000
     : null;
@@ -429,7 +376,8 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
 
   // ── HEADER ────────────────────────────────────────────────────────────────
   const headerRow = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
+    width: { size: PAGE_W, type: WidthType.DXA },
+    columnWidths: [HEADER_LOGO, HEADER_TXT, HEADER_REF],
     rows: [new TableRow({
       children: [
         new TableCell({
@@ -438,262 +386,284 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
               ? new Paragraph({
                   children: [new ImageRun({
                     data: logoBytes,
-                    transformation: { width: 60, height: 60 },
+                    transformation: { width: 56, height: 56 },
                     type: 'jpg',
                   })],
                 })
-              : new Paragraph({ children: [run('EVERGREEN', { bold: true, size: 24, color: C_BRAND })] }),
+              : new Paragraph({
+                  children: [run('EVR', { bold: true, size: 28, color: C_BRAND, font: FONT_BRAND })],
+                }),
           ],
-          width: { size: 18, type: WidthType.PERCENTAGE },
-          borders: noBorder(),
-          margins: { top: 0, bottom: 0, left: 0, right: 80 },
-        }),
-        new TableCell({
-          children: [
-            new Paragraph({ children: [run('EVERGREEN LINE', { bold: true, size: 30, color: C_BRAND })] }),
-            new Paragraph({
-              children: [run(`${HR_SIGNATURE.company}  ·  ${HR_SIGNATURE.unit}  ·  Dammam, K.S.A`, { size: 14, color: C_MUTED })],
-              spacing: { before: 30 },
-            }),
-          ],
-          width: { size: 82, type: WidthType.PERCENTAGE },
-          borders: noBorder(),
-          margins: { top: 0, bottom: 0, left: 0, right: 0 },
+          width: { size: HEADER_LOGO, type: WidthType.DXA },
+          margins: { top: 0, bottom: 0, left: 0, right: 100 },
+          borders: NO_BORDER,
           verticalAlign: VerticalAlign.CENTER,
         }),
-      ],
-    })],
-  });
-
-  const divider = new Paragraph({
-    children: [run('')],
-    border: { bottom: { color: C_BRAND, space: 4, style: BorderStyle.SINGLE, size: 12 } },
-    spacing: { before: 60, after: 120 },
-  });
-
-  // ── TITLE BAR — EN + AR on one row, Date/Ref right-aligned ────────────────
-  // Sized to keep both EN + AR on a single line in the title cell, with
-  // Date / Ref pushed to a smaller right column. The previous version
-  // wrapped because EN at 22pt + the AR phrase exceeded the 65% column
-  // width.
-  const titleEnMain = `PERMISSION REQUEST — ${typeBoth.en.toUpperCase()}`;
-  const titleArMain = `طلب استئذان — ${typeBoth.ar}`;
-
-  const titleBar = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [new TableRow({
-      children: [
         new TableCell({
           children: [
             new Paragraph({
-              children: [
-                run(titleEnMain, { bold: true, size: 22 }),
-              ],
+              children: [run('EVERGREEN LINE', { bold: true, size: 32, color: C_BRAND, font: FONT_BRAND })],
             }),
             new Paragraph({
-              children: [
-                arRun(titleArMain, { size: 18, color: C_BRAND, bold: true }),
-              ],
-              spacing: { before: 30 },
+              children: [run(
+                'Evergreen Shipping Agency Saudi Co. (L.L.C)  ·  ESAU SADMN SUP / HR Dept',
+                { size: 14, color: C_MUTED },
+              )],
+              spacing: { before: 50 },
             }),
           ],
-          width: { size: 70, type: WidthType.PERCENTAGE },
-          borders: noBorder(),
+          width: { size: HEADER_TXT, type: WidthType.DXA },
           margins: { top: 0, bottom: 0, left: 0, right: 0 },
+          borders: NO_BORDER,
           verticalAlign: VerticalAlign.CENTER,
         }),
         new TableCell({
           children: [
             new Paragraph({
               children: [
-                run('Date: ',  { bold: true, color: C_MUTED, size: 16 }),
-                run(fmtDateMed(today), { size: 16 }),
-                run('   \u00B7   ', { color: C_MUTED, size: 16 }),
-                run('Ref: ',   { bold: true, color: C_MUTED, size: 16 }),
-                run(`PR-${String(request.id).padStart(5, '0')}`, { bold: true, size: 16 }),
+                run('Date: ', { bold: true, color: C_MUTED, size: 14 }),
+                run(fmtDateMed(today), { size: 14 }),
               ],
               alignment: AlignmentType.RIGHT,
             }),
+            new Paragraph({
+              children: [
+                run('Ref:  ', { bold: true, color: C_MUTED, size: 14 }),
+                run(`PR-${String(request.id).padStart(5, '0')}`, { bold: true, size: 14 }),
+              ],
+              alignment: AlignmentType.RIGHT,
+              spacing: { before: 40 },
+            }),
           ],
-          width: { size: 30, type: WidthType.PERCENTAGE },
-          borders: noBorder(),
+          width: { size: HEADER_REF, type: WidthType.DXA },
           margins: { top: 0, bottom: 0, left: 0, right: 0 },
+          borders: NO_BORDER,
           verticalAlign: VerticalAlign.CENTER,
         }),
       ],
     })],
+  });
+
+  const headerRule = new Paragraph({
+    children: [run('')],
+    border: { bottom: { style: BorderStyle.SINGLE, size: 14, color: C_BRAND, space: 1 } },
+    spacing: { before: 80, after: 0 },
+  });
+  const headerRuleCopper = new Paragraph({
+    children: [run('')],
+    border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: C_COPPER, space: 1 } },
+    spacing: { before: 30, after: 80 },
+  });
+
+  // ── TITLE ─────────────────────────────────────────────────────────────────
+  const titleStrip = new Paragraph({
+    children: [
+      run('Permission Request — ', { bold: true, size: 24, color: C_TEXT }),
+      run(typeBoth.en, { bold: true, italics: true, size: 24, color: C_COPPER }),
+    ],
+    spacing: { before: 80, after: 30 },
+  });
+  const titleStripAr = new Paragraph({
+    children: [arRun(`طلب استئذان · ${typeBoth.ar}`, { bold: true, size: 16, color: C_BRAND })],
+    bidirectional: true,
+    alignment: AlignmentType.LEFT,
+    spacing: { before: 0, after: 120 },
+    border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER, space: 4 } },
   });
 
   // ── EMPLOYEE INFORMATION ──────────────────────────────────────────────────
   const empTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
+    width: { size: PAGE_W, type: WidthType.DXA },
+    columnWidths: [LABEL_W, VALUE_W],
     rows: [
-      formRow('Employee name',    'اسم الموظف',     employee?.name || '—', { bold: true }),
-      formRow('Employee PSN ID',  'الرقم الوظيفي',   employee?.id || '—'),
-      formRow('Department',       'القسم',           `${dept}  ·  ${loc}`),
-      formRow('Application date', 'تاريخ التقديم',   fmtDateMed(today)),
+      formRow('Employee name',  'اسم الموظف',   employee?.name || '—', { bold: true }),
+      formRow('PSN ID',         'الرقم الوظيفي', employee?.id || '—'),
+      formRow('Department',     'القسم',         `${dept}  ·  ${loc}`),
+      formRow('Submitted',      'تاريخ التقديم', fmtDateTime(request.requested_at || today)),
     ],
   });
 
   // ── PERMISSION DETAILS ────────────────────────────────────────────────────
   const typeChecks = [
-    ...cbRun(typeKey === 'late_arrival', 'Late Arrival', 'تأخير في الحضور'),
-    run('   ', { size: 18 }),
-    ...cbRun(typeKey === 'early_leave',  'Early Departure', 'انصراف مبكر'),
+    ...cbRun(typeKey === 'late_arrival', 'Late Arrival'),
+    ...cbRun(typeKey === 'early_leave',  'Early Departure'),
   ];
-
   const noticeChecks = [
-    ...cbRun(noticePlanned, 'Planned (≥24h)', 'مُخطط مسبقًا'),
-    run('   ', { size: 18 }),
-    ...cbRun(noticeUrgent,  'Urgent (<24h)',  'طارئ'),
+    ...cbRun(noticePlanned, 'Planned (≥24h)'),
+    ...cbRun(noticeUrgent,  'Urgent (<24h)'),
   ];
+  const reasonChecks = REASON_CATEGORIES.map(c =>
+    cbRun(cat === c.id, c.en)
+  ).flat();
 
-  const reasonChecks = REASON_CATEGORIES.map((c, i) => [
-    ...cbRun(cat === c.id, c.en, c.ar),
-    ...(i < REASON_CATEGORIES.length - 1 ? [run('  ', { size: 18 })] : []),
-  ]).flat();
-
-  const timeText = (request.time_from && request.time_to)
-    ? `${request.time_from}  →  ${request.time_to}   ·   Duration: ${dur} mins`
-    : `Duration: ${dur} mins`;
+  const timeRuns = [
+    run(`${request.time_from || '—'}  →  ${request.time_to || '—'}`, { bold: true, size: 21, color: C_BRAND }),
+    run('   ·   ', { size: 21, color: C_MUTED }),
+    run(`Duration: ${dur} mins`, { size: 21 }),
+  ];
 
   const summaryHours = Number(request.hours || 0);
-  const usageText = `${summaryHours} hour${summaryHours === 1 ? '' : 's'} of 3 allowed   ·   ${request.exceeds_quota ? 'Quota exceeded' : 'Within monthly quota'}`;
+  const usageQuantity = `${summaryHours} hour${summaryHours === 1 ? '' : 's'} of 3 allowed`;
+  const usageStatus   = request.exceeds_quota ? 'Quota exceeded' : 'within monthly quota';
+  const usageRuns = [
+    run(usageQuantity, { size: 21, bold: true, color: 'B83A2E' }),
+    run('   ·   ', { size: 21, color: C_MUTED }),
+    run(usageStatus, { size: 21 }),
+  ];
 
   const detailsTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
+    width: { size: PAGE_W, type: WidthType.DXA },
+    columnWidths: [LABEL_W, VALUE_W],
     rows: [
-      formRow('Type of permission', 'نوع الاستئذان',  typeChecks),
-      formRow('Permission date',    'تاريخ الاستئذان', fmtDateLong(request.permission_date), { bold: true }),
-      formRow('Time',               'الوقت',           timeText),
-      formRow('This month usage',   'الاستخدام الشهري', usageText),
-      formRow('Notice',             'نوع الإشعار',     noticeChecks),
-      formRow('Reason category',    'فئة السبب',       reasonChecks),
-      formRow('Reason details',     'تفاصيل السبب',    request.reason || '—'),
+      formRow('Type',             'النوع',           typeChecks),
+      formRow('Permission date',  'تاريخ الاستئذان', fmtDateLong(request.permission_date), { bold: true, color: C_BRAND }),
+      formRow('Time window',      'الوقت',           timeRuns),
+      formRow('Monthly usage',    'الاستخدام الشهري', usageRuns),
+      formRow('Notice',           'الإشعار',         noticeChecks),
+      formRow('Reason category',  'فئة السبب',       reasonChecks),
+      formRow('Reason details',   'السبب',           request.reason || '—'),
     ],
   });
 
-  // ── COMPANY POLICY REMINDER ───────────────────────────────────────────────
+  // ── POLICY ────────────────────────────────────────────────────────────────
   const policyTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: POLICY_BULLETS.map(b => new TableRow({
-      children: [
-        new TableCell({
-          children: [new Paragraph({
-            children: [run('•  ', { bold: true, size: 16 }), run(b.en, { size: 16 })],
-          })],
-          width: { size: 50, type: WidthType.PERCENTAGE },
-          margins: { top: 60, bottom: 60, left: 140, right: 100 },
-          borders: formBorder(),
-        }),
-        new TableCell({
-          children: [new Paragraph({
-            children: [arRun(b.ar + '  •', { size: 16, color: C_TEXT })],
-            alignment: AlignmentType.RIGHT,
-            bidirectional: true,
-          })],
-          width: { size: 50, type: WidthType.PERCENTAGE },
-          margins: { top: 60, bottom: 60, left: 100, right: 140 },
-          borders: formBorder(),
-        }),
-      ],
-    })),
+    width: { size: PAGE_W, type: WidthType.DXA },
+    columnWidths: [HALF_W, PAGE_W - HALF_W],
+    rows: [
+      // Policy header row
+      new TableRow({
+        children: [
+          new TableCell({
+            children: [new Paragraph({
+              children: [run('COMPANY POLICY · MONTHLY QUOTA', { bold: true, size: 13, color: C_COPPER })],
+            })],
+            width: { size: HALF_W, type: WidthType.DXA },
+            margins: { top: 80, bottom: 60, left: 180, right: 100 },
+            shading: shading(C_LABEL_BG),
+            borders: FORM_BORDER,
+          }),
+          new TableCell({
+            children: [new Paragraph({
+              children: [arRun('سياسة الشركة · الحصة الشهرية', { bold: true, size: 14, color: C_MUTED })],
+              alignment: AlignmentType.RIGHT,
+              bidirectional: true,
+            })],
+            width: { size: PAGE_W - HALF_W, type: WidthType.DXA },
+            margins: { top: 80, bottom: 60, left: 100, right: 180 },
+            shading: shading(C_LABEL_BG),
+            borders: FORM_BORDER,
+          }),
+        ],
+      }),
+      // Policy bullet rows
+      ...POLICY_BULLETS.map((b, i) => new TableRow({
+        children: [
+          new TableCell({
+            children: [new Paragraph({
+              children: [
+                run(`${String(i + 1).padStart(2, '0')}.   `, { bold: true, size: 14, color: C_COPPER }),
+                run(b.en, { size: 17 }),
+              ],
+            })],
+            width: { size: HALF_W, type: WidthType.DXA },
+            margins: { top: 80, bottom: 80, left: 180, right: 100 },
+            shading: shading(C_LABEL_BG),
+            borders: FORM_BORDER,
+            verticalAlign: VerticalAlign.CENTER,
+          }),
+          new TableCell({
+            children: [new Paragraph({
+              children: [arRun(b.ar, { size: 16, color: C_MUTED })],
+              alignment: AlignmentType.RIGHT,
+              bidirectional: true,
+            })],
+            width: { size: PAGE_W - HALF_W, type: WidthType.DXA },
+            margins: { top: 80, bottom: 80, left: 100, right: 180 },
+            shading: shading(C_LABEL_BG),
+            borders: FORM_BORDER,
+            verticalAlign: VerticalAlign.CENTER,
+          }),
+        ],
+      })),
+    ],
   });
 
   // ── SIGNATURES ────────────────────────────────────────────────────────────
-  // 4-column × 3-row signature table. Header band on top (shaded), open
-  // signing space in the middle, footer band on bottom (shaded). Each
-  // band is a real table row of 4 cells — Word renders this exactly as
-  // designed, no nested-table surprises.
   const sigCols = [
-    {
-      en: 'EMPLOYEE',     ar: 'الموظف',
-      name: employee?.name || '',
+    { en: 'EMPLOYEE',  ar: 'الموظف',          name: employee?.name || '',
       footerLeft:  request.requested_at ? `Submitted ${fmtStampCompact(request.requested_at)}` : '',
-      footerRight: 'Signature & Date',
-    },
-    {
-      en: 'DEPT MANAGER', ar: 'مدير القسم',
-      name: manager?.name || '',
+      footerRight: 'Signature' },
+    { en: 'DEPT MGR',  ar: 'مدير القسم',       name: manager?.name || '',
       footerLeft:  request.manager_decided_at ? `Approved ${fmtStampCompact(request.manager_decided_at)}` : '',
-      footerRight: 'HQ Stamp / Date',
-    },
-    {
-      en: 'ESAU SUP',     ar: 'إدارة الموارد البشرية',
-      name: hrApprover?.name || HR_SIGNATURE.name,
+      footerRight: 'HQ Stamp' },
+    { en: 'ESAU SUP',  ar: 'الموارد البشرية',   name: hrApprover?.name || HR_SIGNATURE.name,
       footerLeft:  request.hr_decided_at ? `Approved ${fmtStampCompact(request.hr_decided_at)}` : '',
-      footerRight: 'Signature & Date',
-    },
-    {
-      en: 'ESAU MGT',     ar: 'الإدارة',
-      name: '',
-      footerLeft:  '',
-      footerRight: 'HQ Stamp / Date',
-    },
+      footerRight: 'Signature' },
+    { en: 'ESAU MGT',  ar: 'الإدارة',          name: '',
+      footerLeft:  '', footerRight: 'HQ Stamp' },
   ];
 
+  // 4 cell widths summing to PAGE_W exactly.
+  const sigWidths = [SIG_W, SIG_W, SIG_W, SIG_W_LAST];
+
   const sigTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
+    width: { size: PAGE_W, type: WidthType.DXA },
+    columnWidths: sigWidths,
     rows: [
-      // Header band — single shaded row of role titles.
       new TableRow({
-        children: sigCols.map(c => sigHeaderCell(c.en, c.ar)),
+        children: sigCols.map((c, i) => sigHeaderCell(c.en, c.ar, sigWidths[i])),
       }),
-      // Body — open signing area. HeightRule.ATLEAST 2400 (~120pt /
-      // ~4.2cm) gives a generous wet-signature area that uses the empty
-      // A4 space below — the previous 1400 left a lot of unused page.
       new TableRow({
-        height: { value: 2400, rule: HeightRule.ATLEAST },
-        children: sigCols.map(c => sigBodyCell(c.name)),
+        height: { value: 1700, rule: HeightRule.ATLEAST },
+        children: sigCols.map((c, i) => sigBodyCell(c.name, sigWidths[i])),
       }),
-      // Footer band — single shaded row with timestamp + role label.
       new TableRow({
-        children: sigCols.map(c => sigFooterCell(c.footerLeft, c.footerRight)),
+        children: sigCols.map((c, i) => sigFooterCell(c.footerLeft, c.footerRight, sigWidths[i])),
       }),
     ],
   });
 
   // ── FOOTER ────────────────────────────────────────────────────────────────
-  // Generation timestamp + generated-by. Right-aligned muted italic.
   const generatedAt = new Date().toLocaleString('en-GB', {
     day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
-  const footer = [
-    spacer(80),
-    para(
-      `Generated on ${generatedAt} GMT+3  by  ${hrApprover?.name || HR_SIGNATURE.name}`,
-      { run: { size: 12, italics: true, color: C_MUTED }, align: AlignmentType.RIGHT },
-    ),
-  ];
+  const footerLine = new Paragraph({
+    children: [
+      run(`Generated on ${generatedAt} GMT+3  ·  ${hrApprover?.name || HR_SIGNATURE.name}`,
+          { size: 12, italics: true, color: C_COPPER }),
+    ],
+    alignment: AlignmentType.RIGHT,
+    spacing: { before: 100, after: 0 },
+  });
 
+  // ── DOCUMENT ──────────────────────────────────────────────────────────────
   const doc = new Document({
-    styles: { default: { document: { run: { font: 'Calibri' } } } },
+    styles: { default: { document: { run: { font: FONT_BODY } } } },
     sections: [{
       properties: {
         page: {
-          size:    { width: 11906, height: 16838 }, // A4
-          // Tight margins so we always fit single page even with the
-          // 4-column signature footer.
+          size:    { width: 11906, height: 16838 },
           margin:  { top: 540, right: 540, bottom: 540, left: 540 },
         },
       },
       children: [
         headerRow,
-        divider,
-        titleBar,
-        spacer(120),
-        sectionBanner('Employee Information', 'معلومات الموظف'),
+        headerRule,
+        headerRuleCopper,
+        titleStrip,
+        titleStripAr,
+        spacer(60),
+        sectionBanner('EMPLOYEE INFORMATION', 'معلومات الموظف'),
         empTable,
         spacer(80),
-        sectionBanner('Permission Details', 'تفاصيل الاستئذان'),
+        sectionBanner('PERMISSION DETAILS', 'تفاصيل الاستئذان'),
         detailsTable,
         spacer(80),
-        sectionBanner('Company Policy Reminder', 'تنبيه بسياسة الشركة'),
         policyTable,
-        spacer(120),
+        spacer(100),
         sigTable,
-        ...footer,
+        footerLine,
       ],
     }],
   });
@@ -701,8 +671,7 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
   return await Packer.toBlob(doc);
 }
 
-// ─── email draft ──────────────────────────────────────────────────────────────
-
+// ─── email draft ─────────────────────────────────────────────────────────────
 export function resolveExecCcEmails(employees = []) {
   const emails = new Set();
   for (const entry of EXEC_CC) {
@@ -725,10 +694,7 @@ export function resolveExecCcEmails(employees = []) {
 export function buildPermissionEmailDraft({ employee, manager, hrApprover, request, employees = [] }) {
   const typeBoth = TYPE[request.type] || TYPE.late_arrival;
   const to       = employee?.email || '';
-  const ccRaw    = [
-    manager?.email,
-    ...resolveExecCcEmails(employees),
-  ].filter(Boolean);
+  const ccRaw    = [manager?.email, ...resolveExecCcEmails(employees)].filter(Boolean);
   const cc = Array.from(new Set(ccRaw.filter(e => e !== to)));
 
   const firstName = (employee?.name || '').split(' ')[0] || 'Colleague';
@@ -777,10 +743,7 @@ export function buildPermissionEmailDraft({ employee, manager, hrApprover, reque
   ].join('\n');
 
   return {
-    to,
-    cc,
-    subject,
-    body,
+    to, cc, subject, body,
     mailto: buildMailto({ to, cc, subject, body }),
   };
 }
@@ -792,8 +755,6 @@ function buildMailto({ to, cc, subject, body }) {
   params.set('body', body);
   return `mailto:${encodeURIComponent(to)}?${params.toString().replace(/\+/g, '%20')}`;
 }
-
-// ─── one-shot helper ──────────────────────────────────────────────────────────
 
 export async function downloadPermissionLetter({ employee, manager, hrApprover, request }) {
   const blob = await generatePermissionLetterBlob({ employee, manager, hrApprover, request });
