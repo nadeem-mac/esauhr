@@ -38,46 +38,59 @@ update public.employees
 set is_admin = true
 where id = 'H94152';
 
--- 4. RLS — light policies. Adjust later if you want stricter rules.
+-- 4. RLS — DELIBERATELY PERMISSIVE.
+--
+-- This app uses PSN+PIN auth at the application layer with the
+-- Supabase anon key for all reads and writes. auth.uid() is null in
+-- this setup, so any policy that calls auth.uid() effectively
+-- evaluates to false and locks the entire table.
+--
+-- Worse: an earlier version of this file used
+--   exists (select 1 from public.employees e where e.is_admin = true)
+-- which causes infinite RLS recursion (a policy on employees that
+-- queries employees). Re-running that version on a live database
+-- will lock the entire portal — every read of employees triggers
+-- the policy, which queries employees, which triggers the policy,
+-- and so on, until Postgres bails with 42P17.
+--
+-- The replacement policies below match the pattern used everywhere
+-- else in this codebase (audit_log, attendance_violations, etc.):
+-- using (true). All real authorisation lives in the React layer
+-- (is_admin checks in JS), which is the actual source of truth for
+-- this PSN+PIN auth model.
 alter table public.employees enable row level security;
 alter table public.registration_requests enable row level security;
 
--- Drop existing if present (so re-running this migration is safe)
-drop policy if exists "employees_select_authenticated" on public.employees;
-drop policy if exists "employees_admin_all" on public.employees;
-drop policy if exists "reg_req_admin_all" on public.registration_requests;
-drop policy if exists "reg_req_anon_insert" on public.registration_requests;
+-- Defensively drop ALL prior policies on these tables — including
+-- ones from older versions of this migration that may still be
+-- live. We re-run safe replacements below.
+do $$
+declare r record;
+begin
+  for r in
+    select policyname, tablename from pg_policies
+    where schemaname = 'public'
+      and tablename in ('employees','registration_requests')
+  loop
+    execute format('drop policy %I on public.%I', r.policyname, r.tablename);
+  end loop;
+end $$;
 
--- Anyone authenticated can read employee directory (needed for app to function)
-create policy "employees_select_authenticated"
-  on public.employees for select
-  using (auth.role() = 'authenticated');
+-- Permissive read+write on employees. App-layer is_admin checks
+-- enforce who can do what.
+create policy "employees_read_all"
+  on public.employees for select using (true);
 
--- Admins can do anything to employees
-create policy "employees_admin_all"
-  on public.employees for all
-  using (
-    exists (
-      select 1 from public.employees e
-      where e.auth_user_id = auth.uid() and e.is_admin = true
-    )
-  );
+create policy "employees_write_all"
+  on public.employees for all using (true) with check (true);
 
--- Admins can read/update/delete all registration requests
-create policy "reg_req_admin_all"
-  on public.registration_requests for all
-  using (
-    exists (
-      select 1 from public.employees e
-      where e.auth_user_id = auth.uid() and e.is_admin = true
-    )
-  );
+-- Same for registration_requests. The admin panel filters server-
+-- side client-side using the React is_admin flag.
+create policy "reg_req_read_all"
+  on public.registration_requests for select using (true);
 
--- Anonymous (unauthenticated) users can INSERT a registration request
--- (this is how the "Request Access" screen works for unsigned-in staff)
-create policy "reg_req_anon_insert"
-  on public.registration_requests for insert
-  with check (true);
+create policy "reg_req_write_all"
+  on public.registration_requests for all using (true) with check (true);
 
 -- Helper view for admin panel: pending requests joined with employee details
 create or replace view public.v_pending_registrations as

@@ -29,20 +29,32 @@ create index idx_audit_created       on public.audit_log(created_at desc);
 
 alter table public.audit_log enable row level security;
 
--- Anyone signed-in can append (only for themselves).
-create policy "audit_insert_authenticated"
-  on public.audit_log for insert
-  with check (
-    auth.role() = 'authenticated'
-    and (actor_user_id is null or actor_user_id = auth.uid())
-  );
+-- DELIBERATELY PERMISSIVE — see migration_psn_auth.sql for the full
+-- rationale. Short version: auth.uid() is null under PSN+PIN auth
+-- with the anon key, so any policy referencing it locks the table.
+-- Authorisation is enforced in JS instead.
+--
+-- An earlier version of this file shipped a recursive admin policy
+-- (exists from public.employees ...) that referenced auth.uid() AND
+-- queried employees from inside an audit_log policy. The audit_log
+-- table didn't recurse on itself, but the admin check still
+-- evaluated to false (auth.uid() = null), locking selects. The
+-- separate migration_audit_log_fix_rls.sql was added to repair this.
+-- We collapse the two by making the original migration safe from
+-- the start.
+do $$
+declare r record;
+begin
+  for r in
+    select policyname from pg_policies
+    where schemaname = 'public' and tablename = 'audit_log'
+  loop
+    execute format('drop policy %I on public.audit_log', r.policyname);
+  end loop;
+end $$;
 
--- Only admins can read.
-create policy "audit_select_admin"
-  on public.audit_log for select
-  using (
-    exists (
-      select 1 from public.employees e
-      where e.auth_user_id = auth.uid() and e.is_admin = true
-    )
-  );
+create policy "audit_read_all"
+  on public.audit_log for select using (true);
+
+create policy "audit_write_all"
+  on public.audit_log for all using (true) with check (true);

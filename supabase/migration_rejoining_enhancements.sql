@@ -92,21 +92,35 @@ create index if not exists idx_notifications_recipient_unread
   on public.notifications(recipient_id, created_at desc)
   where read_at is null;
 
--- RLS — recipients can read & mark their own notifications read.
+-- RLS — DELIBERATELY PERMISSIVE.
+--
+-- This app uses PSN+PIN auth at the application layer with the
+-- Supabase anon key. auth.uid() is null in this setup, so any
+-- policy referencing auth.uid() effectively evaluates to false
+-- and locks the table. The recipient-scoped read filtering happens
+-- in JS (the dashboard fetches notifications WHERE recipient_id =
+-- me.id), which is the actual source of truth here.
+--
+-- Pattern below matches every other working table in the schema
+-- (audit_log, attendance_violations, etc.): using (true).
 alter table public.notifications enable row level security;
 
-drop policy if exists "notif_read_own"   on public.notifications;
-drop policy if exists "notif_update_own" on public.notifications;
+do $$
+declare r record;
+begin
+  for r in
+    select policyname from pg_policies
+    where schemaname = 'public' and tablename = 'notifications'
+  loop
+    execute format('drop policy %I on public.notifications', r.policyname);
+  end loop;
+end $$;
 
-create policy "notif_read_own" on public.notifications
-  for select using (
-    recipient_id in (select id from public.employees where auth_user_id = auth.uid())
-  );
+create policy "notif_read_all" on public.notifications
+  for select using (true);
 
-create policy "notif_update_own" on public.notifications
-  for update using (
-    recipient_id in (select id from public.employees where auth_user_id = auth.uid())
-  );
+create policy "notif_write_all" on public.notifications
+  for all using (true) with check (true);
 
 -- Trigger — when a leave row's return_stage transitions from NULL to
 -- 'pending_manager' (i.e. staff submits their rejoining), insert one

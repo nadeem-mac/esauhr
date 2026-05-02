@@ -57,57 +57,45 @@ select
 from public.permission_requests
 group by employee_id, date_trunc('month', permission_date);
 
--- 4) Row-level security
+-- 4) Row-level security — DELIBERATELY PERMISSIVE.
+--
+-- This app uses PSN+PIN auth at the application layer with the
+-- Supabase anon key. auth.uid() is always null in this setup, so
+-- any policy referencing auth.uid() effectively evaluates to false
+-- and locks the table.
+--
+-- An earlier version of this file shipped policies that referenced
+-- auth.uid() (perm_self_select, perm_reviewer_all, etc.). Those
+-- policies, if applied to a live database with this auth model,
+-- would break every read and write to permission_requests until
+-- they were dropped or replaced.
+--
+-- Pattern below matches every other working table in the schema
+-- (audit_log, attendance_violations, employees, etc.):
+-- using (true). The actual access gates live in the React layer
+-- (ReviewerPanel scopes by role; PersonalDashboard scopes by
+-- employee_id), which is the source of truth for this auth model.
 alter table public.permission_requests enable row level security;
 
-drop policy if exists "perm_self_select"    on public.permission_requests;
-drop policy if exists "perm_self_insert"    on public.permission_requests;
-drop policy if exists "perm_self_cancel"    on public.permission_requests;
-drop policy if exists "perm_reviewer_all"   on public.permission_requests;
-drop policy if exists "perm_admin_all"      on public.permission_requests;
+-- Defensively drop ALL prior policies on this table, including
+-- ones from older versions of this migration that may still be
+-- live, before re-creating safe ones.
+do $$
+declare r record;
+begin
+  for r in
+    select policyname from pg_policies
+    where schemaname = 'public' and tablename = 'permission_requests'
+  loop
+    execute format('drop policy %I on public.permission_requests', r.policyname);
+  end loop;
+end $$;
 
--- Staff can read their own permission rows
-create policy "perm_self_select"
-  on public.permission_requests for select
-  using (
-    exists (select 1 from public.employees e
-              where e.auth_user_id = auth.uid() and e.id = permission_requests.employee_id)
-  );
+create policy "perm_read_all"
+  on public.permission_requests for select using (true);
 
--- Staff can insert their own permission rows
-create policy "perm_self_insert"
-  on public.permission_requests for insert
-  with check (
-    exists (select 1 from public.employees e
-              where e.auth_user_id = auth.uid() and e.id = permission_requests.employee_id)
-  );
-
--- Staff can cancel their own pending rows
-create policy "perm_self_cancel"
-  on public.permission_requests for update
-  using (
-    exists (select 1 from public.employees e
-              where e.auth_user_id = auth.uid()
-                and e.id = permission_requests.employee_id)
-    and permission_requests.status = 'pending'
-  )
-  with check (
-    status in ('pending','cancelled')
-  );
-
--- Reviewers (can_review_permissions) and admins can do anything
-create policy "perm_reviewer_all"
-  on public.permission_requests for all
-  using (
-    exists (select 1 from public.employees e
-              where e.auth_user_id = auth.uid()
-                and (e.can_review_permissions = true or e.is_admin = true))
-  )
-  with check (
-    exists (select 1 from public.employees e
-              where e.auth_user_id = auth.uid()
-                and (e.can_review_permissions = true or e.is_admin = true))
-  );
+create policy "perm_write_all"
+  on public.permission_requests for all using (true) with check (true);
 
 -- The view is admin/reviewer readable
 grant select on public.v_monthly_permission_usage to authenticated;
