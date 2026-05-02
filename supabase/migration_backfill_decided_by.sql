@@ -1,54 +1,70 @@
 -- ══════════════════════════════════════════════════════════════════════════
--- LEAVE DESK — Backfill *_decided_by columns
+-- LEAVE DESK — Fix decided_by column type + backfill NULL values
 --
--- Bug context: decideLeave used to write
---   hr_decided_by = me.auth_user_id || null
--- For accounts without a Supabase Auth UUID linked, the column was
--- saved as NULL. Those rows then disappeared from MY RECENT DECISIONS
--- because the history query filters on hr_decided_by IN (psn, auth)
--- and NULL matches neither.
+-- Two problems to solve:
 --
--- The bug is fixed going forward (both decideLeave and HrApprovalModal
--- now write a non-null id, falling back to me.id if auth_user_id is
--- missing). This migration patches the rows already in the table so
--- the existing rejections also surface in the history list.
+-- (1) SCHEMA INCONSISTENCY
+--     leave_requests.hr_decided_by and .manager_decided_by are stored
+--     as `uuid`, but the equivalent columns on permission_requests
+--     (added later, via migration_permissions_two_step.sql) are
+--     `text`. The leave-side columns were added either manually
+--     through Supabase UI or via an early migration that's no longer
+--     in the repo, before the text-based pattern was settled.
 --
--- Strategy:
---   • Approved leaves at the HR stage with NULL hr_decided_by → set
---     to Bashaier's PSN ('H94830'), since she's the only HR reviewer
---     who could have approved them.
---   • Rejected-by-HR leaves with NULL hr_decided_by → same. She's
---     the only one with the role to perform that rejection.
---   • Rejected-by-manager / approved-at-manager-stage rows are NOT
---     touched here — those have many possible deciders (every line
---     manager) and we can't guess. Inline rejection-reason migration
---     wasn't applied to them either, so they were already missing
---     from history pre-bug.
+--     This means decideLeave can only write Supabase Auth UUIDs, not
+--     PSN strings — but the app uses PSN+PIN auth, so for any user
+--     account without an auth UUID linked, the column is forced to
+--     NULL. NULL rows then disappear from MY RECENT DECISIONS.
 --
--- After running, the existing rows show up in MY RECENT DECISIONS
--- the next time Bashaier loads the page.
+-- (2) EXISTING NULL ATTRIBUTIONS
+--     Past decisions saved with NULL hr_decided_by need to be
+--     attributed so they reappear in the history list.
 --
--- Idempotent — the WHERE clauses skip rows already populated.
+-- The fix:
+--   • Change column type from uuid to text (matching the pattern
+--     used for permission_requests). Existing UUID values are
+--     preserved as their text representation.
+--   • Backfill NULLs on rows that can be safely attributed:
+--       - 'approved' or 'rejected_by_hr' rows where hr_decided_at
+--         is set → must be Bashaier (only HR reviewer in scope).
+--   • No FK constraint on either column (uuid wouldn't reference
+--     employees.id which is text), so no constraint to drop.
+--   • No RLS policy or trigger depends on these columns' types.
+--
+-- After running, MY RECENT DECISIONS shows every prior decision and
+-- every future decision (including ones from accounts without an
+-- auth_user_id linked).
+--
+-- Idempotent — re-running is a no-op.
 -- ══════════════════════════════════════════════════════════════════════════
 
--- 1) HR-stage approvals authored by Bashaier
+-- 1) Change column type uuid → text. Postgres ALTER COLUMN TYPE with
+--    USING ::text serialises the UUID as its canonical 36-char string.
+alter table public.leave_requests
+  alter column hr_decided_by type text using hr_decided_by::text;
+
+alter table public.leave_requests
+  alter column manager_decided_by type text using manager_decided_by::text;
+
+-- 2) HR-stage approvals authored by Bashaier
 update public.leave_requests
    set hr_decided_by = 'H94830'
  where stage = 'approved'
    and hr_decided_at is not null
    and hr_decided_by is null;
 
--- 2) HR-stage rejections authored by Bashaier
+-- 3) HR-stage rejections authored by Bashaier
 update public.leave_requests
    set hr_decided_by = 'H94830'
  where stage = 'rejected_by_hr'
    and hr_decided_at is not null
    and hr_decided_by is null;
 
--- Sanity check — should now show 0 in the 'still null' columns for
--- rows that were attributable.
+-- 4) Sanity check — the *_still_null columns should now show 0 for
+--    rows that were attributable.
 select
   count(*) filter (where stage = 'approved'        and hr_decided_at is not null and hr_decided_by is null) as approved_still_null,
   count(*) filter (where stage = 'rejected_by_hr'  and hr_decided_at is not null and hr_decided_by is null) as rejected_by_hr_still_null,
-  count(*) filter (where hr_decided_by = 'H94830') as bashaier_decisions_total
+  count(*) filter (where hr_decided_by = 'H94830') as bashaier_decisions_total,
+  count(*) filter (where hr_decided_by ~ '^[0-9a-f]{8}-') as legacy_uuid_decisions
 from public.leave_requests;
