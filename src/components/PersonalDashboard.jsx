@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { supabase, directGet } from '../supabaseClient.js';
 import {
   Calendar, Clock, Plus, AlertTriangle, Sun, Sunrise, Sunset,
-  CheckCircle2, XCircle, Loader2, Users, Plane, Mail
+  CheckCircle2, XCircle, Loader2, Users, Plane, Mail, HeartPulse
 } from 'lucide-react';
 import { fmtDate, calculateBalance, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 import { summariseMonth, PERMISSION_QUOTA } from '../lib/permissionLogic.js';
@@ -11,6 +11,7 @@ import MyApplicationsCard from './MyApplicationsCard.jsx';
 import MyAttendanceCard from './MyAttendanceCard.jsx';
 import MyRejoiningCard from './MyRejoiningCard.jsx';
 import SubstituteFreedCard from './SubstituteFreedCard.jsx';
+import SickDeclarationModal from './SickDeclarationModal.jsx';
 import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
 import { Download } from 'lucide-react';
 
@@ -30,6 +31,11 @@ export default function PersonalDashboard({
   onOpenNewRequest,
 }) {
   const [adjustments, setAdjustments] = useState({});
+  // SickDeclarationModal toggle — front-door sick declaration UX.
+  // Opens when the staff taps "I'm sick today" on the dashboard.
+  // After successful submit we trigger a refresh so the new
+  // pending_certificate row appears in MyApplicationsCard.
+  const [sickModalOpen, setSickModalOpen] = useState(false);
   // Local fetch state used only when the parent didn't pass the data in.
   // When AppShell DOES pass requests/permissions, these slots stay [].
   const [localRequests,    setLocalRequests]    = useState([]);
@@ -300,7 +306,20 @@ export default function PersonalDashboard({
           permission, with inline status pill and per-substitute progress
           where relevant. Click any row to open the matching timeline
           modal. */}
-      <div className="flex justify-end -mb-2">
+      <div className="flex justify-end gap-2 -mb-2">
+        {/* "I'm sick today" — front door for sick-leave declarations.
+            Replaces the historical email-HR pattern. Tapping this opens
+            SickDeclarationModal which creates a leave_requests row in
+            stage='pending_certificate'. The certificate gets uploaded
+            later via the Add-Sehhaty-cert flow. Red palette to match
+            the leave-type icon and to make it visually distinct from
+            the standard leave-request CTA. */}
+        <button onClick={() => setSickModalOpen(true)}
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs"
+          style={{ background:'#B91C1C', color:'#FFFFFF', fontWeight: 600 }}
+          title="Declare a sick day. Manager and HR will be notified.">
+          <HeartPulse className="w-3 h-3" /> I'm sick today
+        </button>
         <button onClick={onOpenNewRequest}
           className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs"
           style={{ background:'var(--ink)', color:'var(--paper)' }}>
@@ -323,6 +342,21 @@ export default function PersonalDashboard({
       {/* Self-service attendance record. Auto-hides when there are no
           violations on file — clean records don't need this card. */}
       <MyAttendanceCard me={me} />
+
+      {/* SickDeclarationModal — opened from the "I'm sick today" tile
+          above. Creates a leave_requests row in pending_certificate
+          stage. After success we close the modal and call load() so
+          the new row appears in MyApplicationsCard immediately. */}
+      {sickModalOpen && (
+        <SickDeclarationModal
+          employee={me}
+          onClose={() => setSickModalOpen(false)}
+          onCreated={() => {
+            setSickModalOpen(false);
+            load();
+          }}
+        />
+      )}
     </div>
   );
 }
