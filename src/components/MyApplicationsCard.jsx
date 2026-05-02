@@ -1,12 +1,13 @@
 import React, { useState, useMemo } from 'react';
 import {
   RefreshCw, Clock, CheckCircle2, XCircle, AlertTriangle,
-  Palmtree, Sunrise, Sunset, Users2, Check, X,
+  Palmtree, Sunrise, Sunset, Users2, Check, X, ArrowLeftCircle,
 } from 'lucide-react';
 import { fmtDateShort } from '../lib/leaveLogic.js';
 import { PERMISSION_TYPES } from '../lib/permissionLogic.js';
 import LeaveTimelineModal from './LeaveTimelineModal.jsx';
 import PermissionTimelineModal from './PermissionTimelineModal.jsx';
+import RejoiningTimelineModal from './RejoiningTimelineModal.jsx';
 
 // =============================================================================
 // MyApplicationsCard
@@ -36,6 +37,16 @@ import PermissionTimelineModal from './PermissionTimelineModal.jsx';
 // chosen so pending_* shades go warm (amber → orange → deeper orange as
 // the request moves up the chain), final states go green/red.
 function pillFor(item) {
+  // Rejoining items use return_* fields, not stage/status.
+  if (item._kind === 'rejoin') {
+    const rs = item.return_stage;
+    if (rs === 'approved')              return { label: 'Approved',           color: '#0F4C2A', bg: '#ECFDF5' };
+    if (rs === 'rejected_by_manager')   return { label: 'Sent back by manager', color: '#B91C1C', bg: '#FEE2E2' };
+    if (rs === 'rejected_by_hr')        return { label: 'Sent back by HR',     color: '#B91C1C', bg: '#FEE2E2' };
+    if (rs === 'pending_manager')       return { label: 'Awaiting manager',    color: '#9A3412', bg: '#FFEDD5' };
+    if (rs === 'pending_hr')            return { label: 'Awaiting HR',         color: '#7C2D12', bg: '#FED7AA' };
+    return { label: 'Pending', color: '#92400E', bg: '#FEF3C7' };
+  }
   const stage  = item.stage  || (item.status === 'approved' ? 'approved' : 'pending_manager');
   const status = item.status || (stage === 'approved' ? 'approved' : 'pending');
   if (status === 'approved' || stage === 'approved') {
@@ -58,6 +69,9 @@ function pillFor(item) {
 // what kind of application it is. Mirrors the colour scheme used on the
 // admin dashboard tiles for consistency.
 function iconFor(item) {
+  if (item._kind === 'rejoin') {
+    return { Icon: ArrowLeftCircle, color: '#0F4C2A', bg: '#D1FAE5' };
+  }
   if (item._kind === 'leave') {
     return { Icon: Palmtree, color: '#0F4C2A', bg: '#ECFDF5' };
   }
@@ -69,9 +83,16 @@ function iconFor(item) {
 
 // Sort key — most recent activity first. We use the most-meaningful
 // timestamp on the row: hr_decided_at > manager_decided_at > requested_at
-// > created_at. That way an item that just got HR-approved bubbles up
-// even if it was submitted weeks ago.
+// > created_at. For rejoining synthetic items, prefer the return_*
+// timestamps so they sort by their own activity, not the original
+// leave's.
 function sortKey(item) {
+  if (item._kind === 'rejoin') {
+    return new Date(
+      item.return_hr_decided_at || item.return_manager_decided_at ||
+      item.return_submitted_at  || item.actual_return_date || 0
+    ).getTime();
+  }
   return new Date(
     item.hr_decided_at || item.manager_decided_at || item.requested_at || item.created_at || 0
   ).getTime();
@@ -88,23 +109,54 @@ export default function MyApplicationsCard({
   const [filter, setFilter]       = useState('all');
   const [openLeave, setOpenLeave] = useState(null);
   const [openPerm,  setOpenPerm]  = useState(null);
+  const [openRejoin, setOpenRejoin] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Combine leaves + permissions, tag each with _kind for downstream
-  // rendering, sort newest-activity-first.
+  // Combine leaves + permissions + synthesized rejoining entries, tag
+  // each with _kind, apply 90-day visibility cutoff, sort newest first.
+  //
+  // Rejoining is a sub-state of an approved leave row, not its own table —
+  // so we project a virtual 'rejoin' item from any leave row that has
+  // return_stage set. The user sees their leave AND their rejoining as
+  // separate entries with their own status/timeline. Same UX as having
+  // them be distinct records, no schema change.
   const items = useMemo(() => {
+    // 90-day cutoff — staff sees activity from the last 90 days; older
+    // records live in HR's archive and no longer clutter the personal view.
+    const cutoff = Date.now() - 90 * 86_400_000;
+    const inWindow = (k) => k >= cutoff;
+
     const ls = (requests || [])
       .filter(r => r.employee_id === me?.id)
-      .map(r => ({ ...r, _kind: 'leave' }));
+      .map(r => ({ ...r, _kind: 'leave' }))
+      .filter(it => inWindow(sortKey(it)));
+
     const ps = (permissions || [])
       .filter(p => p.employee_id === me?.id)
-      .map(p => ({ ...p, _kind: 'permission' }));
-    return [...ls, ...ps].sort((a, b) => sortKey(b) - sortKey(a));
+      .map(p => ({ ...p, _kind: 'permission' }))
+      .filter(it => inWindow(sortKey(it)));
+
+    // Rejoining synthetic items — one per leave row whose rejoining
+    // workflow has been started (return_stage IS NOT NULL). The leave
+    // itself stays in the list; this just adds a sibling entry showing
+    // the rejoining's own progress.
+    const rs = (requests || [])
+      .filter(r => r.employee_id === me?.id && !!r.return_stage)
+      .map(r => ({ ...r, _kind: 'rejoin' }))
+      .filter(it => inWindow(sortKey(it)));
+
+    return [...ls, ...ps, ...rs].sort((a, b) => sortKey(b) - sortKey(a));
   }, [requests, permissions, me?.id]);
 
   const counts = useMemo(() => {
     const c = { all: items.length, pending: 0, approved: 0, rejected: 0 };
     for (const it of items) {
+      if (it._kind === 'rejoin') {
+        if (it.return_stage === 'approved')                c.approved++;
+        else if (/^rejected/.test(it.return_stage || ''))   c.rejected++;
+        else                                                c.pending++;
+        continue;
+      }
       const status = it.status || (it.stage === 'approved' ? 'approved' : 'pending');
       if (status === 'approved' || it.stage === 'approved') c.approved++;
       else if (status === 'rejected' || /^rejected/.test(it.stage || '')) c.rejected++;
@@ -116,6 +168,11 @@ export default function MyApplicationsCard({
   const visible = useMemo(() => {
     if (filter === 'all') return items;
     return items.filter(it => {
+      if (it._kind === 'rejoin') {
+        if (filter === 'approved')  return it.return_stage === 'approved';
+        if (filter === 'rejected')  return /^rejected/.test(it.return_stage || '');
+        return /^pending/.test(it.return_stage || '');
+      }
       const status = it.status || (it.stage === 'approved' ? 'approved' : 'pending');
       if (filter === 'approved')  return status === 'approved' || it.stage === 'approved';
       if (filter === 'rejected')  return status === 'rejected' || /^rejected/.test(it.stage || '');
@@ -203,12 +260,24 @@ export default function MyApplicationsCard({
               empMap={empMap}
               leaveTypes={leaveTypes}
               onClick={() => {
-                if (item._kind === 'leave') setOpenLeave(item);
-                else                        setOpenPerm(item);
+                if (item._kind === 'leave')       setOpenLeave(item);
+                else if (item._kind === 'rejoin') setOpenRejoin(item);
+                else                              setOpenPerm(item);
               }}
             />
           ))}
         </ul>
+      )}
+
+      {/* Footer note — staff sees 90 days of activity here. Older
+          applications are kept in HR records but no longer surface
+          on the personal landing page so the list stays focused on
+          recent / actionable items. */}
+      {items.length > 0 && (
+        <div className="mt-4 pt-3 text-[10px] italic text-center"
+             style={{ color: '#1F1B16', opacity: 0.6, borderTop: '1px dashed var(--border-soft, #E5E0D5)' }}>
+          Showing your applications from the last 90 days · Older records are archived in HR
+        </div>
       )}
 
       {/* Modals */}
@@ -227,6 +296,13 @@ export default function MyApplicationsCard({
           onClose={() => setOpenPerm(null)}
         />
       )}
+      {openRejoin && (
+        <RejoiningTimelineModal
+          request={openRejoin}
+          empMap={empMap}
+          onClose={() => setOpenRejoin(null)}
+        />
+      )}
     </section>
   );
 }
@@ -237,15 +313,27 @@ function Row({ item, empMap, leaveTypes, onClick }) {
   const pill = pillFor(item);
 
   // Title varies by kind. For leaves, use the leave-type name. For
-  // permissions, use 'Late Arrival' / 'Early Leave'.
-  const title = item._kind === 'leave'
-    ? (leaveTypes.find(t => t.id === item.leave_type_id)?.name || 'Leave')
-    : (PERMISSION_TYPES[item.type]?.label || item.type);
+  // permissions, 'Late Arrival' / 'Early Leave'. For rejoinings,
+  // 'Rejoining (<leave type>)'.
+  const leaveTypeName = leaveTypes.find(t => t.id === item.leave_type_id)?.name;
+  const title =
+    item._kind === 'leave'  ? (leaveTypeName || 'Leave')
+  : item._kind === 'rejoin' ? `Rejoining${leaveTypeName ? ` (${leaveTypeName})` : ''}`
+  :                           (PERMISSION_TYPES[item.type]?.label || item.type);
 
-  // Date string — leaves use start→end, permissions use single date.
-  const dateStr = item._kind === 'leave'
-    ? `${fmtDateShort(item.start_date)} → ${fmtDateShort(item.end_date)} · ${item.days} day${item.days !== 1 ? 's' : ''}`
+  // Date string per kind.
+  const dateStr =
+    item._kind === 'leave'
+      ? `${fmtDateShort(item.start_date)} → ${fmtDateShort(item.end_date)} · ${item.days} day${item.days !== 1 ? 's' : ''}`
+    : item._kind === 'rejoin'
+      ? `Returned ${fmtDateShort(item.actual_return_date)}${item.balance_after > 0 ? ` · +${item.balance_after}d credited back` : ''}`
     : `${fmtDateShort(item.permission_date)}${item.time_from && item.time_to ? `  ·  ${item.time_from}–${item.time_to}` : ''}  ·  ${Number(item.hours)} hr${Number(item.hours) === 1 ? '' : 's'}`;
+
+  // Kind tag label
+  const kindLabel =
+    item._kind === 'leave'  ? 'LEAVE'
+  : item._kind === 'rejoin' ? 'REJOINING'
+  :                           'PERMISSION';
 
   // Inline substitute progress strip for leaves at pending_substitutes
   // — replaces the standalone wait card. Hidden for any other kind/stage.
@@ -271,7 +359,7 @@ function Row({ item, empMap, leaveTypes, onClick }) {
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm" style={{ color: '#1F1B16', fontWeight: 600 }}>{title}</span>
             <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: bg, color, fontWeight: 600, letterSpacing: '0.05em' }}>
-              {item._kind === 'leave' ? 'LEAVE' : 'PERMISSION'}
+              {kindLabel}
             </span>
           </div>
           <div className="text-xs mt-0.5" style={{ color: '#1F1B16', opacity: 0.7 }}>
