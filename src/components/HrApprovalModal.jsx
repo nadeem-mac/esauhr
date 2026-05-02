@@ -803,15 +803,28 @@ export default function HrApprovalModal({ request, employee, manager, substitute
           structured fields are. */}
       {confirmOpen && (
         <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4"
-             style={{ background: 'rgba(15,31,26,0.55)' }}
-             onClick={(e) => { if (e.target === e.currentTarget) setConfirmOpen(false); }}>
+             style={{ background: 'rgba(15,31,26,0.55)' }}>
+          {/* Click-outside-to-close was causing accidental closes
+              when Bashaier pasted screenshots, opened the file
+              picker, or tapped near the modal edges on touch. The
+              modal now closes only via Cancel, the verify success
+              path, or the close (X) button — explicit user intent
+              required. */}
           <div className="bg-paper rounded-t-2xl sm:rounded-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto fade-in"
             style={{ boxShadow: '0 12px 40px rgba(31,27,22,0.2)' }}>
-            <div className="px-5 py-4 border-b sticky top-0 z-10" style={{ borderColor: 'var(--border-soft)', background: 'var(--paper)' }}>
-              <div className="text-[10px] tracking-[0.25em] font-bold mb-1" style={{ color: '#B45309' }}>
+            <div className="px-5 py-4 border-b sticky top-0 z-10 relative" style={{ borderColor: 'var(--border-soft)', background: 'var(--paper)' }}>
+              <button
+                type="button"
+                onClick={() => setConfirmOpen(false)}
+                aria-label="Close"
+                className="absolute top-3 right-3 w-8 h-8 rounded-full flex items-center justify-center hover:bg-black/5"
+                style={{ color: '#0A0A0A' }}>
+                <X className="w-4 h-4"/>
+              </button>
+              <div className="text-[10px] tracking-[0.25em] font-bold mb-1 pr-10" style={{ color: '#B45309' }}>
                 CROSS-CHECK · SEHHATY CERTIFICATE
               </div>
-              <h3 className="text-lg" style={{ fontFamily: 'Georgia, serif', color: '#0A0A0A', fontWeight: 500 }}>
+              <h3 className="text-lg pr-10" style={{ fontFamily: 'Georgia, serif', color: '#0A0A0A', fontWeight: 500 }}>
                 Cross-check the Sehhaty certificate
               </h3>
               <div className="text-[11px] mt-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>
@@ -1137,6 +1150,12 @@ function OcrPasteZone({ busy, error, thumb, lastRun, onDrop, onPick }) {
         cursor: thumb ? 'default' : 'pointer',
       }}
       onClick={(e) => {
+        // Stop propagation so the click doesn't bubble up to any
+        // ancestor modal that might interpret it as a backdrop
+        // click (a click-outside-to-close pattern). Even though the
+        // current modal no longer uses that pattern, this is
+        // defensive against future regressions.
+        e.stopPropagation();
         // Only trigger file picker when clicking empty zone, not
         // the thumbnail or buttons inside it.
         if (!thumb && e.target === e.currentTarget && fileInputRef.current) {
