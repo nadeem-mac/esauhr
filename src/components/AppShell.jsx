@@ -90,7 +90,11 @@ function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, me }) {
     const insertIdx = base.findIndex(t => t.id === 'calendar');
     base.splice(insertIdx >= 0 ? insertIdx + 1 : base.length, 0, { id: 'attendance', label: 'Attendance', icon: Clock });
   }
-  if (isAdmin || isHrReviewer) {
+  if (isAdmin) {
+    // Admin tab is admin-only (Nadeem). Bashaier (HR reviewer) does
+    // her work through Reviews + Employees + Attendance — the Admin
+    // tab surfaces are reserved for the universal admin: PSN access
+    // requests, sign-in activity, full audit log.
     base.splice(5, 0, { id: 'admin', label: 'Admin', icon: ShieldCheck });
   }
   return base;
@@ -750,7 +754,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
         {tab === 'diagnostics' && isAdmin && (
           <ConnectivityTest />
         )}
-        {tab === 'admin' && (isAdmin || isHrReviewer) && (
+        {tab === 'admin' && isAdmin && (
           <AdminPanel session={session} me={me} onRefreshMe={onRefreshMe} />
         )}
       </main>
