@@ -41,6 +41,15 @@ export default function ReviewerPanel({ me }) {
   // re-downloadable .docx.
   const [recentRejoinDecisions, setRecentRejoinDecisions] = useState([]);
   const [historyQuery, setHistoryQuery] = useState('');
+  // Recurring-permission detection. For each (employee_id, type) in
+  // the current pending queue, we look up the same employee's last 60
+  // days of approved permissions and group by weekday to spot
+  // patterns ('every Monday', '3rd Monday in 4 weeks'). Surfaced as
+  // an inline badge on the row so Bashaier can use the pattern as
+  // context when deciding. Map shape:
+  //   key: 'H94590|late_arrival'
+  //   value: { count: 3, weekday: 'Mon', label: '3 Mondays in 4 weeks' }
+  const [recurringPattern, setRecurringPattern] = useState(new Map());
   // Delegation: which staff in my queue belong to an absent manager
   // (one of my direct reports who is themselves a manager and on
   // approved leave covering today). Used to render a 'DELEGATED' pill
@@ -248,6 +257,95 @@ export default function ReviewerPanel({ me }) {
   }, [me?.id, isAdmin, isHrReviewer, canPerm]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Recurring permission pattern detection. For each unique
+  // (employee_id, type) currently pending, fetch the last 60 days of
+  // approved permissions of the same type and detect weekday clusters.
+  // We flag the pattern when:
+  //   • ≥3 occurrences in the window for the same employee+type
+  //   • ≥half of those fall on the same weekday
+  // Renders as a badge inline on the row. Skipped silently for empty
+  // queues — no extra fetches when there's nothing to flag.
+  useEffect(() => {
+    if (!perms || perms.length === 0) {
+      setRecurringPattern(new Map());
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - 60);
+        const cutoffIso = cutoff.toISOString().slice(0, 10);
+        // Build the unique (employee_id, type) set from pending rows.
+        const pairs = new Map();
+        perms.forEach(p => {
+          const k = p.employee_id + '|' + p.type;
+          if (!pairs.has(k)) pairs.set(k, { employee_id: p.employee_id, type: p.type });
+        });
+        // Single bulk fetch — all approved permissions in window for
+        // these employees, then we filter and group client-side.
+        const empIds = Array.from(new Set(Array.from(pairs.values()).map(p => p.employee_id)));
+        if (empIds.length === 0) {
+          if (!cancelled) setRecurringPattern(new Map());
+          return;
+        }
+        const rows = await directGet(
+          'permission_requests?select=employee_id,type,permission_date'
+          + '&stage=eq.approved'
+          + '&permission_date=gte.' + cutoffIso
+          + '&employee_id=in.(' + empIds.map(encodeURIComponent).join(',') + ')'
+        );
+        if (cancelled) return;
+        const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const buckets = new Map(); // key: emp|type → Array<rows>
+        (rows || []).forEach(r => {
+          const k = r.employee_id + '|' + r.type;
+          if (!pairs.has(k)) return;
+          if (!buckets.has(k)) buckets.set(k, []);
+          buckets.get(k).push(r);
+        });
+        const pattern = new Map();
+        buckets.forEach((bucketRows, k) => {
+          if (bucketRows.length < 3) return;
+          // Count weekdays
+          const weekdayCounts = {};
+          bucketRows.forEach(r => {
+            const wd = new Date(r.permission_date).getDay();
+            weekdayCounts[wd] = (weekdayCounts[wd] || 0) + 1;
+          });
+          // Find dominant weekday
+          let topDay = -1, topCount = 0;
+          Object.entries(weekdayCounts).forEach(([d, c]) => {
+            if (c > topCount) { topCount = c; topDay = Number(d); }
+          });
+          // Only flag if dominant weekday is at least half of the bucket
+          if (topCount >= Math.ceil(bucketRows.length / 2) && topCount >= 2) {
+            pattern.set(k, {
+              count: topCount,
+              total: bucketRows.length,
+              weekday: WEEKDAYS[topDay],
+              label: `${topCount} ${WEEKDAYS[topDay]}s in last 60d`,
+            });
+          } else if (bucketRows.length >= 4) {
+            // No dominant weekday but high overall frequency — still
+            // worth flagging.
+            pattern.set(k, {
+              count: bucketRows.length,
+              total: bucketRows.length,
+              weekday: null,
+              label: `${bucketRows.length} approved in last 60d`,
+            });
+          }
+        });
+        setRecurringPattern(pattern);
+      } catch (e) {
+        console.warn('Recurring pattern fetch failed:', e?.message || e);
+        if (!cancelled) setRecurringPattern(new Map());
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [perms]);
 
   // No realtime channel. The websocket subscription was causing the supabase-js
   // client to wedge after the first load. Reviewers click the Refresh button, or
@@ -629,6 +727,23 @@ export default function ReviewerPanel({ me }) {
                                     DELEGATED
                                   </span>
                                 )}
+                                {/* Recurring-pattern flag — Bashaier
+                                    sees at a glance whether this is the
+                                    Nth same-weekday request from the
+                                    same person. Helps decide whether
+                                    the pattern needs a conversation
+                                    rather than another approval. */}
+                                {(() => {
+                                  const p = recurringPattern.get(req.employee_id + '|' + req.type);
+                                  if (!p) return null;
+                                  return (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded font-bold tracking-wider inline-flex items-center gap-1"
+                                          style={{ background: '#7C2D12', color: '#FFFDF7' }}
+                                          title={`Recurring pattern: ${p.label}. Worth a conversation if this continues.`}>
+                                      RECURRING · {p.label.toUpperCase()}
+                                    </span>
+                                  );
+                                })()}
                               </div>
                               <div className="text-xs opacity-70 mt-0.5">
                                 {PERMISSION_TYPES[req.type]?.label} · {fmtDate(new Date(req.permission_date))} · {req.hours}h

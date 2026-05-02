@@ -790,6 +790,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
         <EmployeeDetailModal
           employee={selectedEmployee}
           employees={employees}
+          empMap={empMap}
           leaveTypes={leaveTypes}
           requests={requests.filter(r => r.employee_id === selectedEmployee.id)}
           balances={balances.filter(b => b.employee_id === selectedEmployee.id)}

@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
-import { supabase } from '../supabaseClient.js';
-import { X, AlertTriangle, Sunrise, Sunset, Loader2 } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { supabase, directGet } from '../supabaseClient.js';
+import { X, AlertTriangle, Sunrise, Sunset, Loader2, History } from 'lucide-react';
 import { logAction } from '../lib/audit.js';
 import { checkExceeds, summariseMonth, PERMISSION_QUOTA, PERMISSION_TYPES, reasonsFor } from '../lib/permissionLogic.js';
 
@@ -58,6 +58,58 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
   const exceeds = useMemo(() => checkExceeds(monthRows, hours), [monthRows, hours]);
   const Icon    = type === 'late_arrival' ? Sunrise : Sunset;
   const cfg     = PERMISSION_TYPES[type];
+
+  // Quick-pick chips from this employee's last 3 approved permissions
+  // of the same type. Saves them re-typing the same time window every
+  // week. Click a chip to pre-fill from-time and to-time.
+  // Distinct windows only — if they always request 08:00-09:00, a
+  // single chip covers it. Falls back silently to no chips if the
+  // fetch fails or there's no history.
+  const [recentPicks, setRecentPicks] = useState([]);
+  useEffect(() => {
+    if (!me?.id || !type) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        // Last 90 days, approved, same type. Order by most recent so
+        // the chips reflect current habits rather than ancient history.
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - 90);
+        const cutoffIso = cutoff.toISOString().slice(0, 10);
+        const data = await directGet(
+          'permission_requests?select=time_from,time_to,permission_date'
+          + '&employee_id=eq.' + encodeURIComponent(me.id)
+          + '&type=eq.' + type
+          + '&stage=eq.approved'
+          + '&permission_date=gte.' + cutoffIso
+          + '&order=permission_date.desc&limit=10'
+        );
+        if (cancelled) return;
+        // Distinct time windows only
+        const seen = new Set();
+        const distinct = [];
+        (data || []).forEach(p => {
+          if (!p.time_from || !p.time_to) return;
+          const f = String(p.time_from).slice(0, 5);
+          const t = String(p.time_to).slice(0, 5);
+          const key = f + '|' + t;
+          if (seen.has(key)) return;
+          seen.add(key);
+          distinct.push({ from: f, to: t, lastUsed: p.permission_date });
+          if (distinct.length >= 3) return;
+        });
+        setRecentPicks(distinct);
+      } catch (e) {
+        console.warn('[Permission auto-suggest] fetch failed:', e?.message || e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [me?.id, type]);
+
+  const applyPick = (pick) => {
+    setTimeFrom(pick.from);
+    setTimeTo(pick.to);
+  };
 
   // Validation flags — used to disable the submit button + show inline
   // hint text. Matches ESAU policy: each request 15–60 mins, must be a
@@ -177,10 +229,32 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
               between 15 and 60 mins per company policy (validated above
               + enforced server-side via row-level check). */}
           <div>
-            <label className="block text-[10px] tracking-[0.25em] mb-2"
-              style={{ color: '#1F1B16', fontWeight: 700 }}>
-              TIME · ARABIC الوقت
-            </label>
+            <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+              <label className="text-[10px] tracking-[0.25em]"
+                style={{ color: '#1F1B16', fontWeight: 700 }}>
+                TIME · ARABIC الوقت
+              </label>
+              {/* Quick-pick chips from history. Surfaces only when
+                  the employee has prior approved permissions of this
+                  type — one click pre-fills the form from a recent
+                  pattern. Saves re-typing the same window every week. */}
+              {recentPicks.length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[9px] tracking-wider opacity-60 inline-flex items-center gap-1"
+                    style={{ color: '#1F1B16', fontWeight: 700 }}>
+                    <History className="w-3 h-3"/> RECENT
+                  </span>
+                  {recentPicks.map((p, i) => (
+                    <button key={i} type="button" onClick={() => applyPick(p)}
+                      className="text-[10px] font-mono px-2 py-1 rounded-full border hover:bg-black/5 transition-colors"
+                      style={{ borderColor: 'var(--border)', color: '#1F1B16' }}
+                      title={`Last used ${new Date(p.lastUsed).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`}>
+                      {p.from}–{p.to}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <div className="text-[10px] mb-1" style={{ color: '#1F1B16', opacity: 0.7 }}>From · من</div>

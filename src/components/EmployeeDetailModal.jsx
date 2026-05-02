@@ -1,12 +1,13 @@
 import React, { useMemo, useState } from 'react';
-import { X, Building2, MapPin, Calendar, Briefcase, KeyRound, Loader2, CheckCircle2, AlertCircle, Pencil, Save } from 'lucide-react';
+import { X, Building2, MapPin, Calendar, Briefcase, KeyRound, Loader2, CheckCircle2, AlertCircle, Pencil, Save, FileText, Download } from 'lucide-react';
 import { Avatar, Pill } from './Dashboard.jsx';
 import { supabase, directPatch } from '../supabaseClient.js';
 import {
   calculateBalance, fmtDate, fmtDateShort, yearsOfService, monthsOfService, LOCATION_LABELS,
 } from '../lib/leaveLogic.js';
+import { downloadMonthlyAttendanceReport } from '../lib/monthlyAttendanceReport.js';
 
-export default function EmployeeDetailModal({ employee, leaveTypes, requests, balances, typeMap, me, employees = [], onSaved, onClose }) {
+export default function EmployeeDetailModal({ employee, leaveTypes, requests, balances, typeMap, me, employees = [], empMap = {}, onSaved, onClose }) {
   const year = new Date().getFullYear();
 
   const balByType = useMemo(() => {
@@ -68,6 +69,15 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
               employees={employees}
               onSaved={onSaved}
             />
+          )}
+
+          {/* Monthly attendance summary — HR-only download. Bashaier
+              picks a month and gets a single-page .docx for the
+              employee's HR file or for evaluation handover. Reads
+              from attendance_violations directly so it always
+              reflects the current record. */}
+          {(me?.is_admin || me?.is_hr_reviewer) && employee?.id && (
+            <MonthlyAttendancePanel employee={employee} empMap={empMap} me={me} />
           )}
 
           <div>
@@ -484,5 +494,110 @@ function Field({ label, children }) {
       </span>
       {children}
     </label>
+  );
+}
+
+// ─── MonthlyAttendancePanel ──────────────────────────────────────────────
+// HR-only month picker + download button for the attendance summary
+// .docx. Defaults to the previous calendar month (most common use
+// case: Bashaier finalising last month's evaluation file). Lets her
+// jump back up to 12 months for retrospective reports.
+function MonthlyAttendancePanel({ employee, empMap, me }) {
+  // Default month = previous calendar month (most common case)
+  const defaultMonth = useMemo(() => {
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() - 1);
+    return d.toISOString().slice(0, 7); // 'YYYY-MM'
+  }, []);
+  const [month, setMonth] = useState(defaultMonth);
+  const [busy, setBusy]   = useState(false);
+  const [error, setError] = useState('');
+  const [done, setDone]   = useState(null);
+
+  async function handleDownload() {
+    setBusy(true); setError(''); setDone(null);
+    try {
+      const result = await downloadMonthlyAttendanceReport({
+        employee,
+        empMap,
+        monthStart: month + '-01',
+        preparedBy: {
+          name:    me?.is_hr_reviewer ? 'BASHAIER ALI' : (me?.name || 'HR'),
+          title:   'HR Department',
+          company: 'Evergreen Shipping Agency Saudi Co., (L.L.C)',
+        },
+      });
+      setDone(result);
+    } catch (e) {
+      setError(e?.message || 'Could not generate the report.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Month options: last 12 months
+  const monthOptions = useMemo(() => {
+    const out = [];
+    const d = new Date();
+    d.setDate(1);
+    for (let i = 0; i < 12; i++) {
+      const v = d.toISOString().slice(0, 7);
+      const label = d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+      out.push({ value: v, label });
+      d.setMonth(d.getMonth() - 1);
+    }
+    return out;
+  }, []);
+
+  return (
+    <div className="rounded-xl border p-4"
+         style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}>
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <div>
+          <div className="text-xs tracking-widest opacity-60">MONTHLY ATTENDANCE REPORT</div>
+          <div className="text-[11px] mt-0.5" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+            Single-page .docx for the employee's HR file or evaluation handover.
+          </div>
+        </div>
+        <FileText className="w-4 h-4 opacity-60" style={{ color: '#0A0A0A' }}/>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <select
+          value={month}
+          onChange={e => { setMonth(e.target.value); setDone(null); setError(''); }}
+          className="text-xs px-3 py-2 rounded-md border"
+          style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', color: '#0A0A0A' }}>
+          {monthOptions.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
+        <button type="button" onClick={handleDownload} disabled={busy}
+          className="text-xs px-4 py-2 rounded-full inline-flex items-center gap-1.5 disabled:opacity-50"
+          style={{ background: '#0F4C2A', color: '#FFFFFF', fontWeight: 600 }}>
+          {busy ? <><Loader2 className="w-3 h-3 animate-spin"/> Generating…</> : <><Download className="w-3 h-3"/> Generate report</>}
+        </button>
+      </div>
+
+      {error && (
+        <div className="mt-3 px-3 py-2 rounded-md text-xs flex items-start gap-2"
+             style={{ background: '#FEE2E2', color: '#0A0A0A', border: '1px solid #FECACA' }}>
+          <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0"/> {error}
+        </div>
+      )}
+      {done && (
+        <div className="mt-3 px-3 py-2 rounded-md text-xs flex items-start gap-2"
+             style={{
+               background: done.overThreshold ? '#FEE2E2' : '#ECFDF5',
+               color: '#0A0A0A',
+               border: '1px solid ' + (done.overThreshold ? '#FECACA' : '#A7F3D0'),
+             }}>
+          <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 flex-shrink-0"
+            style={{ color: done.overThreshold ? '#991B1B' : '#047857' }}/>
+          <span>
+            <strong>Report downloaded.</strong> {done.rowCount} incident{done.rowCount === 1 ? '' : 's'} across {done.distinctDays} day{done.distinctDays === 1 ? '' : 's'}.
+            {done.overThreshold && ' Above the 5-per-month review threshold — flagged in the report notes.'}
+          </span>
+        </div>
+      )}
+    </div>
   );
 }
