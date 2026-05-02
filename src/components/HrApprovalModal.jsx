@@ -1363,36 +1363,49 @@ function SehhatyTopBox({ value, onChange, placeholder, editable = true, monoLg, 
 }
 
 // ─── SehhatyField ───────────────────────────────────────────────────────────
-// One label+value cell inside the gray result card. The Arabic
-// label sits above the value, exactly like the real Sehhaty page.
-// The value is an inline-styled input (no border, no padding) so
-// it visually reads as text but stays editable for OCR corrections.
+// One label+value cell inside the gray result card. Header line
+// shows the Arabic label and the English translation side by side
+// — both readable, not tucked away. The actual Sehhaty page is
+// Arabic-only; we add the English here so non-Arabic readers can
+// quickly identify each field without translating in their head.
+//
+// The value sits below as an inline-styled input — transparent
+// border most of the time so it reads as text, white box with
+// amber focus border when clicked, so OCR misreads can be edited
+// without leaving the layout.
 function SehhatyField({ arabic, english, value, onChange, placeholder, type, isArabic, status }) {
   const statusBadge = status === 'match'    ? { ico: '✓', bg: '#D1FAE5', col: '#065F46' }
                     : status === 'mismatch' ? { ico: '✕', bg: '#FEE2E2', col: '#991B1B' }
                     : null;
 
   // Date inputs need ltr direction; Arabic name/doctor inputs read
-  // right-to-left and we let them inherit the parent rtl.
-  // Numbers and English/transliterated fields are ltr too.
+  // right-to-left and we let them inherit the parent rtl. Numbers
+  // and English/transliterated fields are ltr too.
   const inputDir = type === 'date' || type === 'number' || !isArabic ? 'ltr' : 'rtl';
 
   return (
     <div>
-      <div className="flex items-center gap-1.5 mb-1.5">
-        <span className="text-[13px]" style={{ color: '#0A0A0A', fontWeight: 700 }}>
-          {arabic}
-        </span>
-        {statusBadge && (
-          <span className="inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold"
-            style={{ background: statusBadge.bg, color: statusBadge.col }}>
-            {statusBadge.ico}
-          </span>
-        )}
-        <span className="text-[9px] tracking-wider font-bold ml-auto"
-          style={{ color: '#0A0A0A', opacity: 0.45, direction: 'ltr' }}>
+      {/* Header — Arabic label + English translation + optional
+          match badge. Layout is rtl from the parent, so visually
+          the Arabic appears on the right and the English on the
+          left when the row is read right-to-left. We use dir='ltr'
+          for the inner flex so Arabic reads in its natural order
+          and English is consistent left-of-it. */}
+      <div className="flex items-baseline gap-2 mb-1.5" dir="ltr" style={{ justifyContent: 'space-between' }}>
+        <span className="text-[12px]" style={{ color: '#0A0A0A', opacity: 0.7, fontWeight: 500 }}>
           {english}
         </span>
+        <div className="flex items-center gap-1.5">
+          {statusBadge && (
+            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold"
+              style={{ background: statusBadge.bg, color: statusBadge.col }}>
+              {statusBadge.ico}
+            </span>
+          )}
+          <span className="text-[13px]" style={{ color: '#0A0A0A', fontWeight: 700, direction: 'rtl' }}>
+            {arabic}
+          </span>
+        </div>
       </div>
       <input
         type={type || 'text'}

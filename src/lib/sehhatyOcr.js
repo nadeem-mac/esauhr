@@ -157,23 +157,58 @@ function matchIssueDate(text) {
   return dates[0] || null;
 }
 
-/** Days count. Sehhaty shows it right under 'المدة بالأيام:' as a
- *  small standalone integer (1, 2, 3, 7, 14, 30, etc.). We look for
- *  a 1-3 digit number that's NOT part of a date or ID. */
+/** Days count. Most reliable: anchor to the 'المدة بالأيام' label
+ *  and grab the very next 1-3 digit number. Tesseract sometimes
+ *  picks up a stray digit elsewhere on the page (e.g. mistakes a
+ *  letter shape for '4'), so the standalone-integer fallback is
+ *  vulnerable to false positives. The label-anchored search is
+ *  much more accurate because the only digit that can legitimately
+ *  appear right after 'بالأيام:' is the day count itself. */
 function matchDays(text) {
-  // Strip dates AND 10-digit IDs first to avoid mis-matching their
-  // internal digits.
+  // Pattern 1 — direct label match: 'المدة بالأيام: 1'
+  let m = text.match(/المدة\s*بالأيام\s*[:：]?\s*(\d{1,3})/);
+  if (m) {
+    const n = parseInt(m[1], 10);
+    if (n >= 1 && n <= 365) return n;
+  }
+
+  // Pattern 2 — label and digit may be separated by a line break
+  // or other Arabic/Latin text in OCR output. Find the label, then
+  // search a 200-char window after it for the first small integer
+  // that isn't part of a date or a 10-digit ID.
+  const labelIdx = text.search(/المدة\s*بالأيام/);
+  if (labelIdx >= 0) {
+    const after = text.slice(labelIdx, labelIdx + 200)
+      .replace(/\d{4}-\d{2}-\d{2}/g, '')
+      .replace(/\d{4}\/\d{2}\/\d{2}/g, '')
+      .replace(/\b\d{10}\b/g, '');
+    const dm = after.match(/\b(\d{1,3})\b/);
+    if (dm) {
+      const n = parseInt(dm[1], 10);
+      if (n >= 1 && n <= 365) return n;
+    }
+  }
+
+  // Pattern 3 — also accept English label variants ('Days', 'Duration')
+  // in case the OCR confidence on Arabic text was low.
+  m = text.match(/(?:Days|Duration|Period)\s*[:：]?\s*(\d{1,3})/i);
+  if (m) {
+    const n = parseInt(m[1], 10);
+    if (n >= 1 && n <= 365) return n;
+  }
+
+  // Fallback — first standalone small integer in the document that
+  // isn't part of a date/ID/leave code. Less reliable than the
+  // label-anchored matches above but better than returning null.
   const cleaned = text
     .replace(/\d{4}-\d{2}-\d{2}/g, '')
+    .replace(/\d{4}\/\d{2}\/\d{2}/g, '')
     .replace(/\b\d{10}\b/g, '')
     .replace(/GSL[A-Z0-9]+/gi, '');
-  // Find candidate small integers
   const candidates = [...cleaned.matchAll(/\b(\d{1,3})\b/g)]
     .map(m => parseInt(m[1], 10))
     .filter(n => n >= 1 && n <= 365);
   if (!candidates.length) return null;
-  // The duration value is usually small (1-30). Return the first
-  // small match.
   const small = candidates.find(n => n <= 30);
   return small ?? candidates[0];
 }
