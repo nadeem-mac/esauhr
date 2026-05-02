@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../supabaseClient.js';
 import {
-  ShieldCheck, Clock, CheckCircle2, XCircle, Copy, RefreshCw, Mail, Loader2, AlertCircle, KeyRound, UserCheck
+  ShieldCheck, Clock, CheckCircle2, XCircle, Copy, RefreshCw, Mail, Loader2, AlertCircle, KeyRound, UserCheck, FileEdit, Save
 } from 'lucide-react';
 import { psnToEmail, generatePin, getAdminParallelClient } from '../lib/psnAuth.js';
-import { logAction, formatAction } from '../lib/audit.js';
+import { logAction, formatAction, actionCategory } from '../lib/audit.js';
+import { loadTemplates, saveTemplates, DEFAULT_TEMPLATES, invalidate as invalidateTemplates } from '../lib/emailTemplates.js';
 
 // Admin panel: review pending PSN registration requests, generate PIN, create auth user,
 // link to employee, mark request approved. Surfaces PIN to admin so they can share it
@@ -15,6 +16,10 @@ export default function AdminPanel({ session, me, onRefreshMe }) {
   const [recent, setRecent]   = useState([]);
   const [auditLog, setAuditLog] = useState([]);
   const [auditFilter, setAuditFilter] = useState('all'); // 'all' | psn
+  // Category filter for the activity log — chips above the list let
+  // admin narrow to e.g. just leave decisions or just attendance work.
+  // Categories are derived from the action slug via actionCategory().
+  const [auditCategory, setAuditCategory] = useState('all');
   const [loading, setLoading] = useState(true);
   const [auditLoading, setAuditLoading] = useState(true);
   const [error, setError]     = useState('');
@@ -303,6 +308,9 @@ export default function AdminPanel({ session, me, onRefreshMe }) {
       {/* ─────────── SIGN-IN ACTIVITY (admin-only) ─────────── */}
       <SignInActivity auditLog={auditLog} loading={auditLoading} onRefresh={loadAudit} />
 
+      {/* ─────────── EMAIL TEMPLATES (admin-only) ─────────── */}
+      <EmailTemplatesPanel me={me} />
+
       {/* ─────────── ACTIVITY LOG (admin-only) ─────────── */}
       <section className="pt-8 border-t" style={{ borderColor: 'rgba(244,238,223,0.08)' }}>
         <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
@@ -331,6 +339,32 @@ export default function AdminPanel({ session, me, onRefreshMe }) {
           </div>
         </div>
 
+        {/* Category chips — narrow the activity feed to one of the
+            high-level activity buckets. Derived from the action slug
+            via actionCategory(). 'All' is always present; the rest
+            only render if there's at least one log row in that
+            category, so the chip row stays compact in light usage. */}
+        {auditLog.length > 0 && (() => {
+          const presentCats = new Set(auditLog.map(l => actionCategory(l.action)));
+          const orderedCats = ['all', 'leave', 'permission', 'rejoining', 'attendance', 'shift', 'org', 'access', 'auth', 'other'];
+          const visible = orderedCats.filter(c => c === 'all' || presentCats.has(c));
+          return (
+            <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+              {visible.map(c => (
+                <button key={c} onClick={() => setAuditCategory(c)}
+                  className="text-[10px] tracking-wider font-bold px-2.5 py-1 rounded-full border transition-colors"
+                  style={{
+                    borderColor: auditCategory === c ? 'rgba(244,238,223,0.5)' : 'rgba(244,238,223,0.15)',
+                    background:  auditCategory === c ? 'rgba(244,238,223,0.12)' : 'transparent',
+                    color:       auditCategory === c ? '#FAF7F0' : 'rgba(244,238,223,0.65)',
+                  }}>
+                  {c.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          );
+        })()}
+
         {auditLoading ? (
           <div className="opacity-60 text-sm flex items-center gap-2">
             <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading activity…
@@ -344,6 +378,7 @@ export default function AdminPanel({ session, me, onRefreshMe }) {
           <ul className="space-y-1.5">
             {auditLog
               .filter(l => auditFilter === 'all' || l.actor_psn === auditFilter)
+              .filter(l => auditCategory === 'all' || actionCategory(l.action) === auditCategory)
               .slice(0, 60)
               .map(log => (
                 <li key={log.id}
@@ -517,5 +552,207 @@ function SignInActivity({ auditLog, loading, onRefresh }) {
         </div>
       )}
     </section>
+  );
+}
+
+// ─── EmailTemplatesPanel ────────────────────────────────────────────────
+// Admin-editable customisation surface for the values currently
+// hardcoded across the email-builder libraries. Today wires:
+//   • HR signature block (name, email, phone, WhatsApp, etc.)
+//   • Subject prefixes for the various email types
+// More fields can be added incrementally — the storage shape (a single
+// JSON value in app_settings.key='email_templates') accommodates new
+// keys without schema migration.
+//
+// Reads via loadTemplates(); saves via saveTemplates() with cache
+// invalidation so consumers (permissionLetter, rejoiningReport, etc.)
+// pick up the new values on their next read. Defaults fall through
+// when a leaf is empty so partial edits work cleanly.
+function EmailTemplatesPanel({ me }) {
+  const [data, setData]       = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy]       = useState(false);
+  const [error, setError]     = useState('');
+  const [saved, setSaved]     = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        invalidateTemplates(); // force fresh read on panel open
+        const t = await loadTemplates();
+        if (!cancelled) setData(t);
+      } catch (e) {
+        if (!cancelled) {
+          setData({ ...DEFAULT_TEMPLATES });
+          setError('Could not load saved templates — showing defaults. Run migration_app_settings.sql to enable saving.');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const updateSig = (field, value) => {
+    setData(d => ({ ...d, hr_signature: { ...d.hr_signature, [field]: value } }));
+    setSaved(false);
+  };
+  const updateSubject = (key, value) => {
+    setData(d => ({ ...d, subject_prefixes: { ...d.subject_prefixes, [key]: value } }));
+    setSaved(false);
+  };
+  const resetField = (section, field) => {
+    setData(d => ({ ...d, [section]: { ...d[section], [field]: DEFAULT_TEMPLATES[section][field] } }));
+    setSaved(false);
+  };
+
+  const handleSave = async () => {
+    setBusy(true); setError(''); setSaved(false);
+    try {
+      await saveTemplates(data, me?.id);
+      // Re-hydrate cache from DB so we're sure what was actually saved
+      // is what consumers will read.
+      invalidateTemplates();
+      const fresh = await loadTemplates();
+      setData(fresh);
+      setSaved(true);
+      try { logAction(me, 'email_template_update', { targetType: 'app_settings', targetId: 'email_templates' }); } catch (_) {}
+    } catch (e) {
+      setError(e?.message || 'Could not save changes — try again or run migration_app_settings.sql.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <section className="pt-8 border-t" style={{ borderColor: 'rgba(244,238,223,0.08)' }}>
+        <h3 className="text-xs tracking-[0.25em] opacity-60 mb-3">EMAIL TEMPLATES</h3>
+        <div className="opacity-60 text-sm flex items-center gap-2">
+          <Loader2 className="w-3.5 h-3.5 animate-spin"/> Loading templates…
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="pt-8 border-t" style={{ borderColor: 'rgba(244,238,223,0.08)' }}>
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <div>
+          <h3 className="text-xs tracking-[0.25em] opacity-60 inline-flex items-center gap-2">
+            <FileEdit className="w-3.5 h-3.5"/> EMAIL TEMPLATES
+          </h3>
+          <p className="text-xs opacity-50 mt-1">
+            Override the values used in generated permission, rejoining, and attendance emails. Empty fields fall back to defaults.
+          </p>
+        </div>
+        <button onClick={handleSave} disabled={busy}
+          className="text-xs inline-flex items-center gap-1.5 px-4 py-2 rounded-full disabled:opacity-50"
+          style={{ background: 'var(--evergreen-500)', color: 'var(--paper)', fontWeight: 600 }}>
+          {busy ? <><Loader2 className="w-3.5 h-3.5 animate-spin"/> Saving…</> : <><Save className="w-3.5 h-3.5"/> Save changes</>}
+        </button>
+      </div>
+
+      {error && (
+        <div className="rounded-lg p-3 text-xs mb-3 flex items-start gap-2"
+          style={{ background: 'rgba(184,74,62,0.1)', border: '1px solid rgba(184,74,62,0.3)', color: '#FAF7F0' }}>
+          <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0"/> {error}
+        </div>
+      )}
+      {saved && (
+        <div className="rounded-lg p-3 text-xs mb-3 inline-flex items-center gap-2"
+          style={{ background: 'rgba(143,179,154,0.15)', border: '1px solid rgba(143,179,154,0.4)', color: '#BFD5C4' }}>
+          <CheckCircle2 className="w-3.5 h-3.5"/> Saved. New emails will use the updated values.
+        </div>
+      )}
+
+      {/* HR Signature block */}
+      <div className="rounded-xl p-4 mb-4"
+        style={{ background: 'rgba(244,238,223,0.03)', border: '1px solid rgba(244,238,223,0.08)' }}>
+        <div className="text-[10px] tracking-widest opacity-60 mb-3" style={{ fontWeight: 700 }}>
+          HR SIGNATURE
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {[
+            ['name',     'Name'],
+            ['email',    'Email'],
+            ['tel',      'Phone'],
+            ['whatsapp', 'WhatsApp'],
+            ['unit',     'Unit'],
+            ['address',  'Address'],
+            ['company',  'Company'],
+          ].map(([f, label]) => (
+            <SettingField key={f}
+              label={label}
+              value={data?.hr_signature?.[f] ?? ''}
+              defaultValue={DEFAULT_TEMPLATES.hr_signature[f]}
+              onChange={v => updateSig(f, v)}
+              onReset={() => resetField('hr_signature', f)} />
+          ))}
+        </div>
+      </div>
+
+      {/* Subject prefixes */}
+      <div className="rounded-xl p-4"
+        style={{ background: 'rgba(244,238,223,0.03)', border: '1px solid rgba(244,238,223,0.08)' }}>
+        <div className="text-[10px] tracking-widest opacity-60 mb-3" style={{ fontWeight: 700 }}>
+          SUBJECT PREFIXES
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {[
+            ['permission_letter', 'Permission letter'],
+            ['rejoining_letter',  'Rejoining letter'],
+            ['attendance_late',   'Lateness notice'],
+            ['attendance_early',  'Early departure notice'],
+            ['attendance_missed', 'Punch reminder'],
+          ].map(([k, label]) => (
+            <SettingField key={k}
+              label={label}
+              value={data?.subject_prefixes?.[k] ?? ''}
+              defaultValue={DEFAULT_TEMPLATES.subject_prefixes[k]}
+              onChange={v => updateSubject(k, v)}
+              onReset={() => resetField('subject_prefixes', k)} />
+          ))}
+        </div>
+      </div>
+
+      <div className="text-[11px] opacity-50 mt-4">
+        Note: these overrides take effect for newly-generated emails. Already-sent drafts in your mail client are unaffected.
+      </div>
+    </section>
+  );
+}
+
+function SettingField({ label, value, defaultValue, onChange, onReset }) {
+  const isCustomised = value !== defaultValue && value !== '' && value !== undefined && value !== null;
+  return (
+    <label className="block">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] tracking-wider opacity-60" style={{ fontWeight: 600 }}>
+          {label.toUpperCase()}
+          {isCustomised && (
+            <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full"
+              style={{ background: '#9D6B53' }}
+              title="Customised — different from default"/>
+          )}
+        </span>
+        {isCustomised && (
+          <button type="button" onClick={onReset}
+            className="text-[10px] opacity-40 hover:opacity-100 underline"
+            title={`Reset to default: ${defaultValue}`}>
+            reset
+          </button>
+        )}
+      </div>
+      <input type="text" value={value ?? ''} onChange={e => onChange(e.target.value)}
+        placeholder={defaultValue}
+        className="w-full px-3 py-2 rounded-md text-sm font-mono"
+        style={{
+          background: 'rgba(244,238,223,0.05)',
+          border: '1px solid rgba(244,238,223,0.15)',
+          color: '#FAF7F0',
+        }}/>
+    </label>
   );
 }

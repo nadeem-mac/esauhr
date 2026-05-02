@@ -4,6 +4,7 @@ import {
   Plus, LogOut, Activity, ShieldCheck, RefreshCw
 , Clock , BarChart3 } from 'lucide-react';
 import { supabase, directGet, directPatch } from '../supabaseClient.js';
+import { loadTemplates as loadEmailTemplates } from '../lib/emailTemplates.js';
 import Dashboard from './Dashboard.jsx';
 import Requests from './Requests.jsx';
 import ManagerShiftCard from './ManagerShiftCard.jsx';
@@ -218,6 +219,12 @@ export default function AppShell({ session, me, onRefreshMe }) {
   }, []);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Hydrate email-template overrides at app start. Fire-and-forget —
+  // every consumer falls back to defaults if this never resolves
+  // (table missing, slow network, etc.). Refreshes happen via the
+  // Email Templates admin panel after a save.
+  useEffect(() => { loadEmailTemplates(); }, []);
 
   // Pending registration count (admin badge)
   useEffect(() => {
@@ -477,7 +484,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
 
       {/* Header */}
       <header className="border-b" style={{ borderColor: 'var(--border-soft)', background: 'var(--paper)' }}>
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <EvergreenLogo variant="full" size="md" />
           </div>
@@ -573,7 +580,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
         </div>
 
         {/* Tabs */}
-        <div className="max-w-7xl mx-auto px-6 flex gap-1 overflow-x-auto">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 flex gap-1 overflow-x-auto">
           {TABS.map(t => (
             <button key={t.id} onClick={() => setTabPersistent(t.id)}
               className="relative flex items-center gap-2 px-4 py-3 text-sm whitespace-nowrap transition-colors"
@@ -610,14 +617,14 @@ export default function AppShell({ session, me, onRefreshMe }) {
       </header>
 
       {error && (
-        <div className="max-w-7xl mx-auto px-6 mt-4">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 mt-4">
           <div className="p-3 rounded-lg text-sm" style={{ background: 'rgba(184,74,62,0.1)', color: 'var(--clay)' }}>
             {error}
           </div>
         </div>
       )}
 
-      <main className="max-w-7xl mx-auto px-6 py-8 fade-in" key={tab}>
+      <main className="max-w-7xl mx-auto px-3 sm:px-6 py-6 sm:py-8 fade-in" key={tab}>
         {tab === 'dashboard' && (
           (isAdmin || isHrReviewer) ? (
             // Admin Dashboard: Nadeem (admin) and Bashaier (HR reviewer) only.
@@ -715,7 +722,8 @@ export default function AppShell({ session, me, onRefreshMe }) {
         )}
         {tab === 'calendar' && (
           <CalendarView
-            requests={requests} empMap={empMap} typeMap={typeMap} holidays={holidays}
+            requests={requests} permissions={permissions}
+            empMap={empMap} typeMap={typeMap} holidays={holidays}
           />
         )}
         {tab === 'settings' && isAdmin && (

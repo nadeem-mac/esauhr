@@ -1444,7 +1444,7 @@ export default function AttendanceView({ me, employees }) {
 
           {/* Approved leaves (excluded) */}
           {detection.onLeave.length > 0 && (
-            <div className="rounded-2xl border p-5" style={{ borderColor: '#D4C7AB', background: '#FAF6EC' }}>
+            <div className="rounded-2xl border p-3 sm:p-5" style={{ borderColor: '#D4C7AB', background: '#FAF6EC' }}>
               <div className="text-[10px] mb-1" style={{ color: '#1F1B16', letterSpacing: '0.25em', fontWeight: 700 }}>
                 EXCLUDED — APPROVED LEAVE ({detection.onLeave.length})
               </div>
@@ -1456,7 +1456,7 @@ export default function AttendanceView({ me, employees }) {
 
           {/* Unknown employees */}
           {detection.unknownEmp.length > 0 && (
-            <div className="rounded-2xl border p-5" style={{ borderColor: '#FCA5A5', background: '#FEF2F2' }}>
+            <div className="rounded-2xl border p-3 sm:p-5" style={{ borderColor: '#FCA5A5', background: '#FEF2F2' }}>
               <div className="text-[10px] mb-1" style={{ color: '#991B1B', letterSpacing: '0.25em', fontWeight: 700 }}>
                 ⚠ UNRECOGNISED EMPLOYEES IN FILE ({detection.unknownEmp.length})
               </div>
@@ -1528,7 +1528,7 @@ export default function AttendanceView({ me, employees }) {
 
 function FileSummary({ fileName, csvDate, isWeekend, totalRows, counts, actionsEnabled, onToggleActions, isDuplicate, onReset }) {
   return (
-    <div className="rounded-2xl border bg-white p-5" style={{ borderColor: '#D4C7AB' }}>
+    <div className="rounded-2xl border bg-white p-3 sm:p-5" style={{ borderColor: '#D4C7AB' }}>
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div className="text-[10px] mb-1" style={{ color: '#1F1B16', letterSpacing: '0.25em', fontWeight: 700 }}>
@@ -1611,7 +1611,7 @@ function CountPill({ icon, label, count, color, tint }) {
 function FlaggedSection({ title, kicker, iconColor, barFrom, barTo, entries, empty, renderButton, onBulk }) {
   if (!entries.length) {
     return (
-      <div className="rounded-2xl border bg-white p-5" style={{ borderColor: '#D4C7AB' }}>
+      <div className="rounded-2xl border bg-white p-3 sm:p-5" style={{ borderColor: '#D4C7AB' }}>
         <div className="text-[10px] mb-1" style={{ color: '#1F1B16', letterSpacing: '0.25em', fontWeight: 700 }}>{kicker}</div>
         <div style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#1F1B16' }}>{title}</div>
         <div className="flex items-center gap-2 mt-3" style={{ color: '#047857' }}>
@@ -1628,7 +1628,7 @@ function FlaggedSection({ title, kicker, iconColor, barFrom, barTo, entries, emp
     (e.actionable !== false) && !e.emailSentAt && !e.sent
   );
   return (
-    <div className="rounded-2xl border bg-white p-5" style={{ borderColor: '#D4C7AB' }}>
+    <div className="rounded-2xl border bg-white p-3 sm:p-5" style={{ borderColor: '#D4C7AB' }}>
       <div className="flex items-center justify-between gap-3 flex-wrap mb-1">
         <div className="text-[10px]" style={{ color: iconColor, letterSpacing: '0.25em', fontWeight: 700 }}>
           {kicker} · {entries.length}

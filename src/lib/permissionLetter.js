@@ -79,7 +79,13 @@ const EXEC_CC = [
   { name: 'jaffar' },
 ];
 
-const HR_SIGNATURE = {
+// HR signature block. Editable via the admin Email Templates panel —
+// values stored in app_settings(key='email_templates').hr_signature
+// override these defaults. The cache (loadTemplates) is hydrated at
+// app start; this constant is kept as the fallback when the cache
+// hasn't loaded or the override is partial.
+import { getTemplateSync } from './emailTemplates.js';
+const HR_SIGNATURE_DEFAULTS = {
   name:    'BASHAIER ALI',
   company: 'Evergreen Shipping Agency Saudi Co.,(L.L.C)',
   unit:    'ESAU - SADMN SUP/ HR DEPT',
@@ -88,6 +94,16 @@ const HR_SIGNATURE = {
   tel:     '966-013 813 8563 – Ext 8543',
   email:   'bashaier.alsubaie@evergreen-shipping.com.sa',
 };
+// Proxy that always returns the live value at access time. Using a
+// Proxy keeps every existing call site (HR_SIGNATURE.name, etc)
+// working without per-site refactor.
+const HR_SIGNATURE = new Proxy({}, {
+  get(_, prop) {
+    const t = getTemplateSync();
+    const live = (t && t.hr_signature) || HR_SIGNATURE_DEFAULTS;
+    return live[prop] !== undefined ? live[prop] : HR_SIGNATURE_DEFAULTS[prop];
+  },
+});
 
 const POLICY_BULLETS = [
   {
