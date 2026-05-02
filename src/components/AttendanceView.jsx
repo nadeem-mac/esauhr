@@ -4,25 +4,35 @@ import {
   X, Calendar, Briefcase, Users, Send, Sparkles
 } from 'lucide-react';
 import { directGet, directPost } from '../supabaseClient.js';
+import { parseTimeCardXlsx, TimeCardParseError } from '../lib/timeCard.js';
 
 /* ────────────────────────────────────────────────────────────────────────
-   Daily attendance check — driven by Time Card CSV upload.
+   Daily attendance check — driven by Time Card xlsx upload.
 
-   Bashaier uploads yesterday's Time Card export (CSV). The system finds:
+   Bashaier uploads yesterday's Time Card export (.xlsx). The system finds:
      1. LATE   — punched in after 08:15 (8:00 official start + 15 min grace)
+        Cross-referenced against approved late_arrival permissions:
+          • LATE_PERMITTED   — permission on file, within window
+          • LATE_BEYOND      — permission on file, but came in even later
+          • LATE_NO_PERMISSION — actual violation, action required
      2. EARLY  — punched out before scheduled end - 15 min grace
                   • SUP team: scheduled end 16:00 (4 PM) → cutoff 15:45
                   • All other depts: scheduled end 17:00 (5 PM) → cutoff 16:45
-     3. MISSED — First Punch empty OR Last Punch empty
+        Same WITH/WITHOUT permission split as late.
+     3. INCOMPLETE — only 1 punch on file (no punch-out recorded)
 
-   For each flagged person: an "Email To" button opens her mail client with a
-   pre-filled email (TO: employee, CC: direct manager + John + James + SUP team).
+   For each WITHOUT-PERMISSION row: an "Email" button opens her mail client
+   with a pre-filled email (TO: employee, CC: direct manager + execs).
    No automated send — every email needs her review and explicit Send click.
 
-   Anyone with an approved leave request covering the CSV's date is excluded
+   Anyone with an approved leave request covering the date is excluded
    automatically (they are on leave, not absent or late).
 
    Weekend rows (Friday/Saturday in KSA) are skipped entirely.
+
+   The xlsx format is the ONLY accepted format going forward. The
+   previous CSV path has been removed — uploaders will see a clear
+   error if they try to upload anything else.
    ──────────────────────────────────────────────────────────────────────── */
 
 // ESAU policy constants
@@ -279,27 +289,44 @@ function buildMailto({ to, cc, subject, body }) {
 // MAIN COMPONENT
 // ────────────────────────────────────────────────────────────────────────
 export default function AttendanceView({ me, employees }) {
-  const [csvText, setCsvText] = useState('');
-  const [csvFileName, setCsvFileName] = useState('');
-  const [parseError, setParseError] = useState(null);
-  const [approvedLeaves, setApprovedLeaves] = useState([]);
-  const [acceptedShifts, setAcceptedShifts] = useState([]);
-  const [sentMarkers, setSentMarkers] = useState({}); // key: row.id → true
-  const [loggedMarkers, setLoggedMarkers] = useState({}); // key: 'empId:type' → true (P5)
+  // The xlsx ingestion replaces the legacy CSV path entirely. We hold
+  // the parsed result rather than the raw text — there's no use case
+  // for re-parsing on the fly the way the CSV path was wired.
+  const [xlsxFileName, setXlsxFileName] = useState('');
+  const [parsedData, setParsedData]     = useState({ rows: [], dataDate: null, sheetName: null });
+  const [parseError, setParseError]     = useState(null);
+
+  const [approvedLeaves, setApprovedLeaves]       = useState([]);
+  const [approvedPermissions, setApprovedPerms]   = useState([]); // for the data date
+  const [acceptedShifts, setAcceptedShifts]       = useState([]);
+  const [sentMarkers, setSentMarkers]             = useState({}); // key: row.id → true
+  const [loggedMarkers, setLoggedMarkers]         = useState({}); // key: 'empId:type' → true
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
 
-  // Parse the CSV
+  // The xlsx parser yields rows with { psn, name, date, firstPunch,
+  // lastPunch, uniquePunches, midDayPunches, ... }. The downstream
+  // detection logic in this file (carried over from the CSV era)
+  // expects rows keyed by the spreadsheet header names: 'Employee ID',
+  // 'First Name', 'Date', 'First Punch', 'Last Punch'. We adapt the
+  // shape here once at ingestion time so detection stays untouched —
+  // less risk of regressing the shift-override and weekend handling
+  // that already work.
   const parsed = useMemo(() => {
-    if (!csvText) return { headers: [], rows: [] };
-    try {
-      return parseCsv(csvText);
-    } catch (e) {
-      return { headers: [], rows: [], err: e.message };
-    }
-  }, [csvText]);
+    const rows = (parsedData.rows || []).map(r => ({
+      'Employee ID': r.psn,
+      'First Name':  r.name,
+      'Date':        r.date,
+      'First Punch': r.firstPunch ? r.firstPunch.slice(0, 5) : '', // HH:MM
+      'Last Punch':  r.lastPunch  ? r.lastPunch.slice(0, 5)  : '',
+      // Carry the whole parsed entry so cross-reference can read
+      // uniqueCount / midDayPunches / rawPunches without re-parsing.
+      _tc: r,
+    }));
+    return { headers: ['Employee ID','First Name','Date','First Punch','Last Punch'], rows };
+  }, [parsedData]);
 
-  const csvDate = useMemo(() => detectCsvDate(parsed.rows), [parsed.rows]);
+  const csvDate = useMemo(() => parsedData.dataDate || null, [parsedData.dataDate]);
   const csvIsWeekend = isKsaWeekend(csvDate);
 
   // Fetch approved leaves for the CSV date
@@ -315,6 +342,32 @@ export default function AttendanceView({ me, employees }) {
       } catch (e) {
         console.warn('Could not fetch approved leaves:', e);
         if (!cancelled) setApprovedLeaves([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [csvDate]);
+
+  // Fetch approved permission_requests for the data date so the
+  // detection step can split late/early into WITH-permission vs
+  // WITHOUT-permission. Bashaier wants the actionable signal — only
+  // rows without coverage need a follow-up email.
+  // Schema-wise: permission_requests has stage='approved' for fully
+  // signed-off rows. Older rows may set status='approved' as well, so
+  // we fetch on stage but the cross-ref function below tolerates either.
+  useEffect(() => {
+    if (!csvDate) { setApprovedPerms([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await directGet(
+          'permission_requests?select=id,employee_id,permission_date,type,time_from,time_to,hours,reason,stage,status'
+          + '&permission_date=eq.' + csvDate
+          + '&stage=eq.approved'
+        );
+        if (!cancelled) setApprovedPerms(data || []);
+      } catch (e) {
+        console.warn('Could not fetch approved permissions:', e);
+        if (!cancelled) setApprovedPerms([]);
       }
     })();
     return () => { cancelled = true; };
@@ -403,6 +456,31 @@ export default function AttendanceView({ me, employees }) {
     return mgr?.email || null;
   }, [empById]);
 
+  // Index approved permissions by employee+type for O(1) lookup during
+  // detection. The cross-reference layer turns a late/early flag into
+  // one of three outcomes:
+  //   • permitted, within window     → covered, audit only
+  //   • permitted, beyond window     → still actionable, but with context
+  //   • no permission on file        → actionable, the actual violation
+  // Bashaier asked for this split so the email-action queue surfaces
+  // only true violations and the rest serve as a record.
+  const permIndex = useMemo(() => {
+    const m = new Map();
+    (approvedPermissions || []).forEach(p => {
+      if (!p?.employee_id || !p?.type) return;
+      const key = String(p.employee_id).toUpperCase() + '|' + p.type;
+      // If multiple, keep the widest window (defensive — should be 1).
+      const prev = m.get(key);
+      const span = (a) => {
+        const f = timeToMinutes(String(a.time_from || '').slice(0,5));
+        const t = timeToMinutes(String(a.time_to   || '').slice(0,5));
+        return Math.max(0, (t || 0) - (f || 0));
+      };
+      if (!prev || span(p) > span(prev)) m.set(key, p);
+    });
+    return m;
+  }, [approvedPermissions]);
+
   // Run detection
   const detection = useMemo(() => {
     const out = { late: [], early: [], missed: [], onTime: [], onLeave: [], unknownEmp: [] };
@@ -468,6 +546,24 @@ export default function AttendanceView({ me, employees }) {
       let flagged = false;
       // Late check
       if (punchInMin > lateCutoffMin) {
+        // Cross-reference with approved late_arrival permissions for
+        // this employee on this date. Three sub-cases:
+        //   • no permission           → LATE_NO_PERMISSION (actionable)
+        //   • permission, within      → LATE_PERMITTED  (audit-only)
+        //   • permission, beyond      → LATE_BEYOND     (actionable + context)
+        const permKey = String(emp.id).toUpperCase() + '|late_arrival';
+        const perm = permIndex.get(permKey) || null;
+        let permStatus = 'LATE_NO_PERMISSION';
+        let minutesBeyond = null;
+        if (perm) {
+          const permEndMin = timeToMinutes(String(perm.time_to || '').slice(0, 5));
+          if (Number.isFinite(permEndMin) && punchInMin > permEndMin) {
+            permStatus = 'LATE_BEYOND';
+            minutesBeyond = punchInMin - permEndMin;
+          } else {
+            permStatus = 'LATE_PERMITTED';
+          }
+        }
         out.late.push({
           id: 'row-' + idx,
           employee: emp,
@@ -480,6 +576,9 @@ export default function AttendanceView({ me, employees }) {
           lateCutoff: sched.lateCutoffStr,
           scheduleLabel: sched.label,
           isCustomShift: !!sched.isCustom,
+          permission: perm,
+          permStatus,
+          minutesBeyond,
         });
         flagged = true;
       }
@@ -487,6 +586,20 @@ export default function AttendanceView({ me, employees }) {
       const earlyCutoffMin = timeToMinutes(sched.earlyCutoffStr);
       const scheduledEndMin = timeToMinutes(sched.endStr);
       if (punchOutMin < earlyCutoffMin) {
+        // Same WITH/WITHOUT permission split, mirror of the late branch.
+        const permKey = String(emp.id).toUpperCase() + '|early_leave';
+        const perm = permIndex.get(permKey) || null;
+        let permStatus = 'EARLY_NO_PERMISSION';
+        let minutesBeyond = null;
+        if (perm) {
+          const permStartMin = timeToMinutes(String(perm.time_from || '').slice(0, 5));
+          if (Number.isFinite(permStartMin) && punchOutMin < permStartMin) {
+            permStatus = 'EARLY_BEYOND';
+            minutesBeyond = permStartMin - punchOutMin;
+          } else {
+            permStatus = 'EARLY_PERMITTED';
+          }
+        }
         out.early.push({
           id: 'row-' + idx,
           employee: emp,
@@ -501,6 +614,9 @@ export default function AttendanceView({ me, employees }) {
           isCustomShift: !!sched.isCustom,
           minutesEarly: scheduledEndMin - punchOutMin,
           isSup: isSupTeam(emp),
+          permission: perm,
+          permStatus,
+          minutesBeyond,
         });
         flagged = true;
       }
@@ -509,24 +625,39 @@ export default function AttendanceView({ me, employees }) {
       }
     });
     return out;
-  }, [parsed.rows, empById, onLeaveOnDate, csvIsWeekend, shiftOverrideById]);
+  }, [parsed.rows, empById, onLeaveOnDate, csvIsWeekend, shiftOverrideById, permIndex]);
 
   // File handling
-  const handleFile = useCallback((file) => {
+  const handleFile = useCallback(async (file) => {
     setParseError(null);
     if (!file) return;
-    if (!/\.csv$/i.test(file.name) && !/\.cvs$/i.test(file.name)) {
-      setParseError('Please upload a CSV file.');
+    // xlsx-only — the CSV format is no longer supported. Reject with
+    // a clear message so the user doesn't end up with a half-parsed
+    // file silently producing wrong results.
+    if (!/\.xlsx$/i.test(file.name)) {
+      setParseError(
+        'Please upload the .xlsx Time Card export. CSV files are no longer accepted — ' +
+        're-export from the fingerprint device as Excel and try again.',
+      );
       return;
     }
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      setCsvText(String(e.target?.result || ''));
-      setCsvFileName(file.name);
+    try {
+      const buf = await file.arrayBuffer();
+      const result = await parseTimeCardXlsx(buf);
+      setParsedData(result);
+      setXlsxFileName(file.name);
       setSentMarkers({});
-    };
-    reader.onerror = () => setParseError('Could not read the file.');
-    reader.readAsText(file);
+      if (!result.dataDate) {
+        setParseError('The file parsed but contained no usable rows. Check the export.');
+      }
+    } catch (e) {
+      if (e instanceof TimeCardParseError) {
+        setParseError(`${e.message}${e.hint ? '  ' + e.hint : ''}`);
+      } else {
+        console.error('[Attendance] xlsx parse failed:', e);
+        setParseError('Could not read the file. Please try re-uploading.');
+      }
+    }
   }, []);
 
   const onDrop = useCallback((e) => {
@@ -542,7 +673,10 @@ export default function AttendanceView({ me, employees }) {
   }, [handleFile]);
 
   const reset = () => {
-    setCsvText(''); setCsvFileName(''); setParseError(null); setSentMarkers({});
+    setParsedData({ rows: [], dataDate: null, sheetName: null });
+    setXlsxFileName('');
+    setParseError(null);
+    setSentMarkers({});
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -668,7 +802,7 @@ export default function AttendanceView({ me, employees }) {
   };
 
   // ─── Render ────────────────────────────────────────────────────────────
-  const hasFile = !!csvText;
+  const hasFile = !!xlsxFileName;
 
   return (
     <div className="space-y-6" style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
@@ -701,22 +835,31 @@ export default function AttendanceView({ me, employees }) {
           }}>
           <Upload className="w-10 h-10 mx-auto mb-4" style={{ color: '#1F1B16' }}/>
           <div style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#1F1B16', marginBottom: '6px' }}>
-            Drop your Time Card CSV here
+            Drop your Time Card .xlsx here
           </div>
           <div className="text-sm" style={{ color: '#1F1B16' }}>
             or <span style={{ color: '#047857', textDecoration: 'underline', fontWeight: 600 }}>click to browse</span>
           </div>
-          <div className="text-xs mt-4" style={{ color: '#1F1B16' }}>
-            Expected columns: Employee ID, First Name, Department, Date, Weekday, First Punch, Last Punch, Total Time
+          <div className="text-xs mt-4" style={{ color: '#0A0A0A' }}>
+            Expected columns: Employee ID · First Name · Date · Times · Time
           </div>
-          <input ref={fileInputRef} type="file" accept=".csv,.cvs,text/csv" className="hidden" onChange={onPick}/>
+          <div className="text-[11px] mt-1" style={{ color: '#1F1B16', opacity: 0.7 }}>
+            Only the .xlsx export from the fingerprint device is accepted.
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            className="hidden"
+            onChange={onPick}
+          />
           {parseError && (
-            <div className="mt-4 text-sm" style={{ color: '#BE123C' }}>{parseError}</div>
+            <div className="mt-4 text-sm px-3 py-2 rounded-md inline-block text-left" style={{ color: '#BE123C', background: '#FEF2F2', maxWidth: '480px' }}>{parseError}</div>
           )}
         </div>
       ) : (
         <FileSummary
-          fileName={csvFileName}
+          fileName={xlsxFileName}
           csvDate={csvDate}
           isWeekend={csvIsWeekend}
           totalRows={parsed.rows.length}
@@ -751,14 +894,37 @@ export default function AttendanceView({ me, employees }) {
             iconColor="#BE123C"
             barFrom="#FB7185" barTo="#BE123C"
             empty="Nobody arrived late — well done team."
-            entries={detection.late.map(e => ({
-              ...e,
-              detail: 'Punched in at ' + e.punchInStr + ' — ' + e.minutesLate + ' min after grace period'
-                + (e.isCustomShift ? ' · ' + e.scheduleLabel : ''),
-              metaIcon: <Clock className="w-4 h-4"/>,
-              logged: !!loggedMarkers[e.employee.id + ':late'],
-            }))}
-            renderButton={(entry) => (
+            entries={detection.late.map(e => {
+              // Detail line carries WITH/WITHOUT permission status. Bashaier
+              // wants the difference visible at a glance.
+              const baseDetail = 'Punched in at ' + e.punchInStr + ' — '
+                + e.minutesLate + ' min after grace period'
+                + (e.isCustomShift ? ' · ' + e.scheduleLabel : '');
+              let detail = baseDetail;
+              let permBadge = null;
+              if (e.permStatus === 'LATE_PERMITTED') {
+                detail = baseDetail + ' · Covered by approved permission '
+                  + (e.permission?.time_from || '').slice(0,5) + '–'
+                  + (e.permission?.time_to   || '').slice(0,5);
+                permBadge = { tone: 'amber', text: 'PERMITTED' };
+              } else if (e.permStatus === 'LATE_BEYOND') {
+                detail = baseDetail + ' · Permitted to '
+                  + (e.permission?.time_to || '').slice(0,5)
+                  + ' — ' + e.minutesBeyond + ' min beyond permission';
+                permBadge = { tone: 'red', text: 'BEYOND PERMISSION' };
+              } else {
+                permBadge = { tone: 'red', text: 'NO PERMISSION' };
+              }
+              return {
+                ...e,
+                detail,
+                permBadge,
+                actionable: e.permStatus !== 'LATE_PERMITTED',
+                metaIcon: <Clock className="w-4 h-4"/>,
+                logged: !!loggedMarkers[e.employee.id + ':late'],
+              };
+            })}
+            renderButton={(entry) => entry.actionable ? (
               <RowButton
                 onClick={() => handleEmailLate(entry)}
                 onMarkSent={() => markSent(entry.id)}
@@ -766,6 +932,11 @@ export default function AttendanceView({ me, employees }) {
                 logged={entry.logged}
                 label="Email lateness notice"
               />
+            ) : (
+              <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
+                style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' }}>
+                AUDIT ONLY · COVERED
+              </span>
             )}
           />
 
@@ -775,14 +946,35 @@ export default function AttendanceView({ me, employees }) {
             iconColor="#A16207"
             barFrom="#FACC15" barTo="#A16207"
             empty="Nobody left early — full day attendance recorded."
-            entries={detection.early.map(e => ({
-              ...e,
-              detail: 'Punched out at ' + e.punchOutStr + ' — ' + e.minutesEarly + ' min before scheduled ' + e.scheduledEnd
-                + (e.isCustomShift ? ' · ' + e.scheduleLabel : (e.isSup ? ' (SUP team)' : '')),
-              metaIcon: <Briefcase className="w-4 h-4"/>,
-              logged: !!loggedMarkers[e.employee.id + ':early_leave'],
-            }))}
-            renderButton={(entry) => (
+            entries={detection.early.map(e => {
+              const baseDetail = 'Punched out at ' + e.punchOutStr + ' — '
+                + e.minutesEarly + ' min before scheduled ' + e.scheduledEnd
+                + (e.isCustomShift ? ' · ' + e.scheduleLabel : (e.isSup ? ' (SUP team)' : ''));
+              let detail = baseDetail;
+              let permBadge = null;
+              if (e.permStatus === 'EARLY_PERMITTED') {
+                detail = baseDetail + ' · Covered by approved permission '
+                  + (e.permission?.time_from || '').slice(0,5) + '–'
+                  + (e.permission?.time_to   || '').slice(0,5);
+                permBadge = { tone: 'amber', text: 'PERMITTED' };
+              } else if (e.permStatus === 'EARLY_BEYOND') {
+                detail = baseDetail + ' · Permitted from '
+                  + (e.permission?.time_from || '').slice(0,5)
+                  + ' — ' + e.minutesBeyond + ' min beyond permission';
+                permBadge = { tone: 'red', text: 'BEYOND PERMISSION' };
+              } else {
+                permBadge = { tone: 'red', text: 'NO PERMISSION' };
+              }
+              return {
+                ...e,
+                detail,
+                permBadge,
+                actionable: e.permStatus !== 'EARLY_PERMITTED',
+                metaIcon: <Briefcase className="w-4 h-4"/>,
+                logged: !!loggedMarkers[e.employee.id + ':early_leave'],
+              };
+            })}
+            renderButton={(entry) => entry.actionable ? (
               <RowButton
                 onClick={() => handleEmailEarly(entry)}
                 onMarkSent={() => markSent(entry.id)}
@@ -790,6 +982,11 @@ export default function AttendanceView({ me, employees }) {
                 logged={entry.logged}
                 label="Email early-departure notice"
               />
+            ) : (
+              <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
+                style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' }}>
+                AUDIT ONLY · COVERED
+              </span>
             )}
           />
 
@@ -939,13 +1136,30 @@ function FlaggedSection({ title, kicker, iconColor, barFrom, barTo, entries, emp
             <div className="p-4 pl-5 flex items-center justify-between gap-4 flex-wrap">
               <div className="flex items-center gap-3 flex-1 min-w-[200px]">
                 <div className="flex-1">
-                  <div style={{ fontWeight: 700, color: '#1F1B16', fontSize: '15px' }}>
-                    {entry.employee.name}
-                    <span className="text-xs font-normal ml-2" style={{ color: '#1F1B16' }}>
+                  <div className="flex items-center gap-2 flex-wrap" style={{ color: '#1F1B16' }}>
+                    <span style={{ fontWeight: 700, fontSize: '15px' }}>{entry.employee.name}</span>
+                    <span className="text-xs font-normal" style={{ color: '#0A0A0A' }}>
                       · {entry.employee.id || entry.employee.psn || ''} · {entry.employee.department || ''}
                     </span>
+                    {entry.permBadge && (
+                      <span
+                        className="text-[10px] tracking-wider font-bold px-2 py-0.5 rounded-md"
+                        style={
+                          entry.permBadge.tone === 'amber'
+                            ? { background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' }
+                            : { background: '#FEE2E2', color: '#991B1B', border: '1px solid #FECACA' }
+                        }
+                        title={
+                          entry.permBadge.tone === 'amber'
+                            ? 'This row is covered by an approved permission — recorded for audit but no action needed.'
+                            : 'No permission on file (or punched outside the permitted window) — action required.'
+                        }
+                      >
+                        {entry.permBadge.text}
+                      </span>
+                    )}
                   </div>
-                  <div className="flex items-center gap-1.5 mt-1 text-xs" style={{ color: '#1F1B16' }}>
+                  <div className="flex items-center gap-1.5 mt-1 text-xs" style={{ color: '#0A0A0A' }}>
                     {entry.metaIcon} {entry.detail}
                   </div>
                 </div>
