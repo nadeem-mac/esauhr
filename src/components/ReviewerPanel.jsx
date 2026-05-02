@@ -13,6 +13,42 @@ import { PERMISSION_TYPES, summariseMonth } from '../lib/permissionLogic.js';
 // OR is a manager (has someone whose manager_id === me.id). After the dept-head
 // flag revoke, "manager" is now derived from the org chart, not from a flag.
 
+// Display label for a leave_type_id. Mirrors the seeded leave_types
+// table (schema.sql) so the reviewer sees the same name on the card
+// as in the request modal. Falls back to title-casing the id when an
+// unknown type appears (e.g. a custom 'other' subtype).
+const LEAVE_TYPE_LABELS = {
+  annual:      'Annual',
+  sick:        'Sick',
+  unpaid:      'Unpaid',
+  maternity:   'Maternity',
+  paternity:   'Paternity',
+  bereavement: 'Bereavement',
+  hajj:        'Hajj',
+  emergency:   'Emergency',
+  other:       'Other',
+};
+const labelForLeave = (id) => {
+  if (!id) return 'Leave';
+  return LEAVE_TYPE_LABELS[id] || (id.charAt(0).toUpperCase() + id.slice(1));
+};
+
+// Brand-aligned colour per leave type — kept in sync with the colours
+// seeded in schema.sql leave_types table so chips on the reviewer
+// queue match chips in the request modal and elsewhere.
+const LEAVE_TYPE_COLOURS = {
+  annual:      '#0F4C2A',
+  sick:        '#B84A3E',
+  unpaid:      '#6B7280',
+  maternity:   '#BE185D',
+  paternity:   '#1D4ED8',
+  bereavement: '#374151',
+  hajj:        '#A16207',
+  emergency:   '#D97706',
+  other:       '#6B7280',
+};
+const pickLeaveTypeColor = (id) => LEAVE_TYPE_COLOURS[id] || '#6B7280';
+
 export default function ReviewerPanel({ me }) {
   const [leave, setLeave]             = useState([]);
   const [perms, setPerms]             = useState([]);
@@ -830,6 +866,29 @@ export default function ReviewerPanel({ me }) {
                                   HR FINAL APPROVAL
                                 </span>
                               )}
+                              {/* Leave-type chip — gives the reviewer
+                                  the most important piece of context
+                                  at a glance. Without this, the
+                                  manager only sees dates and a stage
+                                  pill and has to open the row to
+                                  know whether it's annual / sick /
+                                  hajj / etc. The chip uses the same
+                                  type-colour palette as elsewhere
+                                  (annual=green, sick=red, etc.)
+                                  driven by the seeded leave_types
+                                  table; we look up via labelForLeave
+                                  and pickLeaveTypeColor below the
+                                  component. */}
+                              <span className="text-[10px] tracking-wider px-2 py-0.5 rounded-full"
+                                style={{
+                                  background: pickLeaveTypeColor(req.leave_type_id) + '22',
+                                  color: pickLeaveTypeColor(req.leave_type_id),
+                                  border: '1px solid ' + pickLeaveTypeColor(req.leave_type_id) + '55',
+                                  fontWeight: 700,
+                                  letterSpacing: '0.06em',
+                                }}>
+                                {labelForLeave(req.leave_type_id)}
+                              </span>
                             </div>
                             <div className="text-xs opacity-70 mt-0.5">
                               {fmtDate(new Date(req.start_date))} → {fmtDate(new Date(req.end_date))} · {req.days} day{req.days !== 1 ? 's' : ''}
