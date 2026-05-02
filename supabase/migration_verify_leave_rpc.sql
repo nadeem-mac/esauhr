@@ -21,6 +21,11 @@
 --
 -- Idempotent — safe to re-run.
 
+-- Drop the existing function first so we can change the return-type
+-- signature without hitting "cannot change return type of existing
+-- function". CREATE OR REPLACE alone can't do that.
+DROP FUNCTION IF EXISTS public.verify_leave(uuid);
+
 CREATE OR REPLACE FUNCTION public.verify_leave(p_id uuid)
 RETURNS TABLE (
   id                  uuid,
