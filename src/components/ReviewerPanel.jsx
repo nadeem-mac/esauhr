@@ -939,6 +939,7 @@ export default function ReviewerPanel({ me }) {
           manager={empMap[empMap[hrModalReq.employee_id]?.manager_id]}
           substitutes={(hrModalReq.substitute_ids || []).map(sid => empMap[sid]).filter(Boolean)}
           me={me}
+          allRequests={leave}
           onClose={() => setHrModalReq(null)}
           onApproved={() => { setHrModalReq(null); load(); }}
         />

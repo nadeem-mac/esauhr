@@ -1,9 +1,13 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { X, AlertTriangle, AlertCircle, Calendar } from 'lucide-react';
+import { X, AlertTriangle, AlertCircle, Calendar, ShieldCheck, ExternalLink } from 'lucide-react';
 import {
   calculateRequestDays, calculateBalance, findOverlappingRequests, checkEligibility,
   todayISO, fmtDateShort, LOCATION_LABELS,
 } from '../lib/leaveLogic.js';
+import {
+  SEHHATY_VERIFY_URL, normaliseSehhatyCode, looksLikeSehhatyCode,
+  classifySickLeaveBracket,
+} from '../lib/sehhaty.js';
 
 export default function NewRequestModal({ me, employees, leaveTypes, requests, balances, holidays, onClose, onSubmit }) {
   // Picker rule: admin and HR can pick any employee (e.g. submitting on
@@ -25,6 +29,10 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
   const [substituteSearch, setSubstituteSearch] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  // Sehhaty fields — only shown / required when leave type is 'sick'.
+  const [sehhatyCode, setSehhatyCode] = useState('');
+  const [sehhatyIssueDate, setSehhatyIssueDate] = useState(todayISO());
+  const [sehhatyClinic, setSehhatyClinic] = useState('');
 
   const employee = employees.find(e => e.id === employeeId);
   const leaveType = leaveTypes.find(t => t.id === leaveTypeId);
@@ -67,7 +75,37 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
   , [employee, leaveType, requests]);
 
   const willExceedBalance = currentBalance && (currentBalance.available - requestDays) < 0;
-  const canSubmit = employee && leaveType && requestDays > 0 && eligibility.ok;
+
+  // Sick-leave specific: classify the pay bracket for the new days
+  // and flag if the request crosses a Saudi Labour Law boundary
+  // (30/60/30 split). Year-to-date sick days are summed from
+  // approved + pending sick leave requests for this employee in
+  // the current year.
+  const isSick = leaveTypeId === 'sick';
+  const sickYTD = useMemo(() => {
+    if (!isSick || !employee) return 0;
+    const yearStart = new Date().getFullYear() + '-01-01';
+    return (requests || [])
+      .filter(r => r.employee_id === employee.id
+        && r.leave_type_id === 'sick'
+        && (r.status === 'approved' || /^pending/.test(r.status || ''))
+        && r.start_date >= yearStart)
+      .reduce((sum, r) => sum + (Number(r.days) || 0), 0);
+  }, [isSick, employee, requests]);
+  const sickBracket = useMemo(() =>
+    isSick ? classifySickLeaveBracket(sickYTD, requestDays) : null
+  , [isSick, sickYTD, requestDays]);
+
+  // Sehhaty validation: when sick leave is selected, both code and
+  // issue date are required for submission. Code must look plausible
+  // (alphanumeric ≥4 chars). The portal can't verify the code itself
+  // — that's HR's job after the request lands — but we ensure the
+  // field isn't empty so HR has something to check against.
+  const sehhatyCodeValid = !isSick || looksLikeSehhatyCode(sehhatyCode);
+  const sehhatyDateValid = !isSick || !!sehhatyIssueDate;
+
+  const canSubmit = employee && leaveType && requestDays > 0 && eligibility.ok
+    && sehhatyCodeValid && sehhatyDateValid;
 
   const submit = async (e) => {
     e.preventDefault();
@@ -104,6 +142,12 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
         substitute_ids: substituteIds,
         substitute_decisions: decisions,
         stage: 'pending_substitutes',
+        // Sehhaty fields — only present when sick leave is selected.
+        // Stored normalised (uppercase, no whitespace) so the values
+        // are stable across edits and HR's manual cross-check.
+        sehhaty_code:        isSick ? normaliseSehhatyCode(sehhatyCode) : null,
+        sehhaty_issue_date:  isSick ? sehhatyIssueDate : null,
+        sehhaty_clinic:      isSick ? (sehhatyClinic.trim() || null) : null,
       });
     } catch (err) {
       setError(err.message || 'Failed to submit');
@@ -313,6 +357,112 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
                 placeholder="https://…"
                 className="w-full px-3 py-2.5 rounded-lg border bg-transparent text-sm focus:outline-none"
                 style={{ borderColor: 'var(--border-soft)' }}/>
+            </div>
+          )}
+
+          {/* Sehhaty (صحتي) details — required for sick leave per
+              Saudi Labour Law. Since 2022 only Sehhaty-issued
+              certificates are accepted; HR uses the service code
+              shown on the certificate to verify it on Sehhaty's
+              portal. We capture the code at submission time so HR
+              has something to cross-check. */}
+          {isSick && (
+            <div className="rounded-xl border p-4"
+              style={{ borderColor: '#86EFAC', background: '#F0FDF4' }}>
+              <div className="flex items-center gap-2 mb-3">
+                <ShieldCheck className="w-4 h-4" style={{ color: '#047857' }}/>
+                <div className="text-xs tracking-widest" style={{ fontWeight: 700, color: '#047857' }}>
+                  SEHHATY · MEDICAL CERTIFICATE DETAILS
+                </div>
+              </div>
+              <p className="text-[11px] mb-3" style={{ color: '#0A0A0A' }}>
+                Saudi Labour Law accepts only Sehhaty-issued certificates. Enter the service code from the certificate so HR can verify it on the Sehhaty portal.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <Label>Sehhaty service code <span style={{ color: '#B91C1C' }}>*</span></Label>
+                  <input type="text" value={sehhatyCode}
+                    onChange={e => setSehhatyCode(e.target.value)}
+                    placeholder="e.g. GSL-1234567"
+                    className="w-full px-3 py-2.5 rounded-lg border text-sm font-mono uppercase"
+                    style={{
+                      borderColor: sehhatyCode && !sehhatyCodeValid ? '#B91C1C' : 'var(--border-soft)',
+                      background: '#FFFFFF', color: '#0A0A0A',
+                    }}/>
+                  {sehhatyCode && !sehhatyCodeValid && (
+                    <div className="text-[10px] mt-1" style={{ color: '#B91C1C' }}>
+                      Code looks too short. Sehhaty codes are typically 4+ characters.
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <Label>Issue date <span style={{ color: '#B91C1C' }}>*</span></Label>
+                  <input type="date" value={sehhatyIssueDate}
+                    onChange={e => setSehhatyIssueDate(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-lg border text-sm"
+                    style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', color: '#0A0A0A' }}/>
+                </div>
+                <div className="sm:col-span-2">
+                  <Label>Clinic / hospital <span className="opacity-60">(optional)</span></Label>
+                  <input type="text" value={sehhatyClinic}
+                    onChange={e => setSehhatyClinic(e.target.value)}
+                    placeholder="e.g. Dr. Sulaiman Al Habib Hospital"
+                    className="w-full px-3 py-2.5 rounded-lg border text-sm"
+                    style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', color: '#0A0A0A' }}/>
+                </div>
+              </div>
+
+              {/* Saudi Labour Law bracket warning — visible whenever
+                  the request would push the employee into a new
+                  pay-bracket band (75% or unpaid) so the requester
+                  knows what to expect financially. */}
+              {sickBracket && (
+                <div className="mt-3 rounded-lg p-3 text-[11px]"
+                  style={{
+                    background: '#FFFFFF',
+                    border: '1px solid ' + (sickBracket.crossesBoundary || sickBracket.overQuota ? '#FCA5A5' : 'var(--border-soft)'),
+                    color: '#0A0A0A',
+                  }}>
+                  <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+                    <span style={{ fontWeight: 700 }}>
+                      Year-to-date sick days: {sickBracket.startTotal} of 120
+                    </span>
+                    <span className="font-mono">
+                      After this request: {sickBracket.endTotal} ({sickBracket.daysRemaining} remaining)
+                    </span>
+                  </div>
+                  <div>
+                    Pay bracket for this request:{' '}
+                    <span style={{
+                      fontWeight: 700,
+                      color: sickBracket.endBracket?.color,
+                    }}>
+                      {sickBracket.endBracket?.label}
+                    </span>
+                    {sickBracket.crossesBoundary && (
+                      <span style={{ color: '#B91C1C', marginLeft: '6px' }}>
+                        — crosses pay-bracket boundary mid-request; payroll will need to split.
+                      </span>
+                    )}
+                    {sickBracket.overQuota && (
+                      <span style={{ color: '#7F1D1D', marginLeft: '6px' }}>
+                        — exceeds 120-day annual quota.
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-3 flex items-center gap-2 flex-wrap">
+                <a href={SEHHATY_VERIFY_URL} target="_blank" rel="noopener noreferrer"
+                  className="text-[11px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border"
+                  style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', color: '#0A0A0A' }}>
+                  <ExternalLink className="w-3 h-3"/> Open Sehhaty
+                </a>
+                <span className="text-[10px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+                  HR will verify the code on Sehhaty before approving.
+                </span>
+              </div>
             </div>
           )}
 
