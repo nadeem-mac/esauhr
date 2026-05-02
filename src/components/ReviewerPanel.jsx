@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { supabase, directPatch, directGet } from '../supabaseClient.js';
-import { CheckCircle2, XCircle, Clock, Loader2, AlertTriangle, Sunrise, Sunset, Calendar, RefreshCw, Search, Plane, FileDown, ArrowLeftCircle, Mail } from 'lucide-react';
+import { CheckCircle2, XCircle, Clock, Loader2, AlertTriangle, Sunrise, Sunset, Calendar, RefreshCw, Search, Plane, ArrowLeftCircle, Mail } from 'lucide-react';
 import { logAction } from '../lib/audit.js';
 import HrApprovalModal from './HrApprovalModal.jsx';
-import { downloadVacationFormForRequest, buildLeaveRejectionEmailDraft, buildEmailDraft, buildSickLeaveApprovalEmailDraft } from '../lib/vacationForm.js';
+import { buildLeaveRejectionEmailDraft } from '../lib/vacationForm.js';
 import PermissionApprovedModal from './PermissionApprovedModal.jsx';
 import RejoiningApprovedModal from './RejoiningApprovedModal.jsx';
+import LeaveApprovedModal     from './LeaveApprovedModal.jsx';
 import { fmtDate, rejectionReasonsForLeaveType, findRejectionReason } from '../lib/leaveLogic.js';
 import { PERMISSION_TYPES, summariseMonth } from '../lib/permissionLogic.js';
 
@@ -61,6 +62,11 @@ export default function ReviewerPanel({ me }) {
   // a fresh final approve or via the 'Letter / email' button on a row in
   // MY RECENT DECISIONS history.
   const [approvedRejoining,  setApprovedRejoining]  = useState(null);
+  // Held when Bashaier clicks Letter/email on an approved leave row
+  // in MY RECENT DECISIONS. Opens LeaveApprovedModal with the same
+  // Form download + Email draft pair the initial post-approval flow
+  // offered. State holds the leave_request row.
+  const [approvedLeave,      setApprovedLeave]      = useState(null);
   // History of permission decisions made by THIS HR reviewer in the last
   // 30 days. Surfaces below the active queue so Bashaier can review her
   // own decisions, re-open the timeline for context, and re-download
@@ -787,6 +793,7 @@ export default function ReviewerPanel({ me }) {
                   setQuery={setHistoryQuery}
                   setApprovedPermission={setApprovedPermission}
                   setApprovedRejoining={setApprovedRejoining}
+                  setApprovedLeave={setApprovedLeave}
                   isAdmin={isAdmin}
                 />
               )}
@@ -1062,6 +1069,7 @@ export default function ReviewerPanel({ me }) {
               setQuery={setHistoryQuery}
               setApprovedPermission={setApprovedPermission}
               setApprovedRejoining={setApprovedRejoining}
+                  setApprovedLeave={setApprovedLeave}
               isAdmin={isAdmin}
             />
           )}
@@ -1107,6 +1115,19 @@ export default function ReviewerPanel({ me }) {
           request={approvedRejoining}
           empMap={empMap}
           onClose={() => setApprovedRejoining(null)}
+        />
+      )}
+      {approvedLeave && (
+        <LeaveApprovedModal
+          request={approvedLeave}
+          employee={empMap[approvedLeave.employee_id]}
+          manager={empMap[empMap[approvedLeave.employee_id]?.manager_id]}
+          hrApprover={empMap[approvedLeave.hr_decided_by] || me}
+          empMap={empMap}
+          substitutes={(approvedLeave.substitute_ids || [])
+            .map(sid => empMap[sid])
+            .filter(Boolean)}
+          onClose={() => setApprovedLeave(null)}
         />
       )}
     </div>
@@ -1410,7 +1431,7 @@ function RejoiningSection({ queue, empMap, me, onChanged, onApproved }) {
 // something — the row leaves the queue but appears here on the same load.
 function HistorySection({
   recentLeaveDecisions, recentDecisions, recentRejoinDecisions = [],
-  empMap, query, setQuery, setApprovedPermission, setApprovedRejoining,
+  empMap, query, setQuery, setApprovedPermission, setApprovedRejoining, setApprovedLeave,
 }) {
   // Tag each row with kind so the unified list can render appropriately.
   const all = [
@@ -1471,6 +1492,7 @@ function HistorySection({
               empMap={empMap}
               onReopenPermission={() => setApprovedPermission(req)}
               onReopenRejoining={() => setApprovedRejoining(req)}
+              onReopenLeave={() => setApprovedLeave && setApprovedLeave(req)}
             />
           ))}
         </ul>
@@ -1479,7 +1501,7 @@ function HistorySection({
   );
 }
 
-function HistoryItem({ req, empMap, onReopenPermission, onReopenRejoining }) {
+function HistoryItem({ req, empMap, onReopenPermission, onReopenRejoining, onReopenLeave }) {
   const emp = empMap[req.employee_id];
   const isLeave  = req._kind === 'leave';
   const isPerm   = req._kind === 'permission';
@@ -1530,44 +1552,6 @@ function HistoryItem({ req, empMap, onReopenPermission, onReopenRejoining }) {
     : isRejoin
       ? `Rejoining · returned ${fmtDate(req.actual_return_date)}${req.balance_after > 0 ? ` · +${req.balance_after}d credited` : ''}`
       : `${PERMISSION_TYPES[req.type]?.label || req.type} · ${Number(req.hours)}h · ${fmtDate(req.permission_date)}`;
-
-  async function downloadLeaveLetter() {
-    try {
-      await downloadVacationFormForRequest(req, empMap);
-    } catch (err) {
-      console.warn('letter download failed:', err);
-      alert('Could not download letter: ' + (err.message || err));
-    }
-  }
-
-  // Open the approval email composer for an already-approved leave.
-  // Sick leaves use the Sehhaty-aware draft (with the cross-check
-  // block, the print-and-stamp instructions, and the Badria/Fahad
-  // CC routing); other leave types use the standard substitute-aware
-  // approval draft. Lets Bashaier re-send the approval email later
-  // if the staff member missed it or didn't get around to printing
-  // and stamping the form.
-  function openApprovalEmail() {
-    const employee   = empMap[req.employee_id];
-    const manager    = empMap[employee?.manager_id];
-    const hrApprover = empMap[req.hr_decided_by] || null;
-    const isSickReq  = req.leave_type_id === 'sick';
-    const substitutes = (req.substitute_ids || [])
-      .map(sid => empMap[sid])
-      .filter(Boolean);
-    const draft = isSickReq
-      ? buildSickLeaveApprovalEmailDraft({
-          employee, request: req, manager, hrApprover,
-          payBracketLabel: null, // not recomputed here; the email
-                                 // body still renders cleanly without it
-          badria: empMap?.['H94458'] || null,
-          fahad:  empMap?.['H94712'] || null,
-        })
-      : buildEmailDraft({
-          employee, request: req, manager, hrApprover, substitutes,
-        });
-    window.location.href = draft.mailto;
-  }
 
   // Build the rejection-email draft on demand. The email opens
   // pre-filled with the standardised reason label, the free-text
@@ -1630,21 +1614,10 @@ function HistoryItem({ req, empMap, onReopenPermission, onReopenRejoining }) {
         {wasApproved && isLeave && (
           <button
             type="button"
-            onClick={downloadLeaveLetter}
+            onClick={() => onReopenLeave && onReopenLeave()}
             className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap inline-flex items-center gap-1"
             style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
-            title="Re-download the leave application form"
-          >
-            <FileDown className="w-3 h-3" /> Form
-          </button>
-        )}
-        {wasApproved && isLeave && (
-          <button
-            type="button"
-            onClick={openApprovalEmail}
-            className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap inline-flex items-center gap-1"
-            style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
-            title="Re-open the approval email pre-filled for this leave"
+            title="Re-open form download and email draft"
           >
             <Mail className="w-3 h-3" /> Letter / email
           </button>
