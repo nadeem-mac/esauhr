@@ -282,3 +282,140 @@ export function avatarColor(id) {
 }
 
 export const LOCATION_LABELS = { DMM: 'Dammam', JED: 'Jeddah', RYD: 'Riyadh' };
+
+// =============================================================================
+// REJECTION REASONS
+//
+// Catalog of standardised reasons a leave request can be rejected. Used by
+// both the rejection modal (ReviewerPanel) and the staff status card
+// (MyApplicationsCard) so labels stay in sync. Each reason has:
+//   • code        — short machine-readable identifier, persisted in
+//                   leave_requests.rejection_reason_code
+//   • label       — human-readable label shown to the staff member
+//   • description — explanatory tooltip the rejector sees in the dropdown
+//   • scopes      — which leave types this reason applies to:
+//                   ['*'] = any leave type
+//                   ['sick'] = sick leave only
+//                   ['annual', 'emergency'] = those types only
+//   • requiresNote — when true, the rejector MUST write a follow-up note
+//                    (e.g. 'Other reason' is meaningless without context)
+//
+// Adding a new reason: append a new entry. The rejection modal builds
+// its dropdown from this list filtered by the request's leave type.
+// =============================================================================
+export const REJECTION_REASONS = [
+  // ─── Sick-leave specific (Sehhaty-related) ──────────────────────────
+  {
+    code: 'sehhaty_invalid',
+    label: 'Sehhaty leave ID is not valid',
+    description: 'The leave ID could not be found on the Sehhaty portal.',
+    scopes: ['sick'],
+    requiresNote: false,
+  },
+  {
+    code: 'sehhaty_mismatch_dates',
+    label: 'Sehhaty dates do not match the request',
+    description: 'The certificate on Sehhaty covers different dates than what was applied for.',
+    scopes: ['sick'],
+    requiresNote: false,
+  },
+  {
+    code: 'sehhaty_mismatch_name',
+    label: 'Sehhaty patient name does not match the requester',
+    description: 'The certificate on Sehhaty was issued to a different person.',
+    scopes: ['sick'],
+    requiresNote: false,
+  },
+  {
+    code: 'sehhaty_quota_exceeded',
+    label: 'Annual sick-leave quota exceeded',
+    description: 'The 120-day annual quota under Saudi Labour Law Art. 117 is fully used.',
+    scopes: ['sick'],
+    requiresNote: false,
+  },
+
+  // ─── Common across leave types ──────────────────────────────────────
+  {
+    code: 'insufficient_balance',
+    label: 'Insufficient leave balance',
+    description: 'The employee does not have enough days left in this leave-type bucket.',
+    scopes: ['*'],
+    requiresNote: false,
+  },
+  {
+    code: 'business_critical',
+    label: 'Business-critical period — cannot be granted',
+    description: 'The dates fall in a peak/freeze window where leave is restricted.',
+    scopes: ['*'],
+    requiresNote: false,
+  },
+  {
+    code: 'no_substitute',
+    label: 'No suitable substitute coverage arranged',
+    description: 'Substitute coverage is required for these dates and none has accepted.',
+    scopes: ['annual', 'emergency', 'maternity', 'paternity', 'hajj', 'unpaid', 'other'],
+    requiresNote: false,
+  },
+  {
+    code: 'overlap',
+    label: 'Overlaps with another approved leave or holiday',
+    description: 'These dates collide with an existing approved leave or a public holiday.',
+    scopes: ['*'],
+    requiresNote: false,
+  },
+  {
+    code: 'documentation_missing',
+    label: 'Required supporting document is missing',
+    description: 'A certificate, ticket, or other document required for this leave type was not provided.',
+    scopes: ['*'],
+    requiresNote: false,
+  },
+  {
+    code: 'late_submission',
+    label: 'Submitted too late — notice period not met',
+    description: 'Company policy requires advance notice that has not been given.',
+    scopes: ['annual', 'hajj', 'maternity', 'paternity', 'unpaid', 'other'],
+    requiresNote: false,
+  },
+  {
+    code: 'duplicate',
+    label: 'Duplicate of an existing request',
+    description: 'A request for the same period is already on file.',
+    scopes: ['*'],
+    requiresNote: false,
+  },
+  {
+    code: 'resubmit_corrected',
+    label: 'Please resubmit with corrected details',
+    description: 'A field on this request needs correction before HR can process it. Add a note explaining what.',
+    scopes: ['*'],
+    requiresNote: true,
+  },
+  {
+    code: 'other',
+    label: 'Other reason (note required)',
+    description: 'Free-text reason — a note is required.',
+    scopes: ['*'],
+    requiresNote: true,
+  },
+];
+
+/**
+ * Returns the reasons applicable to a given leave-type id, in the order
+ * they should appear in the dropdown. Sick-specific reasons come first
+ * for sick leaves so the rejector sees the most relevant options at the
+ * top.
+ */
+export function rejectionReasonsForLeaveType(leaveTypeId) {
+  return REJECTION_REASONS.filter(r =>
+    r.scopes.includes('*') || r.scopes.includes(leaveTypeId || '')
+  );
+}
+
+/**
+ * Look up a reason by code. Returns the catalog entry or null.
+ */
+export function findRejectionReason(code) {
+  if (!code) return null;
+  return REJECTION_REASONS.find(r => r.code === code) || null;
+}

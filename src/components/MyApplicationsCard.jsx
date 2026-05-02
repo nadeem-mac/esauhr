@@ -3,7 +3,7 @@ import {
   RefreshCw, Clock, CheckCircle2, XCircle, AlertTriangle,
   Palmtree, Sunrise, Sunset, Users2, Check, X, ArrowLeftCircle,
 } from 'lucide-react';
-import { fmtDateShort } from '../lib/leaveLogic.js';
+import { fmtDateShort, findRejectionReason } from '../lib/leaveLogic.js';
 import { PERMISSION_TYPES } from '../lib/permissionLogic.js';
 import LeaveTimelineModal from './LeaveTimelineModal.jsx';
 import PermissionTimelineModal from './PermissionTimelineModal.jsx';
@@ -342,6 +342,17 @@ function Row({ item, empMap, leaveTypes, onClick }) {
     && item.stage === 'pending_substitutes'
     && (item.substitute_ids || []).length > 0;
 
+  // Rejection reason banner — surfaces the standardised reason code
+  // and any free-text note Bashaier or the manager wrote when they
+  // rejected the leave. Only shown for leaves that have actually
+  // been rejected and that have a reason recorded (legacy rejections
+  // pre-migration won't have one; they fall back to the pill alone).
+  const isRejected = item._kind === 'leave'
+    && (item.status === 'rejected' || /^rejected/.test(item.stage || ''));
+  const rejectionReason = isRejected ? findRejectionReason(item.rejection_reason_code) : null;
+  const rejectionNote   = isRejected ? (item.rejection_reason_note || '').trim() : '';
+  const showRejection   = isRejected && (rejectionReason || rejectionNote);
+
   return (
     <li
       className="py-3 px-2 -mx-2 rounded-lg cursor-pointer hover:bg-black/5 transition-colors"
@@ -373,6 +384,25 @@ function Row({ item, empMap, leaveTypes, onClick }) {
           {pill.label}
         </span>
       </div>
+
+      {showRejection && (
+        <div className="mt-2 ml-12 rounded-lg p-2.5"
+          style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
+          <div className="text-[10px] tracking-wider font-bold mb-1" style={{ color: '#B91C1C' }}>
+            REASON FOR REJECTION
+          </div>
+          {rejectionReason && (
+            <div className="text-[12px]" style={{ color: '#0A0A0A', fontWeight: 600 }}>
+              {rejectionReason.label}
+            </div>
+          )}
+          {rejectionNote && (
+            <div className="text-[11px] mt-1" style={{ color: '#0A0A0A', opacity: 0.85 }}>
+              "{rejectionNote}"
+            </div>
+          )}
+        </div>
+      )}
 
       {showSubProgress && (
         <div className="mt-2 pl-12 flex items-center gap-1.5 flex-wrap">

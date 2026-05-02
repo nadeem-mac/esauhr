@@ -6,7 +6,7 @@ import HrApprovalModal from './HrApprovalModal.jsx';
 import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
 import PermissionApprovedModal from './PermissionApprovedModal.jsx';
 import RejoiningApprovedModal from './RejoiningApprovedModal.jsx';
-import { fmtDate } from '../lib/leaveLogic.js';
+import { fmtDate, rejectionReasonsForLeaveType, findRejectionReason } from '../lib/leaveLogic.js';
 import { PERMISSION_TYPES, summariseMonth } from '../lib/permissionLogic.js';
 
 // Visible to anyone with can_review_leave OR can_review_permissions OR is_admin
@@ -97,6 +97,12 @@ export default function ReviewerPanel({ me }) {
   const [loading, setLoading]         = useState(true);
   const [busyId, setBusyId]           = useState(null);
   const [hrModalReq, setHrModalReq]   = useState(null);
+  // When set, the rejection modal is open for this leave request.
+  // The modal asks the rejector to pick a reason from the dropdown
+  // (filtered by the leave type) and optionally add a note. The
+  // selected code + note get persisted on rejection so the staff
+  // member can see the rejection reason on their My Applications card.
+  const [rejectLeaveReq, setRejectLeaveReq] = useState(null);
 
   // Role flags for stage-based routing
   // - is_admin (Nadeem): sees both pending_manager and pending_hr
@@ -389,7 +395,7 @@ export default function ReviewerPanel({ me }) {
 
   // Stage-aware decision: figures out the next stage from the current one and the action.
   // The status<->stage trigger keeps the legacy status column synced automatically.
-  async function decideLeave(req, action) {
+  async function decideLeave(req, action, rejectionReasonCode = null, rejectionReasonNote = null) {
     setBusyId(`leave-${req.id}`);
     const now = new Date().toISOString();
     let nextStage, patch = {};
@@ -420,6 +426,14 @@ export default function ReviewerPanel({ me }) {
     }
     patch.stage = nextStage;
 
+    // Persist the rejection reason fields when the action is reject.
+    // For approvals these stay null (or get cleared if a previous
+    // rejection was overturned, though that path isn't exposed today).
+    if (action === 'rejected') {
+      patch.rejection_reason_code = rejectionReasonCode || null;
+      patch.rejection_reason_note = (rejectionReasonNote && rejectionReasonNote.trim()) || null;
+    }
+
     try {
       // Use directPatch (raw fetch) instead of supabase-js — the JS client
       // builder occasionally wedges and never sends the request.
@@ -428,7 +442,11 @@ export default function ReviewerPanel({ me }) {
         targetType: 'leave_request',
         targetId: req.id,
         targetLabel: `${empMap[req.employee_id]?.name || req.employee_id} · ${nextStage}`,
-        details: { stage: nextStage, action },
+        details: {
+          stage: nextStage,
+          action,
+          rejection_reason_code: action === 'rejected' ? rejectionReasonCode : undefined,
+        },
       });
       await load();
     } catch (err) { alert(err.message); }
@@ -937,7 +955,7 @@ export default function ReviewerPanel({ me }) {
                             style={{ background: 'var(--evergreen-500)', color: 'var(--paper)' }}>
                             <CheckCircle2 className="w-3 h-3" /> Approve
                           </button>
-                          <button onClick={() => decideLeave(req, 'rejected')}
+                          <button onClick={() => setRejectLeaveReq(req)}
                             disabled={busyId === `leave-${req.id}`}
                             className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs border disabled:opacity-50"
                             style={{ borderColor: 'var(--clay)', color: 'var(--clay)' }}>
@@ -1001,6 +1019,17 @@ export default function ReviewerPanel({ me }) {
           allRequests={leave}
           onClose={() => setHrModalReq(null)}
           onApproved={() => { setHrModalReq(null); load(); }}
+        />
+      )}
+      {rejectLeaveReq && (
+        <RejectLeaveModal
+          request={rejectLeaveReq}
+          employee={empMap[rejectLeaveReq.employee_id]}
+          onClose={() => setRejectLeaveReq(null)}
+          onConfirm={async (code, note) => {
+            await decideLeave(rejectLeaveReq, 'rejected', code, note);
+            setRejectLeaveReq(null);
+          }}
         />
       )}
       {approvedPermission && (
@@ -1504,5 +1533,139 @@ function HistoryItem({ req, empMap, onReopenPermission, onReopenRejoining }) {
         </button>
       )}
     </li>
+  );
+}
+
+// ─── RejectLeaveModal ───────────────────────────────────────────────────────
+// Opens when the rejector clicks 'Reject' on a leave card. Forces an
+// explicit reason from a curated dropdown so the staff member sees
+// something useful on their My Applications card. Sick-leave-specific
+// reasons (e.g. 'Sehhaty leave ID is not valid') appear at the top of
+// the dropdown for sick leaves; common reasons appear for any type.
+//
+// The note field becomes mandatory when the selected reason has
+// requiresNote=true (e.g. 'Other reason' or 'Please resubmit with
+// corrected details') — those are meaningless without context.
+function RejectLeaveModal({ request, employee, onClose, onConfirm }) {
+  const reasons = rejectionReasonsForLeaveType(request.leave_type_id);
+  const [code, setCode] = useState('');
+  const [note, setNote] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  const selectedReason = findRejectionReason(code);
+  const noteRequired   = !!selectedReason?.requiresNote;
+  const canSubmit = !!code && (!noteRequired || note.trim().length > 0);
+
+  const submit = async () => {
+    if (!canSubmit || submitting) return;
+    setSubmitting(true);
+    setError('');
+    try {
+      await onConfirm(code, note);
+    } catch (err) {
+      setError(err?.message || String(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4"
+         style={{ background: 'rgba(15,31,26,0.55)' }}
+         onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bg-paper rounded-t-2xl sm:rounded-2xl w-full max-w-md fade-in"
+        style={{ boxShadow: '0 12px 40px rgba(31,27,22,0.2)' }}>
+        <div className="px-5 py-4 border-b" style={{ borderColor: 'var(--border-soft)' }}>
+          <div className="text-[10px] tracking-[0.25em] font-bold mb-1" style={{ color: '#B91C1C' }}>
+            REJECT LEAVE REQUEST
+          </div>
+          <h3 className="text-lg" style={{ fontFamily: 'Georgia, serif', color: '#0A0A0A', fontWeight: 500 }}>
+            Why are you rejecting?
+          </h3>
+          <div className="text-[11px] mt-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+            {employee?.name} ({request.employee_id}) · {fmtDate(new Date(request.start_date))} → {fmtDate(new Date(request.end_date))}
+          </div>
+        </div>
+
+        <div className="px-5 py-4 space-y-3">
+          <div>
+            <label className="text-[10px] tracking-wider font-bold opacity-70 mb-1 block">
+              REASON <span style={{ color: '#B91C1C' }}>*</span>
+            </label>
+            <select value={code} onChange={e => setCode(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-lg border text-sm bg-transparent focus:outline-none"
+              style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}>
+              <option value="">— select a reason —</option>
+              {reasons.map(r => (
+                <option key={r.code} value={r.code}>{r.label}</option>
+              ))}
+            </select>
+            {selectedReason?.description && (
+              <div className="text-[10px] mt-1.5 px-2 py-1 rounded"
+                style={{ background: 'rgba(196,155,97,0.10)', color: '#0A0A0A' }}>
+                {selectedReason.description}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <label className="text-[10px] tracking-wider font-bold opacity-70 mb-1 block">
+              NOTE FOR THE STAFF MEMBER {noteRequired && <span style={{ color: '#B91C1C' }}>*</span>}
+              {!noteRequired && <span className="opacity-60 font-normal"> (optional)</span>}
+            </label>
+            <textarea value={note} onChange={e => setNote(e.target.value)}
+              rows={3} maxLength={500}
+              placeholder={noteRequired
+                ? 'Required — explain what needs to change before resubmission.'
+                : 'Optional — any additional context the staff member should see.'}
+              className="w-full px-3 py-2 rounded-lg border text-sm bg-transparent focus:outline-none resize-none"
+              style={{
+                borderColor: noteRequired && !note.trim() ? '#FCA5A5' : 'var(--border-soft)',
+                color: '#0A0A0A',
+              }}/>
+            <div className="text-[9px] opacity-50 text-right mt-0.5">
+              {note.length}/500
+            </div>
+          </div>
+
+          <div className="rounded-lg p-2.5 text-[11px]"
+            style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}>
+            ℹ The reason and note will be visible to {employee?.name?.split(' ')[0] || 'the staff member'} on their My Applications card.
+          </div>
+
+          {error && (
+            <div className="rounded-lg p-2.5 text-[11px]"
+              style={{ background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}>
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-3 border-t flex items-center justify-end gap-2"
+          style={{ borderColor: 'var(--border-soft)', background: '#FAF6EC' }}>
+          <button onClick={onClose}
+            disabled={submitting}
+            className="text-[11px] px-3 py-1.5 rounded-full border"
+            style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', color: '#0A0A0A' }}>
+            Cancel
+          </button>
+          <button onClick={submit}
+            disabled={!canSubmit || submitting}
+            className="text-[11px] inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full"
+            style={{
+              background: !canSubmit ? '#9CA3AF' : '#B91C1C',
+              color: '#FFFFFF',
+              fontWeight: 700,
+              cursor: (!canSubmit || submitting) ? 'not-allowed' : 'pointer',
+              opacity: (!canSubmit || submitting) ? 0.7 : 1,
+            }}>
+            {submitting
+              ? <>Saving…</>
+              : <><XCircle className="w-3 h-3"/> Reject with this reason</>}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
