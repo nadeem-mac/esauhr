@@ -62,6 +62,11 @@ const HR_SIGNATURE = {
 };
 const CEO_EMAIL          = 'johnho@evergreen-shipping.com.sa';
 const COUNTRY_HEAD_EMAIL = 'jamesliu@evergreen-shipping.com.sa';
+// CEO name for the ESAU MGT signature column on the printed form.
+// Mirrors vacationForm.js so the two forms line up visually when filed
+// together. Title appears below the name in the sig footer.
+const CEO_NAME           = 'JOHN HO';
+const CEO_TITLE_EN       = 'Country Head / CEO';
 
 // ─── brand palette ────────────────────────────────────────────────────────────
 const C_TEXT      = '1F1B16';
@@ -83,9 +88,10 @@ const LABEL_W     = 2400;
 const VALUE_W     = PAGE_W - LABEL_W;
 const HALF_W      = Math.floor(PAGE_W / 2);
 
-// 3-column signature grid (Employee | Dept Mgr | ESAU SUP) — sums to PAGE_W
-const SIG3_W      = Math.floor(PAGE_W / 3); // 3608
-const SIG3_W_LAST = PAGE_W - (SIG3_W * 2);  // remainder absorber
+// 4-column signature grid (Employee | Dept Mgr | ESAU SUP | ESAU MGT).
+// Same layout as vacationForm so the two filed forms align visually.
+const SIG_W      = Math.floor(PAGE_W / 4); // 2706
+const SIG_W_LAST = PAGE_W - (SIG_W * 3);   // remainder absorber
 
 // 4-col header — Logo | Wordmark | Date+Ref | QR
 const HEADER_LOGO = 1100;
@@ -655,11 +661,14 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
     ],
   });
 
-  // ── 3-COLUMN APPROVAL SIGNATURES ──────────────────────────────────────────
-  // Stamps reflect each step of the 3-step rejoining workflow:
-  //   Employee  →  return_submitted_at  ('Submitted DD MMM · HH:MM')
+  // ── 4-COLUMN APPROVAL SIGNATURES ──────────────────────────────────────────
+  // Mirrors the vacation form so the two filed documents line up.
+  // Stamps reflect each step of the 3-step rejoining workflow plus the
+  // executive sign-off column (HQ stamp, no auto-stamp):
+  //   Employee  →  return_submitted_at        ('Submitted DD MMM · HH:MM')
   //   Dept Mgr  →  return_manager_decided_at  ('Approved DD MMM · HH:MM')
-  //   ESAU SUP  →  return_hr_decided_at  ('Approved DD MMM · HH:MM')
+  //   ESAU SUP  →  return_hr_decided_at       ('Approved DD MMM · HH:MM')
+  //   ESAU MGT  →  Country Head / CEO         ('HQ Stamp' label, hand-applied)
   const sigCols = [
     { en: 'EMPLOYEE', ar: 'الموظف',         name: employee?.name || '',
       footerLeft: request.return_submitted_at
@@ -676,8 +685,10 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
                   ? `Approved ${fmtStampCompact(request.return_hr_decided_at)}`
                   : '',
       footerRight: 'Signature' },
+    { en: 'ESAU MGT', ar: 'الإدارة',         name: CEO_NAME,
+      footerLeft:  CEO_TITLE_EN, footerRight: 'HQ Stamp' },
   ];
-  const sigWidths = [SIG3_W, SIG3_W, SIG3_W_LAST];
+  const sigWidths = [SIG_W, SIG_W, SIG_W, SIG_W_LAST];
 
   const sigTable = new Table({
     width: { size: PAGE_W, type: WidthType.DXA },
@@ -703,20 +714,29 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
   });
 
   // ── FOOTER ────────────────────────────────────────────────────────────────
+  // Corporate-style two-column footer using tab stops:
+  //   left  — generation stamp + confidentiality marker
+  //   right — ref number + 'Page 1 of 1'
+  // No verify URL printed (the QR code already encodes it; printing
+  // the raw URL was clutter and made the footer look like a draft).
   const generatedAt = new Date().toLocaleString('en-GB', {
     day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
   const footerBlock = new Paragraph({
     children: [
-      run(`Generated on ${generatedAt} GMT+3  ·  ${returnConfirmer?.name || hrApprover?.name || HR_SIGNATURE_NAME}`,
-          { size: 12, italics: true, color: C_COPPER }),
-      run('     ·     ', { size: 11, color: C_MUTED }),
-      run('Verify online: ', { size: 11, color: C_MUTED }),
-      run(verifyUrl, { size: 11, color: C_BRAND }),
+      run(`Generated ${generatedAt} GMT+3 · ${returnConfirmer?.name || hrApprover?.name || HR_SIGNATURE_NAME}`,
+          { size: 11, italics: true, color: C_COPPER }),
+      run('     ·     ', { size: 11, color: C_BORDER }),
+      run('CONFIDENTIAL — HR RECORDS', { size: 11, bold: true, color: C_MUTED }),
+      run('                                                                        ', { size: 11 }),
+      run(`Ref: ${shortRef(request.id)}`, { size: 11, bold: true, color: C_TEXT }),
+      run('     ·     ', { size: 11, color: C_BORDER }),
+      run('Page 1 of 1', { size: 11, color: C_MUTED }),
     ],
     alignment: AlignmentType.LEFT,
-    spacing: { before: 40, after: 0 },
+    spacing: { before: 60, after: 0 },
+    border: { top: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER, space: 4 } },
   });
 
   // ── REJOINED STAMP ────────────────────────────────────────────────────────
