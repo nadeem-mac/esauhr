@@ -280,7 +280,7 @@ export default function PersonalDashboard({
       {/* REJOINING — back-from-leave staff prompt. Shows when one of MY
           approved leaves has finished and I haven't submitted my
           rejoining yet (or it was sent back). Hides itself otherwise. */}
-      <MyRejoiningCard me={me} employees={employees} />
+      <MyRejoiningCard me={me} employees={Object.values(empMap || {})} />
 
       {/* SUBSTITUTE FREED — when a colleague the user was covering for
           submits their rejoining, the DB trigger fires a notification
