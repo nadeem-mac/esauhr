@@ -423,6 +423,15 @@ export default function ReviewerPanel({ me }) {
     const now = new Date().toISOString();
     let nextStage, patch = {};
 
+    // Always write a non-null identifier into the decided_by columns
+    // so every decision is attributable. We prefer the Supabase auth
+    // UUID for back-compat with rows already in the table, and fall
+    // back to the PSN (me.id) when the user account doesn't have an
+    // auth UUID yet. Writing null here would make the row invisible
+    // to MY RECENT DECISIONS, which queries on hr_decided_by /
+    // manager_decided_by — that was the bug.
+    const deciderId = me.auth_user_id || me.id;
+
     if (req.stage === 'pending_manager') {
       // Self-approval guard (see decidePerm above for full rationale)
       const requester = empMap[req.employee_id];
@@ -431,17 +440,17 @@ export default function ReviewerPanel({ me }) {
         nextStage = requesterIsHr ? 'approved' : 'pending_hr';
         if (requesterIsHr) {
           patch.hr_decided_at = now;
-          patch.hr_decided_by = me.auth_user_id || null;
+          patch.hr_decided_by = deciderId;
         }
       } else {
         nextStage = 'rejected_by_manager';
       }
       patch.manager_decided_at = now;
-      patch.manager_decided_by = me.auth_user_id || null;
+      patch.manager_decided_by = deciderId;
     } else if (req.stage === 'pending_hr') {
       nextStage = action === 'approved' ? 'approved' : 'rejected_by_hr';
       patch.hr_decided_at = now;
-      patch.hr_decided_by = me.auth_user_id || null;
+      patch.hr_decided_by = deciderId;
     } else {
       alert('Unexpected request stage: ' + req.stage);
       setBusyId(null);
@@ -458,9 +467,27 @@ export default function ReviewerPanel({ me }) {
     }
 
     try {
-      // Use directPatch (raw fetch) instead of supabase-js — the JS client
-      // builder occasionally wedges and never sends the request.
-      await directPatch('leave_requests', 'id', req.id, patch, { timeoutMs: 15000 });
+      // directPatch returns the updated row(s) thanks to
+      // Prefer: return=representation. We log the result so a future
+      // debug session can confirm which fields actually landed —
+      // particularly the decided_by columns, which drive the history
+      // visibility.
+      const updated = await directPatch('leave_requests', 'id', req.id, patch, { timeoutMs: 15000 });
+      if (Array.isArray(updated) && updated.length === 0) {
+        // PostgREST returns an empty array when the WHERE clause
+        // matched no rows — usually means RLS filtered out the row.
+        // We surface this loudly so it doesn't silently disappear.
+        throw new Error('Patch returned 0 rows — row may be hidden by RLS, or id mismatch.');
+      }
+      // eslint-disable-next-line no-console
+      console.info('[decideLeave] patched row', {
+        id: req.id,
+        action,
+        stage: nextStage,
+        hr_decided_by: updated?.[0]?.hr_decided_by ?? null,
+        manager_decided_by: updated?.[0]?.manager_decided_by ?? null,
+        rejection_reason_code: updated?.[0]?.rejection_reason_code ?? null,
+      });
       logAction(me, 'leave_request_decide', {
         targetType: 'leave_request',
         targetId: req.id,

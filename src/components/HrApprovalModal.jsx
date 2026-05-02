@@ -205,7 +205,7 @@ export default function HrApprovalModal({ request, employee, manager, substitute
       await directPatch('leave_requests', 'id', request.id, {
         stage: 'approved',
         hr_decided_at: now,
-        hr_decided_by: me?.auth_user_id || null,
+        hr_decided_by: me?.auth_user_id || me?.id || null,
       }, { timeoutMs: 15000 });
 
       try {
