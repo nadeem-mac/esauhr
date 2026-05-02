@@ -246,6 +246,19 @@ function valueCellRuns(children) {
     verticalAlign: VerticalAlign.CENTER,
   });
 }
+// For rich, multi-paragraph values (e.g. the bilingual declaration
+// nested inside the 'Notes from staff' row). Caller passes an array
+// of Paragraph nodes — typically auto-declaration + Arabic mirror +
+// optional staff-typed note.
+function valueCellMulti(paragraphs) {
+  return new TableCell({
+    children: paragraphs,
+    width: { size: VALUE_W, type: WidthType.DXA },
+    margins: { top: 80, bottom: 80, left: 200, right: 160 },
+    borders: FORM_BORDER,
+    verticalAlign: VerticalAlign.CENTER,
+  });
+}
 function formRow(en, ar, value, opts = {}) {
   return new TableRow({
     children: [
@@ -533,90 +546,63 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
   });
 
   // ── DECLARATION (Statement of Rejoining) ─────────────────────────────────
-  // First-person formal declaration block — direct echo of the legacy
-  // template's "I confirm that I went on my <leave-type> leave from X to Y…
-  // I shall be obliged if you can put me on the payroll with effect from Z"
-  // language. The phrasing is what department heads and accounts have
-  // expected on this form for years; auto-filling it from the request
-  // saves the staff member typing it but preserves the exact wording.
+  // First-person formal declaration — direct echo of the legacy template's
+  // "I confirm that I went on my <leave-type> leave from X to Y… I shall be
+  // obliged if you can put me on the payroll with effect from Z" language.
+  // The phrasing is what department heads and accounts have expected on
+  // this form for years; auto-filling it from the request saves the staff
+  // member typing it but preserves the exact wording.
+  //
+  // This used to be a standalone paragraph block above RETURN DETAILS.
+  // Now folded into the 'Notes from staff' row inside RETURN DETAILS so
+  // the audit data lives in one place and the page stays compact.
   const reportingBackDate = actualReturn || (() => {
     const d = new Date(request.end_date); d.setDate(d.getDate() + 1);
     return d.toISOString().slice(0, 10);
   })();
 
-  const declarationStripEn = new Paragraph({
-    children: [
-      run('I confirm that I went on my ', { size: 19, color: C_TEXT }),
-      run(`${ltBoth.en.toLowerCase()} `, { size: 19, italics: true, bold: true, color: C_COPPER }),
-      run('leave from ', { size: 19, color: C_TEXT }),
-      run(fmtDateMed(request.start_date), { size: 19, bold: true, color: C_BRAND }),
-      run(' to ', { size: 19, color: C_TEXT }),
-      run(fmtDateMed(request.end_date), { size: 19, bold: true, color: C_BRAND }),
-      run(`, totalling ${dayCount} day${dayCount === 1 ? '' : 's'}. I am reporting back on duty on `, { size: 19, color: C_TEXT }),
-      run(fmtDateMed(reportingBackDate), { size: 19, bold: true, color: C_BRAND }),
-      run('. I shall be obliged if you can place me on the payroll with effect from ', { size: 19, color: C_TEXT }),
-      run(fmtDateMed(reportingBackDate), { size: 19, bold: true, color: C_BRAND }),
-      run('.', { size: 19, color: C_TEXT }),
-    ],
-    spacing: { before: 30, after: 30, line: 240 },
-    alignment: AlignmentType.JUSTIFIED,
-  });
-
-  const declarationStripAr = new Paragraph({
-    children: [
-      arRun(`أؤكد أنني كنت في إجازة ${ltBoth.ar} من ${fmtDateMed(request.start_date)} إلى ${fmtDateMed(request.end_date)}، بإجمالي ${dayCount} يوم. عائد إلى العمل بتاريخ ${fmtDateMed(reportingBackDate)}.`, { size: 16, color: C_MUTED }),
-    ],
-    bidirectional: true,
-    alignment: AlignmentType.RIGHT,
-    spacing: { before: 0, after: 30, line: 240 },
-  });
-
-  // ── ADMIN / PAYROLL INSTRUCTION BLOCK ─────────────────────────────────────
-  // Second half of the legacy template — "TO: Admin Manager. Please put
-  // <name> on payroll from <date>." Kept as a small framed block after the
-  // declaration so the accounts team has the explicit instruction.
-  const adminBlock = new Table({
-    width: { size: PAGE_W, type: WidthType.DXA },
-    columnWidths: [PAGE_W],
-    rows: [
-      new TableRow({
-        children: [new TableCell({
-          width: { size: PAGE_W, type: WidthType.DXA },
-          margins: { top: 50, bottom: 50, left: 200, right: 200 },
-          shading: shading(C_BANNER),
-          borders: {
-            top:    { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-            bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-            left:   { style: BorderStyle.SINGLE, size: 24, color: C_COPPER },
-            right:  { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
-          },
+  // Multi-line notes content as docx Paragraphs — the value cell
+  // accepts an array of paragraph children via valueCellMulti.
+  const declarationParas = [
+    new Paragraph({
+      children: [
+        run('I confirm that I went on my ', { size: 19, color: C_TEXT }),
+        run(`${ltBoth.en.toLowerCase()} `, { size: 19, italics: true, bold: true, color: C_COPPER }),
+        run('leave from ', { size: 19, color: C_TEXT }),
+        run(fmtDateMed(request.start_date), { size: 19, bold: true, color: C_BRAND }),
+        run(' to ', { size: 19, color: C_TEXT }),
+        run(fmtDateMed(request.end_date), { size: 19, bold: true, color: C_BRAND }),
+        run(`, totalling ${dayCount} day${dayCount === 1 ? '' : 's'}. I am reporting back on duty on `, { size: 19, color: C_TEXT }),
+        run(fmtDateMed(reportingBackDate), { size: 19, bold: true, color: C_BRAND }),
+        run('. I shall be obliged if you can place me on the payroll with effect from ', { size: 19, color: C_TEXT }),
+        run(fmtDateMed(reportingBackDate), { size: 19, bold: true, color: C_BRAND }),
+        run('.', { size: 19, color: C_TEXT }),
+      ],
+      spacing: { before: 0, after: 30, line: 240 },
+      alignment: AlignmentType.JUSTIFIED,
+    }),
+    new Paragraph({
+      children: [
+        arRun(`أؤكد أنني كنت في إجازة ${ltBoth.ar} من ${fmtDateMed(request.start_date)} إلى ${fmtDateMed(request.end_date)}، بإجمالي ${dayCount} يوم. عائد إلى العمل بتاريخ ${fmtDateMed(reportingBackDate)}.`,
+              { size: 16, color: C_MUTED }),
+      ],
+      bidirectional: true,
+      alignment: AlignmentType.RIGHT,
+      spacing: { before: 0, after: request.return_notes ? 80 : 0, line: 240 },
+    }),
+    // Append the staff's actual typed note as a small italic line BELOW
+    // the auto-declaration when present. Keeps the two pieces visually
+    // distinct so anyone reading knows what's auto vs typed.
+    ...(request.return_notes
+      ? [new Paragraph({
           children: [
-            new Paragraph({
-              children: [
-                run('TO:  ', { bold: true, size: 14, color: C_MUTED }),
-                run('ESAU Admin Manager', { bold: true, size: 14, color: C_TEXT }),
-                run('     ·     ', { size: 13, color: C_BORDER }),
-                run('FROM:  ', { bold: true, size: 14, color: C_MUTED }),
-                run('Departmental Head', { bold: true, size: 14, color: C_TEXT }),
-              ],
-              spacing: { after: 40 },
-            }),
-            new Paragraph({
-              children: [
-                run('Kindly place ', { size: 17 }),
-                run(employee?.name || '—', { bold: true, size: 17 }),
-                run(`  (PSN ${employee?.id || '—'}, ${dept})`, { size: 15, color: C_MUTED }),
-                run(' on the active payroll with effect from ', { size: 17 }),
-                run(fmtDateMed(reportingBackDate), { size: 17, bold: true, color: C_BRAND }),
-                run('.', { size: 17 }),
-              ],
-              spacing: { after: 0, line: 260 },
-            }),
+            run('Note: ', { size: 16, bold: true, color: C_MUTED }),
+            run(request.return_notes, { size: 16, italics: true, color: C_TEXT }),
           ],
-        })],
-      }),
-    ],
-  });
+          spacing: { before: 0, after: 0, line: 240 },
+        })]
+      : []),
+  ];
 
   // ── RETURN DETAILS ────────────────────────────────────────────────────────
   // Structured field-by-field record of the return — the data Bashaier and
@@ -655,7 +641,17 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
           )]
         : []
       ),
-      formRow('Notes from staff',    'ملاحظات الموظف',      request.return_notes || '—'),
+      // Statement of rejoining + staff notes — declaration auto-built
+      // from the request fields (the legacy 'I confirm that…' phrasing,
+      // bilingual), plus the staff's typed note appended below if any.
+      // Replaces the old standalone declaration block + plain Notes row
+      // — one cell, one place to read, audit-friendly.
+      new TableRow({
+        children: [
+          labelCell('Statement / Notes', 'الإفادة / ملاحظات'),
+          valueCellMulti(declarationParas),
+        ],
+      }),
     ],
   });
 
@@ -767,13 +763,6 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
         sectionBanner('ORIGINAL LEAVE', 'تفاصيل الإجازة الأصلية'),
         origLeaveTable,
         spacer(20),
-        // Narrative declaration — first-person formal statement, the
-        // soul of the legacy template.
-        declarationStripEn,
-        declarationStripAr,
-        // Admin/payroll instruction — explicit memo to accounts.
-        adminBlock,
-        spacer(20),
         sectionBanner('RETURN DETAILS', 'تفاصيل العودة'),
         returnTable,
         spacer(20),
@@ -810,9 +799,27 @@ export async function downloadRejoiningReportForRequest(request, empMap) {
   if (!empMap)  throw new Error('Employee directory unavailable');
   const employee = empMap[request.employee_id];
   if (!employee) throw new Error('Employee not found in directory');
-  const manager         = resolveApprover(request.manager_decided_by, empMap);
-  const hrApprover      = resolveApprover(request.hr_decided_by,      empMap);
-  const returnConfirmer = resolveApprover(request.return_confirmed_by, empMap);
+
+  // Resolve the names that print on the sig grid. Three-tier cascade
+  // for each role so we always have something to print:
+  //   Manager:   return_manager_decided_by (rejoining approver)
+  //            → manager_decided_by        (original leave approver)
+  //            → employee.manager_id       (org-chart fallback)
+  //   HR:        return_hr_decided_by      (rejoining HR approver)
+  //            → hr_decided_by             (original leave HR approver)
+  // Without the org-chart fallback, manager_decided_by being NULL or
+  // an unresolvable UUID would leave the DEPT MGR signature box blank
+  // — exactly the bug the user just hit.
+  const manager =
+       resolveApprover(request.return_manager_decided_by, empMap)
+    || resolveApprover(request.manager_decided_by,        empMap)
+    || (employee.manager_id ? empMap[employee.manager_id] : null);
+
+  const hrApprover =
+       resolveApprover(request.return_hr_decided_by, empMap)
+    || resolveApprover(request.hr_decided_by,        empMap);
+
+  const returnConfirmer = resolveApprover(request.return_confirmed_by, empMap) || hrApprover;
 
   const blob = await generateRejoiningReportBlob({
     request, employee, manager, hrApprover, returnConfirmer,
@@ -886,8 +893,16 @@ export function composeRejoiningEmailForRequest(request, empMap) {
   if (!empMap)  throw new Error('Employee directory unavailable');
   const employee = empMap[request.employee_id];
   if (!employee) throw new Error('Employee not found in directory');
-  const manager    = resolveApprover(request.manager_decided_by, empMap);
-  const hrApprover = resolveApprover(request.hr_decided_by,      empMap);
+  // Same three-tier cascade as downloadRejoiningReportForRequest so
+  // the email's Cc and signature blocks line up with what the report
+  // shows.
+  const manager =
+       resolveApprover(request.return_manager_decided_by, empMap)
+    || resolveApprover(request.manager_decided_by,        empMap)
+    || (employee.manager_id ? empMap[employee.manager_id] : null);
+  const hrApprover =
+       resolveApprover(request.return_hr_decided_by, empMap)
+    || resolveApprover(request.hr_decided_by,        empMap);
 
   const draft = buildRejoiningEmailDraft({ employee, request, manager, hrApprover });
   if (!draft.to) {
