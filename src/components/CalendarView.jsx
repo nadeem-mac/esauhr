@@ -192,20 +192,30 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
     <div className="space-y-4 sm:space-y-6">
       <div className="flex items-end justify-between flex-wrap gap-3">
         <div>
-          <div className="text-[10px] tracking-[0.25em] mb-2" style={{ color: '#0A0A0A' }}>CALENDAR</div>
-          <h1 className="serif text-3xl sm:text-4xl" style={{ fontWeight: 500, letterSpacing: '-0.02em' }}>{monthName}</h1>
+          <div className="text-[10px] tracking-[0.25em] mb-2 inline-flex items-center gap-2"
+            style={{ color: '#0F4C2A', fontWeight: 700 }}>
+            <span className="inline-block w-7 h-px" style={{ background: '#0F4C2A' }}/>
+            CALENDAR
+          </div>
+          <h1 className="serif text-3xl sm:text-4xl" style={{ fontWeight: 500, letterSpacing: '-0.02em', color: '#0A0A0A' }}>
+            {monthName}
+          </h1>
         </div>
         <div className="flex gap-1">
           <button onClick={() => setViewDate(new Date(year, month - 1, 1))}
-            className="p-2 rounded-full border" style={{ borderColor: 'var(--border-soft)' }}
+            className="p-2 rounded-full border transition-colors hover:bg-black/5"
+            style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', color: '#0A0A0A' }}
             aria-label="Previous month">
             <ChevronLeft className="w-4 h-4"/>
           </button>
           <button onClick={() => setViewDate(new Date())}
-            className="px-4 py-2 rounded-full border text-sm"
-            style={{ borderColor: 'var(--border-soft)' }}>Today</button>
+            className="px-4 py-2 rounded-full text-sm transition-colors"
+            style={{ background: '#0F4C2A', color: '#FFFFFF', fontWeight: 600 }}>
+            Today
+          </button>
           <button onClick={() => setViewDate(new Date(year, month + 1, 1))}
-            className="p-2 rounded-full border" style={{ borderColor: 'var(--border-soft)' }}
+            className="p-2 rounded-full border transition-colors hover:bg-black/5"
+            style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', color: '#0A0A0A' }}
             aria-label="Next month">
             <ChevronRight className="w-4 h-4"/>
           </button>
@@ -217,7 +227,7 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
           <FilterChip active={showLeaves}      onClick={() => setShowLeaves(v => !v)}      label="Leaves"      dot="#0F4C2A" />
           <FilterChip active={showPermissions} onClick={() => setShowPermissions(v => !v)} label="Permissions" dot="#1D4ED8" />
           <FilterChip active={showShifts}      onClick={() => setShowShifts(v => !v)}      label="Shifts"      dot="#9333EA" />
-          <FilterChip active={showHolidays}    onClick={() => setShowHolidays(v => !v)}    label="Holidays"    dot="#C49B61" />
+          <FilterChip active={showHolidays}    onClick={() => setShowHolidays(v => !v)}    label="Holidays"    dot="#B45309" />
         </div>
         {canSeeAll && peopleInMonth.length > 1 && (
           <select value={personFilter} onChange={e => setPersonFilter(e.target.value)}
@@ -231,12 +241,31 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
         )}
       </div>
 
-      <div className="rounded-xl border overflow-hidden"
-           style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}>
-        <div className="grid grid-cols-7 text-[10px] tracking-widest border-b"
-             style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}>
-          {['SUN','MON','TUE','WED','THU','FRI','SAT'].map(d => (
-            <div key={d} className="px-2 py-2 text-center">{d}</div>
+      {/* Calendar grid container — soft drop shadow + warm cream
+          background gives the whole month a sense of depth, like a
+          paper page. Rounded corners + subtle border keep the overall
+          feel close to the rest of the app. */}
+      <div className="rounded-2xl overflow-hidden"
+           style={{
+             border: '1px solid #E8DEC4',
+             background: '#FFFDF7',
+             boxShadow: '0 4px 16px rgba(31,27,22,0.06), 0 1px 3px rgba(31,27,22,0.04)',
+           }}>
+        {/* Day-of-week header — slight evergreen tint so it stands
+            apart from the cells below. Bolder labels with brand
+            colour anchor the whole grid visually. */}
+        <div className="grid grid-cols-7 text-[10px] tracking-widest"
+             style={{
+               background: '#F4EFDC',
+               borderBottom: '1px solid #E8DEC4',
+               color: '#0F4C2A',
+               fontWeight: 700,
+             }}>
+          {['SUN','MON','TUE','WED','THU','FRI','SAT'].map((d, i) => (
+            <div key={d} className="px-2 py-2.5 text-center"
+              style={{ borderRight: i < 6 ? '1px solid #E8DEC4' : 'none' }}>
+              {d}
+            </div>
           ))}
         </div>
         <div className="grid grid-cols-7">
@@ -249,12 +278,26 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
             const leaves = leavesOnDay(d);
             const perms  = permissionsOnDay(d);
             const dayShifts = shiftsOnDay(d);
+            const totalEvents = leaves.length + perms.length + dayShifts.length;
+            const hasEvents = totalEvents > 0 || !!holiday;
 
-            let bg = 'transparent';
-            if (!d) bg = 'rgba(247,243,234,0.5)';
-            else if (isToday) bg = 'rgba(45,95,63,0.08)';
-            else if (holiday) bg = 'rgba(196,155,97,0.12)';
-            else if (isWeekend) bg = 'rgba(247,243,234,0.5)';
+            // Cell background — layered logic so today, holidays,
+            // weekends, and empty-fill cells each have a distinct
+            // identity. Today wins, then holiday, then weekend, then
+            // a neutral cream for filled days.
+            let bg = '#FFFFFF';
+            let topAccent = null;
+            if (!d) {
+              bg = '#F8F1DD'; // out-of-month filler — clearly muted
+            } else if (isToday) {
+              bg = '#F0F9F4'; // soft brand-green tint — today pops
+              topAccent = '#0F4C2A';
+            } else if (holiday) {
+              bg = '#FEF3E0'; // warm copper-cream for holidays
+              topAccent = '#B45309';
+            } else if (isWeekend) {
+              bg = '#FAF5E8'; // distinctly tinted weekend
+            }
 
             return (
               <div key={i}
@@ -262,69 +305,117 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
                 onMouseLeave={() => setHoveredISO(prev => prev === iso ? null : prev)}
                 onClick={() => {
                   if (!d) return;
-                  const hasAny = leaves.length + perms.length + dayShifts.length > 0 || !!holiday;
-                  if (hasAny) setClickedISO(iso);
+                  if (hasEvents) setClickedISO(iso);
                 }}
-                className={"min-h-[88px] sm:min-h-[112px] border-r border-b p-1.5 relative transition-colors " +
-                  (d ? "cursor-pointer hover:bg-black/[0.02]" : "")}
-                   style={{ borderColor: 'var(--border-soft)', background: bg }}>
+                className={"min-h-[96px] sm:min-h-[120px] p-2 relative transition-all duration-150 " +
+                  (d && hasEvents ? "cursor-pointer hover:shadow-md" : d ? "cursor-default" : "")}
+                style={{
+                  borderRight:  dow < 6 ? '1px solid #E8DEC4' : 'none',
+                  borderBottom: '1px solid #E8DEC4',
+                  background: bg,
+                }}>
+                {/* Top accent stripe — coloured bar at the top of the
+                    cell when it's today or a holiday. Quick visual
+                    cue without taking vertical space from event chips. */}
+                {topAccent && (
+                  <div aria-hidden style={{
+                    position: 'absolute', top: 0, left: 0, right: 0, height: '3px',
+                    background: topAccent,
+                  }}/>
+                )}
                 {d && (
                   <>
-                    <div className="flex items-center justify-between mb-1 gap-1">
-                      <div className="text-xs" style={{
-                        fontWeight: isToday ? 600 : 400,
-                        color: isToday ? 'var(--evergreen-500)' : '#0A0A0A',
-                      }}>{d}</div>
+                    <div className="flex items-center justify-between mb-1.5 gap-1">
+                      {/* Date number — circular for today, bold for
+                          weekend/holiday so visual hierarchy reads
+                          before any chips. */}
+                      {isToday ? (
+                        <div className="flex items-center justify-center w-7 h-7 rounded-full text-xs"
+                          style={{ background: '#0F4C2A', color: '#FFFFFF', fontWeight: 700 }}>
+                          {d}
+                        </div>
+                      ) : (
+                        <div className="text-sm" style={{
+                          fontWeight: holiday ? 700 : isWeekend ? 600 : 500,
+                          color: holiday ? '#B45309' : '#0A0A0A',
+                        }}>{d}</div>
+                      )}
                       <div className="flex items-center gap-1">
                         {dayShifts.length > 0 && showShifts && (
-                          <span className="text-[9px] px-1 rounded font-bold tracking-wider"
-                            style={{ background: 'rgba(147,51,234,0.15)', color: '#7E22CE' }}>
+                          <span className="text-[9px] px-1.5 py-0.5 rounded font-bold tracking-wider"
+                            style={{ background: '#9333EA', color: '#FFFFFF' }}>
                             {dayShifts.length}S
                           </span>
                         )}
-                        {holiday && (
-                          <div className="text-[9px] uppercase tracking-wider" style={{ color: '#0A0A0A', opacity: 0.7 }}>
-                            HOLIDAY
-                          </div>
+                        {totalEvents >= 4 && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded font-bold tracking-wider"
+                            style={{ background: '#0F4C2A', color: '#FFFFFF' }}
+                            title={`${totalEvents} events on this day`}>
+                            {totalEvents}
+                          </span>
                         )}
                       </div>
                     </div>
                     {holiday && (
-                      <div className="text-[10px] leading-tight mb-1 truncate" style={{ color: '#0A0A0A', opacity: 0.85 }}>
+                      <div className="text-[10px] leading-tight mb-1.5 truncate"
+                        style={{ color: '#B45309', fontWeight: 700, letterSpacing: '0.02em' }}>
                         {holiday.name}
                       </div>
                     )}
-                    <div className="space-y-0.5">
+                    {/* Leave chips — solid colour with white text for
+                        readability. Each chip carries a coloured left
+                        border so the leave type stays visually distinct
+                        even when several stack up on the same day. */}
+                    <div className="space-y-1">
                       {leaves.slice(0, 3).map(r => {
                         const emp = empMap[r.employee_id]; const tp = typeMap[r.leave_type_id];
                         if (!emp) return null;
+                        const tpColor = tp?.color || '#0F4C2A';
                         return (
                           <div key={r.id}
-                            className="text-[10px] px-1.5 py-0.5 rounded truncate"
-                            style={{ background: (tp?.color || '#000') + '25', color: tp?.color }}>
+                            className="text-[10px] px-1.5 py-0.5 rounded truncate flex items-center gap-1"
+                            style={{
+                              background: tpColor,
+                              color: '#FFFFFF',
+                              fontWeight: 600,
+                              boxShadow: '0 1px 2px rgba(0,0,0,0.08)',
+                            }}>
                             {emp.name.split(' ')[0]}
                           </div>
                         );
                       })}
                       {leaves.length > 3 && (
-                        <div className="text-[10px] px-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>+{leaves.length - 3} more</div>
+                        <div className="text-[10px] px-1.5"
+                          style={{ color: '#0A0A0A', fontWeight: 600 }}>
+                          +{leaves.length - 3} more
+                        </div>
                       )}
                     </div>
+                    {/* Permission icons — bigger and more visible than
+                        before. Solid coloured dot with white icon, so
+                        they read at a glance as 'something time-bound
+                        happens here'. */}
                     {perms.length > 0 && (
-                      <div className="flex items-center gap-0.5 mt-1 flex-wrap">
+                      <div className="flex items-center gap-1 mt-1.5 flex-wrap">
                         {perms.slice(0, 4).map(p => {
                           const Icon = p.type === 'late_arrival' ? Sunrise : Sunset;
-                          const color = p.type === 'late_arrival' ? '#1D4ED8' : '#A16207';
+                          const color = p.type === 'late_arrival' ? '#1D4ED8' : '#D97706';
                           return (
                             <span key={p.id}
-                              className="inline-flex items-center justify-center w-4 h-4 rounded-full"
-                              style={{ background: color + '18' }}>
-                              <Icon className="w-2.5 h-2.5" style={{ color: color }}/>
+                              className="inline-flex items-center justify-center w-5 h-5 rounded-full"
+                              style={{
+                                background: color,
+                                boxShadow: '0 1px 2px rgba(0,0,0,0.12)',
+                              }}>
+                              <Icon className="w-3 h-3" style={{ color: '#FFFFFF' }} strokeWidth={2.5}/>
                             </span>
                           );
                         })}
                         {perms.length > 4 && (
-                          <span className="text-[9px]" style={{ color: '#0A0A0A', opacity: 0.6 }}>+{perms.length - 4}</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold"
+                            style={{ background: '#0A0A0A', color: '#FFFFFF' }}>
+                            +{perms.length - 4}
+                          </span>
                         )}
                       </div>
                     )}
@@ -408,16 +499,20 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
 function FilterChip({ active, onClick, label, dot }) {
   return (
     <button onClick={onClick}
-      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs transition-colors"
+      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-all"
       style={{
-        borderColor: active ? '#0A0A0A' : 'var(--border-soft)',
-        background: active ? '#FFFFFF' : 'transparent',
-        color: '#0A0A0A',
-        fontWeight: active ? 600 : 400,
-        opacity: active ? 1 : 0.55,
+        borderColor: active ? dot : 'var(--border-soft)',
+        background:  active ? dot + '14' : '#FFFFFF',
+        color:       active ? dot : '#0A0A0A',
+        fontWeight:  active ? 700 : 500,
+        opacity:     active ? 1 : 0.65,
+        boxShadow:   active ? `0 1px 3px ${dot}33` : 'none',
       }}
       title={(active ? 'Hide ' : 'Show ') + label.toLowerCase()}>
-      <span className="inline-block w-2 h-2 rounded-full" style={{ background: dot }}/>
+      <span className="inline-block w-2 h-2 rounded-full" style={{
+        background: dot,
+        boxShadow: active ? `0 0 0 2px ${dot}33` : 'none',
+      }}/>
       {label}
     </button>
   );
