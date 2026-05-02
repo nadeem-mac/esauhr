@@ -438,16 +438,36 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
   });
 
   // ── TITLE ─────────────────────────────────────────────────────────────────
+  // Echoes the legacy "REJOINING REPORT (From Vacation)" headline used
+  // by Evergreen for decades — keeping the corporate phrasing the
+  // department heads recognise.
   const titleStrip = new Paragraph({
     children: [
-      run('Rejoining Report — ', { bold: true, size: 24, color: C_TEXT }),
-      run(`${ltBoth.en} Leave`, { bold: true, italics: true, size: 24, color: C_COPPER }),
+      run('REJOINING REPORT ', { bold: true, size: 28, color: C_TEXT, font: FONT_BRAND }),
+      run(`(From ${ltBoth.en} Leave)`, { bold: true, italics: true, size: 24, color: C_COPPER, font: FONT_BRAND }),
     ],
     spacing: { before: 80, after: 30 },
   });
   const titleStripAr = new Paragraph({
     children: [arRun(`تقرير العودة من الإجازة · إجازة ${ltBoth.ar}`, { bold: true, size: 16, color: C_BRAND })],
     bidirectional: true,
+    alignment: AlignmentType.LEFT,
+    spacing: { before: 0, after: 30 },
+  });
+
+  // "TO: Departmental Head" addressing block — direct lift from the
+  // legacy template. Adds the formal correspondence framing the old form
+  // had which the previous version of this report missed entirely.
+  const toBlock = new Paragraph({
+    children: [
+      run('TO:  ', { bold: true, size: 18, color: C_MUTED }),
+      run('Departmental Head', { bold: true, size: 18, color: C_TEXT }),
+      run('   ·   ', { size: 16, color: C_BORDER }),
+      arRun('إلى: رئيس القسم', { size: 16, color: C_MUTED }),
+      run('         ', { size: 16 }),
+      run('FROM:  ', { bold: true, size: 18, color: C_MUTED }),
+      run(employee?.name || '—', { bold: true, size: 18, color: C_TEXT }),
+    ],
     alignment: AlignmentType.LEFT,
     spacing: { before: 0, after: 60 },
     border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER, space: 4 } },
@@ -479,26 +499,120 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
     ],
   });
 
+  // ── DECLARATION (Statement of Rejoining) ─────────────────────────────────
+  // First-person formal declaration block — direct echo of the legacy
+  // template's "I confirm that I went on my <leave-type> leave from X to Y…
+  // I shall be obliged if you can put me on the payroll with effect from Z"
+  // language. The phrasing is what department heads and accounts have
+  // expected on this form for years; auto-filling it from the request
+  // saves the staff member typing it but preserves the exact wording.
+  const reportingBackDate = actualReturn || (() => {
+    const d = new Date(request.end_date); d.setDate(d.getDate() + 1);
+    return d.toISOString().slice(0, 10);
+  })();
+
+  const declarationStripEn = new Paragraph({
+    children: [
+      run('I confirm that I went on my ', { size: 21, color: C_TEXT }),
+      run(`${ltBoth.en.toLowerCase()} `, { size: 21, italics: true, bold: true, color: C_COPPER }),
+      run('leave from ', { size: 21, color: C_TEXT }),
+      run(fmtDateMed(request.start_date), { size: 21, bold: true, color: C_BRAND }),
+      run(' to ', { size: 21, color: C_TEXT }),
+      run(fmtDateMed(request.end_date), { size: 21, bold: true, color: C_BRAND }),
+      run(`, totalling ${dayCount} day${dayCount === 1 ? '' : 's'}. I am reporting back on duty on `, { size: 21, color: C_TEXT }),
+      run(fmtDateMed(reportingBackDate), { size: 21, bold: true, color: C_BRAND }),
+      run('. I shall be obliged if you can place me on the payroll with effect from ', { size: 21, color: C_TEXT }),
+      run(fmtDateMed(reportingBackDate), { size: 21, bold: true, color: C_BRAND }),
+      run('.', { size: 21, color: C_TEXT }),
+    ],
+    spacing: { before: 60, after: 40, line: 280 },
+    alignment: AlignmentType.JUSTIFIED,
+  });
+
+  const declarationStripAr = new Paragraph({
+    children: [
+      arRun('أؤكد أنني كنت في إجازة ', { size: 18, color: C_MUTED }),
+      arRun(`${ltBoth.ar} `, { size: 18, bold: true, color: C_COPPER }),
+      arRun(`من ${fmtDateMed(request.start_date)} إلى ${fmtDateMed(request.end_date)}، بإجمالي ${dayCount} يوم${dayCount === 1 ? '' : ''}. عائد إلى العمل بتاريخ ${fmtDateMed(reportingBackDate)}.`, { size: 18, color: C_MUTED }),
+    ],
+    bidirectional: true,
+    alignment: AlignmentType.RIGHT,
+    spacing: { before: 0, after: 60, line: 260 },
+  });
+
+  // ── ADMIN / PAYROLL INSTRUCTION BLOCK ─────────────────────────────────────
+  // Second half of the legacy template — "TO: Admin Manager. Please put
+  // <name> on payroll from <date>." Kept as a small framed block after the
+  // declaration so the accounts team has the explicit instruction.
+  const adminBlock = new Table({
+    width: { size: PAGE_W, type: WidthType.DXA },
+    columnWidths: [PAGE_W],
+    rows: [
+      new TableRow({
+        children: [new TableCell({
+          width: { size: PAGE_W, type: WidthType.DXA },
+          margins: { top: 80, bottom: 80, left: 200, right: 200 },
+          shading: shading(C_BANNER),
+          borders: {
+            top:    { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
+            bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
+            left:   { style: BorderStyle.SINGLE, size: 24, color: C_COPPER },
+            right:  { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
+          },
+          children: [
+            new Paragraph({
+              children: [
+                run('TO:  ', { bold: true, size: 16, color: C_MUTED }),
+                run('ESAU Admin Manager', { bold: true, size: 16, color: C_TEXT }),
+                run('     ·     ', { size: 14, color: C_BORDER }),
+                run('FROM:  ', { bold: true, size: 16, color: C_MUTED }),
+                run('Departmental Head', { bold: true, size: 16, color: C_TEXT }),
+              ],
+              spacing: { after: 80 },
+            }),
+            new Paragraph({
+              children: [
+                run('Kindly place ', { size: 19 }),
+                run(employee?.name || '—', { bold: true, size: 19 }),
+                run(`  (PSN ${employee?.id || '—'}, ${dept})`, { size: 17, color: C_MUTED }),
+                run(' on the active payroll with effect from ', { size: 19 }),
+                run(fmtDateMed(reportingBackDate), { size: 19, bold: true, color: C_BRAND }),
+                run('.', { size: 19 }),
+              ],
+              spacing: { after: 0, line: 300 },
+            }),
+          ],
+        })],
+      }),
+    ],
+  });
+
   // ── RETURN DETAILS ────────────────────────────────────────────────────────
-  // The two highlighted rows: actual_return_date + status. The diff line
-  // ("Returned on schedule" / "X day(s) early/late") gives the at-a-glance
-  // story without doing math from the dates.
+  // Structured field-by-field record of the return — the data Bashaier and
+  // the auditor will scan. Sits below the narrative so the human story
+  // ("I went, I'm back") is read first and the audit log second.
   const statusColor = returnStatus === 'RETURNED' ? C_BRAND
                     : returnStatus === 'EXTENDED' ? '8B6914'
                     : returnStatus === 'NO_SHOW'  ? 'B83A2E'
                     : C_MUTED;
+
+  const daysAbsent = (() => {
+    if (!actualReturn) return '—';
+    const start = new Date(request.start_date);
+    const ret   = new Date(actualReturn);
+    const diff  = Math.floor((ret - start) / 86_400_000);
+    return `${diff} day${diff === 1 ? '' : 's'}`;
+  })();
 
   const returnTable = new Table({
     width: { size: PAGE_W, type: WidthType.DXA },
     columnWidths: [LABEL_W, VALUE_W],
     rows: [
       formRow('Actual return date', 'تاريخ العودة الفعلي', actualReturn ? fmtDateLong(actualReturn) : '—', { bold: true, color: C_BRAND }),
-      formRow('Return status',      'حالة العودة',          returnStatus.replace('_', ' '), { bold: true, color: statusColor }),
-      formRow('Punctuality',        'الالتزام بالموعد',     diffLabel),
-      formRow('Notes from staff',   'ملاحظات الموظف',       request.return_notes || '—'),
-      formRow('Submitted by staff', 'تقديم الموظف',         request.return_submitted_at ? fmtDateTime(request.return_submitted_at) : '—'),
-      formRow('Manager approved',   'اعتماد المدير',        request.return_manager_decided_at ? fmtDateTime(request.return_manager_decided_at) : '—'),
-      formRow('HR approved',        'اعتماد الموارد',       request.return_hr_decided_at ? fmtDateTime(request.return_hr_decided_at) : '—'),
+      formRow('Days absent',         'أيام الغياب',         daysAbsent),
+      formRow('Punctuality',         'الالتزام بالموعد',    diffLabel),
+      formRow('Return status',       'حالة العودة',         returnStatus.replace('_', ' '), { bold: true, color: statusColor }),
+      formRow('Notes from staff',    'ملاحظات الموظف',      request.return_notes || '—'),
     ],
   });
 
@@ -531,9 +645,10 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
     columnWidths: sigWidths,
     rows: [new TableRow({
       cantSplit: true,
-      // 3.54 cm row height (2007 dxa) — matching vacationForm sig grid
-      // so the two forms line up visually when filed together.
-      height: { value: 2007, rule: HeightRule.ATLEAST },
+      // 2.6 cm row height (1500 dxa) — slightly tighter than the
+      // vacation form's 3.54 cm because this report has more body
+      // content. Still gives enough room for ink signatures.
+      height: { value: 1500, rule: HeightRule.ATLEAST },
       children: sigCols.map((c, i) =>
         sigCombinedCell(c.en, c.ar, c.name, c.footerLeft, c.footerRight, sigWidths[i])),
     })],
@@ -593,16 +708,23 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
         headerRuleCopper,
         titleStrip,
         titleStripAr,
-        spacer(40),
+        toBlock,
         sectionBanner('EMPLOYEE INFORMATION', 'معلومات الموظف'),
         empTable,
-        spacer(30),
+        spacer(20),
         sectionBanner('ORIGINAL LEAVE', 'تفاصيل الإجازة الأصلية'),
         origLeaveTable,
         spacer(30),
+        // Narrative declaration — first-person formal statement, the
+        // soul of the legacy template.
+        declarationStripEn,
+        declarationStripAr,
+        // Admin/payroll instruction — explicit memo to accounts.
+        adminBlock,
+        spacer(30),
         sectionBanner('RETURN DETAILS', 'تفاصيل العودة'),
         returnTable,
-        spacer(40),
+        spacer(30),
         sigTable,
         footerBlock,
       ],
