@@ -803,13 +803,18 @@ export default function HrApprovalModal({ request, employee, manager, substitute
           structured fields are. */}
       {confirmOpen && (
         <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4"
-             style={{ background: 'rgba(15,31,26,0.55)' }}>
-          {/* Click-outside-to-close was causing accidental closes
-              when Bashaier pasted screenshots, opened the file
-              picker, or tapped near the modal edges on touch. The
-              modal now closes only via Cancel, the verify success
-              path, or the close (X) button — explicit user intent
-              required. */}
+             style={{ background: 'rgba(15,31,26,0.55)' }}
+             onClick={(e) => e.stopPropagation()}>
+          {/* The stopPropagation on this outer wrapper is critical.
+              The cross-check modal is rendered as a child inside the
+              parent HrApprovalModal's outermost div, which has
+              onClick={onClose} on its backdrop. Without stopping
+              propagation here, every click anywhere in the cross-
+              check modal would bubble up and close the entire
+              parent — exactly what the user reported.
+              Click-outside-to-close on this modal itself is also
+              gone — closes only via Cancel, the X button in the
+              header, or successful verify. */}
           <div className="bg-paper rounded-t-2xl sm:rounded-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto fade-in"
             style={{ boxShadow: '0 12px 40px rgba(31,27,22,0.2)' }}>
             <div className="px-5 py-4 border-b sticky top-0 z-10 relative" style={{ borderColor: 'var(--border-soft)', background: 'var(--paper)' }}>
@@ -1232,42 +1237,40 @@ function SehhatyMirror({
         />
       </div>
 
-      {/* The gray result card. dir='rtl' puts the Arabic labels in
-          their natural reading order; the grid columns then flow
-          right-to-left automatically. */}
+      {/* The result card — English-only, ltr, clean. Mirrors the
+          DATA layout of the Sehhaty page (two columns, same field
+          ordering) but uses English labels for clarity. The actual
+          Sehhaty website is Arabic-only; the cross-check view here
+          presents the same information in the language Bashaier
+          reads fastest, which is English in this org. */}
       <div className="rounded-lg p-5"
-        style={{ background: '#F2F2EF', border: '1px solid #E5E5E0' }}
-        dir="rtl">
+        style={{ background: '#F2F2EF', border: '1px solid #E5E5E0' }}>
         <div className="grid grid-cols-2 gap-x-6 gap-y-5">
-          {/* Row 1 — Name (right column) | Issue date (left column) */}
+          {/* Row 1 — Name | Issue date */}
           <SehhatyField
-            arabic="الاسم:"
-            english="Name"
+            label="Name"
             value={seenName}
             onChange={setSeenName}
-            placeholder="غلا نواف على الشريف"
+            placeholder="Patient name"
             isArabic
           />
           <SehhatyField
-            arabic="تاريخ إصدار تقرير الإجازة:"
-            english="Issue date"
+            label="Issue date"
             value={seenIssueDate}
             onChange={setSeenIssueDate}
             type="date"
           />
 
-          {/* Row 2 — Start date | End date */}
+          {/* Row 2 — Start | End */}
           <SehhatyField
-            arabic="تبدأ من:"
-            english="Start"
+            label="Start date"
             value={seenStart}
             onChange={setSeenStart}
             type="date"
             status={startStatus}
           />
           <SehhatyField
-            arabic="وحتى:"
-            english="End"
+            label="End date"
             value={seenEnd}
             onChange={setSeenEnd}
             type="date"
@@ -1276,34 +1279,29 @@ function SehhatyMirror({
 
           {/* Row 3 — Days | Doctor */}
           <SehhatyField
-            arabic="المدة بالأيام:"
-            english="Days"
+            label="Days"
             value={seenDays}
             onChange={setSeenDays}
             type="number"
             status={daysStatus}
           />
           <SehhatyField
-            arabic="اسم الطبيب:"
-            english="Doctor"
+            label="Doctor"
             value={seenDoctor}
             onChange={setSeenDoctor}
-            placeholder="دانه محمد بن عبدالله الغامدي"
+            placeholder="Doctor name"
             isArabic
           />
 
-          {/* Row 4 — Specialty (single, left-side under Doctor in
-              real Sehhaty page; we put it in the right column of
-              row 4 which renders on the visual right under Days). */}
+          {/* Row 4 — Specialty | (empty) */}
           <SehhatyField
-            arabic="المسمى الوظيفي:"
-            english="Specialty"
+            label="Specialty"
             value={seenSpecialty}
             onChange={setSeenSpecialty}
-            placeholder="طب بشري"
+            placeholder="e.g. Family Medicine"
             isArabic
           />
-          <div /> {/* empty cell to keep the 2-column grid balanced */}
+          <div /> {/* keeps the 2-column grid balanced */}
         </div>
       </div>
     </div>
@@ -1363,49 +1361,42 @@ function SehhatyTopBox({ value, onChange, placeholder, editable = true, monoLg, 
 }
 
 // ─── SehhatyField ───────────────────────────────────────────────────────────
-// One label+value cell inside the gray result card. Header line
-// shows the Arabic label and the English translation side by side
-// — both readable, not tucked away. The actual Sehhaty page is
-// Arabic-only; we add the English here so non-Arabic readers can
-// quickly identify each field without translating in their head.
+// One label+value cell inside the gray result card. Clean English-
+// only header with optional match badge — no Arabic mixed in, no
+// rtl direction tricks, no extra whitespace from competing labels.
 //
 // The value sits below as an inline-styled input — transparent
-// border most of the time so it reads as text, white box with
-// amber focus border when clicked, so OCR misreads can be edited
-// without leaving the layout.
-function SehhatyField({ arabic, english, value, onChange, placeholder, type, isArabic, status }) {
+// border most of the time so it reads as a calm value, white box
+// with amber focus border when clicked, so OCR misreads can be
+// edited without leaving the layout.
+//
+// `isArabic` prop only controls input direction for content (e.g.
+// when the user types or pastes Arabic text into Name / Doctor /
+// Specialty, those should display rtl); it no longer changes the
+// label rendering.
+function SehhatyField({ label, value, onChange, placeholder, type, isArabic, status }) {
   const statusBadge = status === 'match'    ? { ico: '✓', bg: '#D1FAE5', col: '#065F46' }
                     : status === 'mismatch' ? { ico: '✕', bg: '#FEE2E2', col: '#991B1B' }
                     : null;
 
-  // Date inputs need ltr direction; Arabic name/doctor inputs read
-  // right-to-left and we let them inherit the parent rtl. Numbers
-  // and English/transliterated fields are ltr too.
-  const inputDir = type === 'date' || type === 'number' || !isArabic ? 'ltr' : 'rtl';
+  // Input direction: dates and numbers are always ltr; text fields
+  // that may contain Arabic content (Name, Doctor, Specialty) get
+  // rtl so typed/pasted Arabic reads in its natural order.
+  const inputDir = type === 'date' || type === 'number' ? 'ltr'
+                 : isArabic ? 'rtl' : 'ltr';
 
   return (
     <div>
-      {/* Header — Arabic label + English translation + optional
-          match badge. Layout is rtl from the parent, so visually
-          the Arabic appears on the right and the English on the
-          left when the row is read right-to-left. We use dir='ltr'
-          for the inner flex so Arabic reads in its natural order
-          and English is consistent left-of-it. */}
-      <div className="flex items-baseline gap-2 mb-1.5" dir="ltr" style={{ justifyContent: 'space-between' }}>
-        <span className="text-[12px]" style={{ color: '#0A0A0A', opacity: 0.7, fontWeight: 500 }}>
-          {english}
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <span className="text-[12px]" style={{ color: '#0A0A0A', fontWeight: 600 }}>
+          {label}
         </span>
-        <div className="flex items-center gap-1.5">
-          {statusBadge && (
-            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold"
-              style={{ background: statusBadge.bg, color: statusBadge.col }}>
-              {statusBadge.ico}
-            </span>
-          )}
-          <span className="text-[13px]" style={{ color: '#0A0A0A', fontWeight: 700, direction: 'rtl' }}>
-            {arabic}
+        {statusBadge && (
+          <span className="inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold"
+            style={{ background: statusBadge.bg, color: statusBadge.col }}>
+            {statusBadge.ico}
           </span>
-        </div>
+        )}
       </div>
       <input
         type={type || 'text'}
@@ -1418,7 +1409,7 @@ function SehhatyField({ arabic, english, value, onChange, placeholder, type, isA
           color: '#0A0A0A',
           fontWeight: 500,
           direction: inputDir,
-          textAlign: isArabic && type !== 'date' && type !== 'number' ? 'right' : 'left',
+          textAlign: inputDir === 'rtl' ? 'right' : 'left',
           border: '1px solid transparent',
         }}
       />
