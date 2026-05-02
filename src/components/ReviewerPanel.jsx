@@ -540,9 +540,32 @@ export default function ReviewerPanel({ me }) {
         <div className="opacity-60 text-sm flex items-center gap-2">
           <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading queue…
         </div>
-      ) : (
-        <>
-          {canSeePerm && (
+      ) : (() => {
+        // Total work waiting on this reviewer right now. When zero, the
+        // page collapses to a single peaceful "All caught up" hero
+        // instead of three giant empty-state cards stacked vertically.
+        // Each role's queues:
+        //   • HR reviewer (Bashaier) — perms, leaves, rejoinings
+        //   • Manager — perms, leaves (rejoinings handled separately)
+        //   • Admin — same as HR plus admin-only rows
+        const queueTotal = (canSeePerm ? perms.length : 0)
+                         + (canLeave ? leave.length : 0)
+                         + (canPerm ? rejoinQueue.length : 0);
+
+        if (queueTotal === 0) {
+          return (
+            <AllCaughtUpHero
+              recentLeaveDecisions={recentLeaveDecisions}
+              recentPermDecisions={recentDecisions}
+              recentRejoinDecisions={recentRejoinDecisions}
+              showHistory={canPerm}
+            />
+          );
+        }
+
+        return (
+          <>
+          {canSeePerm && perms.length > 0 && (
             <section>
               <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
                 <h3 className="text-[10px] tracking-[0.25em] opacity-60">
@@ -563,12 +586,7 @@ export default function ReviewerPanel({ me }) {
                   </button>
                 )}
               </div>
-              {perms.length === 0 ? (
-                <EmptyState text={canPermAsManager && !canPerm
-                  ? 'No pending permission requests from your direct reports.'
-                  : 'No pending permission requests.'} />
-              ) : (
-                <ul className="space-y-2">
+              <ul className="space-y-2">
                   {perms.map(req => {
                     const emp = empMap[req.employee_id];
                     const TypeIcon = req.type === 'late_arrival' ? Sunrise : Sunset;
@@ -622,11 +640,10 @@ export default function ReviewerPanel({ me }) {
                     );
                   })}
                 </ul>
-              )}
             </section>
           )}
 
-          {canLeave && (
+          {canLeave && leave.length > 0 && (
             <section>
               <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
                 <h3 className="text-[10px] tracking-[0.25em] opacity-60">
@@ -648,10 +665,7 @@ export default function ReviewerPanel({ me }) {
                   </button>
                 )}
               </div>
-              {leave.length === 0 ? (
-                <EmptyState text="No pending leave requests." />
-              ) : (
-                <ul className="space-y-2">
+              <ul className="space-y-2">
                   {leave.map(req => {
                     const emp = empMap[req.employee_id];
                     return (
@@ -740,7 +754,6 @@ export default function ReviewerPanel({ me }) {
                     );
                   })}
                 </ul>
-              )}
             </section>
           )}
 
@@ -749,7 +762,7 @@ export default function ReviewerPanel({ me }) {
               hit her queue the moment a manager approves them. Mounted
               above HistorySection so she finds them with the rest of
               her morning queue scan. */}
-          {canPerm && (
+          {canPerm && rejoinQueue.length > 0 && (
             <RejoiningSection
               queue={rejoinQueue}
               empMap={empMap}
@@ -782,7 +795,8 @@ export default function ReviewerPanel({ me }) {
             />
           )}
         </>
-      )}
+        );
+      })()}
           {hrModalReq && (
         <HrApprovalModal
           request={hrModalReq}
@@ -820,6 +834,93 @@ function EmptyState({ text }) {
     <div className="rounded-xl p-6 text-center text-xs opacity-60 border" style={{ borderColor: 'var(--border-soft)' }}>
       <Clock className="w-4 h-4 mx-auto mb-2 opacity-50" />
       {text}
+    </div>
+  );
+}
+
+// ─── All-caught-up hero ──────────────────────────────────────────────────────
+// Shown when no leave / permission / rejoining is waiting on the
+// reviewer. Replaces the three vertically stacked empty-state cards
+// with one tasteful corporate-style status panel — green check, a
+// short message, and a small recent-activity readout so the page
+// still feels informative and Bashaier knows the system is alive.
+function AllCaughtUpHero({ recentLeaveDecisions = [], recentPermDecisions = [], recentRejoinDecisions = [], showHistory = false }) {
+  // 24-hour and 7-day decision counts across all kinds — gives Bashaier
+  // a quick "I've been productive" pulse without forcing her to scroll
+  // to the history below.
+  const now = Date.now();
+  const day  = now - 24 * 3_600_000;
+  const week = now - 7  * 24 * 3_600_000;
+
+  const tsOf = (r, kind) =>
+    new Date(kind === 'rejoin' ? r.return_hr_decided_at : r.hr_decided_at).getTime();
+
+  const all = [
+    ...recentLeaveDecisions.map(r  => ({ t: tsOf(r, 'leave'),  kind: 'leave'  })),
+    ...recentPermDecisions.map(r   => ({ t: tsOf(r, 'perm'),   kind: 'perm'   })),
+    ...recentRejoinDecisions.map(r => ({ t: tsOf(r, 'rejoin'), kind: 'rejoin' })),
+  ];
+  const decidedToday = all.filter(d => d.t >= day).length;
+  const decidedWeek  = all.filter(d => d.t >= week).length;
+
+  const now2 = new Date();
+  const greeting = now2.getHours() < 12 ? 'morning'
+                : now2.getHours() < 17 ? 'afternoon'
+                : 'evening';
+
+  return (
+    <div
+      className="rounded-2xl border overflow-hidden"
+      style={{
+        borderColor: 'rgba(15, 76, 42, 0.18)',
+        background: 'linear-gradient(135deg, #F0FDF4 0%, #ECFDF5 60%, #FFFDF7 100%)',
+      }}
+    >
+      <div className="px-8 py-10 flex flex-col sm:flex-row items-start sm:items-center gap-6">
+        {/* Big status icon */}
+        <div
+          className="w-16 h-16 rounded-full flex items-center justify-center flex-shrink-0"
+          style={{ background: '#FFFFFF', border: '2px solid #047857' }}
+        >
+          <CheckCircle2 className="w-9 h-9" style={{ color: '#047857' }} />
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="text-[10px] tracking-[0.25em] mb-1.5" style={{ color: '#047857', fontWeight: 700 }}>
+            ALL CAUGHT UP
+          </div>
+          <h3 className="serif text-2xl mb-1" style={{ color: '#0A0A0A', fontWeight: 500 }}>
+            Nothing waiting on you this {greeting}.
+          </h3>
+          <p className="text-sm" style={{ color: '#1F1B16', opacity: 0.8 }}>
+            Every leave, permission, and rejoining request has been actioned. New submissions will appear here automatically.
+          </p>
+        </div>
+      </div>
+
+      {showHistory && (decidedToday > 0 || decidedWeek > 0) && (
+        <div
+          className="px-8 py-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs"
+          style={{
+            borderTop: '1px solid rgba(15, 76, 42, 0.12)',
+            background: 'rgba(255, 253, 247, 0.6)',
+            color: '#0A0A0A',
+          }}
+        >
+          <div className="text-[10px] tracking-[0.2em] font-semibold opacity-60">
+            YOUR ACTIVITY
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="font-semibold" style={{ fontSize: '14px' }}>{decidedToday}</span>
+            <span className="opacity-70">decided in the last 24 hours</span>
+          </div>
+          <div className="opacity-30">·</div>
+          <div className="flex items-center gap-1.5">
+            <span className="font-semibold" style={{ fontSize: '14px' }}>{decidedWeek}</span>
+            <span className="opacity-70">in the last 7 days</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
