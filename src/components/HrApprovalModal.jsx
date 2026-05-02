@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from 'react';
-import { X, Check, Loader2, Download, Mail, Calendar, Users, FileText, AlertTriangle, ShieldCheck, ExternalLink } from 'lucide-react';
+import React, { useState, useCallback, useEffect } from 'react';
+import { X, Check, Loader2, Download, Mail, Calendar, Users, FileText, AlertTriangle, ShieldCheck, ExternalLink, Clipboard, Image as ImageIcon, Sparkles } from 'lucide-react';
 import { supabase, directPatch } from '../supabaseClient.js';
 import { fmtDate } from '../lib/leaveLogic.js';
 import { logAction } from '../lib/audit.js';
@@ -112,6 +112,113 @@ export default function HrApprovalModal({ request, employee, manager, substitute
   })();
   const sickBracket = (sickYTD !== null) ? classifySickLeaveBracket(sickYTD, request?.days || 0) : null;
 
+  // OCR-driven auto-fill from a pasted/dropped Sehhaty screenshot.
+  // Saves Bashaier from typing 8 fields by hand. The image stays
+  // entirely in the browser — Tesseract.js runs locally and the
+  // raw image is never sent to any server. Fields that OCR is
+  // confident about overwrite the pre-filled (from-request) values;
+  // fields it doesn't find leave the existing values alone so the
+  // happy path never gets worse.
+  const [ocrBusy, setOcrBusy]       = useState(false);
+  const [ocrError, setOcrError]     = useState('');
+  const [ocrThumb, setOcrThumb]     = useState(null);   // data URL for preview
+  const [ocrLastRun, setOcrLastRun] = useState(null);   // {confidence, fieldsFound}
+
+  const applyOcrToForm = useCallback(async (imageBlob) => {
+    if (!imageBlob) return;
+    setOcrBusy(true);
+    setOcrError('');
+    setOcrLastRun(null);
+    try {
+      // Show preview thumbnail while OCR runs
+      const reader = new FileReader();
+      reader.onload = () => setOcrThumb(reader.result);
+      reader.readAsDataURL(imageBlob);
+
+      // Lazy-import to keep tesseract.js out of the main bundle
+      const { extractFromImage } = await import('../lib/sehhatyOcr.js');
+      const parsed = await extractFromImage(imageBlob);
+
+      // Track which fields actually got values so the success
+      // toast can say something useful instead of just 'done'.
+      const found = [];
+
+      if (parsed.startDate) { setSeenStart(parsed.startDate); found.push('start'); }
+      if (parsed.endDate)   { setSeenEnd(parsed.endDate);     found.push('end'); }
+      if (parsed.days != null) {
+        setSeenDays(String(parsed.days));
+        found.push('days');
+      }
+      if (parsed.issueDate) { setSeenIssueDate(parsed.issueDate); found.push('issue date'); }
+      if (parsed.idNumber)  { setSeenIdNumber(parsed.idNumber);   found.push('Iqama'); }
+      if (parsed.name)      { setSeenName(parsed.name);           found.push('name'); }
+      if (parsed.doctor)    { setSeenDoctor(parsed.doctor);       found.push('doctor'); }
+      if (parsed.specialty) { setSeenSpecialty(parsed.specialty); found.push('specialty'); }
+
+      setOcrLastRun({
+        confidence: parsed.confidence,
+        fieldsFound: found,
+      });
+
+      // If OCR also pulled out a leave ID, sanity-check it against
+      // the request's recorded code. We don't write it to a form
+      // field (the leave ID is on the request itself, not in the
+      // cross-check inputs) — but we surface a warning if they
+      // differ, since that's a strong signal the screenshot is
+      // for the wrong person or wrong leave.
+      if (parsed.leaveId && request?.sehhaty_code) {
+        const a = String(parsed.leaveId).replace(/\s+/g, '').toUpperCase();
+        const b = String(request.sehhaty_code).replace(/\s+/g, '').toUpperCase();
+        if (a !== b) {
+          setOcrError(`Leave ID on screenshot (${a}) does not match the request (${b}). Confirm you pasted the right screenshot.`);
+        }
+      }
+    } catch (err) {
+      setOcrError(err?.message || String(err));
+    } finally {
+      setOcrBusy(false);
+    }
+  }, [request]);
+
+  // Clipboard paste — Bashaier presses Cmd+V (or Ctrl+V) anywhere
+  // in the modal. We listen on the document while the modal is
+  // open so she doesn't have to click a specific zone first.
+  useEffect(() => {
+    if (!confirmOpen) return undefined;
+    const onPaste = (e) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type && item.type.startsWith('image/')) {
+          const blob = item.getAsFile();
+          if (blob) {
+            e.preventDefault();
+            applyOcrToForm(blob);
+            return;
+          }
+        }
+      }
+    };
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  }, [confirmOpen, applyOcrToForm]);
+
+  const onDropImage = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const file = e.dataTransfer?.files?.[0];
+    if (file && file.type.startsWith('image/')) {
+      applyOcrToForm(file);
+    }
+  }, [applyOcrToForm]);
+
+  const onPickImage = useCallback((e) => {
+    const file = e.target?.files?.[0];
+    if (file && file.type.startsWith('image/')) {
+      applyOcrToForm(file);
+    }
+  }, [applyOcrToForm]);
+
   // Apply the verification — called from the confirmation modal
   // after Bashaier explicitly says yes. Writes the verification
   // timestamp, verifier, the cross-check fields she typed in (the
@@ -186,6 +293,11 @@ export default function HrApprovalModal({ request, employee, manager, substitute
     setSeenIssueDate(request.start_date || '');
     setSeenDoctor('');
     setSeenSpecialty('');
+    // Reset OCR state from any previous open of this modal
+    setOcrBusy(false);
+    setOcrError('');
+    setOcrThumb(null);
+    setOcrLastRun(null);
     setConfirmOpen(true);
   }, [request, employee]);
 
@@ -700,14 +812,28 @@ export default function HrApprovalModal({ request, employee, manager, substitute
                 CROSS-CHECK · SEHHATY CERTIFICATE
               </div>
               <h3 className="text-lg" style={{ fontFamily: 'Georgia, serif', color: '#0A0A0A', fontWeight: 500 }}>
-                Type in what you see on Sehhaty
+                Cross-check the Sehhaty certificate
               </h3>
               <div className="text-[11px] mt-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>
-                Each field below is pre-filled from the request. Adjust any value that differs from the Sehhaty result. The system compares both sides and blocks save if dates or day count don't match.
+                Paste your Sehhaty screenshot below and the system reads every field for you. Or type the values in by hand if you prefer. Either way, dates and day count must match the request to verify.
               </div>
             </div>
 
             <div className="px-5 py-4 space-y-4">
+              {/* OCR auto-fill — paste or drop the Sehhaty screenshot
+                  and the system reads every field. The image stays
+                  in the browser; nothing is uploaded to a server.
+                  Bashaier saves ~30 seconds of manual typing per
+                  sick leave verification. */}
+              <OcrPasteZone
+                busy={ocrBusy}
+                error={ocrError}
+                thumb={ocrThumb}
+                lastRun={ocrLastRun}
+                onDrop={onDropImage}
+                onPick={onPickImage}
+              />
+
               {/* Reference card — leave ID + format diagnostic */}
               <div className="rounded-lg p-3"
                 style={{ background: '#FFFFFF', border: '1px solid var(--border-soft)' }}>
@@ -958,6 +1084,166 @@ function CrossRow({ label, requestValue, field, mismatches, isLast, children }) 
         {requestValue}
       </div>
       <div className="col-span-4">{children}</div>
+    </div>
+  );
+}
+
+// ─── OcrPasteZone ────────────────────────────────────────────────────────────
+// The paste-screenshot zone at the top of the cross-check modal.
+// Three states:
+//   idle    — empty zone, prompts the user to paste, drop, or pick
+//             a file. Cmd/Ctrl+V works anywhere in the modal.
+//   busy    — OCR running. Shows the thumbnail dimmed with a
+//             spinner overlay so Bashaier sees progress.
+//   done    — thumbnail still visible (so she can confirm she
+//             pasted the right screenshot), with a green success
+//             banner listing the fields that were filled.
+//
+// The 'fields filled' list is intentionally specific: 'days, start,
+// end, doctor' tells Bashaier at a glance what to spot-check. If a
+// critical field is missing from the list (e.g. start date didn't
+// OCR), she knows to type it by hand or re-paste a clearer image.
+function OcrPasteZone({ busy, error, thumb, lastRun, onDrop, onPick }) {
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = React.useRef(null);
+
+  const onDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(true);
+  };
+  const onDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+  };
+  const onDropInner = (e) => {
+    setDragOver(false);
+    onDrop(e);
+  };
+
+  const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform || '');
+  const pasteShortcut = isMac ? '⌘V' : 'Ctrl+V';
+
+  return (
+    <div
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDropInner}
+      className="rounded-lg p-4 transition-colors"
+      style={{
+        background: dragOver ? '#FEF3C7' : '#FFFEF7',
+        border: dragOver ? '2px dashed #B45309' : '2px dashed #E8DEC4',
+        cursor: thumb ? 'default' : 'pointer',
+      }}
+      onClick={(e) => {
+        // Only trigger file picker when clicking empty zone, not
+        // the thumbnail or buttons inside it.
+        if (!thumb && e.target === e.currentTarget && fileInputRef.current) {
+          fileInputRef.current.click();
+        }
+      }}
+    >
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={onPick}
+      />
+
+      <div className="flex items-start gap-3">
+        {/* Thumbnail or icon */}
+        {thumb ? (
+          <div className="relative flex-shrink-0">
+            <img
+              src={thumb}
+              alt="Sehhaty screenshot"
+              className="rounded"
+              style={{
+                width: 96,
+                height: 96,
+                objectFit: 'cover',
+                border: '1px solid var(--border-soft)',
+                opacity: busy ? 0.5 : 1,
+              }}
+            />
+            {busy && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Loader2 className="w-6 h-6 animate-spin" style={{ color: '#B45309' }}/>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center"
+            style={{ background: '#FEF3C7', color: '#B45309' }}>
+            {busy
+              ? <Loader2 className="w-5 h-5 animate-spin"/>
+              : <Sparkles className="w-5 h-5"/>}
+          </div>
+        )}
+
+        {/* Right side: instructions or status */}
+        <div className="flex-1 min-w-0">
+          <div className="text-[10px] tracking-[0.2em] font-bold mb-1" style={{ color: '#B45309' }}>
+            {busy ? 'READING SCREENSHOT…' :
+             lastRun ? 'AUTO-FILLED FROM SCREENSHOT' :
+             'AUTO-FILL FROM SEHHATY SCREENSHOT'}
+          </div>
+
+          {!thumb && !busy && (
+            <>
+              <div className="text-[12px] mb-2" style={{ color: '#0A0A0A' }}>
+                Press <kbd className="px-1.5 py-0.5 rounded font-mono text-[10px]" style={{ background: '#FFFFFF', border: '1px solid var(--border-soft)' }}>{pasteShortcut}</kbd> to paste a screenshot, drag a file here, or
+                {' '}
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
+                  className="underline"
+                  style={{ color: '#B45309', fontWeight: 600 }}>
+                  choose a file
+                </button>
+                .
+              </div>
+              <div className="text-[10px]" style={{ color: '#0A0A0A', opacity: 0.6 }}>
+                Tip: take a screenshot of the Sehhaty inquiry result with{' '}
+                <kbd className="px-1 py-0.5 rounded font-mono text-[9px]" style={{ background: '#FFFFFF', border: '1px solid var(--border-soft)' }}>{isMac ? '⌘⇧4' : 'Win+Shift+S'}</kbd>
+                {' '}then paste it here. The image stays in your browser — nothing is uploaded.
+              </div>
+            </>
+          )}
+
+          {busy && (
+            <div className="text-[12px]" style={{ color: '#0A0A0A' }}>
+              Reading the certificate… (first run downloads ~4MB language data)
+            </div>
+          )}
+
+          {!busy && lastRun && (
+            <>
+              <div className="text-[12px] flex items-center gap-1.5 mb-1" style={{ color: '#065F46', fontWeight: 600 }}>
+                <Check className="w-3.5 h-3.5"/> Filled {lastRun.fieldsFound.length} field{lastRun.fieldsFound.length === 1 ? '' : 's'}: {lastRun.fieldsFound.join(', ')}
+              </div>
+              <div className="text-[10px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+                Spot-check the values below — OCR isn't perfect. Re-paste a sharper screenshot if anything looks off.
+              </div>
+              {lastRun.fieldsFound.length === 0 && (
+                <div className="text-[11px] mt-1 px-2 py-1 rounded inline-block"
+                  style={{ background: '#FEF3C7', color: '#92400E' }}>
+                  No fields recognised. The image may be too small or blurry — try a sharper screenshot.
+                </div>
+              )}
+            </>
+          )}
+
+          {!busy && error && (
+            <div className="text-[11px] mt-1 px-2 py-1 rounded inline-block"
+              style={{ background: '#FEE2E2', color: '#991B1B' }}>
+              <AlertTriangle className="w-3 h-3 inline-block mr-1 align-text-bottom"/> {error}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
