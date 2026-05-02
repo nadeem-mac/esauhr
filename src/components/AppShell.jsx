@@ -675,8 +675,10 @@ export default function AppShell({ session, me, onRefreshMe }) {
         {tab === 'attendance' && (() => {
           // Defense in depth: even if someone forces tab='attendance' via URL or
           // dev tools, the Attendance feature only renders for users with the
-          // can_view_attendance flag.
-          if (!me?.can_view_attendance) return null;
+          // can_view_attendance flag — OR for the universal admin (Nadeem),
+          // who always has access regardless of which feature flags happen
+          // to be set on his employee record.
+          if (!me?.can_view_attendance && !me?.is_admin) return null;
           return <AttendanceView me={me} employees={employees} />;
         })()}
         {tab === 'requests' && (
