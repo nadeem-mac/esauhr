@@ -9,6 +9,7 @@ import { summariseMonth, PERMISSION_QUOTA } from '../lib/permissionLogic.js';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
 import MyApplicationsCard from './MyApplicationsCard.jsx';
 import MyRejoiningCard from './MyRejoiningCard.jsx';
+import SubstituteFreedCard from './SubstituteFreedCard.jsx';
 import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
 import { Download } from 'lucide-react';
 
@@ -279,7 +280,12 @@ export default function PersonalDashboard({
       {/* REJOINING — back-from-leave staff prompt. Shows when one of MY
           approved leaves has finished and I haven't submitted my
           rejoining yet (or it was sent back). Hides itself otherwise. */}
-      <MyRejoiningCard me={me} />
+      <MyRejoiningCard me={me} employees={employees} />
+
+      {/* SUBSTITUTE FREED — when a colleague the user was covering for
+          submits their rejoining, the DB trigger fires a notification
+          and this card surfaces it. Hides itself when no unread. */}
+      <SubstituteFreedCard me={me} />
 
       {/* SUBSTITUTION REQUESTS — colleagues asking ME to cover for them.
           Stays on its own (yellow card) because it's an action surface

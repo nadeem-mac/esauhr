@@ -525,7 +525,7 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
       run(fmtDateMed(reportingBackDate), { size: 21, bold: true, color: C_BRAND }),
       run('.', { size: 21, color: C_TEXT }),
     ],
-    spacing: { before: 60, after: 40, line: 280 },
+    spacing: { before: 40, after: 30, line: 260 },
     alignment: AlignmentType.JUSTIFIED,
   });
 
@@ -609,9 +609,21 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
     columnWidths: [LABEL_W, VALUE_W],
     rows: [
       formRow('Actual return date', 'تاريخ العودة الفعلي', actualReturn ? fmtDateLong(actualReturn) : '—', { bold: true, color: C_BRAND }),
-      formRow('Days absent',         'أيام الغياب',         daysAbsent),
       formRow('Punctuality',         'الالتزام بالموعد',    diffLabel),
       formRow('Return status',       'حالة العودة',         returnStatus.replace('_', ' '), { bold: true, color: statusColor }),
+      // Balance reconciliation — only render when there's a credit to
+      // report. Early return → unused days credited back to leave_balances
+      // adjustment. The numeric is set by PendingReturnsCard at HR
+      // approval time.
+      ...(typeof request.balance_after === 'number' && request.balance_after > 0
+        ? [formRow(
+            'Balance credited',
+            'الرصيد المُعاد',
+            `+${request.balance_after} day${request.balance_after === 1 ? '' : 's'}  (early return — credited back to leave balance)`,
+            { bold: true, color: C_BRAND },
+          )]
+        : []
+      ),
       formRow('Notes from staff',    'ملاحظات الموظف',      request.return_notes || '—'),
     ],
   });
@@ -714,17 +726,17 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
         spacer(20),
         sectionBanner('ORIGINAL LEAVE', 'تفاصيل الإجازة الأصلية'),
         origLeaveTable,
-        spacer(30),
+        spacer(20),
         // Narrative declaration — first-person formal statement, the
         // soul of the legacy template.
         declarationStripEn,
         declarationStripAr,
         // Admin/payroll instruction — explicit memo to accounts.
         adminBlock,
-        spacer(30),
+        spacer(20),
         sectionBanner('RETURN DETAILS', 'تفاصيل العودة'),
         returnTable,
-        spacer(30),
+        spacer(20),
         sigTable,
         footerBlock,
       ],

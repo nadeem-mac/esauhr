@@ -229,6 +229,31 @@ export function checkEligibility(employee, leaveType, requests = [], asOf = new 
     }
   }
 
+  // Rejoining gate — block new leave applications when the employee has
+  // a prior approved leave whose end_date has passed but whose return
+  // workflow has not yet reached final approval. Forces compliance with
+  // the rejoining process: staff must close out their last leave (submit
+  // → manager approve → HR approve) before applying for the next one.
+  // Pending stages (pending_manager, pending_hr) and rejected stages
+  // both count as "still open" — the employee needs to either get the
+  // current rejoining approved or resubmit a rejected one.
+  const todayISO = asOf.toISOString().slice(0, 10);
+  const unreturned = requests.find(r =>
+    r.employee_id === employee.id &&
+    r.stage === 'approved' &&
+    r.end_date < todayISO &&
+    r.return_stage !== 'approved'
+  );
+  if (unreturned) {
+    const stageLabel = !unreturned.return_stage
+      ? 'not yet submitted'
+      : unreturned.return_stage.replace(/_/g, ' ');
+    errors.push(
+      `Rejoining required for previous leave (${unreturned.start_date} → ${unreturned.end_date}). ` +
+      `Current rejoining status: ${stageLabel}. Submit and complete the rejoining workflow before applying for new leave.`
+    );
+  }
+
   return { ok: errors.length === 0, errors, warnings };
 }
 

@@ -131,24 +131,69 @@ export default function PendingReturnsCard({ me, employees, scope = 'manager' })
     if (!me?.id) return;
     setBusyId(req.id);
     try {
-      const patch = scope === 'manager'
-        ? {
-            return_stage:              'pending_hr',
-            return_manager_decided_at: new Date().toISOString(),
-            return_manager_decided_by: me.id,
-            return_rejection_reason:   null,
+      let patch;
+      if (scope === 'manager') {
+        patch = {
+          return_stage:              'pending_hr',
+          return_manager_decided_at: new Date().toISOString(),
+          return_manager_decided_by: me.id,
+          return_rejection_reason:   null,
+        };
+      } else {
+        // HR final approval — compute balance_after and credit early
+        // returns. If staff returned earlier than end_date, the
+        // unused days are credited back as a leave_balances adjustment
+        // so their available balance is accurate going forward.
+        patch = {
+          return_stage:              'approved',
+          return_hr_decided_at:      new Date().toISOString(),
+          return_hr_decided_by:      me.id,
+          // Final approval also stamps the legacy fields used by the
+          // Rejoining Report and the verify page.
+          returned_at:               new Date().toISOString(),
+          return_confirmed_by:       me.id,
+          return_status:             'returned',
+          return_rejection_reason:   null,
+        };
+
+        try {
+          // Days saved if staff returned early. actual_return_date is the
+          // first day BACK at work, so anything earlier than end_date+1
+          // means the leave was cut short.
+          const planned = new Date(req.end_date);
+          const actual  = new Date(req.actual_return_date);
+          // expectedReturn = end_date + 1 day
+          const expectedReturn = new Date(planned); expectedReturn.setDate(expectedReturn.getDate() + 1);
+          const daysSaved = Math.max(0, Math.floor((expectedReturn - actual) / 86_400_000));
+
+          if (daysSaved > 0) {
+            // Credit back to the leave_balances row. Adjustment is
+            // additive to whatever's already there.
+            const yr = new Date(req.start_date).getFullYear();
+            const balRows = await directGet(
+              'leave_balances',
+              `select=id,adjustment,adjustment_note&employee_id=eq.${encodeURIComponent(req.employee_id)}` +
+              `&leave_type_id=eq.${encodeURIComponent(req.leave_type_id)}&year=eq.${yr}`,
+              { timeoutMs: 6000 },
+            );
+            if (Array.isArray(balRows) && balRows.length > 0) {
+              const cur = balRows[0];
+              const newAdj = Number(cur.adjustment || 0) + daysSaved;
+              const note = `${cur.adjustment_note ? cur.adjustment_note + ' · ' : ''}` +
+                           `+${daysSaved}d credited (early return on rejoining ${new Date().toISOString().slice(0,10)})`;
+              await directPatch('leave_balances', 'id', cur.id, {
+                adjustment: newAdj,
+                adjustment_note: note,
+              }, { timeoutMs: 6000 });
+            }
+            patch.balance_after = daysSaved; // store the credit count for reporting
+          } else {
+            patch.balance_after = 0;
           }
-        : {
-            return_stage:              'approved',
-            return_hr_decided_at:      new Date().toISOString(),
-            return_hr_decided_by:      me.id,
-            // Final approval also stamps the legacy fields used by the
-            // Rejoining Report and the verify page.
-            returned_at:               new Date().toISOString(),
-            return_confirmed_by:       me.id,
-            return_status:             'returned',
-            return_rejection_reason:   null,
-          };
+        } catch (e) {
+          console.warn('[rejoining approve] balance reconciliation failed (non-fatal):', e);
+        }
+      }
       await directPatch('leave_requests', 'id', req.id, patch, { timeoutMs: 10000 });
       cancel();
       await load();
