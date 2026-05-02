@@ -15,7 +15,7 @@ import { downloadRejoiningReportForRequest } from '../lib/rejoiningReport.js';
 //                       Reject   →  rejected_by_manager (sends back to staff)
 //
 //   scope='hr'       →  return_stage='pending_hr'                  (primary)
-//                       + end_date + 3 days < today &&
+//                       + end_date + 1 day < today &&
 //                         return_stage IS NULL                      (no-show)
 //                       company-wide
 //                       Approve  →  approved (final) — sets returned_at,
@@ -27,7 +27,7 @@ import { downloadRejoiningReportForRequest } from '../lib/rejoiningReport.js';
 // from there. They're sorted to the top with a red NO-SHOW chip.
 // =============================================================================
 
-const NO_SHOW_THRESHOLD_DAYS = 3;
+const NO_SHOW_THRESHOLD_DAYS = 1;
 
 export default function PendingReturnsCard({ me, employees, scope = 'manager' }) {
   const [rows,    setRows]    = useState([]);
@@ -75,7 +75,7 @@ export default function PendingReturnsCard({ me, employees, scope = 'manager' })
       } else {
         // HR scope — two parallel queries union'd:
         //   a) pending_hr (primary work)
-        //   b) end_date+3 < today AND return_stage IS NULL (no-shows)
+        //   b) end_date+1 < today AND return_stage IS NULL (no-shows)
         const cutoff = new Date();
         cutoff.setDate(cutoff.getDate() - NO_SHOW_THRESHOLD_DAYS);
         const cutoffISO = cutoff.toISOString().slice(0, 10);
