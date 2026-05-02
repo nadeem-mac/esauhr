@@ -296,6 +296,23 @@ export default function AttendanceView({ me, employees }) {
   const [parsedData, setParsedData]     = useState({ rows: [], dataDate: null, sheetName: null });
   const [parseError, setParseError]     = useState(null);
 
+  // File-integrity state. fileSha256 is the SHA-256 of the raw bytes;
+  // we use it to dedupe accidental re-uploads of the same file (and
+  // to record an audit row in attendance_uploads). fileSize is shown
+  // in the summary so Bashaier can sanity-check before processing.
+  // existingUpload is the row from attendance_uploads that already
+  // exists for this (data_date, file_sha256) pair — when present it
+  // means the file was processed before.
+  const [fileSha256,     setFileSha256]     = useState('');
+  const [fileSize,       setFileSize]       = useState(0);
+  const [existingUpload, setExistingUpload] = useState(null);
+  const [uploadId,       setUploadId]       = useState(null); // current upload row pk
+
+  // Per-row email confirm modal state. Holds the entry being
+  // emailed so the modal can show a TO/CC/SUBJECT preview before
+  // the mailto fires.
+  const [confirmEntry, setConfirmEntry] = useState(null); // { entry, kind: 'late'|'early'|'missed' }
+
   const [approvedLeaves, setApprovedLeaves]       = useState([]);
   const [approvedPermissions, setApprovedPerms]   = useState([]); // for the data date
   const [acceptedShifts, setAcceptedShifts]       = useState([]);
@@ -643,12 +660,44 @@ export default function AttendanceView({ me, employees }) {
     }
     try {
       const buf = await file.arrayBuffer();
+      // Compute SHA-256 of the raw bytes so duplicate uploads can be
+      // detected (same file content for the same data date). Done
+      // before parsing so the hash is available even if parsing fails.
+      const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+      const hashHex = Array.from(new Uint8Array(hashBuf))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+
       const result = await parseTimeCardXlsx(buf);
       setParsedData(result);
       setXlsxFileName(file.name);
+      setFileSha256(hashHex);
+      setFileSize(file.size || buf.byteLength);
       setSentMarkers({});
+      setUploadId(null);
+      setExistingUpload(null);
       if (!result.dataDate) {
         setParseError('The file parsed but contained no usable rows. Check the export.');
+        return;
+      }
+      // Look up any prior upload of this exact file for this exact
+      // data date — if present, surface a banner so Bashaier knows
+      // she's looking at processed history, not new work.
+      try {
+        const prior = await directGet(
+          'attendance_uploads?select=id,uploaded_by,uploaded_at,row_count&'
+          + 'data_date=eq.' + result.dataDate
+          + '&file_sha256=eq.' + hashHex
+        );
+        if (prior && prior.length > 0) {
+          setExistingUpload(prior[0]);
+          setUploadId(prior[0].id);
+        }
+      } catch (e) {
+        // Table may not exist yet (migration not run). Degrade
+        // gracefully — the rest of the UI continues to work; only
+        // the dedupe banner is suppressed.
+        console.warn('[Attendance] attendance_uploads lookup failed (migration may not be applied):', e?.message || e);
       }
     } catch (e) {
       if (e instanceof TimeCardParseError) {
@@ -677,10 +726,61 @@ export default function AttendanceView({ me, employees }) {
     setXlsxFileName('');
     setParseError(null);
     setSentMarkers({});
+    setFileSha256('');
+    setFileSize(0);
+    setExistingUpload(null);
+    setUploadId(null);
+    setConfirmEntry(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const markSent = (rowId) => setSentMarkers(prev => ({ ...prev, [rowId]: true }));
+
+  // Lazily insert (or reuse) an attendance_uploads row the first time
+  // Bashaier acts on the file. We don't write on parse — most uploads
+  // are previewed but never acted upon (e.g., she opens to check
+  // counts). The first violation log triggers the audit row.
+  // Idempotent: subsequent calls re-use the same uploadId for the
+  // session. If the table doesn't exist (migration not yet run), we
+  // log a warning and continue — violations still get written.
+  const ensureUploadRecorded = useCallback(async () => {
+    if (uploadId) return uploadId;
+    if (!fileSha256 || !csvDate || !xlsxFileName) return null;
+    try {
+      // The unique (data_date, file_sha256) means a re-upload of the
+      // exact same file for the same date returns 23505. We catch
+      // that and re-fetch the existing row's id.
+      const payload = {
+        uploaded_by: me?.id || 'H94830',
+        data_date: csvDate,
+        sheet_name: parsedData.sheetName || null,
+        file_name: xlsxFileName,
+        file_size_bytes: fileSize || null,
+        file_sha256: fileSha256,
+        row_count: parsedData.rows?.length || 0,
+      };
+      const created = await directPost('attendance_uploads', payload, { timeoutMs: 6000 });
+      const id = created?.[0]?.id || null;
+      if (id) setUploadId(id);
+      return id;
+    } catch (e) {
+      const msg = String(e?.message || e);
+      if (msg.includes('23505') || msg.includes('duplicate key')) {
+        // Race or genuine re-upload — fetch the existing row and use it.
+        try {
+          const prior = await directGet(
+            'attendance_uploads?select=id&data_date=eq.' + csvDate + '&file_sha256=eq.' + fileSha256
+          );
+          const id = prior?.[0]?.id || null;
+          if (id) setUploadId(id);
+          return id;
+        } catch (_) { /* fall through */ }
+      }
+      // Table missing or permission denied — degrade gracefully.
+      console.warn('[Attendance] could not record upload row:', msg);
+      return null;
+    }
+  }, [uploadId, fileSha256, csvDate, xlsxFileName, fileSize, parsedData, me]);
 
   // Build mailto for a row
   // P5: write a row to attendance_violations whenever Bashaier clicks an
@@ -689,7 +789,9 @@ export default function AttendanceView({ me, employees }) {
   // the same row gets a 23505 from Postgres, which we swallow as success.
   // Real schema (verified against live DB): id, employee_id, violation_date,
   // violation_type, minutes_off, punch_in_time, punch_out_time,
-  // scheduled_start, scheduled_end, recorded_by, recorded_at, email_sent_at.
+  // scheduled_start, scheduled_end, recorded_by, recorded_at, email_sent_at,
+  // plus the new upload_id and permission_id columns from
+  // migration_attendance_uploads.sql.
   const logViolation = useCallback(async ({ entry, violationType, minutesOff, punchInTime, punchOutTime, scheduledStart, scheduledEnd }) => {
     const empId = entry.employee.id;
     const markerKey = empId + ':' + violationType;
@@ -697,6 +799,10 @@ export default function AttendanceView({ me, employees }) {
     // network round trip. If the insert fails for an unexpected reason
     // (not a 23505 dup), we revert below.
     setLoggedMarkers(prev => ({ ...prev, [markerKey]: true }));
+    // Make sure the upload row exists before recording the violation —
+    // gives us the audit trail. ensureUploadRecorded is idempotent;
+    // subsequent violations on the same upload share the upload_id.
+    const ensuredUploadId = await ensureUploadRecorded();
     const row = {
       employee_id: empId,
       violation_date: csvDate,                 // ISO yyyy-mm-dd from csvDate
@@ -708,6 +814,11 @@ export default function AttendanceView({ me, employees }) {
       scheduled_end:   scheduledEnd   || null,
       recorded_by: me?.id || 'H94830',
       email_sent_at: new Date().toISOString(),
+      // New fields. Pin which upload + which permission (if any) was
+      // on file at the moment of action. permission_id is null on
+      // pure no-permission violations — that's the explicit case.
+      upload_id:     ensuredUploadId || null,
+      permission_id: entry?.permission?.id || null,
     };
     try {
       await directPost('attendance_violations', row, { timeoutMs: 6000 });
@@ -804,6 +915,44 @@ export default function AttendanceView({ me, employees }) {
   // ─── Render ────────────────────────────────────────────────────────────
   const hasFile = !!xlsxFileName;
 
+  // Date sanity flags — surface as a banner above the count summary.
+  // These detect the most common upload mistakes:
+  //   • TODAY  — file is for today's date; staff haven't punched out
+  //              yet, so most rows will look INCOMPLETE
+  //   • STALE  — file is for a date >7 days old; possibly the wrong file
+  //   • FUTURE — file is for a date after today; almost certainly a
+  //              wrong export or device clock drift
+  const dateSanity = useMemo(() => {
+    if (!csvDate) return null;
+    const todayIso = new Date().toISOString().slice(0, 10);
+    if (csvDate > todayIso) return { kind: 'FUTURE', label: 'Future-dated file' };
+    if (csvDate === todayIso) return { kind: 'TODAY', label: 'Today\'s data' };
+    const ageMs = new Date(todayIso).getTime() - new Date(csvDate).getTime();
+    const ageDays = Math.round(ageMs / 86_400_000);
+    if (ageDays > 7) return { kind: 'STALE', label: `${ageDays} days old`, ageDays };
+    return null;
+  }, [csvDate]);
+
+  // Anomaly detection — if a high fraction of rows are INCOMPLETE
+  // (only one punch on file), the file was probably exported mid-day
+  // before staff punched out. We compute this from the raw parsed
+  // rows so it works regardless of which detection bucket they
+  // landed in.
+  const anomaly = useMemo(() => {
+    const rows = parsedData.rows || [];
+    if (rows.length === 0) return null;
+    const incomplete = rows.filter(r => r.uniqueCount <= 1).length;
+    const pct = Math.round((incomplete / rows.length) * 100);
+    if (pct >= 50) {
+      return {
+        kind: 'MOSTLY_INCOMPLETE',
+        message: `${incomplete} of ${rows.length} rows (${pct}%) have only one punch on file. ` +
+                 `This usually means the file was exported before staff punched out — please re-export at end of day.`,
+      };
+    }
+    return null;
+  }, [parsedData.rows]);
+
   return (
     <div className="space-y-6" style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
       {/* Header */}
@@ -814,10 +963,11 @@ export default function AttendanceView({ me, employees }) {
         <h1 className="leading-none" style={{ fontFamily: 'Georgia, serif', fontSize: 'clamp(2.2rem, 4.5vw, 3rem)', fontWeight: 400, color: '#1F1B16', letterSpacing: '-0.02em' }}>
           Daily attendance check.
         </h1>
-        <p className="text-sm mt-3 max-w-3xl" style={{ color: '#1F1B16' }}>
-          Upload yesterday's <strong>Time Card export (CSV)</strong>. The system will flag late arrivals,
-          early departures, and missed punches per ESAU policy. You review each notice and click Send in your mail client.
-          Anyone with an approved leave on that date is excluded automatically.
+        <p className="text-sm mt-3 max-w-3xl" style={{ color: '#0A0A0A' }}>
+          Upload yesterday's <strong>Time Card export (.xlsx)</strong>. The system flags late arrivals,
+          early departures, and incomplete punches per ESAU policy, cross-referenced against approved
+          permissions. You review each notice and click Send in your mail client. Anyone with an approved
+          leave on that date is excluded automatically.
         </p>
       </div>
 
@@ -875,12 +1025,78 @@ export default function AttendanceView({ me, employees }) {
         />
       )}
 
+      {/* INTEGRITY BANNERS — surface upload sanity issues prominently
+          before any actions are taken. Each is independent; multiple
+          can show at once. Order: most critical first. */}
+
+      {/* Duplicate-upload notice — same file content for the same
+          data date has been processed before. Cheap dedupe via
+          SHA-256 hash. Doesn't block re-processing — just informs. */}
+      {hasFile && existingUpload && (
+        <div className="rounded-2xl border p-4 flex items-start gap-3"
+             style={{ borderColor: '#A16207', background: '#FEFCE8' }}>
+          <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: '#A16207' }}/>
+          <div className="text-sm" style={{ color: '#0A0A0A' }}>
+            <div className="font-bold mb-1">This file was processed before.</div>
+            <div>
+              The same content (identical SHA-256) was uploaded for {formatDateLong(csvDate)} on{' '}
+              <strong>{new Date(existingUpload.uploaded_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</strong>
+              {' '}({existingUpload.row_count} rows). Re-processing is allowed but any prior
+              violation emails are already on record — the buttons below will skip duplicates
+              automatically.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Date sanity — today / future / very stale */}
+      {hasFile && dateSanity && (
+        <div className="rounded-2xl border p-4 flex items-start gap-3"
+             style={{
+               borderColor: dateSanity.kind === 'FUTURE' ? '#BE123C' : '#A16207',
+               background:  dateSanity.kind === 'FUTURE' ? '#FEF2F2' : '#FEFCE8',
+             }}>
+          <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5"
+            style={{ color: dateSanity.kind === 'FUTURE' ? '#BE123C' : '#A16207' }}/>
+          <div className="text-sm" style={{ color: '#0A0A0A' }}>
+            <div className="font-bold mb-1">{dateSanity.label}.</div>
+            <div>
+              {dateSanity.kind === 'TODAY' && (
+                <>This file is for today — staff who haven't punched out yet will appear as Incomplete.
+                Wait until end of day for a complete picture.</>
+              )}
+              {dateSanity.kind === 'FUTURE' && (
+                <>The data date ({formatDateLong(csvDate)}) is in the future. Likely the wrong file
+                — please verify before sending notices.</>
+              )}
+              {dateSanity.kind === 'STALE' && (
+                <>The data date ({formatDateLong(csvDate)}) is {dateSanity.ageDays} days old. Make sure
+                this is the file you intended to process.</>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* High-incompleteness anomaly — typically means file was
+          exported mid-day before staff punched out. */}
+      {hasFile && !csvIsWeekend && anomaly?.kind === 'MOSTLY_INCOMPLETE' && (
+        <div className="rounded-2xl border p-4 flex items-start gap-3"
+             style={{ borderColor: '#A16207', background: '#FEFCE8' }}>
+          <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: '#A16207' }}/>
+          <div className="text-sm" style={{ color: '#0A0A0A' }}>
+            <div className="font-bold mb-1">Most rows look incomplete.</div>
+            <div>{anomaly.message}</div>
+          </div>
+        </div>
+      )}
+
       {/* Sections — only show if file uploaded and not weekend */}
       {hasFile && csvIsWeekend && (
         <div className="rounded-2xl border p-6 text-center" style={{ borderColor: '#D4C7AB', background: '#FAF6EC' }}>
           <Calendar className="w-8 h-8 mx-auto mb-3" style={{ color: '#1F1B16' }}/>
           <div style={{ fontFamily: 'Georgia, serif', fontSize: '18px', color: '#1F1B16' }}>This was a weekend day.</div>
-          <div className="text-sm mt-2" style={{ color: '#1F1B16' }}>
+          <div className="text-sm mt-2" style={{ color: '#0A0A0A' }}>
             {formatDateLong(csvDate)} is a Friday or Saturday — no detection runs on KSA weekends.
           </div>
         </div>
@@ -926,7 +1142,7 @@ export default function AttendanceView({ me, employees }) {
             })}
             renderButton={(entry) => entry.actionable ? (
               <RowButton
-                onClick={() => handleEmailLate(entry)}
+                onClick={() => setConfirmEntry({ entry, kind: 'late' })}
                 onMarkSent={() => markSent(entry.id)}
                 sent={!!sentMarkers[entry.id]}
                 logged={entry.logged}
@@ -976,7 +1192,7 @@ export default function AttendanceView({ me, employees }) {
             })}
             renderButton={(entry) => entry.actionable ? (
               <RowButton
-                onClick={() => handleEmailEarly(entry)}
+                onClick={() => setConfirmEntry({ entry, kind: 'early' })}
                 onMarkSent={() => markSent(entry.id)}
                 sent={!!sentMarkers[entry.id]}
                 logged={entry.logged}
@@ -1012,7 +1228,7 @@ export default function AttendanceView({ me, employees }) {
             })}
             renderButton={(entry) => (
               <RowButton
-                onClick={() => handleEmailMissed(entry)}
+                onClick={() => setConfirmEntry({ entry, kind: 'missed' })}
                 onMarkSent={() => markSent(entry.id)}
                 sent={!!sentMarkers[entry.id]}
                 logged={entry.logged}
@@ -1051,6 +1267,25 @@ export default function AttendanceView({ me, employees }) {
             </div>
           )}
         </>
+      )}
+
+      {/* Confirm-before-send modal — every email button routes through
+          here for an extra check. The mailto: link only fires after
+          explicit confirmation. */}
+      {confirmEntry && (
+        <ConfirmEmailModal
+          confirm={confirmEntry}
+          csvDate={csvDate}
+          getManagerEmail={getManagerEmail}
+          onCancel={() => setConfirmEntry(null)}
+          onConfirm={() => {
+            const { entry, kind } = confirmEntry;
+            setConfirmEntry(null);
+            if (kind === 'late')   handleEmailLate(entry);
+            else if (kind === 'early')  handleEmailEarly(entry);
+            else if (kind === 'missed') handleEmailMissed(entry);
+          }}
+        />
       )}
     </div>
   );
@@ -1208,6 +1443,143 @@ function RowButton({ onClick, onMarkSent, sent, logged, label }) {
           LOGGED
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Confirm-before-send modal ───────────────────────────────────────────
+// Shows a TO / CC / SUBJECT / preview before the mailto: fires.
+// Mirrors the pattern used by PermissionApprovedModal and
+// RejoiningApprovedModal — Bashaier reviews the recipients,
+// confirms, the email opens in her client. No silent sends.
+function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, onCancel, onConfirm }) {
+  const { entry, kind } = confirm;
+  const dateLong = formatDateLong(csvDate);
+  const cc = [getManagerEmail(entry.employee), ...FIXED_CC].filter(Boolean);
+
+  // Compute preview subject + a short summary line. The full body goes
+  // out via the existing handleEmail* path; we don't duplicate it here.
+  let subject = '';
+  let summary = '';
+  if (kind === 'late') {
+    const c = lateEmailContent({
+      employee: entry.employee, dateLong,
+      punchInStr: entry.punchInStr,
+      minutesLate: entry.minutesLate,
+      scheduledStart: entry.scheduledStart,
+      lateCutoff: entry.lateCutoff,
+    });
+    subject = c.subject;
+    summary = `Late arrival on ${dateLong} — punched in ${entry.punchInStr}, ${entry.minutesLate} min after grace.`;
+  } else if (kind === 'early') {
+    const c = earlyLeaveEmailContent({
+      employee: entry.employee, dateLong,
+      punchOutStr: entry.punchOutStr,
+      scheduledEnd: entry.scheduledEnd,
+      minutesEarly: entry.minutesEarly,
+    });
+    subject = c.subject;
+    summary = `Early departure on ${dateLong} — punched out ${entry.punchOutStr}, ${entry.minutesEarly} min before scheduled ${entry.scheduledEnd}.`;
+  } else if (kind === 'missed') {
+    const c = missedPunchEmailContent({
+      employee: entry.employee, dateLong, missingType: entry.missingType,
+    });
+    subject = c.subject;
+    summary = `Missing punch on ${dateLong} — ${entry.missingType === 'both' ? 'both in and out' : entry.missingType === 'in' ? 'punch-in' : 'punch-out'} not recorded.`;
+  }
+
+  return (
+    <div
+      onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        background: 'rgba(15, 23, 42, 0.55)',
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        padding: '40px 16px', overflowY: 'auto',
+      }}
+    >
+      <div
+        className="w-full max-w-lg rounded-2xl border"
+        style={{
+          borderColor: '#D4C7AB',
+          background: '#FFFDF7',
+          boxShadow: '0 12px 40px rgba(31,27,22,0.18)',
+        }}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between px-6 py-5 border-b" style={{ borderColor: '#E5E0D5' }}>
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+                 style={{ background: '#FEF3C7', border: '1px solid #FDE68A' }}>
+              <Mail className="w-5 h-5" style={{ color: '#A16207' }}/>
+            </div>
+            <div>
+              <h2 style={{ fontFamily: 'Georgia, serif', fontSize: '18px', color: '#0A0A0A', fontWeight: 500 }}>
+                Confirm before sending
+              </h2>
+              <div className="text-xs mt-1" style={{ color: '#0A0A0A' }}>
+                Review the recipients and content. Your mail client will open the draft — you still need to click Send there.
+              </div>
+            </div>
+          </div>
+          <button type="button" onClick={onCancel}
+            className="p-1.5 rounded-full hover:bg-black/5 transition-colors" aria-label="Cancel">
+            <X className="w-4 h-4" style={{ color: '#0A0A0A' }}/>
+          </button>
+        </div>
+
+        {/* Recipient + subject preview */}
+        <div className="px-6 py-4 border-b text-xs" style={{ borderColor: '#E5E0D5', color: '#0A0A0A' }}>
+          <div className="grid grid-cols-[60px_1fr] gap-x-3 gap-y-1.5">
+            <span style={{ fontWeight: 700, letterSpacing: '0.18em', fontSize: '10px' }}>TO</span>
+            <span>
+              {entry.employee.name}{' '}
+              {entry.employee.email
+                ? <em style={{ opacity: 0.7 }}>&lt;{entry.employee.email}&gt;</em>
+                : <span style={{ color: '#B91C1C' }}>(no email on file)</span>}
+            </span>
+
+            <span style={{ fontWeight: 700, letterSpacing: '0.18em', fontSize: '10px' }}>CC</span>
+            <span>
+              {getManagerEmail(entry.employee) ? 'Manager + ' : ''}{cc.length} executive{cc.length === 1 ? '' : 's'}
+            </span>
+
+            <span style={{ fontWeight: 700, letterSpacing: '0.18em', fontSize: '10px' }}>SUBJECT</span>
+            <span>{subject}</span>
+
+            <span style={{ fontWeight: 700, letterSpacing: '0.18em', fontSize: '10px' }}>SUMMARY</span>
+            <span>{summary}</span>
+          </div>
+          {entry.permission && (
+            <div className="mt-3 px-3 py-2 rounded-md text-[11px]"
+                 style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' }}>
+              <strong>Note:</strong> An approved permission is on file for this date
+              ({String(entry.permission.time_from || '').slice(0,5)}–{String(entry.permission.time_to || '').slice(0,5)}).
+              The email will explain that the punch was outside the permitted window.
+            </div>
+          )}
+        </div>
+
+        {/* Action buttons */}
+        <div className="p-5 flex flex-col sm:flex-row gap-2.5">
+          <button type="button" onClick={onCancel}
+            className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl border text-sm transition-colors"
+            style={{ background: '#FFFFFF', borderColor: '#D4C7AB', color: '#0A0A0A', fontWeight: 500 }}>
+            Cancel
+          </button>
+          <button type="button" onClick={onConfirm} disabled={!entry.employee.email}
+            className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm transition-colors disabled:opacity-50"
+            style={{ background: '#0A0A0A', color: '#FFFDF7', fontWeight: 500 }}>
+            <Send className="w-4 h-4"/> Open email draft
+          </button>
+        </div>
+
+        {!entry.employee.email && (
+          <div className="px-5 pb-4 text-xs" style={{ color: '#B91C1C' }}>
+            No email address on file for {entry.employee.name}. Please add one in the directory before sending.
+          </div>
+        )}
+      </div>
     </div>
   );
 }
