@@ -1040,6 +1040,61 @@ export default function AttendanceView({ me, employees }) {
     return null;
   }, [parsedData.rows]);
 
+  // Sheet-name vs data-date check. The fingerprint device names its
+  // export sheet 'YYYYMMDD' (the export date — e.g. '20260502' for a
+  // file exported on 2 May 2026). The actual punches are normally for
+  // a recent prior day. Two abnormal cases worth flagging:
+  //   • Sheet date BEFORE data date — impossible if data is real, so
+  //     either the wrong file or the device clock drifted
+  //   • Sheet date >7 days AFTER data date — uncommon enough to warn
+  //     ('exporting a week-old day's data' is unusual workflow)
+  // When the sheet name doesn't parse as YYYYMMDD we just skip the
+  // check rather than warning — some export configurations name
+  // sheets differently and we shouldn't false-positive on those.
+  const sheetSanity = useMemo(() => {
+    const name = parsedData.sheetName || '';
+    const m = /^(\d{4})(\d{2})(\d{2})$/.exec(name);
+    if (!m || !csvDate) return null;
+    const sheetDate = `${m[1]}-${m[2]}-${m[3]}`;
+    if (sheetDate === csvDate) return null;
+    const sheetMs = new Date(sheetDate + 'T00:00:00Z').getTime();
+    const dataMs  = new Date(csvDate   + 'T00:00:00Z').getTime();
+    const diffDays = Math.round((sheetMs - dataMs) / 86_400_000);
+    if (diffDays < 0) {
+      return {
+        kind: 'SHEET_BEFORE_DATA',
+        sheetDate,
+        message: `The sheet is named '${name}' (decoded ${sheetDate}) but the punches are dated ${csvDate} — the export pre-dates the data. ` +
+                 `Likely the wrong file or the device clock has drifted; please verify.`,
+      };
+    }
+    if (diffDays > 7) {
+      return {
+        kind: 'SHEET_FAR_AFTER',
+        sheetDate,
+        diffDays,
+        message: `The sheet is named '${name}' (decoded ${sheetDate}) but the punches are dated ${csvDate} — that's ${diffDays} days apart. ` +
+                 `Make sure this is the file you intended to process.`,
+      };
+    }
+    return null;
+  }, [parsedData.sheetName, csvDate]);
+
+  // Read-only / preview mode. By default actions are enabled. When
+  // the duplicate-upload banner shows (existingUpload != null) we
+  // auto-flip to read-only — the same file was processed before and
+  // emails are already on record, so the sensible default is "look,
+  // don't touch". Bashaier can manually toggle either way via the
+  // Actions toggle in the FileSummary footer. State is in component
+  // scope so it persists across renders without lurching.
+  const [actionsEnabled, setActionsEnabled] = useState(true);
+  useEffect(() => {
+    // When a fresh upload comes in, restore the default. If it's a
+    // duplicate, switch to read-only. The toggle is always visible
+    // so Bashaier can override either default.
+    setActionsEnabled(!existingUpload);
+  }, [existingUpload, fileSha256]);
+
   return (
     <div className="space-y-6" style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
       {/* Header */}
@@ -1108,6 +1163,9 @@ export default function AttendanceView({ me, employees }) {
             onLeave: detection.onLeave.length,
             unknown: detection.unknownEmp.length,
           }}
+          actionsEnabled={actionsEnabled}
+          onToggleActions={() => setActionsEnabled(v => !v)}
+          isDuplicate={!!existingUpload}
           onReset={reset}
         />
       )}
@@ -1178,6 +1236,26 @@ export default function AttendanceView({ me, employees }) {
         </div>
       )}
 
+      {/* Sheet-name vs data-date mismatch. Catches mislabeled exports
+          and device clock drift. Both kinds are mid-priority — yellow
+          for stale, red-tinted yellow for impossible. */}
+      {hasFile && sheetSanity && (
+        <div className="rounded-2xl border p-4 flex items-start gap-3"
+             style={{
+               borderColor: sheetSanity.kind === 'SHEET_BEFORE_DATA' ? '#BE123C' : '#A16207',
+               background:  sheetSanity.kind === 'SHEET_BEFORE_DATA' ? '#FEF2F2' : '#FEFCE8',
+             }}>
+          <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5"
+            style={{ color: sheetSanity.kind === 'SHEET_BEFORE_DATA' ? '#BE123C' : '#A16207' }}/>
+          <div className="text-sm" style={{ color: '#0A0A0A' }}>
+            <div className="font-bold mb-1">
+              {sheetSanity.kind === 'SHEET_BEFORE_DATA' ? 'Sheet name pre-dates the data.' : 'Sheet name far from data date.'}
+            </div>
+            <div>{sheetSanity.message}</div>
+          </div>
+        </div>
+      )}
+
       {/* Sections — only show if file uploaded and not weekend */}
       {hasFile && csvIsWeekend && (
         <div className="rounded-2xl border p-6 text-center" style={{ borderColor: '#D4C7AB', background: '#FAF6EC' }}>
@@ -1197,7 +1275,7 @@ export default function AttendanceView({ me, employees }) {
             iconColor="#BE123C"
             barFrom="#FB7185" barTo="#BE123C"
             empty="Nobody arrived late — well done team."
-            onBulk={(rows) => setBulkSession({ kind: 'late', queue: rows, sentIds: new Set() })}
+            onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'late', queue: rows, sentIds: new Set() }) : null}
             entries={detection.late.map(e => {
               // Detail line carries WITH/WITHOUT permission status. Bashaier
               // wants the difference visible at a glance.
@@ -1232,7 +1310,13 @@ export default function AttendanceView({ me, employees }) {
                 monthlyCount: monthlyCounts[e.employee.id] || 0,
               };
             })}
-            renderButton={(entry) => entry.actionable ? (
+            renderButton={(entry) => !actionsEnabled ? (
+              <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
+                style={{ background: '#F4F4EE', color: '#0A0A0A', border: '1px solid #E5E0D5' }}
+                title="Read-only mode — toggle 'Actions on' in the file summary above to enable emailing.">
+                READ-ONLY
+              </span>
+            ) : entry.actionable ? (
               <RowButton
                 onClick={() => setConfirmEntry({ entry, kind: 'late' })}
                 onMarkSent={() => markSent(entry.id)}
@@ -1255,7 +1339,7 @@ export default function AttendanceView({ me, employees }) {
             iconColor="#A16207"
             barFrom="#FACC15" barTo="#A16207"
             empty="Nobody left early — full day attendance recorded."
-            onBulk={(rows) => setBulkSession({ kind: 'early', queue: rows, sentIds: new Set() })}
+            onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'early', queue: rows, sentIds: new Set() }) : null}
             entries={detection.early.map(e => {
               const baseDetail = 'Punched out at ' + e.punchOutStr + ' — '
                 + e.minutesEarly + ' min before scheduled ' + e.scheduledEnd
@@ -1288,7 +1372,13 @@ export default function AttendanceView({ me, employees }) {
                 monthlyCount: monthlyCounts[e.employee.id] || 0,
               };
             })}
-            renderButton={(entry) => entry.actionable ? (
+            renderButton={(entry) => !actionsEnabled ? (
+              <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
+                style={{ background: '#F4F4EE', color: '#0A0A0A', border: '1px solid #E5E0D5' }}
+                title="Read-only mode — toggle 'Actions on' in the file summary above to enable emailing.">
+                READ-ONLY
+              </span>
+            ) : entry.actionable ? (
               <RowButton
                 onClick={() => setConfirmEntry({ entry, kind: 'early' })}
                 onMarkSent={() => markSent(entry.id)}
@@ -1311,7 +1401,7 @@ export default function AttendanceView({ me, employees }) {
             iconColor="#1D4ED8"
             barFrom="#60A5FA" barTo="#1D4ED8"
             empty="All staff punched in and out — perfect compliance."
-            onBulk={(rows) => setBulkSession({ kind: 'missed', queue: rows, sentIds: new Set() })}
+            onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'missed', queue: rows, sentIds: new Set() }) : null}
             entries={detection.missed.map(e => {
               const types = e.missingType === 'both' ? ['missed_in', 'missed_out']
                 : e.missingType === 'in' ? ['missed_in'] : ['missed_out'];
@@ -1334,7 +1424,13 @@ export default function AttendanceView({ me, employees }) {
                 monthlyCount: monthlyCounts[e.employee.id] || 0,
               });
             })}
-            renderButton={(entry) => (
+            renderButton={(entry) => !actionsEnabled ? (
+              <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
+                style={{ background: '#F4F4EE', color: '#0A0A0A', border: '1px solid #E5E0D5' }}
+                title="Read-only mode — toggle 'Actions on' in the file summary above to enable emailing.">
+                READ-ONLY
+              </span>
+            ) : (
               <RowButton
                 onClick={() => setConfirmEntry({ entry, kind: 'missed' })}
                 onMarkSent={() => markSent(entry.id)}
@@ -1430,7 +1526,7 @@ export default function AttendanceView({ me, employees }) {
 
 // ─── Sub-components ──────────────────────────────────────────────────────
 
-function FileSummary({ fileName, csvDate, isWeekend, totalRows, counts, onReset }) {
+function FileSummary({ fileName, csvDate, isWeekend, totalRows, counts, actionsEnabled, onToggleActions, isDuplicate, onReset }) {
   return (
     <div className="rounded-2xl border bg-white p-5" style={{ borderColor: '#D4C7AB' }}>
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -1441,18 +1537,49 @@ function FileSummary({ fileName, csvDate, isWeekend, totalRows, counts, onReset 
           <div className="flex items-center gap-2" style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#1F1B16' }}>
             <FileText className="w-5 h-5"/> {fileName}
           </div>
-          <div className="text-sm mt-2" style={{ color: '#1F1B16' }}>
+          <div className="text-sm mt-2" style={{ color: '#0A0A0A' }}>
             <strong>Date detected:</strong> {csvDate ? formatDateLong(csvDate) : 'unknown'}
             {isWeekend && <span style={{ color: '#A16207', marginLeft: '8px' }}>(KSA weekend — skipped)</span>}
             {' · '}<strong>{totalRows}</strong> rows parsed
           </div>
         </div>
-        <button
-          onClick={onReset}
-          className="text-xs px-3 py-1.5 rounded-full border flex items-center gap-1.5"
-          style={{ borderColor: '#D4C7AB', color: '#1F1B16' }}>
-          <X className="w-3.5 h-3.5"/> Upload different file
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Actions toggle. When OFF, every email/bulk button on the
+              page renders as a disabled placeholder so Bashaier can
+              study the data without risk of accidentally triggering
+              an email. Auto-OFF on duplicate uploads (handled in the
+              parent component) — toggle here lets her override either
+              default. */}
+          {typeof onToggleActions === 'function' && (
+            <button onClick={onToggleActions}
+              className="text-xs px-3 py-1.5 rounded-full border flex items-center gap-1.5"
+              style={{
+                borderColor: actionsEnabled ? '#0F4C2A' : '#D4C7AB',
+                background:  actionsEnabled ? '#ECFDF5' : '#FFFFFF',
+                color: '#0A0A0A',
+                fontWeight: 600,
+              }}
+              title={actionsEnabled
+                ? 'Email and bulk-action buttons are enabled. Click to switch to read-only mode.'
+                : 'Read-only mode: email buttons are hidden. Click to enable actions.'}>
+              <span className="inline-block w-2 h-2 rounded-full"
+                style={{ background: actionsEnabled ? '#047857' : '#9CA3AF' }}/>
+              {actionsEnabled ? 'Actions on' : 'Read-only'}
+              {isDuplicate && actionsEnabled && (
+                <span className="text-[9px] px-1 py-0.5 rounded font-bold tracking-wider"
+                  style={{ background: '#FDE68A', color: '#92400E' }}>
+                  DUPLICATE
+                </span>
+              )}
+            </button>
+          )}
+          <button
+            onClick={onReset}
+            className="text-xs px-3 py-1.5 rounded-full border flex items-center gap-1.5"
+            style={{ borderColor: '#D4C7AB', color: '#1F1B16' }}>
+            <X className="w-3.5 h-3.5"/> Upload different file
+          </button>
+        </div>
       </div>
 
       {!isWeekend && (
@@ -1575,6 +1702,28 @@ function FlaggedSection({ title, kicker, iconColor, barFrom, barTo, entries, emp
                   <div className="flex items-center gap-1.5 mt-1 text-xs" style={{ color: '#0A0A0A' }}>
                     {entry.metaIcon} {entry.detail}
                   </div>
+                  {/* Mid-day punches — surfaced inline when the staff
+                      member punched 3+ times that day. Shows the
+                      timestamps that aren't first or last. Often these
+                      are lunch-break punches, site visits, or device
+                      retries. Purely informational at this stage —
+                      shifts integration will turn these into proper
+                      mid-day check counts later. */}
+                  {entry.row?._tc?.midDayPunches?.length > 0 && (
+                    <div className="flex items-center gap-1.5 mt-1 text-[11px] flex-wrap" style={{ color: '#0A0A0A', opacity: 0.85 }}>
+                      <span className="text-[9px] tracking-wider font-bold opacity-60">MID-DAY</span>
+                      {entry.row._tc.midDayPunches.map((t, i) => (
+                        <span key={i}
+                          className="px-1.5 py-0.5 rounded font-mono text-[10px]"
+                          style={{ background: '#F4F4EE', border: '1px solid #E5E0D5' }}>
+                          {t.slice(0, 5)}
+                        </span>
+                      ))}
+                      <span className="text-[10px] opacity-60">
+                        ({entry.row._tc.uniqueCount} punches total)
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2">
