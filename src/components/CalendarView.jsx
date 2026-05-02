@@ -1,8 +1,8 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { ChevronLeft, ChevronRight, Calendar as CalIcon, Sunrise, Sunset, Briefcase, X, Sun } from 'lucide-react';
 import { Card, Avatar, Pill, Empty } from './Dashboard.jsx';
 import { toISO, todayISO, fmtDateShort, KSA_WEEKEND } from '../lib/leaveLogic.js';
-import { directGet } from '../supabaseClient.js';
+import { directGet, supabase } from '../supabaseClient.js';
 
 // ─────────────────────────────────────────────────────────────────────────
 // CalendarView — month grid with overlays for every workforce signal:
@@ -49,38 +49,41 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
   const [hoveredISO, setHoveredISO] = useState(null);
   // Clicked cell — opens the day detail modal grouped by person.
   const [clickedISO, setClickedISO] = useState(null);
+  // Last-selected cell. Persists past modal close so the user can
+  // see which day they just inspected when they review the calendar
+  // in sequence (close modal → glance at next day → click).
+  // Cleared by clicking an empty cell or pressing Esc on the grid.
+  const [selectedISO, setSelectedISO] = useState(null);
 
   // Permissions: prefer the prop but fall back to a self-fetch so the
   // calendar still works on routes that don't pre-load permissions.
   const [permsLocal, setPermsLocal] = useState([]);
-  useEffect(() => {
+  const refetchPermsLocal = useCallback(async () => {
     if (Array.isArray(permsProp)) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const monthStart = toISO(firstDay);
-        const monthEnd   = toISO(lastDay);
-        // For regular staff, scope the query to their own PSN so
-        // we never even pull other people's permissions over the
-        // wire — defense in depth on top of the client-side filter.
-        const scopeQs = (!canSeeAll && scopeId)
-          ? '&employee_id=eq.' + encodeURIComponent(scopeId)
-          : '';
-        const data = await directGet(
-          'permission_requests?select=id,employee_id,type,permission_date,time_from,time_to,hours,stage'
-          + '&stage=eq.approved'
-          + '&permission_date=gte.' + monthStart
-          + '&permission_date=lte.' + monthEnd
-          + scopeQs
-          + '&order=permission_date.asc'
-        );
-        if (!cancelled) setPermsLocal(data || []);
-      } catch (e) {
-        if (!cancelled) setPermsLocal([]);
-      }
-    })();
-    return () => { cancelled = true; };
+    try {
+      const monthStart = toISO(firstDay);
+      const monthEnd   = toISO(lastDay);
+      // For regular staff, scope the query to their own PSN so
+      // we never even pull other people's permissions over the
+      // wire — defense in depth on top of the client-side filter.
+      const scopeQs = (!canSeeAll && scopeId)
+        ? '&employee_id=eq.' + encodeURIComponent(scopeId)
+        : '';
+      const data = await directGet(
+        'permission_requests?select=id,employee_id,type,permission_date,time_from,time_to,hours,stage'
+        + '&stage=eq.approved'
+        + '&permission_date=gte.' + monthStart
+        + '&permission_date=lte.' + monthEnd
+        + scopeQs
+        + '&order=permission_date.asc'
+      );
+      setPermsLocal(data || []);
+    } catch (e) {
+      setPermsLocal([]);
+    }
   }, [permsProp, year, month, canSeeAll, scopeId]);
+  useEffect(() => { refetchPermsLocal(); }, [refetchPermsLocal]);
+
   // When the parent passes permissions and the user can't see all,
   // clip the prop to the user's own rows so we don't leak even via
   // accidentally-broad parent fetches.
@@ -93,29 +96,65 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
   // Shifts: self-fetch the visible month, scoped to the user when
   // they're not allowed to see everyone's.
   const [shifts, setShifts] = useState([]);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const monthStart = toISO(firstDay);
-        const monthEnd   = toISO(lastDay);
-        const scopeQs = (!canSeeAll && scopeId)
-          ? '&employee_id=eq.' + encodeURIComponent(scopeId)
-          : '';
-        const data = await directGet(
-          'employee_shifts?select=id,employee_id,shift_date,shift_start,shift_end,status'
-          + '&shift_date=gte.' + monthStart
-          + '&shift_date=lte.' + monthEnd
-          + scopeQs
-          + '&order=shift_date.asc'
-        );
-        if (!cancelled) setShifts(data || []);
-      } catch (e) {
-        if (!cancelled) setShifts([]);
-      }
-    })();
-    return () => { cancelled = true; };
+  const refetchShifts = useCallback(async () => {
+    try {
+      const monthStart = toISO(firstDay);
+      const monthEnd   = toISO(lastDay);
+      const scopeQs = (!canSeeAll && scopeId)
+        ? '&employee_id=eq.' + encodeURIComponent(scopeId)
+        : '';
+      const data = await directGet(
+        'employee_shifts?select=id,employee_id,shift_date,shift_start,shift_end,status'
+        + '&shift_date=gte.' + monthStart
+        + '&shift_date=lte.' + monthEnd
+        + scopeQs
+        + '&order=shift_date.asc'
+      );
+      setShifts(data || []);
+    } catch (e) {
+      setShifts([]);
+    }
   }, [year, month, canSeeAll, scopeId]);
+  useEffect(() => { refetchShifts(); }, [refetchShifts]);
+
+  // Realtime updates. Subscribes to the three tables that drive the
+  // calendar (leaves, permissions, shifts) and refetches any time
+  // a row changes. Supabase's free tier has fairly tight realtime
+  // budgets so we debounce: at most one refetch every 800ms even if
+  // multiple changes land back-to-back.
+  //
+  // Leaves arrive via the `requests` prop maintained by AppShell —
+  // AppShell already runs its own realtime subscription, so we just
+  // listen for permission and shift changes here. The brief catch-up
+  // (refetch even if AppShell has already updated state) is cheap
+  // and avoids the 'I just approved this and it didn't show' moment.
+  useEffect(() => {
+    let lastRun = 0;
+    let pending = null;
+    const trigger = (refetch) => {
+      const now = Date.now();
+      const since = now - lastRun;
+      const delay = since < 800 ? 800 - since : 0;
+      clearTimeout(pending);
+      pending = setTimeout(() => {
+        lastRun = Date.now();
+        refetch();
+      }, delay);
+    };
+
+    const channel = supabase
+      .channel('calendar-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'permission_requests' },
+        () => { if (!Array.isArray(permsProp)) trigger(refetchPermsLocal); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'employee_shifts' },
+        () => trigger(refetchShifts))
+      .subscribe();
+
+    return () => {
+      clearTimeout(pending);
+      supabase.removeChannel(channel);
+    };
+  }, [refetchPermsLocal, refetchShifts, permsProp]);
 
   // Leaves come in as a pre-loaded prop — filter them client-side
   // for non-admin/HR users. Memoised so the lookup helpers below
@@ -299,12 +338,18 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
               bg = '#FAF5E8'; // distinctly tinted weekend
             }
 
+            const isSelected = selectedISO === iso;
+
             return (
               <div key={i}
                 onMouseEnter={() => d && setHoveredISO(iso)}
                 onMouseLeave={() => setHoveredISO(prev => prev === iso ? null : prev)}
                 onClick={() => {
                   if (!d) return;
+                  // Always remember which day was clicked for the
+                  // persistent highlight; only open the modal when
+                  // there's something to show.
+                  setSelectedISO(iso);
                   if (hasEvents) setClickedISO(iso);
                 }}
                 className={"min-h-[64px] sm:min-h-[78px] p-1.5 relative transition-all duration-150 " +
@@ -313,6 +358,14 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
                   borderRight:  dow < 6 ? '1px solid #E8DEC4' : 'none',
                   borderBottom: '1px solid #E8DEC4',
                   background: bg,
+                  // Persistent highlight on the last-clicked cell —
+                  // an inset ring in brand green. Survives modal
+                  // close so Bashaier can see which day she just
+                  // reviewed when scanning sequentially.
+                  boxShadow: isSelected
+                    ? 'inset 0 0 0 2px #0F4C2A'
+                    : undefined,
+                  zIndex: isSelected ? 5 : undefined,
                 }}>
                 {/* Top accent stripe — coloured bar at the top of the
                     cell when it's today or a holiday. Quick visual

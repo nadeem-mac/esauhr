@@ -350,6 +350,34 @@ export default function AppShell({ session, me, onRefreshMe }) {
     return count;
   }, [requests, permissions, employees, me, isAdmin, isHrReviewer]);
 
+  // Today-on-calendar count for the badge on the Calendar tab. Counts
+  // distinct people with any approved event happening today — leaves
+  // covering today, permissions filed for today, shifts assigned to
+  // today. Surfaces 'how many staff are doing something out-of-the-
+  // ordinary right now' in a single number, so the calendar pulls
+  // attention only on busy days.
+  // Scoped to the user's view: admin/HR see everyone; staff see
+  // themselves only (mirrors CalendarView's role gating).
+  const calendarTodayCount = useMemo(() => {
+    if (!me) return 0;
+    const today = new Date().toISOString().slice(0, 10);
+    const canSeeAll = isAdmin || isHrReviewer;
+    const peopleToday = new Set();
+    (requests || []).forEach(r => {
+      if (r.status !== 'approved') return;
+      if (r.start_date > today || r.end_date < today) return;
+      if (!canSeeAll && r.employee_id !== me.id) return;
+      peopleToday.add(r.employee_id);
+    });
+    (permissions || []).forEach(p => {
+      if (p.stage !== 'approved') return;
+      if (p.permission_date !== today) return;
+      if (!canSeeAll && p.employee_id !== me.id) return;
+      peopleToday.add(p.employee_id);
+    });
+    return peopleToday.size;
+  }, [requests, permissions, me, isAdmin, isHrReviewer]);
+
   const signOut = async () => {
     // Bulletproof sign-out: clear local/session storage, race the supabase API
     // against a 3s timeout, then hard-reload back to the login screen. This
@@ -613,6 +641,17 @@ export default function AppShell({ session, me, onRefreshMe }) {
                 <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full"
                   style={{ background: 'var(--clay)', color: 'var(--paper)' }}>
                   {pendingRegCount}
+                </span>
+              )}
+              {t.id === 'calendar' && calendarTodayCount > 0 && (
+                // Calendar 'today' badge — green pill matching the
+                // brand colour. Distinct from the red 'urgent' tones
+                // used on Reviews/Requests so it reads as 'fyi' not
+                // 'action needed'.
+                <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full font-bold"
+                  style={{ background: '#0F4C2A', color: '#FFFFFF', minWidth: '18px', textAlign: 'center' }}
+                  title={`${calendarTodayCount} ${calendarTodayCount === 1 ? 'person has' : 'people have'} an event today`}>
+                  {calendarTodayCount}
                 </span>
               )}
             </button>
