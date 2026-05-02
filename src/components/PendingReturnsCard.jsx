@@ -73,17 +73,26 @@ export default function PendingReturnsCard({ me, employees, scope = 'manager' })
           { timeoutMs: 10000 },
         );
       } else {
-        // HR scope — two parallel queries union'd:
-        //   a) pending_hr (primary work)
-        //   b) end_date+1 < today AND return_stage IS NULL (no-shows)
+        // HR scope — three parallel queries union'd:
+        //   a) pending_hr      (primary work — manager has approved, awaiting her)
+        //   b) pending_manager (informational — staff submitted, awaiting manager;
+        //                       she sees these so she has the same early visibility
+        //                       managers get the moment a request comes in)
+        //   c) end_date+1 < today AND return_stage IS NULL (no-shows)
         const cutoff = new Date();
         cutoff.setDate(cutoff.getDate() - NO_SHOW_THRESHOLD_DAYS);
         const cutoffISO = cutoff.toISOString().slice(0, 10);
-        const [pendingHr, noShows] = await Promise.all([
+        const [pendingHr, pendingMgr, noShows] = await Promise.all([
           directGet(
             'leave_requests',
             `select=*&stage=eq.approved&return_stage=eq.pending_hr` +
             `&order=return_manager_decided_at.asc&limit=200`,
+            { timeoutMs: 10000 },
+          ).catch(() => []),
+          directGet(
+            'leave_requests',
+            `select=*&stage=eq.approved&return_stage=eq.pending_manager` +
+            `&order=return_submitted_at.asc&limit=200`,
             { timeoutMs: 10000 },
           ).catch(() => []),
           directGet(
@@ -94,8 +103,9 @@ export default function PendingReturnsCard({ me, employees, scope = 'manager' })
           ).catch(() => []),
         ]);
         data = [
-          ...(Array.isArray(pendingHr) ? pendingHr : []),
-          ...(Array.isArray(noShows)   ? noShows   : []),
+          ...(Array.isArray(pendingHr)  ? pendingHr  : []),
+          ...(Array.isArray(pendingMgr) ? pendingMgr : []),
+          ...(Array.isArray(noShows)    ? noShows    : []),
         ];
       }
       setRows(data);
@@ -361,34 +371,49 @@ export default function PendingReturnsCard({ me, employees, scope = 'manager' })
 
                   {!rejectMode && (
                     <div className="flex items-center gap-2 flex-wrap pt-1">
-                      <button
-                        onClick={() => approve(req)}
-                        disabled={busy}
-                        className="px-3 py-1.5 rounded-md text-xs font-semibold inline-flex items-center gap-1.5"
-                        style={{ background: '#0F4C2A', color: '#FFFFFF' }}>
-                        {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-                        {scope === 'manager' ? 'Approve & forward to HR' : 'Final approve'}
-                      </button>
-                      <button
-                        onClick={() => setRejectMode(true)}
-                        disabled={busy}
-                        className="px-3 py-1.5 rounded-md text-xs font-semibold inline-flex items-center gap-1.5"
-                        style={{ background: '#FFFFFF', color: '#0A0A0A', border: '1px solid #FCA5A5' }}>
-                        Send back
-                      </button>
-                      {/* Preview report — HR only. Manager doesn't get
-                          to download/preview the .docx because the
-                          rejoining isn't 'official' until Bashaier's
-                          final approval (which is when the QR code
-                          becomes meaningful). */}
-                      {scope === 'hr' && (
-                        <button
-                          onClick={() => handleDownload(req)}
-                          disabled={busy}
-                          className="px-3 py-1.5 rounded-md text-xs font-semibold inline-flex items-center gap-1.5"
-                          style={{ background: '#FFFFFF', color: '#0A0A0A', border: '1px solid #C9B894' }}>
-                          <FileDown className="w-3 h-3" /> Preview report
-                        </button>
+                      {/* HR sees rows from the moment staff submits, but
+                          can't act on them until the manager has approved.
+                          Action buttons are gated: only show Approve / Send
+                          back when this row is actually at the user's stage
+                          of the workflow. */}
+                      {(scope === 'manager' || isPendingHr(req)) ? (
+                        <>
+                          <button
+                            onClick={() => approve(req)}
+                            disabled={busy}
+                            className="px-3 py-1.5 rounded-md text-xs font-semibold inline-flex items-center gap-1.5"
+                            style={{ background: '#0F4C2A', color: '#FFFFFF' }}>
+                            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                            {scope === 'manager' ? 'Approve & forward to HR' : 'Final approve'}
+                          </button>
+                          <button
+                            onClick={() => setRejectMode(true)}
+                            disabled={busy}
+                            className="px-3 py-1.5 rounded-md text-xs font-semibold inline-flex items-center gap-1.5"
+                            style={{ background: '#FFFFFF', color: '#0A0A0A', border: '1px solid #FCA5A5' }}>
+                            Send back
+                          </button>
+                          {/* Preview report — HR only. Manager doesn't get
+                              to download/preview the .docx because the
+                              rejoining isn't 'official' until Bashaier's
+                              final approval (which is when the QR code
+                              becomes meaningful). */}
+                          {scope === 'hr' && (
+                            <button
+                              onClick={() => handleDownload(req)}
+                              disabled={busy}
+                              className="px-3 py-1.5 rounded-md text-xs font-semibold inline-flex items-center gap-1.5"
+                              style={{ background: '#FFFFFF', color: '#0A0A0A', border: '1px solid #C9B894' }}>
+                              <FileDown className="w-3 h-3" /> Preview report
+                            </button>
+                          )}
+                        </>
+                      ) : (
+                        // HR scope, row at pending_manager — view-only
+                        <div className="px-3 py-1.5 rounded-md text-xs italic"
+                             style={{ background: '#FEF3C7', color: '#0A0A0A' }}>
+                          Waiting for {emp?.manager_id ? 'manager' : 'department head'} to approve before HR action.
+                        </div>
                       )}
                       <button
                         onClick={cancel}
