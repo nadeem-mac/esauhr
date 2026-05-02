@@ -198,6 +198,13 @@ export default function HrApprovalModal({ request, employee, manager, substitute
                   </div>
                 </div>
 
+                {/* Substitutes section — hidden for sick leaves
+                    since they bypass the substitute stage entirely
+                    (Option B in the workflow: you can't pre-arrange
+                    illness coverage, so the request goes straight
+                    to the manager). For sick leaves the manager
+                    decides coverage themselves. */}
+                {!isSick && (
                 <div className="flex items-start gap-3 pt-3 border-t" style={{ borderColor: 'var(--border-soft, #E8E5D8)' }}>
                   <Users className="w-4 h-4 mt-0.5 opacity-70 flex-shrink-0" />
                   <div className="flex-1 text-xs">
@@ -231,6 +238,7 @@ export default function HrApprovalModal({ request, employee, manager, substitute
                     })}
                   </div>
                 </div>
+                )}
 
                 <div className="flex items-start gap-3 pt-3 border-t" style={{ borderColor: 'var(--border-soft, #E8E5D8)' }}>
                   <Check className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: '#2D5F3F' }} />

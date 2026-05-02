@@ -115,18 +115,27 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
       setError('Please specify the type of leave when "Other" is selected.');
       return;
     }
-    if (substituteIds.length === 0) {
-      setError('Please pick at least one substitute who can cover for you.');
-      return;
-    }
-    if (substituteIds.length > 3) {
-      setError('You can pick at most 3 substitutes.');
-      return;
+    // Substitutes are mandatory for normal leave types but skipped
+    // entirely for sick leave — staff are typically already ill (often
+    // back-dating the request) and can't realistically pre-arrange
+    // coverage for an unplanned absence. Sick leaves bypass the
+    // pending_substitutes stage and go straight to the manager.
+    if (!isSick) {
+      if (substituteIds.length === 0) {
+        setError('Please pick at least one substitute who can cover for you.');
+        return;
+      }
+      if (substituteIds.length > 3) {
+        setError('You can pick at most 3 substitutes.');
+        return;
+      }
     }
     setSubmitting(true);
     try {
       const decisions = {};
-      substituteIds.forEach(psn => { decisions[psn] = { decision: 'pending' }; });
+      if (!isSick) {
+        substituteIds.forEach(psn => { decisions[psn] = { decision: 'pending' }; });
+      }
       await onSubmit({
         employee_id: employeeId,
         leave_type_id: leaveTypeId,
@@ -139,9 +148,16 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
           ? `Other (${customLeaveType}): ${reason || ''}`.trim().replace(/: $/, '')
           : (reason || null),
         attachment_url: attachmentUrl || null,
-        substitute_ids: substituteIds,
+        // Sick leaves carry an empty substitutes set — the column is
+        // an array so '[]' is a valid value, and substitute_decisions
+        // stays as '{}'. This preserves schema shape for downstream
+        // queries that read these fields.
+        substitute_ids: isSick ? [] : substituteIds,
         substitute_decisions: decisions,
-        stage: 'pending_substitutes',
+        // Stage transition skips pending_substitutes for sick leaves —
+        // they go straight to the manager so the substitute-accept
+        // gate doesn't block a back-dated illness submission.
+        stage: isSick ? 'pending_manager' : 'pending_substitutes',
         // Sehhaty fields — only present when sick leave is selected.
         // Stored normalised (uppercase, no whitespace) so the values
         // are stable across edits and HR's manual cross-check.
@@ -474,8 +490,17 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
               style={{ borderColor: 'var(--border-soft)' }}/>
           </div>
 
-          {/* SUBSTITUTE PICKER — required for staff to nominate 1-3 colleagues to cover */}
-          {employee && (
+          {/* SUBSTITUTE PICKER — required for staff to nominate 1-3 colleagues to cover.
+              Skipped entirely for sick leave (the request goes straight
+              to the manager since you can't pre-arrange illness). */}
+          {employee && isSick && (
+            <div className="rounded-xl border p-3 text-xs"
+              style={{ borderColor: 'var(--border-soft)', background: '#FAFAF7', color: '#0A0A0A' }}>
+              <span style={{ fontWeight: 600 }}>Substitutes are not required for sick leave.</span>
+              <span className="opacity-70"> Your manager will be notified directly so coverage can be arranged on your behalf.</span>
+            </div>
+          )}
+          {employee && !isSick && (
             <div>
               <Label>
                 Substitutes <span className="opacity-60">(pick 1–3 colleagues from {employee.department} · {LOCATION_LABELS?.[employee.location] || employee.location})</span>
