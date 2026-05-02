@@ -2,6 +2,7 @@ import React from 'react';
 import { Card } from './Dashboard.jsx';
 import ReviewerPermissionsCard from './ReviewerPermissionsCard.jsx';
 import ManagerAssignmentsCard from './ManagerAssignmentsCard.jsx';
+import MigrationsPanel from './MigrationsPanel.jsx';
 
 export default function SettingsView({ leaveTypes, onUpdateType, employees, requests, holidays, me }) {
   const isAdmin = Boolean(me?.is_admin);
@@ -17,6 +18,9 @@ export default function SettingsView({ leaveTypes, onUpdateType, employees, requ
       )}
       {isAdmin && (
         <ManagerAssignmentsCard employees={employees} me={me} />
+      )}
+      {isAdmin && (
+        <MigrationsPanel me={me} />
       )}
 
       <Card title="Leave types" subtitle="Rename categories and adjust entitlements to match company policy">
