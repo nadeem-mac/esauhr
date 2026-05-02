@@ -1034,6 +1034,94 @@ export function buildEmailDraft({ employee, request, manager, hrApprover, substi
   return { to, cc, subject, body, mailto };
 }
 
+// ─── Sick-leave-specific email draft ──────────────────────────────────────────
+// Used when Bashaier approves a sick-leave request after verifying
+// the certificate on Sehhaty. The draft differs from the standard
+// vacation-form email in three ways:
+//   1. Subject and salutation explicitly call out 'sick leave' and
+//      'validated on Sehhaty' so the staff member knows HR has
+//      cross-checked the certificate, not just rubber-stamped it.
+//   2. Body carries the Sehhaty leave ID and verification timestamp
+//      as a paper-trail line — useful if there's ever a payroll
+//      query about the certificate later.
+//   3. There's no vacation-form attachment (sick leaves don't use
+//      the standard form). Instead, a clear instruction asks
+//      Bashaier to attach the Sehhaty inquiry screenshot before
+//      sending, since mailto: links can't carry attachments.
+//
+// The Saudi Labour Law pay bracket for the leave is included in
+// the body when known — saves a back-and-forth between staff and
+// payroll about whether days are at full / 75% / unpaid rate.
+//
+// Returns the same shape as buildEmailDraft so the caller can
+// share the same launch logic (window.location.href = mailto).
+export function buildSickLeaveApprovalEmailDraft({
+  employee, request, manager, hrApprover, payBracketLabel,
+}) {
+  const dateRange = `${fmtDateMed(request.start_date)} - ${fmtDateMed(request.end_date)}`;
+  const dayCount  = `${request.days} day${request.days === 1 ? '' : 's'}${request.is_half_day ? ' — half day' : ''}`;
+
+  const verifiedAt = request.sehhaty_verified_at
+    ? new Date(request.sehhaty_verified_at)
+    : null;
+  const verifiedAtStr = verifiedAt
+    ? `${fmtDateMed(verifiedAt.toISOString())} at ${verifiedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}`
+    : '—';
+
+  const to = [employee?.email].filter(Boolean).join(',');
+  const ccList = [
+    manager?.email,
+    CEO_EMAIL,
+    COUNTRY_HEAD_EMAIL,
+  ].filter(Boolean);
+  const cc = Array.from(new Set(ccList.filter(e => e !== to))).join(',');
+
+  const subject = `Sick leave approved & validated on Sehhaty · ${employee?.name || ''} · ${dateRange}`;
+
+  const body = [
+    `Dear ${(employee?.name || '').split(' ')[0] || 'Colleague'},`,
+    '',
+    `Your sick leave from ${dateRange} (${dayCount}) has been approved.`,
+    '',
+    `Sehhaty verification`,
+    `--------------------`,
+    `Leave ID:        ${request.sehhaty_code || '—'}`,
+    `Verified on:     ${verifiedAtStr}`,
+    `Verified by:     ${hrApprover?.name || HR_SIGNATURE.name}`,
+    request.sehhaty_verification_note
+      ? `Note:            ${request.sehhaty_verification_note}`
+      : null,
+    payBracketLabel
+      ? `Pay bracket:     ${payBracketLabel} (per Saudi Labour Law Art. 117)`
+      : null,
+    '',
+    `The certificate has been cross-checked on the Sehhaty/Seha platform.`,
+    `A copy of the verification result is attached to this email for your records.`,
+    '',
+    `Take care, get well soon, and please share an update with your manager once you're back.`,
+    '',
+    `If you have any questions about pay treatment for these days, please reply to this email.`,
+    '',
+    `Thanks and regards,`,
+    '',
+    HR_SIGNATURE.name,
+    HR_SIGNATURE.company,
+    HR_SIGNATURE.unit,
+    HR_SIGNATURE.address,
+    `WhatsApp: ${HR_SIGNATURE.whatsapp}`,
+    `Tel: ${HR_SIGNATURE.tel}`,
+    `Email: ${HR_SIGNATURE.email}`,
+  ].filter(Boolean).join('\n');
+
+  const params = new URLSearchParams();
+  if (cc) params.set('cc', cc);
+  params.set('subject', subject);
+  params.set('body', body);
+  const mailto = `mailto:${encodeURIComponent(to)}?${params.toString().replace(/\+/g, '%20')}`;
+
+  return { to, cc, subject, body, mailto };
+}
+
 // ─── helpers ──────────────────────────────────────────────────────────────────
 export function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);

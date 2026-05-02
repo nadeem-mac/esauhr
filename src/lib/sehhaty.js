@@ -19,18 +19,14 @@
 //     running total
 // =============================================================================
 
-// Direct entry point to the MOH Sehhaty sick-leave verification
-// service. This is the page that hosts the "Launch Service" link
-// where HR enters the service code + ID number to verify the
-// certificate. Going to sehhaty.sa homepage forced an extra click
-// to find the right service; this URL drops Bashaier directly
-// onto the verification page.
+// Direct entry to the Seha inquiry form where HR types the
+// leave ID and ID number to verify a Sehhaty-issued sick leave.
+// This is the closest single URL to a 'verify form' — drops
+// Bashaier straight on the input page rather than the homepage.
 //
-// Caveat: the MOH portal occasionally renames paths (the old URL
-// was eServices/Pages/Sick-Leaves.aspx; this newer one is the
-// active Sehhaty-branded landing). If MOH moves it again, this is
-// the single line to update.
-export const SEHHATY_VERIFY_URL = 'https://www.moh.gov.sa/en/eServices/Sehhaty/Pages/Sick-Leaves.aspx';
+// Caveat: Sehha periodically reorganises the inquiry routes;
+// if this 404s in future, this is the single line to update.
+export const SEHHATY_VERIFY_URL = 'https://www.seha.sa/#/inquiries/slenquiry';
 // Alternative for sick leaves issued ABROAD (foreign certificates
 // must be uploaded through the SEHA platform after diplomatic
 // attestation). We don't do this flow today but the URL is

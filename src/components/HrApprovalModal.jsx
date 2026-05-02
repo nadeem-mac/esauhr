@@ -3,7 +3,7 @@ import { X, Check, Loader2, Download, Mail, Calendar, Users, FileText, AlertTria
 import { supabase, directPatch } from '../supabaseClient.js';
 import { fmtDate } from '../lib/leaveLogic.js';
 import { logAction } from '../lib/audit.js';
-import { generateVacationFormBlob, buildEmailDraft, downloadBlob } from '../lib/vacationForm.js';
+import { generateVacationFormBlob, buildEmailDraft, buildSickLeaveApprovalEmailDraft, downloadBlob } from '../lib/vacationForm.js';
 import { SEHHATY_VERIFY_URL, classifySickLeaveBracket, diagnoseSehhatyCode } from '../lib/sehhaty.js';
 
 // Friendly label for a leave type id. Falls back to title-casing the
@@ -150,13 +150,21 @@ export default function HrApprovalModal({ request, employee, manager, substitute
         });
       } catch { /* audit log is best-effort */ }
 
-      setDraft(buildEmailDraft({ request, employee, manager, hrApprover: me, substitutes }));
+      setDraft(isSick
+        ? buildSickLeaveApprovalEmailDraft({
+            request: { ...request, sehhaty_verified_at: verifiedAt || request.sehhaty_verified_at },
+            employee,
+            manager,
+            hrApprover: me,
+            payBracketLabel: sickBracket?.endBracket?.label,
+          })
+        : buildEmailDraft({ request, employee, manager, hrApprover: me, substitutes }));
       setStep('done');
     } catch (err) {
       setError(err?.message || String(err));
       setStep('review');
     }
-  }, [request, employee, manager, substitutes, me]);
+  }, [request, employee, manager, substitutes, me, isSick, verifiedAt, sickBracket]);
 
   const downloadForm = useCallback(async () => {
     setFormGenerating(true);
@@ -496,37 +504,71 @@ export default function HrApprovalModal({ request, employee, manager, substitute
                   <Check className="w-6 h-6 text-white" />
                 </div>
                 <div className="font-semibold text-sm" style={{ color: '#1F4530' }}>
-                  Leave approved · recorded in vacation history
+                  {isSick
+                    ? 'Sick leave approved · validated on Sehhaty'
+                    : 'Leave approved · recorded in vacation history'}
                 </div>
                 <div className="text-xs opacity-70 mt-1">
-                  {request.days} day{request.days === 1 ? '' : 's'} deducted from annual balance
+                  {request.days} day{request.days === 1 ? '' : 's'}
+                  {!isSick ? ' deducted from annual balance' : ''}
                 </div>
               </div>
 
-              <div className="text-xs opacity-70 leading-relaxed">
-                Two final steps. Click <strong>Download Vacation Form</strong> to save the bilingual EN/AR form to your computer,
-                then click <strong>Open email composer</strong> — your mail client will open with the approval email pre-filled.
-                Attach the form you just downloaded before sending.
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <button onClick={downloadForm}
-                        disabled={formGenerating}
-                        className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold disabled:opacity-60"
-                        style={{ background: 'var(--paper-2, #FAF7EE)', border: '1px solid var(--border-soft, #E8E5D8)', color: '#2A2620' }}>
-                  {formGenerating
-                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</>
-                    : downloaded
-                      ? <><FileText className="w-4 h-4" style={{ color: '#2D5F3F' }} /> Downloaded · regenerate</>
-                      : <><Download className="w-4 h-4" /> Download Vacation Form</>}
-                </button>
-                <a href={draft?.url || '#'}
-                   target="_blank" rel="noreferrer"
-                   className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold"
-                   style={{ background: 'linear-gradient(135deg, #2D5F3F 0%, #1F4530 100%)', color: '#fff' }}>
-                  <Mail className="w-4 h-4" /> Open email composer
-                </a>
-              </div>
+              {/* Instructions + actions diverge by leave kind. Sick
+                  leaves don't use the bilingual vacation form, so we
+                  show only the email composer; the user is told
+                  explicitly to attach their Sehhaty screenshot to
+                  the email before sending (mailto: links can't
+                  carry attachments — that's a hard browser limit). */}
+              {isSick ? (
+                <>
+                  <div className="text-xs leading-relaxed"
+                    style={{ color: '#0A0A0A' }}>
+                    Click <strong>Open email composer</strong> — your mail client will open with the approval email pre-filled
+                    (subject, body, recipients all set). Before sending, <strong>attach the Sehhaty inquiry screenshot</strong> you
+                    saved while verifying so the staff member has the proof on record.
+                  </div>
+                  <div className="rounded-lg p-3 text-[11px]"
+                    style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}>
+                    💡 <strong>Tip — saving the Sehhaty screenshot:</strong> on the Sehhaty inquiry result page,
+                    press <code className="px-1 rounded" style={{ background: '#FFFFFF' }}>Cmd+Shift+4</code> (Mac)
+                    or <code className="px-1 rounded" style={{ background: '#FFFFFF' }}>Win+Shift+S</code> (Windows)
+                    to capture the result, then drag-drop into the email before sending.
+                  </div>
+                  <div className="grid grid-cols-1 gap-3">
+                    <a href={draft?.mailto || '#'}
+                       className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold"
+                       style={{ background: 'linear-gradient(135deg, #2D5F3F 0%, #1F4530 100%)', color: '#fff' }}>
+                      <Mail className="w-4 h-4" /> Open email composer
+                    </a>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-xs opacity-70 leading-relaxed">
+                    Two final steps. Click <strong>Download Vacation Form</strong> to save the bilingual EN/AR form to your computer,
+                    then click <strong>Open email composer</strong> — your mail client will open with the approval email pre-filled.
+                    Attach the form you just downloaded before sending.
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <button onClick={downloadForm}
+                            disabled={formGenerating}
+                            className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold disabled:opacity-60"
+                            style={{ background: 'var(--paper-2, #FAF7EE)', border: '1px solid var(--border-soft, #E8E5D8)', color: '#2A2620' }}>
+                      {formGenerating
+                        ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</>
+                        : downloaded
+                          ? <><FileText className="w-4 h-4" style={{ color: '#2D5F3F' }} /> Downloaded · regenerate</>
+                          : <><Download className="w-4 h-4" /> Download Vacation Form</>}
+                    </button>
+                    <a href={draft?.mailto || '#'}
+                       className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold"
+                       style={{ background: 'linear-gradient(135deg, #2D5F3F 0%, #1F4530 100%)', color: '#fff' }}>
+                      <Mail className="w-4 h-4" /> Open email composer
+                    </a>
+                  </div>
+                </>
+              )}
 
               {draft && (
                 <details className="text-xs">
