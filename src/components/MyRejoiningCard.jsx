@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { ArrowLeftCircle, Send, Loader2, Clock, CheckCircle2, AlertCircle, X, Mail } from 'lucide-react';
+import { ArrowLeftCircle, Send, Loader2, Clock, CheckCircle2, AlertCircle, X } from 'lucide-react';
 import { supabase, directGet, directPatch } from '../supabaseClient.js';
 import { fmtDateShort } from '../lib/leaveLogic.js';
 import RejoiningTimelineModal from './RejoiningTimelineModal.jsx';
@@ -125,41 +125,6 @@ export default function MyRejoiningCard({ me, employees = [] }) {
   // Resolve the staff's manager once — used to compose the optional
   // 'email manager' draft when the rejoining is sitting at AWAITING
   // MANAGER. The email is a plain mailto: with the leave details and
-  // a deep link to the verify page; gives the manager a nudge with
-  // everything they need to approve.
-  const myManager = me?.manager_id ? employees.find(e => e.id === me.manager_id) : null;
-  const composeManagerNudge = (req) => {
-    if (!myManager?.email) {
-      alert('Your manager has no email on file in the directory. Please contact HR.');
-      return;
-    }
-    const verifyUrl = `${window.location.origin}/verify-leave/${req.id}`;
-    const subject = `Rejoining approval needed — ${me.name} · ${fmtDateShort(req.start_date)} → ${fmtDateShort(req.end_date)}`;
-    const body = [
-      `Dear ${myManager.name?.split(' ')[0] || 'Manager'},`,
-      ``,
-      `I have submitted my rejoining request after returning from ${(req.leave_type_id || 'leave').toLowerCase()} leave.`,
-      ``,
-      `  Period:           ${fmtDateShort(req.start_date)} → ${fmtDateShort(req.end_date)}  (${req.days} day${req.days === 1 ? '' : 's'})`,
-      `  Returned on:      ${fmtDateShort(req.actual_return_date)}`,
-      `  Submitted at:     ${new Date(req.return_submitted_at || Date.now()).toLocaleString('en-GB')}`,
-      req.return_notes ? `  Notes:            ${req.return_notes}` : null,
-      ``,
-      `Please review and approve at your convenience. The full record is visible on the portal:`,
-      `  ${verifyUrl}`,
-      ``,
-      `Or open the ESAU HR portal directly: ${window.location.origin}`,
-      ``,
-      `Thank you,`,
-      me.name,
-      me.id,
-    ].filter(Boolean).join('\n');
-    const mailto = `mailto:${encodeURIComponent(myManager.email)}` +
-                   `?subject=${encodeURIComponent(subject)}` +
-                   `&body=${encodeURIComponent(body)}`;
-    window.location.href = mailto;
-  };
-
   return (
     <>
     <section className="rounded-2xl overflow-hidden mb-4"
@@ -199,25 +164,14 @@ export default function MyRejoiningCard({ me, employees = [] }) {
                   </div>
                 </div>
                 {pendingMgr && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setTimelineReq(req)}
-                      title="View approval progress"
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold cursor-pointer hover:opacity-90 transition-opacity"
-                      style={{ background: '#FEF3C7', color: '#0A0A0A', border: 'none' }}>
-                      <Clock className="w-3 h-3" /> AWAITING MANAGER
-                    </button>
-                    {myManager?.email && (
-                      <button
-                        onClick={() => composeManagerNudge(req)}
-                        className="px-2.5 py-1 rounded-md text-[10px] font-semibold inline-flex items-center gap-1.5"
-                        style={{ background: '#FFFFFF', color: '#0A0A0A', border: '1px solid #C9B894' }}
-                        title={`Compose email to ${myManager.name}`}>
-                        <Mail className="w-3 h-3" /> Email manager
-                      </button>
-                    )}
-                  </>
+                  <button
+                    type="button"
+                    onClick={() => setTimelineReq(req)}
+                    title="View approval progress"
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold cursor-pointer hover:opacity-90 transition-opacity"
+                    style={{ background: '#FEF3C7', color: '#0A0A0A', border: 'none' }}>
+                    <Clock className="w-3 h-3" /> AWAITING MANAGER
+                  </button>
                 )}
                 {pendingHr && (
                   <button

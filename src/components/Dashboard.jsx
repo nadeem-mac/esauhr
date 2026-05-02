@@ -25,15 +25,22 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
     [requests, today]
   );
 
-  // Pending decisions waiting on the viewing user. Combines leave requests
-  // and permission requests so the PENDING APPROVAL tile + 'Pending
-  // requests' card reflect everything Bashaier (or any reviewer) needs to
-  // act on. Each item is tagged with _kind so the rendering in the
-  // 'Pending requests' card below can branch correctly.
+  // Pending decisions waiting on the viewing user. Combines leave requests,
+  // permission requests, AND rejoining requests so the PENDING APPROVAL
+  // tile + 'Pending requests' card reflect everything Bashaier (or any
+  // reviewer) needs to act on. Each item is tagged with _kind so the
+  // rendering in the 'Pending requests' card below can branch correctly.
   //
   // For HR (Bashaier): leaves at stage='pending_hr' + permissions at
-  // stage='pending_hr'. For admins: same — admins see the same final-tier
-  // queue plus per-stage breakdowns elsewhere if needed.
+  // stage='pending_hr' + rejoinings at return_stage='pending_hr'. For
+  // admins: same — admins see the same final-tier queue plus per-stage
+  // breakdowns elsewhere if needed.
+  //
+  // Rejoining is a sub-state of an approved leave row (return_stage
+  // column). The parent leave is fully approved, so it has
+  // status='approved' — the standard 'pending' filter would miss it.
+  // We project a separate 'rejoin' item from any leave row whose
+  // return_stage is awaiting HR action.
   const pending = useMemo(() => {
     const leaves = (requests || [])
       .filter(r => r.status === 'pending')
@@ -41,9 +48,18 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
     const perms = (permissions || [])
       .filter(p => p.status === 'pending')
       .map(p => ({ ...p, _kind: 'permission' }));
-    return [...leaves, ...perms].sort((a, b) =>
-      new Date(b.requested_at || b.created_at) - new Date(a.requested_at || a.created_at)
-    );
+    const rejoins = (requests || [])
+      .filter(r => r.return_stage === 'pending_hr')
+      .map(r => ({ ...r, _kind: 'rejoin' }));
+    return [...leaves, ...perms, ...rejoins].sort((a, b) => {
+      const aTs = a._kind === 'rejoin'
+        ? new Date(a.return_manager_decided_at || a.return_submitted_at || 0)
+        : new Date(a.requested_at || a.created_at || 0);
+      const bTs = b._kind === 'rejoin'
+        ? new Date(b.return_manager_decided_at || b.return_submitted_at || 0)
+        : new Date(b.requested_at || b.created_at || 0);
+      return bTs - aTs;
+    });
   }, [requests, permissions]);
 
   const upcoming = useMemo(() => {
@@ -522,10 +538,44 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           ) : (
             <ul className="space-y-3">
               {pending.slice(0, 5).map(r => {
-                const emp = empMap[r.employee_id]; const tp = typeMap[r.leave_type_id];
+                const emp = empMap[r.employee_id];
                 if (!emp) return null;
+                // Per-kind row shape — leaves and rejoinings both come
+                // from leave_requests, but the rejoining is the return
+                // event so its meaningful date is actual_return_date,
+                // not start_date. Permissions render their own date too.
+                if (r._kind === 'rejoin') {
+                  return (
+                    <li key={`rejoin-${r.id}`} className="flex items-center gap-3">
+                      <Avatar id={emp.id} name={emp.name}/>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm truncate" style={{ fontWeight: 500 }}>{emp.name}</div>
+                        <div className="text-xs opacity-60">Rejoining · returned {fmtDateShort(r.actual_return_date)}</div>
+                      </div>
+                      <div className="text-[10px] px-1.5 py-0.5 rounded-full font-bold tracking-wider"
+                           style={{ background: '#ECFDF5', color: '#0F4C2A' }}>
+                        REJOIN
+                      </div>
+                    </li>
+                  );
+                }
+                if (r._kind === 'permission') {
+                  return (
+                    <li key={`perm-${r.id}`} className="flex items-center gap-3">
+                      <Avatar id={emp.id} name={emp.name}/>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm truncate" style={{ fontWeight: 500 }}>{emp.name}</div>
+                        <div className="text-xs opacity-60">
+                          {r.type === 'late_arrival' ? 'Late arrival' : 'Early leave'} · {Number(r.hours)}h
+                        </div>
+                      </div>
+                      <div className="text-xs opacity-60">{fmtDateShort(r.permission_date)}</div>
+                    </li>
+                  );
+                }
+                const tp = typeMap[r.leave_type_id];
                 return (
-                  <li key={r.id} className="flex items-center gap-3">
+                  <li key={`leave-${r.id}`} className="flex items-center gap-3">
                     <Avatar id={emp.id} name={emp.name}/>
                     <div className="min-w-0 flex-1">
                       <div className="text-sm truncate" style={{ fontWeight: 500 }}>{emp.name}</div>

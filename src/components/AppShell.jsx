@@ -299,6 +299,46 @@ export default function AppShell({ session, me, onRefreshMe }) {
     return scoped.filter(r => r.status === 'pending').length;
   }, [requests, isAdmin, me?.id]);
 
+  // Count of items waiting for THIS user's review action — drives the
+  // notification badge on the Reviews tab. Each role sees its own
+  // queue:
+  //   • HR reviewer (Bashaier) → leave + permission + rejoining at
+  //                              their final stage (pending_hr)
+  //   • Dept manager           → leave + permission + rejoining at
+  //                              the manager stage for direct reports
+  //                              (pending_manager)
+  //   • Admin (Nadeem)         → everything at any pending stage
+  // Reads only the in-memory requests + permissions arrays already
+  // populated for the dashboard, so the badge updates live with the
+  // realtime subscription — no extra fetch.
+  const reviewQueueCount = useMemo(() => {
+    if (!me) return 0;
+    const directReportIds = new Set(
+      (employees || []).filter(e => e.manager_id === me.id).map(e => e.id)
+    );
+    let count = 0;
+
+    if (isAdmin) {
+      count += (requests    || []).filter(r => /^pending/.test(r.stage || '')).length;
+      count += (permissions || []).filter(p => /^pending/.test(p.stage || '')).length;
+      count += (requests    || []).filter(r => r.return_stage === 'pending_hr' || r.return_stage === 'pending_manager').length;
+    } else if (isHrReviewer) {
+      count += (requests    || []).filter(r => r.stage === 'pending_hr').length;
+      count += (permissions || []).filter(p => p.stage === 'pending_hr').length;
+      // Bashaier sees pending_hr rejoinings as actionable AND
+      // pending_manager rejoinings as informational (per the
+      // landing-page card design). The badge surfaces both so she
+      // never misses the new ones rolling in.
+      count += (requests    || []).filter(r => r.return_stage === 'pending_hr' || r.return_stage === 'pending_manager').length;
+    } else if (directReportIds.size > 0) {
+      // Manager — only their direct reports' pending_manager rows
+      count += (requests    || []).filter(r => r.stage === 'pending_manager' && directReportIds.has(r.employee_id)).length;
+      count += (permissions || []).filter(p => p.stage === 'pending_manager' && directReportIds.has(p.employee_id)).length;
+      count += (requests    || []).filter(r => r.return_stage === 'pending_manager' && directReportIds.has(r.employee_id)).length;
+    }
+    return count;
+  }, [requests, permissions, employees, me, isAdmin, isHrReviewer]);
+
   const signOut = async () => {
     // Bulletproof sign-out: clear local/session storage, race the supabase API
     // against a 3s timeout, then hard-reload back to the login screen. This
@@ -549,6 +589,13 @@ export default function AppShell({ session, me, onRefreshMe }) {
                 <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full"
                   style={{ background: 'var(--clay)', color: 'var(--paper)' }}>
                   {pendingCount}
+                </span>
+              )}
+              {t.id === 'reviews' && reviewQueueCount > 0 && (
+                <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full font-bold"
+                  style={{ background: '#DC2626', color: '#FFFFFF', minWidth: '18px', textAlign: 'center' }}
+                  title={`${reviewQueueCount} request${reviewQueueCount === 1 ? '' : 's'} awaiting your review`}>
+                  {reviewQueueCount}
                 </span>
               )}
               {t.id === 'admin' && pendingRegCount > 0 && (
