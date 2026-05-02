@@ -9,14 +9,17 @@ import {
   classifySickLeaveBracket,
 } from '../lib/sehhaty.js';
 
-export default function NewRequestModal({ me, employees, leaveTypes, requests, balances, holidays, onClose, onSubmit }) {
+export default function NewRequestModal({ me, employees, leaveTypes, requests, balances, holidays, lockedLeaveType, onClose, onSubmit }) {
   // Picker rule: admin and HR can pick any employee (e.g. submitting on
   // someone's behalf). Everyone else can only submit for themselves — their
   // own name is pre-locked, no search box, no dropdown. This matches item 4
   // of the access-control overhaul: "the staff can only request" for himself.
   const isPicker = !!(me?.is_admin || me?.is_hr_reviewer);
   const [employeeId, setEmployeeId] = useState(isPicker ? '' : (me?.id || ''));
-  const [leaveTypeId, setLeaveTypeId] = useState('annual');
+  // When opened via the 'Sick leave' tile in the request picker, the
+  // leave type is locked to 'sick' from the start. The leave-type
+  // selector is hidden so the user can't swap to annual mid-form.
+  const [leaveTypeId, setLeaveTypeId] = useState(lockedLeaveType || 'annual');
   const [customLeaveType, setCustomLeaveType] = useState('');
   const [startDate, setStartDate] = useState(todayISO());
   const [endDate, setEndDate] = useState(todayISO());
@@ -235,7 +238,27 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
             )}
           </div>
 
-          {/* Leave type */}
+          {/* Leave type. When the modal is opened from the 'Sick
+              leave' tile in the request picker the type is locked
+              and shown as a small read-only badge instead of the
+              clickable chip strip — picking sick from the menu was
+              the choice; we don't ask again here. */}
+          {lockedLeaveType ? (
+            <div>
+              <Label>Leave type</Label>
+              {(() => {
+                const t = leaveTypes.find(x => x.id === lockedLeaveType);
+                if (!t) return null;
+                return (
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full"
+                    style={{ background: `${t.color}25`, color: t.color, fontWeight: 600 }}>
+                    <span className="inline-block w-2 h-2 rounded-full" style={{ background: t.color }}/>
+                    {t.name}
+                  </div>
+                );
+              })()}
+            </div>
+          ) : (
           <div>
             <Label>Leave type</Label>
             <div className="flex flex-wrap gap-2">
@@ -272,6 +295,7 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
               <div className="text-xs opacity-60 mt-2">{leaveType.description}</div>
             )}
           </div>
+          )}
 
           {/* Dates */}
           <div className="grid grid-cols-2 gap-3">

@@ -807,11 +807,17 @@ export default function AppShell({ session, me, onRefreshMe }) {
           onPick={(type) => setRequestFlow(type)}
         />
       )}
-      {requestFlow === 'leave' && (
+      {(requestFlow === 'leave' || requestFlow === 'sick') && (
         <NewRequestModal
           me={me}
           employees={employees} leaveTypes={leaveTypes}
           requests={requests} balances={balances} holidays={holidays}
+          // When the picker route is 'sick', the leave-type field is
+          // pre-set and locked. Picking 'Sick leave' from the menu is
+          // a commitment — the user shouldn't be able to swap to
+          // annual mid-form. For the regular 'leave' route the
+          // selector behaves as before with annual as default.
+          lockedLeaveType={requestFlow === 'sick' ? 'sick' : null}
           onClose={() => setRequestFlow(null)}
           onSubmit={async (payload) => {
             await createRequest(payload);

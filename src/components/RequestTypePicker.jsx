@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Plane, Sunrise, Sunset, ChevronRight } from 'lucide-react';
+import { X, Plane, Sunrise, Sunset, ChevronRight, HeartPulse } from 'lucide-react';
 
 // =============================================================================
 // RequestTypePicker
@@ -18,12 +18,20 @@ import { X, Plane, Sunrise, Sunset, ChevronRight } from 'lucide-react';
 // applies to their situation.
 //
 // Choice routes:
-//   'leave'        → NewRequestModal (existing flow, unchanged)
+//   'leave'        → NewRequestModal (vacation/emergency/hajj/etc.)
+//   'sick'         → NewRequestModal pre-locked to 'sick' (Sehhaty flow,
+//                    no substitute step)
 //   'late_arrival' → PermissionRequestModal with type='late_arrival'
 //   'early_leave'  → PermissionRequestModal with type='early_leave'
 //
-// The picker itself is intentionally small and visual — three large
-// option cards in a single column so it works well on phones, where the
+// Sick leave gets its own top-level slot because the workflow is
+// fundamentally different — Sehhaty service code is mandatory,
+// substitutes are skipped entirely, and the request goes straight to
+// the manager. Hiding it inside 'Vacation or leave' made it hard to
+// discover and didn't reflect how distinct the flow is.
+//
+// The picker itself is intentionally small and visual — large option
+// cards in a single column so it works well on phones, where the
 // staff are most likely to be submitting requests in the moment.
 // =============================================================================
 
@@ -33,10 +41,19 @@ export default function RequestTypePicker({ onPick, onClose }) {
       id: 'leave',
       icon: Plane,
       title: 'Vacation or leave',
-      description: 'Full or half-day requests — annual leave, emergency, sick, hajj, etc.',
+      description: 'Full or half-day requests — annual, emergency, hajj, maternity, etc.',
       iconBg: 'var(--evergreen-100)',
       iconColor: 'var(--evergreen-600)',
       borderColor: 'var(--evergreen-200)',
+    },
+    {
+      id: 'sick',
+      icon: HeartPulse,
+      title: 'Sick leave',
+      description: 'You have a Sehhaty medical certificate. Service code required.',
+      iconBg: '#FEE2E2',
+      iconColor: '#B91C1C',
+      borderColor: '#FECACA',
     },
     {
       id: 'late_arrival',
