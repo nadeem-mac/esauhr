@@ -121,6 +121,59 @@ const fmtStampCompact = (iso) => {
   return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} · ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
 };
 
+// Full English date — '24 April 2026' style. Used in the formal
+// Statement of Rejoining body to match the legal-letter register.
+const fmtDateFull = (iso) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+};
+
+// Arabic date — '24 أبريل 2026م' style with the م (Gregorian) suffix
+// used in formal Saudi correspondence.
+const AR_MONTHS = [
+  'يناير','فبراير','مارس','أبريل','مايو','يونيو',
+  'يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'
+];
+const fmtDateArFull = (iso) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return `${d.getDate()} ${AR_MONTHS[d.getMonth()]} ${d.getFullYear()}م`;
+};
+
+// Number to words (English) — for the formal 'totaling six days'
+// phrasing. Handles 0–99; falls back to digits beyond.
+function numToWordsEn(n) {
+  const ones = ['zero','one','two','three','four','five','six','seven','eight','nine'];
+  const teens = ['ten','eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen'];
+  const tens = ['','','twenty','thirty','forty','fifty','sixty','seventy','eighty','ninety'];
+  if (n == null || n < 0 || n > 99) return String(n);
+  if (n < 10) return ones[n];
+  if (n < 20) return teens[n - 10];
+  const t = Math.floor(n / 10), o = n % 10;
+  return tens[t] + (o ? '-' + ones[o] : '');
+}
+
+// Arabic days expression — handles tamyiz grammar for the common
+// counts (1–10), falls back to '<digit> يوماً' for 11+. Returns
+// the WHOLE phrase including the noun, e.g. 'ستة أيام', so the
+// template just uses it directly after 'بإجمالي'.
+function arabicDaysPhrase(n) {
+  const map = {
+    1:  'يوم واحد',
+    2:  'يومان',
+    3:  'ثلاثة أيام',
+    4:  'أربعة أيام',
+    5:  'خمسة أيام',
+    6:  'ستة أيام',
+    7:  'سبعة أيام',
+    8:  'ثمانية أيام',
+    9:  'تسعة أيام',
+    10: 'عشرة أيام',
+  };
+  return map[n] || `${n} يوماً`;
+}
+
 // Diff between actual return and originally-planned return. Negative
 // means returned early, 0 means returned on time, positive means late.
 function returnDiffLabel(actualISO, plannedEndISO) {
@@ -260,7 +313,7 @@ function valueCellMulti(paragraphs) {
   return new TableCell({
     children: paragraphs,
     width: { size: VALUE_W, type: WidthType.DXA },
-    margins: { top: 80, bottom: 80, left: 200, right: 160 },
+    margins: { top: 50, bottom: 50, left: 200, right: 160 },
     borders: FORM_BORDER,
     verticalAlign: VerticalAlign.CENTER,
   });
@@ -569,32 +622,41 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
 
   // Multi-line notes content as docx Paragraphs — the value cell
   // accepts an array of paragraph children via valueCellMulti.
+  // Formal Statement of Rejoining — registered language matching the
+  // legal-letter register expected by ESAU management for HR records.
+  // Dates in long form ('24 April 2026' / '24 أبريل 2026م'), day count
+  // spelled out for the small numbers ('six days' / 'ستة أيام'), with
+  // the standard م suffix on Arabic Gregorian dates.
+  const daysEn = numToWordsEn(dayCount);
+  const daysAr = arabicDaysPhrase(dayCount);
   const declarationParas = [
     new Paragraph({
       children: [
-        run('I confirm that I went on my ', { size: 19, color: C_TEXT }),
-        run(`${ltBoth.en.toLowerCase()} `, { size: 19, italics: true, bold: true, color: C_COPPER }),
-        run('leave from ', { size: 19, color: C_TEXT }),
-        run(fmtDateMed(request.start_date), { size: 19, bold: true, color: C_BRAND }),
-        run(' to ', { size: 19, color: C_TEXT }),
-        run(fmtDateMed(request.end_date), { size: 19, bold: true, color: C_BRAND }),
-        run(`, totalling ${dayCount} day${dayCount === 1 ? '' : 's'}. I am reporting back on duty on `, { size: 19, color: C_TEXT }),
-        run(fmtDateMed(reportingBackDate), { size: 19, bold: true, color: C_BRAND }),
-        run('. I shall be obliged if you can place me on the payroll with effect from ', { size: 19, color: C_TEXT }),
-        run(fmtDateMed(reportingBackDate), { size: 19, bold: true, color: C_BRAND }),
-        run('.', { size: 19, color: C_TEXT }),
+        run('I would like to formally confirm that I was on ', { size: 17, color: C_TEXT }),
+        run(`${ltBoth.en.toLowerCase()} `, { size: 17, italics: true, bold: true, color: C_COPPER }),
+        run('leave from ', { size: 17, color: C_TEXT }),
+        run(fmtDateFull(request.start_date), { size: 17, bold: true, color: C_BRAND }),
+        run(' to ', { size: 17, color: C_TEXT }),
+        run(fmtDateFull(request.end_date), { size: 17, bold: true, color: C_BRAND }),
+        run(`, totaling ${daysEn} day${dayCount === 1 ? '' : 's'}. I am pleased to inform you that I have resumed my duties effective `, { size: 17, color: C_TEXT }),
+        run(fmtDateFull(reportingBackDate), { size: 17, bold: true, color: C_BRAND }),
+        run('. Kindly acknowledge my rejoining and update my employment status accordingly. I would also appreciate your support in arranging the activation of my payroll effective ', { size: 17, color: C_TEXT }),
+        run(fmtDateFull(reportingBackDate), { size: 17, bold: true, color: C_BRAND }),
+        run('.', { size: 17, color: C_TEXT }),
       ],
       spacing: { before: 0, after: 30, line: 240 },
       alignment: AlignmentType.JUSTIFIED,
     }),
     new Paragraph({
       children: [
-        arRun(`أؤكد أنني كنت في إجازة ${ltBoth.ar} من ${fmtDateMed(request.start_date)} إلى ${fmtDateMed(request.end_date)}، بإجمالي ${dayCount} يوم. عائد إلى العمل بتاريخ ${fmtDateMed(reportingBackDate)}.`,
-              { size: 16, color: C_MUTED }),
+        arRun(
+          `أود الإفادة رسميًا بأنني كنت في إجازة ${ltBoth.ar} خلال الفترة من ${fmtDateArFull(request.start_date)} إلى ${fmtDateArFull(request.end_date)}، بإجمالي ${daysAr}، وأفيدكم بأنني قد باشرت عملي اعتبارًا من تاريخ ${fmtDateArFull(reportingBackDate)}، لذا آمل منكم التكرم بتأكيد مباشرتي للعمل وتحديث حالتي الوظيفية وفقًا لذلك، كما أرجو منكم التكرم باتخاذ اللازم حيال تفعيل مسير الراتب اعتبارًا من تاريخ ${fmtDateArFull(reportingBackDate)}.`,
+          { size: 15, color: C_MUTED }
+        ),
       ],
       bidirectional: true,
       alignment: AlignmentType.RIGHT,
-      spacing: { before: 0, after: request.return_notes ? 80 : 0, line: 240 },
+      spacing: { before: 0, after: request.return_notes ? 60 : 0, line: 260 },
     }),
     // Append the staff's actual typed note as a small italic line BELOW
     // the auto-declaration when present. Keeps the two pieces visually
@@ -714,11 +776,9 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
   });
 
   // ── FOOTER ────────────────────────────────────────────────────────────────
-  // Corporate-style two-column footer using tab stops:
-  //   left  — generation stamp + confidentiality marker
-  //   right — ref number + 'Page 1 of 1'
-  // No verify URL printed (the QR code already encodes it; printing
-  // the raw URL was clutter and made the footer look like a draft).
+  // Single understated line: who generated and when. The Ref number is
+  // already in the top header and the QR encodes the verify URL — we
+  // don't repeat them here.
   const generatedAt = new Date().toLocaleString('en-GB', {
     day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
@@ -727,16 +787,10 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
     children: [
       run(`Generated ${generatedAt} GMT+3 · ${returnConfirmer?.name || hrApprover?.name || HR_SIGNATURE_NAME}`,
           { size: 11, italics: true, color: C_COPPER }),
-      run('     ·     ', { size: 11, color: C_BORDER }),
-      run('CONFIDENTIAL — HR RECORDS', { size: 11, bold: true, color: C_MUTED }),
-      run('                                                                        ', { size: 11 }),
-      run(`Ref: ${shortRef(request.id)}`, { size: 11, bold: true, color: C_TEXT }),
-      run('     ·     ', { size: 11, color: C_BORDER }),
-      run('Page 1 of 1', { size: 11, color: C_MUTED }),
     ],
     alignment: AlignmentType.LEFT,
-    spacing: { before: 60, after: 0 },
-    border: { top: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER, space: 4 } },
+    spacing: { before: 30, after: 0 },
+    border: { top: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER, space: 2 } },
   });
 
   // ── REJOINED STAMP ────────────────────────────────────────────────────────
@@ -785,7 +839,7 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
         spacer(20),
         sectionBanner('RETURN DETAILS', 'تفاصيل العودة'),
         returnTable,
-        spacer(20),
+        spacer(10),
         sigTable,
         footerBlock,
       ],
