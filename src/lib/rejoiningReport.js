@@ -49,6 +49,20 @@ const LEAVE_TYPE = {
 
 const HR_SIGNATURE_NAME = 'BASHAIER ALI';
 
+// HR signature block — identical to vacation form so the email looks
+// like the same desk it always comes from.
+const HR_SIGNATURE = {
+  name:    'BASHAIER ALI',
+  company: 'Evergreen Shipping Agency Saudi Co.,(L.L.C)',
+  unit:    'ESAU - SADMN SUP/ HR DEPT',
+  address: 'P.O.Box : 1008,  DAMMAM – 31431, K.S.A',
+  whatsapp:'966-54 320 9694',
+  tel:     '966-013 813 8563 – Ext 8543',
+  email:   'bashaier.alsubaie@evergreen-shipping.com.sa',
+};
+const CEO_EMAIL          = 'johnho@evergreen-shipping.com.sa';
+const COUNTRY_HEAD_EMAIL = 'jamesliu@evergreen-shipping.com.sa';
+
 // ─── brand palette ────────────────────────────────────────────────────────────
 const C_TEXT      = '1F1B16';
 const C_MUTED     = '5C4406';
@@ -206,7 +220,7 @@ function labelCell(en, ar) {
       new Paragraph({ children: [arRun(ar, { size: 14, color: C_COPPER })] }),
     ],
     width: { size: LABEL_W, type: WidthType.DXA },
-    margins: { top: 30, bottom: 30, left: 180, right: 100 },
+    margins: { top: 20, bottom: 20, left: 180, right: 100 },
     shading: shading(C_LABEL_BG),
     borders: FORM_BORDER,
     verticalAlign: VerticalAlign.CENTER,
@@ -218,7 +232,7 @@ function valueCell(text, opts = {}) {
       children: [run(text, { size: 21, bold: !!opts.bold, color: opts.color || C_TEXT })],
     })],
     width: { size: VALUE_W, type: WidthType.DXA },
-    margins: { top: 30, bottom: 30, left: 200, right: 160 },
+    margins: { top: 20, bottom: 20, left: 200, right: 160 },
     borders: FORM_BORDER,
     verticalAlign: VerticalAlign.CENTER,
   });
@@ -227,7 +241,7 @@ function valueCellRuns(children) {
   return new TableCell({
     children: [new Paragraph({ children })],
     width: { size: VALUE_W, type: WidthType.DXA },
-    margins: { top: 30, bottom: 30, left: 200, right: 160 },
+    margins: { top: 20, bottom: 20, left: 200, right: 160 },
     borders: FORM_BORDER,
     verticalAlign: VerticalAlign.CENTER,
   });
@@ -242,31 +256,48 @@ function formRow(en, ar, value, opts = {}) {
 }
 
 // ─── 3-column atomic signature cell ──────────────────────────────────────────
-// Same atomic-cell pattern used in vacationForm — title strip + sig
-// space + name + footer all in ONE cell so cantSplit:true on the row
-// keeps the whole 3-col grid together regardless of content above.
-function sigCombinedCell(en, ar, name, footerLeft, footerRight, width) {
+// ─── 3-column atomic signature grid ──────────────────────────────────────────
+// Two-row table, each column treated as one logical sig box:
+//   Row 1 — cream BANNER strip with EN + AR title (small height)
+//   Row 2 — BODY at exactly 3.54 cm (2007 dxa), content bottom-aligned
+//          (printed name, then divider, then footer with timestamp + label)
+// Bottom alignment is what gives us the legacy form's signature-line look:
+// the wet-ink space sits above the printed name, exactly like a paper form.
+function sigBannerCell(en, ar, width) {
   return new TableCell({
+    width: { size: width, type: WidthType.DXA },
+    margins: { top: 50, bottom: 50, left: 140, right: 140 },
+    borders: FORM_BORDER,
+    shading: shading(C_BANNER),
+    children: [new Paragraph({
+      children: [
+        run(en + '   ', { bold: true, size: 13 }),
+        arRun(ar, { size: 13, color: C_COPPER }),
+      ],
+      spacing: { before: 0, after: 0 },
+    })],
+  });
+}
+
+function sigBodyCell(name, footerLeft, footerRight, width) {
+  return new TableCell({
+    width: { size: width, type: WidthType.DXA },
+    margins: { top: 80, bottom: 60, left: 140, right: 140 },
+    borders: FORM_BORDER,
+    // Bottom-align so the printed name + timestamp footer stick to
+    // the bottom of the 3.54 cm box. The blank space ABOVE them is
+    // where the wet ink signature goes.
+    verticalAlign: VerticalAlign.BOTTOM,
     children: [
-      new Paragraph({
-        children: [
-          run(en + '   ', { bold: true, size: 13 }),
-          arRun(ar, { size: 13, color: C_COPPER }),
-        ],
-        spacing: { before: 0, after: 0 },
-        shading: shading(C_BANNER),
-        border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER, space: 6 } },
-      }),
-      new Paragraph({
-        alignment: AlignmentType.CENTER,
-        children: [run(' ', { size: 16 })],
-        spacing: { before: 60, after: 0 },
-      }),
+      // Printed name — sits just above the divider rule.
       new Paragraph({
         alignment: AlignmentType.CENTER,
         children: [run(name || '', { size: 18, bold: true })],
-        spacing: { before: 0, after: 40 },
+        spacing: { before: 0, after: 60 },
       }),
+      // Footer line — italic timestamp + bold 'Signature' label,
+      // separated by a thin top rule which serves as the visual
+      // baseline of the signature.
       new Paragraph({
         alignment: AlignmentType.CENTER,
         children: [
@@ -274,14 +305,10 @@ function sigCombinedCell(en, ar, name, footerLeft, footerRight, width) {
           run('     ', { size: 12 }),
           run(footerRight, { size: 12, bold: true }),
         ],
-        spacing: { before: 40, after: 0 },
+        spacing: { before: 0, after: 0 },
         border: { top: { style: BorderStyle.SINGLE, size: 4, color: C_BORDER, space: 6 } },
       }),
     ],
-    width: { size: width, type: WidthType.DXA },
-    margins: { top: 40, bottom: 40, left: 140, right: 140 },
-    borders: FORM_BORDER,
-    verticalAlign: VerticalAlign.TOP,
   });
 }
 
@@ -519,31 +546,29 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
 
   const declarationStripEn = new Paragraph({
     children: [
-      run('I confirm that I went on my ', { size: 21, color: C_TEXT }),
-      run(`${ltBoth.en.toLowerCase()} `, { size: 21, italics: true, bold: true, color: C_COPPER }),
-      run('leave from ', { size: 21, color: C_TEXT }),
-      run(fmtDateMed(request.start_date), { size: 21, bold: true, color: C_BRAND }),
-      run(' to ', { size: 21, color: C_TEXT }),
-      run(fmtDateMed(request.end_date), { size: 21, bold: true, color: C_BRAND }),
-      run(`, totalling ${dayCount} day${dayCount === 1 ? '' : 's'}. I am reporting back on duty on `, { size: 21, color: C_TEXT }),
-      run(fmtDateMed(reportingBackDate), { size: 21, bold: true, color: C_BRAND }),
-      run('. I shall be obliged if you can place me on the payroll with effect from ', { size: 21, color: C_TEXT }),
-      run(fmtDateMed(reportingBackDate), { size: 21, bold: true, color: C_BRAND }),
-      run('.', { size: 21, color: C_TEXT }),
+      run('I confirm that I went on my ', { size: 19, color: C_TEXT }),
+      run(`${ltBoth.en.toLowerCase()} `, { size: 19, italics: true, bold: true, color: C_COPPER }),
+      run('leave from ', { size: 19, color: C_TEXT }),
+      run(fmtDateMed(request.start_date), { size: 19, bold: true, color: C_BRAND }),
+      run(' to ', { size: 19, color: C_TEXT }),
+      run(fmtDateMed(request.end_date), { size: 19, bold: true, color: C_BRAND }),
+      run(`, totalling ${dayCount} day${dayCount === 1 ? '' : 's'}. I am reporting back on duty on `, { size: 19, color: C_TEXT }),
+      run(fmtDateMed(reportingBackDate), { size: 19, bold: true, color: C_BRAND }),
+      run('. I shall be obliged if you can place me on the payroll with effect from ', { size: 19, color: C_TEXT }),
+      run(fmtDateMed(reportingBackDate), { size: 19, bold: true, color: C_BRAND }),
+      run('.', { size: 19, color: C_TEXT }),
     ],
-    spacing: { before: 40, after: 30, line: 260 },
+    spacing: { before: 30, after: 30, line: 240 },
     alignment: AlignmentType.JUSTIFIED,
   });
 
   const declarationStripAr = new Paragraph({
     children: [
-      arRun('أؤكد أنني كنت في إجازة ', { size: 18, color: C_MUTED }),
-      arRun(`${ltBoth.ar} `, { size: 18, bold: true, color: C_COPPER }),
-      arRun(`من ${fmtDateMed(request.start_date)} إلى ${fmtDateMed(request.end_date)}، بإجمالي ${dayCount} يوم${dayCount === 1 ? '' : ''}. عائد إلى العمل بتاريخ ${fmtDateMed(reportingBackDate)}.`, { size: 18, color: C_MUTED }),
+      arRun(`أؤكد أنني كنت في إجازة ${ltBoth.ar} من ${fmtDateMed(request.start_date)} إلى ${fmtDateMed(request.end_date)}، بإجمالي ${dayCount} يوم. عائد إلى العمل بتاريخ ${fmtDateMed(reportingBackDate)}.`, { size: 16, color: C_MUTED }),
     ],
     bidirectional: true,
     alignment: AlignmentType.RIGHT,
-    spacing: { before: 0, after: 60, line: 260 },
+    spacing: { before: 0, after: 30, line: 240 },
   });
 
   // ── ADMIN / PAYROLL INSTRUCTION BLOCK ─────────────────────────────────────
@@ -557,7 +582,7 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
       new TableRow({
         children: [new TableCell({
           width: { size: PAGE_W, type: WidthType.DXA },
-          margins: { top: 80, bottom: 80, left: 200, right: 200 },
+          margins: { top: 50, bottom: 50, left: 200, right: 200 },
           shading: shading(C_BANNER),
           borders: {
             top:    { style: BorderStyle.SINGLE, size: 4, color: C_BORDER },
@@ -568,24 +593,24 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
           children: [
             new Paragraph({
               children: [
-                run('TO:  ', { bold: true, size: 16, color: C_MUTED }),
-                run('ESAU Admin Manager', { bold: true, size: 16, color: C_TEXT }),
-                run('     ·     ', { size: 14, color: C_BORDER }),
-                run('FROM:  ', { bold: true, size: 16, color: C_MUTED }),
-                run('Departmental Head', { bold: true, size: 16, color: C_TEXT }),
+                run('TO:  ', { bold: true, size: 14, color: C_MUTED }),
+                run('ESAU Admin Manager', { bold: true, size: 14, color: C_TEXT }),
+                run('     ·     ', { size: 13, color: C_BORDER }),
+                run('FROM:  ', { bold: true, size: 14, color: C_MUTED }),
+                run('Departmental Head', { bold: true, size: 14, color: C_TEXT }),
               ],
-              spacing: { after: 80 },
+              spacing: { after: 40 },
             }),
             new Paragraph({
               children: [
-                run('Kindly place ', { size: 19 }),
-                run(employee?.name || '—', { bold: true, size: 19 }),
-                run(`  (PSN ${employee?.id || '—'}, ${dept})`, { size: 17, color: C_MUTED }),
-                run(' on the active payroll with effect from ', { size: 19 }),
-                run(fmtDateMed(reportingBackDate), { size: 19, bold: true, color: C_BRAND }),
-                run('.', { size: 19 }),
+                run('Kindly place ', { size: 17 }),
+                run(employee?.name || '—', { bold: true, size: 17 }),
+                run(`  (PSN ${employee?.id || '—'}, ${dept})`, { size: 15, color: C_MUTED }),
+                run(' on the active payroll with effect from ', { size: 17 }),
+                run(fmtDateMed(reportingBackDate), { size: 17, bold: true, color: C_BRAND }),
+                run('.', { size: 17 }),
               ],
-              spacing: { after: 0, line: 300 },
+              spacing: { after: 0, line: 260 },
             }),
           ],
         })],
@@ -661,15 +686,24 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
   const sigTable = new Table({
     width: { size: PAGE_W, type: WidthType.DXA },
     columnWidths: sigWidths,
-    rows: [new TableRow({
-      cantSplit: true,
-      // 2.6 cm row height (1500 dxa) — slightly tighter than the
-      // vacation form's 3.54 cm because this report has more body
-      // content. Still gives enough room for ink signatures.
-      height: { value: 1500, rule: HeightRule.ATLEAST },
-      children: sigCols.map((c, i) =>
-        sigCombinedCell(c.en, c.ar, c.name, c.footerLeft, c.footerRight, sigWidths[i])),
-    })],
+    rows: [
+      // Banner row — small, just the cream EN+AR title strip
+      new TableRow({
+        cantSplit: true,
+        children: sigCols.map((c, i) =>
+          sigBannerCell(c.en, c.ar, sigWidths[i])),
+      }),
+      // Body row — exactly 3.54 cm tall (2007 dxa). Contents
+      // bottom-aligned so the printed name + footer line stick
+      // to the bottom of the box, with empty space above for
+      // wet ink signature.
+      new TableRow({
+        cantSplit: true,
+        height: { value: 2007, rule: HeightRule.EXACT },
+        children: sigCols.map((c, i) =>
+          sigBodyCell(c.name, c.footerLeft, c.footerRight, sigWidths[i])),
+      }),
+    ],
   });
 
   // ── FOOTER ────────────────────────────────────────────────────────────────
@@ -787,4 +821,78 @@ export async function downloadRejoiningReportForRequest(request, empMap) {
   const filename = `Rejoining_Report_${safeName}_${request.end_date}.docx`;
   downloadBlob(blob, filename);
   return { blob, filename };
+}
+
+// ─── email draft ─────────────────────────────────────────────────────────────
+// Build a prefilled mailto URL for the rejoining report — Bashaier
+// clicks Email and her mail client opens with the message ready to
+// send. Same shape as buildEmailDraft in vacationForm.js (To: staff,
+// Cc: manager + CEO + Country Head, full HR signature) so the staff
+// recognises the desk it's coming from.
+export function buildRejoiningEmailDraft({ employee, request, manager, hrApprover }) {
+  const ltKey = LEAVE_TYPE[request.leave_type_id] ? request.leave_type_id : 'annual';
+  const leaveTypeLabel = `${LEAVE_TYPE[ltKey].en} Leave`;
+  const dateRange = `${fmtDateMed(request.start_date)} - ${fmtDateMed(request.end_date)}`;
+  const returnDate = fmtDateMed(request.actual_return_date);
+
+  const to = [employee?.email].filter(Boolean).join(',');
+  const ccList = [
+    manager?.email,
+    CEO_EMAIL,
+    COUNTRY_HEAD_EMAIL,
+  ].filter(Boolean);
+  const cc = Array.from(new Set(ccList.filter(e => e !== to))).join(',');
+
+  const subject = `Rejoining approved · ${employee?.name || ''} · returned ${returnDate}`;
+
+  const body = [
+    `Dear ${(employee?.name || '').split(' ')[0] || 'Colleague'},`,
+    '',
+    `Welcome back. Your rejoining following the ${leaveTypeLabel.toLowerCase()} from ${dateRange} has been approved by management. Your return on duty is recorded as ${returnDate} and your payroll has been resumed accordingly.`,
+    '',
+    request.return_notes ? `Notes on file: ${request.return_notes}` : null,
+    request.balance_after && Number(request.balance_after) > 0
+      ? `Balance reconciliation: +${request.balance_after} day${request.balance_after === 1 ? '' : 's'} have been credited back to your leave balance for the early return.`
+      : null,
+    '',
+    `The signed rejoining report is attached for your records — kindly print it, get it signed by yourself and your department head, and submit a hard copy to the HR office at your earliest convenience.`,
+    '',
+    `If you have any questions, please contact HR.`,
+    '',
+    `Thanks and regards,`,
+    '',
+    HR_SIGNATURE.name,
+    HR_SIGNATURE.company,
+    HR_SIGNATURE.unit,
+    HR_SIGNATURE.address,
+    `WhatsApp: ${HR_SIGNATURE.whatsapp}`,
+    `Tel: ${HR_SIGNATURE.tel}`,
+    `Email: ${HR_SIGNATURE.email}`,
+  ].filter(line => line !== null).join('\n');
+
+  const params = new URLSearchParams();
+  if (cc) params.set('cc', cc);
+  params.set('subject', subject);
+  params.set('body', body);
+  const mailto = `mailto:${encodeURIComponent(to)}?${params.toString().replace(/\+/g, '%20')}`;
+
+  return { to, cc, subject, body, mailto };
+}
+
+// Resolve an entire request to its email draft + open the user's
+// mail client. Same shape as the leave/permission email flow.
+export function composeRejoiningEmailForRequest(request, empMap) {
+  if (!request) throw new Error('No request supplied');
+  if (!empMap)  throw new Error('Employee directory unavailable');
+  const employee = empMap[request.employee_id];
+  if (!employee) throw new Error('Employee not found in directory');
+  const manager    = resolveApprover(request.manager_decided_by, empMap);
+  const hrApprover = resolveApprover(request.hr_decided_by,      empMap);
+
+  const draft = buildRejoiningEmailDraft({ employee, request, manager, hrApprover });
+  if (!draft.to) {
+    throw new Error('No email address on file for ' + (employee.name || request.employee_id));
+  }
+  window.location.href = draft.mailto;
+  return draft;
 }

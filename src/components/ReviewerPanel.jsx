@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { supabase, directPatch, directGet } from '../supabaseClient.js';
-import { CheckCircle2, XCircle, Clock, Loader2, AlertTriangle, Sunrise, Sunset, Calendar, RefreshCw, Search, Plane, FileDown, ArrowLeftCircle } from 'lucide-react';
+import { CheckCircle2, XCircle, Clock, Loader2, AlertTriangle, Sunrise, Sunset, Calendar, RefreshCw, Search, Plane, FileDown, ArrowLeftCircle, Mail } from 'lucide-react';
 import { logAction } from '../lib/audit.js';
 import HrApprovalModal from './HrApprovalModal.jsx';
 import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
@@ -862,6 +862,21 @@ function RejoiningSection({ queue, empMap, me, onChanged }) {
                   {!open && (
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <button
+                        onClick={async () => {
+                          try {
+                            const { composeRejoiningEmailForRequest } = await import('../lib/rejoiningReport.js');
+                            composeRejoiningEmailForRequest(req, empMap);
+                          } catch (err) {
+                            alert('Could not compose email: ' + (err.message || err));
+                          }
+                        }}
+                        disabled={busy}
+                        className="px-3 py-1.5 rounded-md text-xs font-semibold inline-flex items-center gap-1.5"
+                        style={{ background: '#FFFFFF', color: '#0A0A0A', border: '1px solid #C9B894' }}
+                        title="Open prefilled email — asks staff to print, sign, and submit hard copy">
+                        <Mail className="w-3 h-3" /> Email
+                      </button>
+                      <button
                         onClick={() => approve(req)}
                         disabled={busy}
                         className="px-3 py-1.5 rounded-md text-xs font-semibold inline-flex items-center gap-1.5"
@@ -1104,15 +1119,33 @@ function HistoryItem({ req, empMap, onReopenPermission }) {
         </button>
       )}
       {wasApproved && isRejoin && (
-        <button
-          type="button"
-          onClick={downloadRejoinReport}
-          className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap inline-flex items-center gap-1"
-          style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
-          title="Re-download the rejoining report"
-        >
-          <FileDown className="w-3 h-3" /> Report
-        </button>
+        <>
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                const { composeRejoiningEmailForRequest } = await import('../lib/rejoiningReport.js');
+                composeRejoiningEmailForRequest(req, empMap);
+              } catch (err) {
+                alert('Could not compose email: ' + (err.message || err));
+              }
+            }}
+            className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap inline-flex items-center gap-1"
+            style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
+            title="Re-open the email draft (print/sign/submit reminder)"
+          >
+            <Mail className="w-3 h-3" /> Email
+          </button>
+          <button
+            type="button"
+            onClick={downloadRejoinReport}
+            className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap inline-flex items-center gap-1"
+            style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
+            title="Re-download the rejoining report"
+          >
+            <FileDown className="w-3 h-3" /> Report
+          </button>
+        </>
       )}
     </li>
   );
