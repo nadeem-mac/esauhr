@@ -376,13 +376,20 @@ export default function PendingReturnsCard({ me, employees, scope = 'manager' })
                         style={{ background: '#FFFFFF', color: '#0A0A0A', border: '1px solid #FCA5A5' }}>
                         Send back
                       </button>
-                      <button
-                        onClick={() => handleDownload(req)}
-                        disabled={busy}
-                        className="px-3 py-1.5 rounded-md text-xs font-semibold inline-flex items-center gap-1.5"
-                        style={{ background: '#FFFFFF', color: '#0A0A0A', border: '1px solid #C9B894' }}>
-                        <FileDown className="w-3 h-3" /> Preview report
-                      </button>
+                      {/* Preview report — HR only. Manager doesn't get
+                          to download/preview the .docx because the
+                          rejoining isn't 'official' until Bashaier's
+                          final approval (which is when the QR code
+                          becomes meaningful). */}
+                      {scope === 'hr' && (
+                        <button
+                          onClick={() => handleDownload(req)}
+                          disabled={busy}
+                          className="px-3 py-1.5 rounded-md text-xs font-semibold inline-flex items-center gap-1.5"
+                          style={{ background: '#FFFFFF', color: '#0A0A0A', border: '1px solid #C9B894' }}>
+                          <FileDown className="w-3 h-3" /> Preview report
+                        </button>
+                      )}
                       <button
                         onClick={cancel}
                         disabled={busy}

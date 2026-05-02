@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { ArrowLeftCircle, Send, Loader2, Clock, CheckCircle2, AlertCircle, X, Mail } from 'lucide-react';
 import { supabase, directGet, directPatch } from '../supabaseClient.js';
 import { fmtDateShort } from '../lib/leaveLogic.js';
+import RejoiningTimelineModal from './RejoiningTimelineModal.jsx';
 
 // =============================================================================
 // MyRejoiningCard
@@ -35,6 +36,7 @@ export default function MyRejoiningCard({ me, employees = [] }) {
   const [openId,  setOpenId]  = useState(null);
   const [form,    setForm]    = useState({ actualDate: '', notes: '' });
   const [error,   setError]   = useState('');
+  const [timelineReq, setTimelineReq] = useState(null);  // for the APPROVAL PROGRESS modal
 
   const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
@@ -159,6 +161,7 @@ export default function MyRejoiningCard({ me, employees = [] }) {
   };
 
   return (
+    <>
     <section className="rounded-2xl overflow-hidden mb-4"
              style={{ background: 'linear-gradient(135deg, #ECFDF5 0%, #D1FAE5 100%)', border: '1px solid #86EFAC' }}>
       <div className="px-5 py-4" style={{ borderBottom: '1px solid #86EFAC' }}>
@@ -197,10 +200,14 @@ export default function MyRejoiningCard({ me, employees = [] }) {
                 </div>
                 {pendingMgr && (
                   <>
-                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold"
-                          style={{ background: '#FEF3C7', color: '#0A0A0A' }}>
+                    <button
+                      type="button"
+                      onClick={() => setTimelineReq(req)}
+                      title="View approval progress"
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold cursor-pointer hover:opacity-90 transition-opacity"
+                      style={{ background: '#FEF3C7', color: '#0A0A0A', border: 'none' }}>
                       <Clock className="w-3 h-3" /> AWAITING MANAGER
-                    </span>
+                    </button>
                     {myManager?.email && (
                       <button
                         onClick={() => composeManagerNudge(req)}
@@ -213,16 +220,24 @@ export default function MyRejoiningCard({ me, employees = [] }) {
                   </>
                 )}
                 {pendingHr && (
-                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold"
-                        style={{ background: '#DBEAFE', color: '#0A0A0A' }}>
+                  <button
+                    type="button"
+                    onClick={() => setTimelineReq(req)}
+                    title="View approval progress"
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold cursor-pointer hover:opacity-90 transition-opacity"
+                    style={{ background: '#DBEAFE', color: '#0A0A0A', border: 'none' }}>
                     <Clock className="w-3 h-3" /> AWAITING HR
-                  </span>
+                  </button>
                 )}
                 {rejectedBy && (
-                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold"
-                        style={{ background: '#FEE2E2', color: '#991B1B' }}>
+                  <button
+                    type="button"
+                    onClick={() => setTimelineReq(req)}
+                    title="View approval progress"
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold cursor-pointer hover:opacity-90 transition-opacity"
+                    style={{ background: '#FEE2E2', color: '#991B1B', border: 'none' }}>
                     <AlertCircle className="w-3 h-3" /> {rejectedBy.toUpperCase()} SENT BACK
-                  </span>
+                  </button>
                 )}
                 {!open && canSubmit && (
                   <button
@@ -302,5 +317,13 @@ export default function MyRejoiningCard({ me, employees = [] }) {
         })}
       </div>
     </section>
+    {timelineReq && (
+      <RejoiningTimelineModal
+        request={timelineReq}
+        empMap={Object.fromEntries((employees || []).map(e => [e.id, e]))}
+        onClose={() => setTimelineReq(null)}
+      />
+    )}
+    </>
   );
 }

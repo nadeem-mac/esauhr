@@ -351,7 +351,13 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
 
   const logoBytes = await loadLogoBytes();
   const verifyUrl = `${VERIFY_BASE_URL}/verify-leave/${request.id}`;
-  const qrBytes = await generateQrPng(verifyUrl, 220);
+  // QR only generated after HR final approval. Until then, a scan would
+  // hit a verify page that says "not approved yet" — confusing on a
+  // form anyone could be carrying around. Skipping the QR makes the
+  // pre-approval state visually obvious (no QR + no REJOINED stamp).
+  const qrBytes = request.return_stage === 'approved'
+    ? await generateQrPng(verifyUrl, 220)
+    : null;
 
   // ── HEADER (Logo | Wordmark | Date+Ref | QR) ─────────────────────────────
   const headerRow = new Table({

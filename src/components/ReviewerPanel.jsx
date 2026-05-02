@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { supabase, directPatch, directGet } from '../supabaseClient.js';
-import { CheckCircle2, XCircle, Clock, Loader2, AlertTriangle, Sunrise, Sunset, Calendar, RefreshCw, Search, Plane, FileDown } from 'lucide-react';
+import { CheckCircle2, XCircle, Clock, Loader2, AlertTriangle, Sunrise, Sunset, Calendar, RefreshCw, Search, Plane, FileDown, ArrowLeftCircle } from 'lucide-react';
 import { logAction } from '../lib/audit.js';
 import HrApprovalModal from './HrApprovalModal.jsx';
 import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
@@ -26,6 +26,15 @@ export default function ReviewerPanel({ me }) {
   // the letter / re-open the email draft if she missed it the first time.
   const [recentDecisions, setRecentDecisions] = useState([]);
   const [recentLeaveDecisions, setRecentLeaveDecisions] = useState([]);
+  // Rejoining requests where Bashaier is the next reviewer
+  // (return_stage='pending_hr'). Surfaced with the same urgency as
+  // pending leave / permission rows so she sees them in the same
+  // queue she already scans every morning.
+  const [rejoinQueue, setRejoinQueue] = useState([]);
+  // Rejoining decisions she's made in the last 90 days. Mirrors
+  // recentLeaveDecisions / recentDecisions — searchable, dismissible,
+  // re-downloadable .docx.
+  const [recentRejoinDecisions, setRecentRejoinDecisions] = useState([]);
   const [historyQuery, setHistoryQuery] = useState('');
   // Delegation: which staff in my queue belong to an absent manager
   // (one of my direct reports who is themselves a manager and on
@@ -195,9 +204,36 @@ export default function ReviewerPanel({ me }) {
         } catch {
           setRecentLeaveDecisions([]);
         }
+
+        // Rejoining queue (pending_hr — manager has approved, awaiting Bashaier)
+        try {
+          const rq = await directGet(
+            'leave_requests',
+            `select=*&stage=eq.approved&return_stage=eq.pending_hr&order=return_manager_decided_at.asc&limit=200`,
+            { timeoutMs: 10000 },
+          );
+          setRejoinQueue(Array.isArray(rq) ? rq : []);
+        } catch {
+          setRejoinQueue([]);
+        }
+
+        // Rejoining history (last 90 days, decided by me)
+        const rejoinHistQs =
+          `select=*&return_stage=eq.approved` +
+          `&return_hr_decided_by=eq.${psn}` +
+          `&return_hr_decided_at=gte.${cutoffISO}` +
+          `&order=return_hr_decided_at.desc&limit=200`;
+        try {
+          const rhist = await directGet('leave_requests', rejoinHistQs, { timeoutMs: 10000 });
+          setRecentRejoinDecisions(Array.isArray(rhist) ? rhist : []);
+        } catch {
+          setRecentRejoinDecisions([]);
+        }
       } else {
         setRecentDecisions([]);
         setRecentLeaveDecisions([]);
+        setRejoinQueue([]);
+        setRecentRejoinDecisions([]);
       }
     } catch (err) {
       console.warn('ReviewerPanel load failed:', err);
@@ -634,6 +670,20 @@ export default function ReviewerPanel({ me }) {
             </section>
           )}
 
+          {/* HR-only — Rejoining queue. Bashaier sees the same urgency
+              for rejoining requests as for leaves and permissions: rows
+              hit her queue the moment a manager approves them. Mounted
+              above HistorySection so she finds them with the rest of
+              her morning queue scan. */}
+          {canPerm && (
+            <RejoiningSection
+              queue={rejoinQueue}
+              empMap={empMap}
+              me={me}
+              onChanged={load}
+            />
+          )}
+
           {/* HR-only — searchable history of every decision this reviewer
               has made in the last 90 days, across BOTH leave and
               permission requests. Lets Bashaier:
@@ -643,10 +693,11 @@ export default function ReviewerPanel({ me }) {
                 • Re-download the .docx letter or re-open the email
                   draft for any approved row
               Hidden for managers (their volume is too small to need it). */}
-          {canPerm && (recentDecisions.length > 0 || recentLeaveDecisions.length > 0) && (
+          {canPerm && (recentDecisions.length > 0 || recentLeaveDecisions.length > 0 || recentRejoinDecisions.length > 0) && (
             <HistorySection
               recentLeaveDecisions={recentLeaveDecisions}
               recentDecisions={recentDecisions}
+              recentRejoinDecisions={recentRejoinDecisions}
               empMap={empMap}
               query={historyQuery}
               setQuery={setHistoryQuery}
@@ -690,20 +741,198 @@ function EmptyState({ text }) {
   );
 }
 
+// ─── Rejoining queue (HR final approval) ────────────────────────────────────
+// Bashaier sees rows where the manager has already approved and the
+// rejoining is awaiting final HR decision. Mirrors the leave / perm
+// queue pattern in this same panel — same chrome, same urgency.
+function RejoiningSection({ queue, empMap, me, onChanged }) {
+  const [busyId, setBusyId] = React.useState(null);
+  const [openId, setOpenId] = React.useState(null);
+  const [reason, setReason] = React.useState('');
+
+  const approve = async (req) => {
+    setBusyId(req.id);
+    try {
+      const patch = {
+        return_stage:              'approved',
+        return_hr_decided_at:      new Date().toISOString(),
+        return_hr_decided_by:      me.id,
+        returned_at:               new Date().toISOString(),
+        return_confirmed_by:       me.id,
+        return_status:             'returned',
+        return_rejection_reason:   null,
+      };
+      // Best-effort early-return credit (mirrors PendingReturnsCard logic).
+      try {
+        const planned = new Date(req.end_date);
+        const actual  = new Date(req.actual_return_date);
+        const expectedReturn = new Date(planned); expectedReturn.setDate(expectedReturn.getDate() + 1);
+        const daysSaved = Math.max(0, Math.floor((expectedReturn - actual) / 86_400_000));
+        if (daysSaved > 0) {
+          const yr = new Date(req.start_date).getFullYear();
+          const balRows = await directGet(
+            'leave_balances',
+            `select=id,adjustment,adjustment_note&employee_id=eq.${encodeURIComponent(req.employee_id)}` +
+            `&leave_type_id=eq.${encodeURIComponent(req.leave_type_id)}&year=eq.${yr}`,
+            { timeoutMs: 6000 },
+          );
+          if (Array.isArray(balRows) && balRows.length > 0) {
+            const cur = balRows[0];
+            const newAdj = Number(cur.adjustment || 0) + daysSaved;
+            const note = `${cur.adjustment_note ? cur.adjustment_note + ' · ' : ''}` +
+                         `+${daysSaved}d credited (early return on rejoining ${new Date().toISOString().slice(0,10)})`;
+            await directPatch('leave_balances', 'id', cur.id, { adjustment: newAdj, adjustment_note: note }, { timeoutMs: 6000 });
+          }
+          patch.balance_after = daysSaved;
+        } else {
+          patch.balance_after = 0;
+        }
+      } catch (e) { /* non-fatal */ }
+      await directPatch('leave_requests', 'id', req.id, patch, { timeoutMs: 10000 });
+      onChanged && onChanged();
+    } catch (err) {
+      alert('Approve failed: ' + (err.message || err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const sendBack = async (req) => {
+    if (!reason.trim()) { alert('Please give a reason so the staff can fix and resubmit.'); return; }
+    setBusyId(req.id);
+    try {
+      await directPatch('leave_requests', 'id', req.id, {
+        return_stage:            'rejected_by_hr',
+        return_hr_decided_at:    new Date().toISOString(),
+        return_hr_decided_by:    me.id,
+        return_rejection_reason: reason.trim(),
+      }, { timeoutMs: 10000 });
+      setOpenId(null); setReason('');
+      onChanged && onChanged();
+    } catch (err) {
+      alert('Send-back failed: ' + (err.message || err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <section>
+      <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+        <h3 className="text-[10px] tracking-[0.25em] opacity-60">
+          REJOINING · HR FINAL APPROVAL · {queue.length}
+        </h3>
+      </div>
+      {queue.length === 0 ? (
+        <EmptyState text="No rejoining requests awaiting your approval." />
+      ) : (
+        <ul className="space-y-2">
+          {queue.map(req => {
+            const emp = empMap[req.employee_id];
+            const open = openId === req.id;
+            const busy = busyId === req.id;
+            return (
+              <li key={req.id} className="rounded-xl px-4 py-3 border"
+                  style={{ background: '#FFFDF7', borderColor: 'var(--border-soft)' }}>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                       style={{ background: '#ECFDF5', color: '#0F4C2A' }}>
+                    <ArrowLeftCircle className="w-4 h-4" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium" style={{ color: '#1F1B16' }}>
+                        {emp?.name || req.employee_id}
+                      </span>
+                      {emp?.department && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded"
+                              style={{ background: 'rgba(0,0,0,0.04)', color: '#1F1B16' }}>
+                          {emp.department}
+                        </span>
+                      )}
+                      <span className="text-[11px]" style={{ color: '#1F1B16', opacity: 0.7 }}>
+                        · {(req.leave_type_id || 'leave').toUpperCase()} · {fmtDate(req.start_date)} → {fmtDate(req.end_date)} · returned {fmtDate(req.actual_return_date)}
+                      </span>
+                    </div>
+                    <div className="text-[10px] mt-0.5" style={{ color: '#1F1B16', opacity: 0.7 }}>
+                      Manager approved {req.return_manager_decided_at ? new Date(req.return_manager_decided_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}
+                      {req.return_notes ? ` · "${req.return_notes}"` : ''}
+                    </div>
+                  </div>
+                  {!open && (
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => approve(req)}
+                        disabled={busy}
+                        className="px-3 py-1.5 rounded-md text-xs font-semibold inline-flex items-center gap-1.5"
+                        style={{ background: '#0F4C2A', color: '#FFFFFF' }}>
+                        {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+                        Final approve
+                      </button>
+                      <button
+                        onClick={() => { setOpenId(req.id); setReason(''); }}
+                        disabled={busy}
+                        className="px-3 py-1.5 rounded-md text-xs font-semibold inline-flex items-center gap-1.5"
+                        style={{ background: '#FFFFFF', color: '#0A0A0A', border: '1px solid #FCA5A5' }}>
+                        Send back
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {open && (
+                  <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--border-soft)' }}>
+                    <input
+                      autoFocus
+                      type="text"
+                      value={reason}
+                      onChange={e => setReason(e.target.value)}
+                      placeholder="Reason — staff sees this and will resubmit"
+                      className="w-full px-2 py-1.5 rounded text-sm mb-2"
+                      style={{ border: '1px solid #FCA5A5', background: '#FFFFFF', color: '#0A0A0A' }}
+                    />
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={() => sendBack(req)}
+                        disabled={busy || !reason.trim()}
+                        className="px-3 py-1.5 rounded-md text-xs font-semibold inline-flex items-center gap-1.5"
+                        style={{ background: '#B91C1C', color: '#FFFFFF', opacity: busy || !reason.trim() ? 0.6 : 1 }}>
+                        {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <XCircle className="w-3 h-3" />}
+                        Confirm send-back
+                      </button>
+                      <button
+                        onClick={() => { setOpenId(null); setReason(''); }}
+                        disabled={busy}
+                        className="px-3 py-1.5 rounded-md text-xs font-semibold"
+                        style={{ background: 'transparent', color: '#1F1B16' }}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 // ─── History (recent decisions) ──────────────────────────────────────────────
 // Combined searchable history of leave + permission decisions made by this
 // reviewer in the last 90 days. Surfaces immediately after Bashaier approves
 // something — the row leaves the queue but appears here on the same load.
 function HistorySection({
-  recentLeaveDecisions, recentDecisions,
+  recentLeaveDecisions, recentDecisions, recentRejoinDecisions = [],
   empMap, query, setQuery, setApprovedPermission,
 }) {
   // Tag each row with kind so the unified list can render appropriately.
   const all = [
-    ...recentLeaveDecisions.map(r => ({ ...r, _kind: 'leave' })),
-    ...recentDecisions.map(r => ({ ...r, _kind: 'permission' })),
+    ...recentLeaveDecisions.map(r => ({ ...r, _kind: 'leave',      _decidedAt: r.hr_decided_at })),
+    ...recentDecisions.map(r => ({ ...r, _kind: 'permission', _decidedAt: r.hr_decided_at })),
+    ...recentRejoinDecisions.map(r => ({ ...r, _kind: 'rejoin',  _decidedAt: r.return_hr_decided_at })),
   ].sort((a, b) =>
-    new Date(b.hr_decided_at || 0).getTime() - new Date(a.hr_decided_at || 0).getTime(),
+    new Date(b._decidedAt || 0).getTime() - new Date(a._decidedAt || 0).getTime(),
   );
 
   const q = (query || '').trim().toLowerCase();
@@ -717,8 +946,9 @@ function HistorySection({
       })
     : all;
 
-  const leaveCount = filtered.filter(r => r._kind === 'leave').length;
-  const permCount  = filtered.filter(r => r._kind === 'permission').length;
+  const leaveCount  = filtered.filter(r => r._kind === 'leave').length;
+  const permCount   = filtered.filter(r => r._kind === 'permission').length;
+  const rejoinCount = filtered.filter(r => r._kind === 'rejoin').length;
 
   return (
     <section>
@@ -727,7 +957,7 @@ function HistorySection({
           MY RECENT DECISIONS · LAST 90 DAYS · {filtered.length}
           {filtered.length > 0 && (
             <span className="ml-2 opacity-70 font-normal lowercase tracking-normal">
-              ({leaveCount} leave · {permCount} permission)
+              ({leaveCount} leave · {permCount} permission · {rejoinCount} rejoining)
             </span>
           )}
         </h3>
@@ -764,21 +994,35 @@ function HistorySection({
 
 function HistoryItem({ req, empMap, onReopenPermission }) {
   const emp = empMap[req.employee_id];
-  const wasApproved = req.stage === 'approved';
-  const isLeave = req._kind === 'leave';
+  const isLeave  = req._kind === 'leave';
+  const isPerm   = req._kind === 'permission';
+  const isRejoin = req._kind === 'rejoin';
 
-  // Icon: Plane for leave, Sunrise/Sunset for permission types
-  const Icon = isLeave
-    ? Plane
-    : (req.type === 'late_arrival' ? Sunrise : Sunset);
+  // Approved/rejected status — different field per kind. Rejoining
+  // approval lives on return_stage, not stage.
+  const wasApproved = isRejoin
+    ? req.return_stage === 'approved'
+    : req.stage === 'approved';
 
-  const iconBg    = isLeave ? '#E0F2FE' : (req.type === 'early_leave' ? '#FCE7F3' : '#FEF3C7');
-  const iconColor = isLeave ? '#0369A1' : (req.type === 'early_leave' ? '#BE185D' : '#A16207');
+  // Icon: Plane for leave, Sunrise/Sunset for permission, ArrowLeftCircle for rejoining
+  const Icon = isLeave  ? Plane
+            : isRejoin ? ArrowLeftCircle
+            : (req.type === 'late_arrival' ? Sunrise : Sunset);
 
-  // Summary line varies by kind
+  const iconBg    = isLeave  ? '#E0F2FE'
+                  : isRejoin ? '#ECFDF5'
+                  : (req.type === 'early_leave' ? '#FCE7F3' : '#FEF3C7');
+  const iconColor = isLeave  ? '#0369A1'
+                  : isRejoin ? '#0F4C2A'
+                  : (req.type === 'early_leave' ? '#BE185D' : '#A16207');
+
   const summary = isLeave
     ? `Leave · ${fmtDate(req.start_date)}${req.end_date && req.end_date !== req.start_date ? ` → ${fmtDate(req.end_date)}` : ''}${req.days ? ` · ${req.days}d` : ''}`
-    : `${PERMISSION_TYPES[req.type]?.label || req.type} · ${Number(req.hours)}h · ${fmtDate(req.permission_date)}`;
+    : isRejoin
+      ? `Rejoining · returned ${fmtDate(req.actual_return_date)}${req.balance_after > 0 ? ` · +${req.balance_after}d credited` : ''}`
+      : `${PERMISSION_TYPES[req.type]?.label || req.type} · ${Number(req.hours)}h · ${fmtDate(req.permission_date)}`;
+
+  const decidedAt = isRejoin ? req.return_hr_decided_at : req.hr_decided_at;
 
   async function downloadLeaveLetter() {
     try {
@@ -786,6 +1030,15 @@ function HistoryItem({ req, empMap, onReopenPermission }) {
     } catch (err) {
       console.warn('letter download failed:', err);
       alert('Could not download letter: ' + (err.message || err));
+    }
+  }
+  async function downloadRejoinReport() {
+    try {
+      const { downloadRejoiningReportForRequest } = await import('../lib/rejoiningReport.js');
+      await downloadRejoiningReportForRequest(req, empMap);
+    } catch (err) {
+      console.warn('rejoining report download failed:', err);
+      alert('Could not download report: ' + (err.message || err));
     }
   }
 
@@ -824,7 +1077,7 @@ function HistoryItem({ req, empMap, onReopenPermission }) {
           </span>
         </div>
         <div className="text-[10px] mt-0.5" style={{ color: '#1F1B16', opacity: 0.6 }}>
-          Decided {new Date(req.hr_decided_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+          Decided {decidedAt ? new Date(decidedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
         </div>
       </div>
 
@@ -839,7 +1092,7 @@ function HistoryItem({ req, empMap, onReopenPermission }) {
           <FileDown className="w-3 h-3" /> Form
         </button>
       )}
-      {wasApproved && !isLeave && (
+      {wasApproved && isPerm && (
         <button
           type="button"
           onClick={onReopenPermission}
@@ -848,6 +1101,17 @@ function HistoryItem({ req, empMap, onReopenPermission }) {
           title="Re-open letter and email draft"
         >
           Letter / email
+        </button>
+      )}
+      {wasApproved && isRejoin && (
+        <button
+          type="button"
+          onClick={downloadRejoinReport}
+          className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap inline-flex items-center gap-1"
+          style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
+          title="Re-download the rejoining report"
+        >
+          <FileDown className="w-3 h-3" /> Report
         </button>
       )}
     </li>
