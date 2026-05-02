@@ -1068,6 +1068,20 @@ export function buildSickLeaveApprovalEmailDraft({
     ? `${fmtDateMed(verifiedAt.toISOString())} at ${verifiedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}`
     : '—';
 
+  // Cross-check block — these are the values HR typed in from the
+  // Sehhaty inquiry result page (sehhaty_seen_*). When present they
+  // make the email a self-contained verification record: anyone
+  // reading it can see what was certified vs what was requested,
+  // without needing to hunt for the screenshot.
+  const seenLines = [];
+  if (request.sehhaty_seen_name)        seenLines.push(`Patient name (Sehhaty):  ${request.sehhaty_seen_name}`);
+  if (request.sehhaty_seen_id_number)   seenLines.push(`National ID / Iqama:     ${request.sehhaty_seen_id_number}`);
+  if (request.sehhaty_seen_start)       seenLines.push(`Period (Sehhaty):        ${request.sehhaty_seen_start} → ${request.sehhaty_seen_end || '—'}`);
+  if (request.sehhaty_seen_days != null) seenLines.push(`Days certified:          ${request.sehhaty_seen_days}`);
+  if (request.sehhaty_seen_issue_date)  seenLines.push(`Cert issued:             ${request.sehhaty_seen_issue_date}`);
+  if (request.sehhaty_seen_doctor)      seenLines.push(`Doctor:                  ${request.sehhaty_seen_doctor}`);
+  if (request.sehhaty_seen_specialty)   seenLines.push(`Specialty:               ${request.sehhaty_seen_specialty}`);
+
   const to = [employee?.email].filter(Boolean).join(',');
   const ccList = [
     manager?.email,
@@ -1083,7 +1097,7 @@ export function buildSickLeaveApprovalEmailDraft({
     '',
     `Your sick leave from ${dateRange} (${dayCount}) has been approved.`,
     '',
-    `Sehhaty verification`,
+    `SEHHATY VERIFICATION`,
     `--------------------`,
     `Leave ID:        ${request.sehhaty_code || '—'}`,
     `Verified on:     ${verifiedAtStr}`,
@@ -1094,9 +1108,13 @@ export function buildSickLeaveApprovalEmailDraft({
     payBracketLabel
       ? `Pay bracket:     ${payBracketLabel} (per Saudi Labour Law Art. 117)`
       : null,
+    seenLines.length > 0 ? '' : null,
+    seenLines.length > 0 ? `CERTIFICATE DETAILS (cross-checked on Sehhaty)` : null,
+    seenLines.length > 0 ? `--------------------` : null,
+    ...seenLines,
     '',
-    `The certificate has been cross-checked on the Sehhaty/Seha platform.`,
-    `A copy of the verification result is attached to this email for your records.`,
+    `The certificate above has been cross-checked on the Sehhaty/Seha platform`,
+    `and the data certified by the doctor matches your leave request on file.`,
     '',
     `Take care, get well soon, and please share an update with your manager once you're back.`,
     '',

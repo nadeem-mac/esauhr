@@ -90,6 +90,145 @@ export function looksLikeSehhatyCode(input) {
 }
 
 /**
+ * Cross-check the Sehhaty inquiry result against what the staff
+ * submitted on the leave request. The Sehhaty page returns
+ * structured fields (name, dates, day count, issue date, doctor,
+ * specialty) — we compare each one to the corresponding value on
+ * the leave request and surface mismatches.
+ *
+ * Inputs:
+ *   request    — the leave_request row
+ *   employee   — the employee row (for name comparison)
+ *   seen       — what HR typed in from the Sehhaty result:
+ *     { name, start, end, days, issueDate, doctor, specialty, idNumber }
+ *
+ * Returns:
+ *   {
+ *     allOk,           // boolean — every required field matched
+ *     mismatches: [],  // array of { field, requested, seen, severity }
+ *     notes: [],       // any fields that were skipped because the
+ *                      // staff value isn't on file (e.g. doctor name
+ *                      // — staff doesn't supply it, only HR sees it
+ *                      // on Sehhaty)
+ *   }
+ *
+ * Severity levels:
+ *   'block'  — refuse to verify (e.g. dates don't match, day count
+ *              wildly off). Cannot bypass.
+ *   'warn'   — discrepancy worth flagging but allowed (e.g. issue
+ *              date is one day before start; common when the
+ *              certificate is issued the morning of the leave).
+ */
+export function crossCheckSehhaty({ request, employee, seen }) {
+  const mismatches = [];
+  const notes = [];
+
+  if (!seen) {
+    return {
+      allOk: false,
+      mismatches: [{ field: 'all', requested: '—', seen: '—', severity: 'block' }],
+      notes: ['No verification data entered yet.'],
+    };
+  }
+
+  // Helper — normalise dates to YYYY-MM-DD strings
+  const isoDate = (v) => {
+    if (!v) return null;
+    if (typeof v === 'string') return v.slice(0, 10);
+    try { return new Date(v).toISOString().slice(0, 10); } catch { return null; }
+  };
+
+  // Start date — must match exactly. If the certificate's start
+  // date doesn't match the leave's start date, we're verifying the
+  // wrong certificate.
+  const reqStart  = isoDate(request.start_date);
+  const seenStart = isoDate(seen.start);
+  if (seenStart && reqStart !== seenStart) {
+    mismatches.push({
+      field: 'Start date',
+      requested: reqStart,
+      seen: seenStart,
+      severity: 'block',
+    });
+  }
+
+  // End date — same rule.
+  const reqEnd  = isoDate(request.end_date);
+  const seenEnd = isoDate(seen.end);
+  if (seenEnd && reqEnd !== seenEnd) {
+    mismatches.push({
+      field: 'End date',
+      requested: reqEnd,
+      seen: seenEnd,
+      severity: 'block',
+    });
+  }
+
+  // Day count — must match. The Sehhaty cert is the source of truth
+  // on how many days were actually certified by the doctor.
+  const reqDays  = Number(request.days) || 0;
+  const seenDays = Number(seen.days);
+  if (Number.isFinite(seenDays) && seenDays > 0 && reqDays !== seenDays) {
+    mismatches.push({
+      field: 'Days',
+      requested: reqDays,
+      seen: seenDays,
+      severity: 'block',
+    });
+  }
+
+  // Name — soft check. Sehhaty stores Arabic; the leave system
+  // stores English/transliterated. We can't enforce equality; HR's
+  // visual confirmation that 'this is the right person' is the
+  // real check. We just record what was seen.
+  if (!seen.name || !seen.name.trim()) {
+    notes.push('No name from Sehhaty entered — HR should confirm visually.');
+  }
+
+  // Issue date — typically same day as start or 1 day before. Flag
+  // if more than 7 days before the leave starts (unusual for a
+  // legitimate same-illness certificate).
+  const seenIssue = isoDate(seen.issueDate);
+  if (seenIssue && reqStart) {
+    const issueMs = new Date(seenIssue).getTime();
+    const startMs = new Date(reqStart).getTime();
+    const dayDiff = Math.round((startMs - issueMs) / 86_400_000);
+    if (dayDiff > 7) {
+      mismatches.push({
+        field: 'Issue date',
+        requested: `before ${reqStart}`,
+        seen: `${seenIssue} (${dayDiff} days earlier)`,
+        severity: 'warn',
+      });
+    }
+    if (dayDiff < -1) {
+      // Issue date is AFTER the leave start. Possible (cert issued
+      // mid-illness when patient saw a doctor a few days in), but
+      // worth flagging.
+      mismatches.push({
+        field: 'Issue date',
+        requested: `near ${reqStart}`,
+        seen: `${seenIssue} (after leave started)`,
+        severity: 'warn',
+      });
+    }
+  }
+
+  // Doctor and specialty — staff doesn't submit these, so they're
+  // record-only. We just take what HR typed in. No comparison.
+  if (!seen.doctor || !seen.doctor.trim()) {
+    notes.push('Doctor name not recorded — useful for the audit trail.');
+  }
+
+  const blockers = mismatches.filter(m => m.severity === 'block');
+  return {
+    allOk: blockers.length === 0,
+    mismatches,
+    notes,
+  };
+}
+
+/**
  * Detailed validation with diagnostic output. Used by the HR
  * verification modal to give Bashaier a clear picture of what's
  * suspicious about a code before she has to make the call.

@@ -4,7 +4,7 @@ import { supabase, directPatch } from '../supabaseClient.js';
 import { fmtDate } from '../lib/leaveLogic.js';
 import { logAction } from '../lib/audit.js';
 import { generateVacationFormBlob, buildEmailDraft, buildSickLeaveApprovalEmailDraft, downloadBlob } from '../lib/vacationForm.js';
-import { SEHHATY_VERIFY_URL, classifySickLeaveBracket, diagnoseSehhatyCode } from '../lib/sehhaty.js';
+import { SEHHATY_VERIFY_URL, classifySickLeaveBracket, diagnoseSehhatyCode, crossCheckSehhaty } from '../lib/sehhaty.js';
 
 // Friendly label for a leave type id. Falls back to title-casing the
 // id when we don't have a curated name. The leaveTypes table stores
@@ -56,6 +56,20 @@ export default function HrApprovalModal({ request, employee, manager, substitute
   // a single button click that's easy to misfire on.
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmNote, setConfirmNote] = useState('');
+  // Cross-check fields — what Bashaier reads off the Sehhaty
+  // inquiry result and types in here. The system compares each
+  // value against the request and refuses to verify if the
+  // critical fields (start, end, days) don't match. Pre-populated
+  // from the request itself so the happy path is just visual
+  // confirmation and an Enter press; only mismatches need editing.
+  const [seenName, setSeenName]           = useState('');
+  const [seenIdNumber, setSeenIdNumber]   = useState('');
+  const [seenStart, setSeenStart]         = useState('');
+  const [seenEnd, setSeenEnd]             = useState('');
+  const [seenDays, setSeenDays]           = useState('');
+  const [seenIssueDate, setSeenIssueDate] = useState('');
+  const [seenDoctor, setSeenDoctor]       = useState('');
+  const [seenSpecialty, setSeenSpecialty] = useState('');
 
   // Format diagnostic for the request's stored code. Exposed to the
   // confirmation modal so Bashaier sees any soft warnings (too short,
@@ -63,6 +77,23 @@ export default function HrApprovalModal({ request, employee, manager, substitute
   const codeDiag = request?.sehhaty_code
     ? diagnoseSehhatyCode(request.sehhaty_code)
     : { severity: 'error', messages: ['No code on this request.'], normalised: '' };
+
+  // Cross-check result: compares the typed-in Sehhaty values
+  // against the request fields. Updates live as Bashaier types.
+  const crossCheck = isSick ? crossCheckSehhaty({
+    request,
+    employee,
+    seen: {
+      name: seenName,
+      idNumber: seenIdNumber,
+      start: seenStart,
+      end: seenEnd,
+      days: seenDays,
+      issueDate: seenIssueDate,
+      doctor: seenDoctor,
+      specialty: seenSpecialty,
+    },
+  }) : { allOk: true, mismatches: [], notes: [] };
 
   // Saudi Labour Law sick-day running total + bracket warning.
   // allRequests prop is optional — when provided, we compute the
@@ -83,18 +114,35 @@ export default function HrApprovalModal({ request, employee, manager, substitute
 
   // Apply the verification — called from the confirmation modal
   // after Bashaier explicitly says yes. Writes the verification
-  // timestamp + verifier + the optional note.
+  // timestamp, verifier, the cross-check fields she typed in (the
+  // structured certificate data she saw on Sehhaty), and the
+  // optional note. Refuses to write if the cross-check has any
+  // 'block' severity mismatches.
   const applyVerification = useCallback(async () => {
     if (verifying) return;
+    if (!crossCheck.allOk) {
+      setVerifyError('Resolve mismatches above before saving.');
+      return;
+    }
     setVerifying(true);
     setVerifyError('');
     try {
       const now = new Date().toISOString();
       const note = confirmNote.trim();
+      // Normalise empty strings to null so we don't store them.
+      const nullIfEmpty = (s) => (s && String(s).trim()) ? String(s).trim() : null;
       await directPatch('leave_requests', 'id', request.id, {
         sehhaty_verified_at: now,
         sehhaty_verified_by: me?.id || me?.auth_user_id || null,
         sehhaty_verification_note: note || null,
+        sehhaty_seen_name:       nullIfEmpty(seenName),
+        sehhaty_seen_id_number:  nullIfEmpty(seenIdNumber),
+        sehhaty_seen_start:      nullIfEmpty(seenStart),
+        sehhaty_seen_end:        nullIfEmpty(seenEnd),
+        sehhaty_seen_days:       seenDays === '' ? null : Number(seenDays),
+        sehhaty_seen_issue_date: nullIfEmpty(seenIssueDate),
+        sehhaty_seen_doctor:     nullIfEmpty(seenDoctor),
+        sehhaty_seen_specialty:  nullIfEmpty(seenSpecialty),
       }, { timeoutMs: 10000 });
       setVerifiedAt(now);
       setConfirmOpen(false);
@@ -103,7 +151,12 @@ export default function HrApprovalModal({ request, employee, manager, substitute
           targetType: 'leave_request',
           targetId: request.id,
           targetLabel: `${employee?.name || request.employee_id} · sick leave verified on Sehhaty`,
-          details: { sehhaty_code: request.sehhaty_code, note: note || null },
+          details: {
+            sehhaty_code: request.sehhaty_code,
+            note: note || null,
+            seen_doctor: nullIfEmpty(seenDoctor),
+            warnings: crossCheck.mismatches.filter(m => m.severity === 'warn').map(m => m.field),
+          },
         });
       } catch { /* audit best-effort */ }
     } catch (err) {
@@ -111,16 +164,30 @@ export default function HrApprovalModal({ request, employee, manager, substitute
     } finally {
       setVerifying(false);
     }
-  }, [request, me, employee, verifying, confirmNote]);
+  }, [request, me, employee, verifying, confirmNote, crossCheck,
+      seenName, seenIdNumber, seenStart, seenEnd, seenDays, seenIssueDate, seenDoctor, seenSpecialty]);
 
   // Open the confirmation modal — used by both the inline 'Verify'
   // button and the 'Approve & continue' button as a pre-approval
-  // gate when the leave is sick and not yet verified.
+  // gate when the leave is sick and not yet verified. Pre-populates
+  // the cross-check fields with the request's own values so the
+  // happy path (no discrepancies) is just visual confirmation.
   const openVerifyConfirm = useCallback(() => {
     setConfirmNote('');
     setVerifyError('');
+    // Pre-fill from the request — if Sehhaty matches, Bashaier
+    // doesn't have to retype anything; she just confirms each
+    // field visually against the screen.
+    setSeenName(employee?.name || '');
+    setSeenIdNumber('');
+    setSeenStart(request.start_date || '');
+    setSeenEnd(request.end_date || '');
+    setSeenDays(String(request.days || ''));
+    setSeenIssueDate(request.start_date || '');
+    setSeenDoctor('');
+    setSeenSpecialty('');
     setConfirmOpen(true);
-  }, []);
+  }, [request, employee]);
 
   // Approval gate: sick leaves must be verified before HR can finalise.
   // This is the policy enforcement — an unverified sick leave should
@@ -152,7 +219,25 @@ export default function HrApprovalModal({ request, employee, manager, substitute
 
       setDraft(isSick
         ? buildSickLeaveApprovalEmailDraft({
-            request: { ...request, sehhaty_verified_at: verifiedAt || request.sehhaty_verified_at },
+            // Merge the verification-time data Bashaier typed in
+            // into the request so the email body can render the
+            // 'CERTIFICATE DETAILS (cross-checked on Sehhaty)' block.
+            // After the directPatch in applyVerification these are
+            // already persisted, but the prop hasn't reloaded yet,
+            // so we layer the local state on top.
+            request: {
+              ...request,
+              sehhaty_verified_at: verifiedAt || request.sehhaty_verified_at,
+              sehhaty_verification_note: confirmNote.trim() || request.sehhaty_verification_note,
+              sehhaty_seen_name:       seenName        || request.sehhaty_seen_name,
+              sehhaty_seen_id_number:  seenIdNumber    || request.sehhaty_seen_id_number,
+              sehhaty_seen_start:      seenStart       || request.sehhaty_seen_start,
+              sehhaty_seen_end:        seenEnd         || request.sehhaty_seen_end,
+              sehhaty_seen_days:       seenDays !== '' ? Number(seenDays) : request.sehhaty_seen_days,
+              sehhaty_seen_issue_date: seenIssueDate   || request.sehhaty_seen_issue_date,
+              sehhaty_seen_doctor:     seenDoctor      || request.sehhaty_seen_doctor,
+              sehhaty_seen_specialty:  seenSpecialty   || request.sehhaty_seen_specialty,
+            },
             employee,
             manager,
             hrApprover: me,
@@ -164,7 +249,8 @@ export default function HrApprovalModal({ request, employee, manager, substitute
       setError(err?.message || String(err));
       setStep('review');
     }
-  }, [request, employee, manager, substitutes, me, isSick, verifiedAt, sickBracket]);
+  }, [request, employee, manager, substitutes, me, isSick, verifiedAt, sickBracket,
+      confirmNote, seenName, seenIdNumber, seenStart, seenEnd, seenDays, seenIssueDate, seenDoctor, seenSpecialty]);
 
   const downloadForm = useCallback(async () => {
     setFormGenerating(true);
@@ -524,16 +610,12 @@ export default function HrApprovalModal({ request, employee, manager, substitute
                 <>
                   <div className="text-xs leading-relaxed"
                     style={{ color: '#0A0A0A' }}>
-                    Click <strong>Open email composer</strong> — your mail client will open with the approval email pre-filled
-                    (subject, body, recipients all set). Before sending, <strong>attach the Sehhaty inquiry screenshot</strong> you
-                    saved while verifying so the staff member has the proof on record.
+                    Click <strong>Open email composer</strong> — the email opens with subject, recipients, and a structured verification record pre-filled.
+                    The body lists every certificate field you cross-checked, so the email is self-contained proof — no attachment needed.
                   </div>
                   <div className="rounded-lg p-3 text-[11px]"
-                    style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}>
-                    💡 <strong>Tip — saving the Sehhaty screenshot:</strong> on the Sehhaty inquiry result page,
-                    press <code className="px-1 rounded" style={{ background: '#FFFFFF' }}>Cmd+Shift+4</code> (Mac)
-                    or <code className="px-1 rounded" style={{ background: '#FFFFFF' }}>Win+Shift+S</code> (Windows)
-                    to capture the result, then drag-drop into the email before sending.
+                    style={{ background: '#F0FDF4', color: '#047857', border: '1px solid #86EFAC' }}>
+                    ✓ <strong>Self-contained verification record:</strong> patient name, dates, day count, doctor, and specialty are all in the email body. If you also want to attach the Sehhaty screenshot for extra evidence, capture with <code className="px-1 rounded" style={{ background: '#FFFFFF' }}>Cmd+Shift+4</code> (Mac) or <code className="px-1 rounded" style={{ background: '#FFFFFF' }}>Win+Shift+S</code> (Windows) and drag-drop into the email — but it's optional.
                   </div>
                   <div className="grid grid-cols-1 gap-3">
                     <a href={draft?.mailto || '#'}
@@ -595,67 +677,200 @@ export default function HrApprovalModal({ request, employee, manager, substitute
         </div>
       </div>
 
-      {/* Confirmation modal — opens when Bashaier clicks 'I've
-          verified this on Sehhaty' (or the Verify & approve
-          button on an unverified sick leave). Forces an explicit
-          'yes the reference matches' before the verification
-          stamp lands. The note field captures any context she
-          wants on the audit trail (e.g. 'cross-checked Iqama
-          with Sehhaty record', 'doctor name matched cert'). */}
+      {/* Confirmation modal — structured cross-check between what
+          Bashaier sees on the Sehhaty inquiry result page and what
+          the staff member submitted in the request. The Sehhaty
+          page (seha.sa/#/inquiries/slenquiry) returns a card with
+          patient name, dates, day count, issue date, doctor name,
+          and specialty — Bashaier reads each value off the screen
+          and types it in here. The system compares to the request
+          and refuses to save when critical fields don't match.
+          Once approved, these values become a self-contained
+          verification record in the email body and the audit log,
+          so the screenshot itself is no longer the proof — the
+          structured fields are. */}
       {confirmOpen && (
         <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4"
              style={{ background: 'rgba(15,31,26,0.55)' }}
              onClick={(e) => { if (e.target === e.currentTarget) setConfirmOpen(false); }}>
-          <div className="bg-paper rounded-t-2xl sm:rounded-2xl w-full max-w-md fade-in"
+          <div className="bg-paper rounded-t-2xl sm:rounded-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto fade-in"
             style={{ boxShadow: '0 12px 40px rgba(31,27,22,0.2)' }}>
-            <div className="px-5 py-4 border-b" style={{ borderColor: 'var(--border-soft)' }}>
+            <div className="px-5 py-4 border-b sticky top-0 z-10" style={{ borderColor: 'var(--border-soft)', background: 'var(--paper)' }}>
               <div className="text-[10px] tracking-[0.25em] font-bold mb-1" style={{ color: '#B45309' }}>
-                CONFIRM VERIFICATION
+                CROSS-CHECK · SEHHATY CERTIFICATE
               </div>
               <h3 className="text-lg" style={{ fontFamily: 'Georgia, serif', color: '#0A0A0A', fontWeight: 500 }}>
-                Is the Sehhaty reference valid?
+                Type in what you see on Sehhaty
               </h3>
-            </div>
-            <div className="px-5 py-4 space-y-3">
-              <div className="text-[12px]" style={{ color: '#0A0A0A' }}>
-                Confirm you opened Sehhaty, entered the leave ID below, and the certificate matches this employee and these dates.
+              <div className="text-[11px] mt-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+                Each field below is pre-filled from the request. Adjust any value that differs from the Sehhaty result. The system compares both sides and blocks save if dates or day count don't match.
               </div>
+            </div>
 
-              {/* Reference card — large mono code so Bashaier can
-                  visually compare against the Sehhaty result. */}
+            <div className="px-5 py-4 space-y-4">
+              {/* Reference card — leave ID + format diagnostic */}
               <div className="rounded-lg p-3"
                 style={{ background: '#FFFFFF', border: '1px solid var(--border-soft)' }}>
-                <div className="text-[9px] tracking-wider opacity-60 mb-1">SEHHATY LEAVE ID</div>
+                <div className="text-[9px] tracking-wider opacity-60 mb-1">SEHHATY LEAVE ID (from request)</div>
                 <div className="font-mono text-base" style={{ fontWeight: 700, color: '#0A0A0A', wordBreak: 'break-all' }}>
                   {request?.sehhaty_code}
                 </div>
-                <div className="text-[10px] mt-2 opacity-70">
-                  Employee: <strong>{employee?.name}</strong> ({request?.employee_id})<br/>
-                  Period: {fmtDate(new Date(request.start_date))} → {fmtDate(new Date(request.end_date))}
-                  {' · '}{request.days} day{request.days === 1 ? '' : 's'}
-                </div>
+                {codeDiag.severity === 'warn' && (
+                  <div className="text-[10px] mt-2 px-2 py-1 rounded inline-block"
+                    style={{ background: '#FEF3C7', color: '#92400E' }}>
+                    ⚠ {codeDiag.messages.join(' ')}
+                  </div>
+                )}
+                {codeDiag.severity === 'error' && (
+                  <div className="text-[10px] mt-2 px-2 py-1 rounded inline-block"
+                    style={{ background: '#FEE2E2', color: '#991B1B' }}>
+                    ✕ {codeDiag.messages.join(' ')}
+                  </div>
+                )}
               </div>
 
-              {/* Format-level diagnostic. Soft warnings ('looks like
-                  a phone number', 'pattern looks like a test value')
-                  appear here so Bashaier sees them right at the
-                  point of decision. */}
-              {codeDiag.severity === 'warn' && (
-                <div className="rounded-lg p-2.5 text-[11px]"
-                  style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}>
-                  ⚠ <strong>Heads-up:</strong> {codeDiag.messages.join(' ')}
+              {/* Cross-check grid — two columns: 'request says' on
+                  the left as read-only references, 'Sehhaty shows'
+                  on the right as inputs. Pre-filled with request
+                  values so the happy path is just visual confirm. */}
+              <div className="rounded-lg overflow-hidden"
+                style={{ border: '1px solid var(--border-soft)', background: '#FFFFFF' }}>
+                <div className="grid grid-cols-12 text-[10px] tracking-wider font-bold px-3 py-2"
+                  style={{ background: '#F4EFDC', color: '#0F4C2A', borderBottom: '1px solid var(--border-soft)' }}>
+                  <div className="col-span-4">FIELD</div>
+                  <div className="col-span-4">REQUEST SAYS</div>
+                  <div className="col-span-4">SEHHATY SHOWS (type in)</div>
+                </div>
+
+                {/* NAME */}
+                <CrossRow label="Patient name"
+                  requestValue={employee?.name || '—'}
+                  field="name"
+                  mismatches={crossCheck.mismatches}>
+                  <input type="text" value={seenName}
+                    onChange={e => setSeenName(e.target.value)}
+                    placeholder="Name on Sehhaty (Arabic OK)"
+                    className="w-full px-2 py-1 rounded border text-[12px]"
+                    style={{ borderColor: 'var(--border-soft)', background: '#FAFAF7', color: '#0A0A0A' }}/>
+                </CrossRow>
+
+                {/* ID NUMBER */}
+                <CrossRow label="National ID / Iqama"
+                  requestValue={<span className="opacity-60 italic">not on file</span>}
+                  field="idNumber"
+                  mismatches={crossCheck.mismatches}>
+                  <input type="text" value={seenIdNumber}
+                    onChange={e => setSeenIdNumber(e.target.value)}
+                    placeholder="e.g. 1127754297"
+                    className="w-full px-2 py-1 rounded border text-[12px] font-mono"
+                    style={{ borderColor: 'var(--border-soft)', background: '#FAFAF7', color: '#0A0A0A' }}/>
+                </CrossRow>
+
+                {/* START */}
+                <CrossRow label="Start date"
+                  requestValue={request.start_date}
+                  field="Start date"
+                  mismatches={crossCheck.mismatches}>
+                  <input type="date" value={seenStart}
+                    onChange={e => setSeenStart(e.target.value)}
+                    className="w-full px-2 py-1 rounded border text-[12px]"
+                    style={{ borderColor: 'var(--border-soft)', background: '#FAFAF7', color: '#0A0A0A' }}/>
+                </CrossRow>
+
+                {/* END */}
+                <CrossRow label="End date"
+                  requestValue={request.end_date}
+                  field="End date"
+                  mismatches={crossCheck.mismatches}>
+                  <input type="date" value={seenEnd}
+                    onChange={e => setSeenEnd(e.target.value)}
+                    className="w-full px-2 py-1 rounded border text-[12px]"
+                    style={{ borderColor: 'var(--border-soft)', background: '#FAFAF7', color: '#0A0A0A' }}/>
+                </CrossRow>
+
+                {/* DAYS */}
+                <CrossRow label="Days certified"
+                  requestValue={request.days}
+                  field="Days"
+                  mismatches={crossCheck.mismatches}>
+                  <input type="number" min="1" max="120" value={seenDays}
+                    onChange={e => setSeenDays(e.target.value)}
+                    className="w-full px-2 py-1 rounded border text-[12px]"
+                    style={{ borderColor: 'var(--border-soft)', background: '#FAFAF7', color: '#0A0A0A' }}/>
+                </CrossRow>
+
+                {/* ISSUE DATE */}
+                <CrossRow label="Cert issue date"
+                  requestValue={<span className="opacity-60 italic">not on file</span>}
+                  field="Issue date"
+                  mismatches={crossCheck.mismatches}>
+                  <input type="date" value={seenIssueDate}
+                    onChange={e => setSeenIssueDate(e.target.value)}
+                    className="w-full px-2 py-1 rounded border text-[12px]"
+                    style={{ borderColor: 'var(--border-soft)', background: '#FAFAF7', color: '#0A0A0A' }}/>
+                </CrossRow>
+
+                {/* DOCTOR */}
+                <CrossRow label="Doctor name"
+                  requestValue={<span className="opacity-60 italic">not on file</span>}
+                  field="doctor"
+                  mismatches={crossCheck.mismatches}>
+                  <input type="text" value={seenDoctor}
+                    onChange={e => setSeenDoctor(e.target.value)}
+                    placeholder="Doctor name from certificate"
+                    className="w-full px-2 py-1 rounded border text-[12px]"
+                    style={{ borderColor: 'var(--border-soft)', background: '#FAFAF7', color: '#0A0A0A' }}/>
+                </CrossRow>
+
+                {/* SPECIALTY */}
+                <CrossRow label="Specialty"
+                  requestValue={<span className="opacity-60 italic">not on file</span>}
+                  field="specialty"
+                  mismatches={crossCheck.mismatches}
+                  isLast>
+                  <input type="text" value={seenSpecialty}
+                    onChange={e => setSeenSpecialty(e.target.value)}
+                    placeholder="e.g. Family Medicine, ENT"
+                    className="w-full px-2 py-1 rounded border text-[12px]"
+                    style={{ borderColor: 'var(--border-soft)', background: '#FAFAF7', color: '#0A0A0A' }}/>
+                </CrossRow>
+              </div>
+
+              {/* Mismatch summary — appears when crossCheck flags
+                  any blocker or warning. 'block' severity refuses
+                  the save; 'warn' allows it but Bashaier sees the
+                  yellow card. */}
+              {crossCheck.mismatches.filter(m => m.severity === 'block').length > 0 && (
+                <div className="rounded-lg p-3 text-[11px]"
+                  style={{ background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}>
+                  <div style={{ fontWeight: 700 }} className="mb-1">✕ Cannot verify — these fields don't match:</div>
+                  <ul className="space-y-0.5">
+                    {crossCheck.mismatches.filter(m => m.severity === 'block').map((m, i) => (
+                      <li key={i}>
+                        <strong>{m.field}:</strong> request says <code>{String(m.requested)}</code> but Sehhaty shows <code>{String(m.seen)}</code>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-2 opacity-80">
+                    Either adjust the request (cancel and ask staff to resubmit) or correct the entry above if you mistyped.
+                  </div>
                 </div>
               )}
-              {codeDiag.severity === 'error' && (
-                <div className="rounded-lg p-2.5 text-[11px]"
-                  style={{ background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}>
-                  ✕ <strong>Cannot verify:</strong> {codeDiag.messages.join(' ')}
+              {crossCheck.mismatches.filter(m => m.severity === 'warn').length > 0 && (
+                <div className="rounded-lg p-3 text-[11px]"
+                  style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}>
+                  <div style={{ fontWeight: 700 }} className="mb-1">⚠ Heads-up — these are unusual but allowed:</div>
+                  <ul className="space-y-0.5">
+                    {crossCheck.mismatches.filter(m => m.severity === 'warn').map((m, i) => (
+                      <li key={i}>
+                        <strong>{m.field}:</strong> {String(m.seen)} (request: {String(m.requested)})
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
 
-              {/* Optional note field — Bashaier can record what
-                  she cross-checked. Saved into
-                  sehhaty_verification_note on the request, audited. */}
+              {/* Optional note */}
               <div>
                 <label className="text-[10px] tracking-wider font-bold opacity-70 mb-1 block">
                   VERIFICATION NOTE <span className="opacity-60 font-normal">(optional)</span>
@@ -663,7 +878,7 @@ export default function HrApprovalModal({ request, employee, manager, substitute
                 <textarea value={confirmNote}
                   onChange={e => setConfirmNote(e.target.value)}
                   rows={2} maxLength={300}
-                  placeholder="e.g. dates match, doctor name matches certificate"
+                  placeholder="e.g. matched the doctor name on the certificate, ID number confirmed via Iqama"
                   className="w-full px-3 py-2 rounded-lg border text-sm bg-transparent focus:outline-none resize-none"
                   style={{ borderColor: 'var(--border-soft)' }}/>
                 <div className="text-[9px] opacity-50 text-right mt-0.5">
@@ -674,12 +889,12 @@ export default function HrApprovalModal({ request, employee, manager, substitute
               {verifyError && (
                 <div className="rounded-lg p-2.5 text-[11px]"
                   style={{ background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}>
-                  Failed to save: {verifyError}
+                  {verifyError}
                 </div>
               )}
             </div>
 
-            <div className="px-5 py-3 border-t flex items-center justify-between gap-2"
+            <div className="px-5 py-3 border-t flex items-center justify-between gap-2 sticky bottom-0"
               style={{ borderColor: 'var(--border-soft)', background: '#FAF6EC' }}>
               <a href={SEHHATY_VERIFY_URL} target="_blank" rel="noopener noreferrer"
                 className="text-[11px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border"
@@ -691,27 +906,58 @@ export default function HrApprovalModal({ request, employee, manager, substitute
                   disabled={verifying}
                   className="text-[11px] px-3 py-1.5 rounded-full border"
                   style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', color: '#0A0A0A' }}>
-                  No, not yet
+                  Cancel
                 </button>
                 <button onClick={applyVerification}
-                  disabled={verifying || codeDiag.severity === 'error'}
+                  disabled={verifying || codeDiag.severity === 'error' || !crossCheck.allOk}
+                  title={!crossCheck.allOk ? 'Resolve mismatches first' : ''}
                   className="text-[11px] inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full"
                   style={{
-                    background: codeDiag.severity === 'error' ? '#9CA3AF' : '#0F4C2A',
+                    background: (codeDiag.severity === 'error' || !crossCheck.allOk) ? '#9CA3AF' : '#0F4C2A',
                     color: '#FFFFFF',
                     fontWeight: 700,
-                    cursor: (verifying || codeDiag.severity === 'error') ? 'not-allowed' : 'pointer',
-                    opacity: (verifying || codeDiag.severity === 'error') ? 0.7 : 1,
+                    cursor: (verifying || codeDiag.severity === 'error' || !crossCheck.allOk) ? 'not-allowed' : 'pointer',
+                    opacity: (verifying || codeDiag.severity === 'error' || !crossCheck.allOk) ? 0.7 : 1,
                   }}>
                   {verifying
                     ? <><Loader2 className="w-3 h-3 animate-spin"/> Saving…</>
-                    : <><Check className="w-3 h-3"/> Yes, reference is valid</>}
+                    : <><Check className="w-3 h-3"/> All matches — verify</>}
                 </button>
               </div>
             </div>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── CrossRow ────────────────────────────────────────────────────────────────
+// One row of the cross-check grid. Left column shows what the
+// request says (read-only reference), right column hosts the
+// input where Bashaier types in what she sees on Sehhaty. The
+// row's left border tints red when this field has a 'block'
+// mismatch and amber when it has a 'warn' so the eye lands on
+// the issue without scanning the summary card.
+function CrossRow({ label, requestValue, field, mismatches, isLast, children }) {
+  const fieldMismatch = (mismatches || []).find(m =>
+    m.field?.toLowerCase() === String(field).toLowerCase()
+  );
+  const accent = fieldMismatch?.severity === 'block' ? '#B91C1C'
+               : fieldMismatch?.severity === 'warn'  ? '#B45309'
+               : 'transparent';
+  return (
+    <div className="grid grid-cols-12 px-3 py-2 items-center gap-2 text-[12px]"
+      style={{
+        borderBottom: isLast ? 'none' : '1px solid var(--border-soft)',
+        borderLeft: `3px solid ${accent}`,
+        color: '#0A0A0A',
+      }}>
+      <div className="col-span-4 font-semibold">{label}</div>
+      <div className="col-span-4 font-mono opacity-80" style={{ fontSize: '11px' }}>
+        {requestValue}
+      </div>
+      <div className="col-span-4">{children}</div>
     </div>
   );
 }
