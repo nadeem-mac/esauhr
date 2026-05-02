@@ -5,6 +5,7 @@ import { logAction } from '../lib/audit.js';
 import HrApprovalModal from './HrApprovalModal.jsx';
 import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
 import PermissionApprovedModal from './PermissionApprovedModal.jsx';
+import RejoiningApprovedModal from './RejoiningApprovedModal.jsx';
 import { fmtDate } from '../lib/leaveLogic.js';
 import { PERMISSION_TYPES, summariseMonth } from '../lib/permissionLogic.js';
 
@@ -20,6 +21,10 @@ export default function ReviewerPanel({ me }) {
   // the freshly-approved row so PermissionApprovedModal opens with the
   // download letter / open email draft actions.
   const [approvedPermission, setApprovedPermission] = useState(null);
+  // Same shape for rejoining — opens RejoiningApprovedModal either after
+  // a fresh final approve or via the 'Letter / email' button on a row in
+  // MY RECENT DECISIONS history.
+  const [approvedRejoining,  setApprovedRejoining]  = useState(null);
   // History of permission decisions made by THIS HR reviewer in the last
   // 30 days. Surfaces below the active queue so Bashaier can review her
   // own decisions, re-open the timeline for context, and re-download
@@ -434,6 +439,75 @@ export default function ReviewerPanel({ me }) {
         </button>
       </div>
 
+      {/* Pending notification — single line summary of what's waiting
+          for HER right now. Sits at the top of the panel so the moment
+          she opens the Reviews tab she knows whether there's anything
+          to do. Only renders when at least one queue is non-empty.
+          Each pill is a soft anchor to its section below: clicking
+          scrolls the section into view. Pure read-side; no decisions
+          happen here. */}
+      {!loading && (() => {
+        const leavePending  = leave.filter(r => r.stage === 'pending_hr').length;
+        const permPending   = perms.filter(r => r.stage === 'pending_hr').length;
+        const rejoinPending = rejoinQueue.length;
+        const total = leavePending + permPending + rejoinPending;
+        if (total === 0) return null;
+        const scrollToSection = (label) => {
+          const el = Array.from(document.querySelectorAll('h3'))
+            .find(h => h.textContent && h.textContent.includes(label));
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        };
+        return (
+          <div
+            className="rounded-xl px-4 py-3 border flex items-start gap-3"
+            style={{
+              background: '#FEF3C7',
+              borderColor: '#F59E0B',
+              color: '#0A0A0A',
+            }}
+            role="status"
+          >
+            <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: '#92400E' }} />
+            <div className="text-xs flex-1">
+              <div className="font-semibold mb-1.5">
+                {total === 1
+                  ? 'You have 1 request awaiting your final approval'
+                  : `You have ${total} requests awaiting your final approval`}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {leavePending > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => scrollToSection('LEAVE')}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold cursor-pointer hover:opacity-90"
+                    style={{ background: '#FFFFFF', color: '#0A0A0A', border: '1px solid #F59E0B' }}>
+                    <Plane className="w-3 h-3" /> {leavePending} leave
+                  </button>
+                )}
+                {permPending > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => scrollToSection('PERMISSION')}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold cursor-pointer hover:opacity-90"
+                    style={{ background: '#FFFFFF', color: '#0A0A0A', border: '1px solid #F59E0B' }}>
+                    <Sunrise className="w-3 h-3" /> {permPending} permission
+                  </button>
+                )}
+                {rejoinPending > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => scrollToSection('REJOINING')}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold cursor-pointer hover:opacity-90"
+                    style={{ background: '#FFFFFF', color: '#0A0A0A', border: '1px solid #F59E0B' }}>
+                    <ArrowLeftCircle className="w-3 h-3" /> {rejoinPending} rejoining
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Delegation banner — surfaces when one of my direct-report
           managers is on approved leave today and their team's pending
           requests are routing to me. Without this banner the acting
@@ -681,6 +755,7 @@ export default function ReviewerPanel({ me }) {
               empMap={empMap}
               me={me}
               onChanged={load}
+              onApproved={(req) => setApprovedRejoining(req)}
             />
           )}
 
@@ -702,6 +777,7 @@ export default function ReviewerPanel({ me }) {
               query={historyQuery}
               setQuery={setHistoryQuery}
               setApprovedPermission={setApprovedPermission}
+              setApprovedRejoining={setApprovedRejoining}
               isAdmin={isAdmin}
             />
           )}
@@ -728,6 +804,13 @@ export default function ReviewerPanel({ me }) {
           onClose={() => setApprovedPermission(null)}
         />
       )}
+      {approvedRejoining && (
+        <RejoiningApprovedModal
+          request={approvedRejoining}
+          empMap={empMap}
+          onClose={() => setApprovedRejoining(null)}
+        />
+      )}
     </div>
   );
 }
@@ -745,7 +828,7 @@ function EmptyState({ text }) {
 // Bashaier sees rows where the manager has already approved and the
 // rejoining is awaiting final HR decision. Mirrors the leave / perm
 // queue pattern in this same panel — same chrome, same urgency.
-function RejoiningSection({ queue, empMap, me, onChanged }) {
+function RejoiningSection({ queue, empMap, me, onChanged, onApproved }) {
   const [busyId, setBusyId] = React.useState(null);
   const [openId, setOpenId] = React.useState(null);
   const [reason, setReason] = React.useState('');
@@ -789,6 +872,9 @@ function RejoiningSection({ queue, empMap, me, onChanged }) {
         }
       } catch (e) { /* non-fatal */ }
       await directPatch('leave_requests', 'id', req.id, patch, { timeoutMs: 10000 });
+      // Open the post-approval modal (Download report + Open email
+      // draft) — same flow as permission letter approval.
+      onApproved && onApproved({ ...req, ...patch });
       onChanged && onChanged();
     } catch (err) {
       alert('Approve failed: ' + (err.message || err));
@@ -939,7 +1025,7 @@ function RejoiningSection({ queue, empMap, me, onChanged }) {
 // something — the row leaves the queue but appears here on the same load.
 function HistorySection({
   recentLeaveDecisions, recentDecisions, recentRejoinDecisions = [],
-  empMap, query, setQuery, setApprovedPermission,
+  empMap, query, setQuery, setApprovedPermission, setApprovedRejoining,
 }) {
   // Tag each row with kind so the unified list can render appropriately.
   const all = [
@@ -999,6 +1085,7 @@ function HistorySection({
               req={req}
               empMap={empMap}
               onReopenPermission={() => setApprovedPermission(req)}
+              onReopenRejoining={() => setApprovedRejoining(req)}
             />
           ))}
         </ul>
@@ -1007,7 +1094,7 @@ function HistorySection({
   );
 }
 
-function HistoryItem({ req, empMap, onReopenPermission }) {
+function HistoryItem({ req, empMap, onReopenPermission, onReopenRejoining }) {
   const emp = empMap[req.employee_id];
   const isLeave  = req._kind === 'leave';
   const isPerm   = req._kind === 'permission';
@@ -1045,15 +1132,6 @@ function HistoryItem({ req, empMap, onReopenPermission }) {
     } catch (err) {
       console.warn('letter download failed:', err);
       alert('Could not download letter: ' + (err.message || err));
-    }
-  }
-  async function downloadRejoinReport() {
-    try {
-      const { downloadRejoiningReportForRequest } = await import('../lib/rejoiningReport.js');
-      await downloadRejoiningReportForRequest(req, empMap);
-    } catch (err) {
-      console.warn('rejoining report download failed:', err);
-      alert('Could not download report: ' + (err.message || err));
     }
   }
 
@@ -1119,33 +1197,15 @@ function HistoryItem({ req, empMap, onReopenPermission }) {
         </button>
       )}
       {wasApproved && isRejoin && (
-        <>
-          <button
-            type="button"
-            onClick={async () => {
-              try {
-                const { composeRejoiningEmailForRequest } = await import('../lib/rejoiningReport.js');
-                composeRejoiningEmailForRequest(req, empMap);
-              } catch (err) {
-                alert('Could not compose email: ' + (err.message || err));
-              }
-            }}
-            className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap inline-flex items-center gap-1"
-            style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
-            title="Re-open the email draft (print/sign/submit reminder)"
-          >
-            <Mail className="w-3 h-3" /> Email
-          </button>
-          <button
-            type="button"
-            onClick={downloadRejoinReport}
-            className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap inline-flex items-center gap-1"
-            style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
-            title="Re-download the rejoining report"
-          >
-            <FileDown className="w-3 h-3" /> Report
-          </button>
-        </>
+        <button
+          type="button"
+          onClick={onReopenRejoining}
+          className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap"
+          style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
+          title="Re-open report download and email draft"
+        >
+          Letter / email
+        </button>
       )}
     </li>
   );
