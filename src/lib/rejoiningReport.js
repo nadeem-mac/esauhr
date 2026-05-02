@@ -17,6 +17,11 @@ import {
   VerticalAlign, ShadingType,
 } from 'docx';
 import QRCode from 'qrcode';
+// Reuse the executive-CC resolver from the permission-letter flow so
+// the rejoining email Cc list stays in lockstep with permission-letter
+// notifications. Single source of truth for who gets CC'd: any change
+// to EXEC_CC in permissionLetter.js automatically applies here too.
+import { resolveExecCcEmails } from './permissionLetter.js';
 
 const VERIFY_BASE_URL = (typeof window !== 'undefined' && window.location?.origin)
   ? window.location.origin
@@ -914,17 +919,20 @@ export async function downloadRejoiningReportForRequest(request, empMap) {
 // send. Same shape as buildEmailDraft in vacationForm.js (To: staff,
 // Cc: manager + CEO + Country Head, full HR signature) so the staff
 // recognises the desk it's coming from.
-export function buildRejoiningEmailDraft({ employee, request, manager, hrApprover }) {
+export function buildRejoiningEmailDraft({ employee, request, manager, hrApprover, employees = [] }) {
   const ltKey = LEAVE_TYPE[request.leave_type_id] ? request.leave_type_id : 'annual';
   const leaveTypeLabel = `${LEAVE_TYPE[ltKey].en} Leave`;
   const dateRange = `${fmtDateMed(request.start_date)} - ${fmtDateMed(request.end_date)}`;
   const returnDate = fmtDateMed(request.actual_return_date);
 
   const to = [employee?.email].filter(Boolean).join(',');
+  // Cc the manager + the full executive list defined in permissionLetter.js
+  // (CEO John Ho, James, Fahad Hussain (SUP), Badria, Jaffar). The
+  // permission-letter resolver does fuzzy roster lookups by name and
+  // department so any new exec added there propagates here automatically.
   const ccList = [
     manager?.email,
-    CEO_EMAIL,
-    COUNTRY_HEAD_EMAIL,
+    ...resolveExecCcEmails(employees),
   ].filter(Boolean);
   const cc = Array.from(new Set(ccList.filter(e => e !== to))).join(',');
 
@@ -982,7 +990,10 @@ export function composeRejoiningEmailForRequest(request, empMap) {
        resolveApprover(request.return_hr_decided_by, empMap)
     || resolveApprover(request.hr_decided_by,        empMap);
 
-  const draft = buildRejoiningEmailDraft({ employee, request, manager, hrApprover });
+  const draft = buildRejoiningEmailDraft({
+    employee, request, manager, hrApprover,
+    employees: Object.values(empMap || {}),
+  });
   if (!draft.to) {
     throw new Error('No email address on file for ' + (employee.name || request.employee_id));
   }

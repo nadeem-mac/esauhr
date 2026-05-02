@@ -58,7 +58,10 @@ export default function RejoiningApprovedModal({ request, empMap, onClose }) {
        resolveApprover(request.return_hr_decided_by, empMap)
     || resolveApprover(request.hr_decided_by,        empMap);
 
-  const draft = buildRejoiningEmailDraft({ employee, request, manager, hrApprover });
+  const draft = buildRejoiningEmailDraft({
+    employee, request, manager, hrApprover,
+    employees: Object.values(empMap || {}),
+  });
 
   async function handleDownload() {
     setDownloading(true);
@@ -140,7 +143,16 @@ export default function RejoiningApprovedModal({ request, empMap, onClose }) {
             <span style={{ fontWeight: 700, letterSpacing: '0.18em', fontSize: '10px' }}>CC</span>
             <span>
               {manager?.name ? <>{manager.name} (manager){manager.email ? '' : <span style={{ color: '#B91C1C' }}> · no email</span>}</> : <span style={{ opacity: 0.6 }}>(no manager linked)</span>}
-              {ccCount > (manager?.email ? 1 : 0) && <>, +CEO &amp; Country Head</>}
+              {(() => {
+                // Count executives in the resolved CC list — everything
+                // that isn't the manager. Surfaced so Bashaier can see
+                // at a glance whether the full leadership chain (CEO,
+                // Country Head, Fahad Hussain, Badria, Jaffar) actually
+                // resolved to email addresses.
+                const execCount = ccCount - (manager?.email ? 1 : 0);
+                if (execCount <= 0) return null;
+                return <>, +{execCount} executive{execCount === 1 ? '' : 's'}</>;
+              })()}
             </span>
 
             <span style={{ fontWeight: 700, letterSpacing: '0.18em', fontSize: '10px' }}>SUBJECT</span>
