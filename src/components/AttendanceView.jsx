@@ -313,6 +313,15 @@ export default function AttendanceView({ me, employees }) {
   // the mailto fires.
   const [confirmEntry, setConfirmEntry] = useState(null); // { entry, kind: 'late'|'early'|'missed' }
 
+  // Bulk-action session. When Bashaier clicks 'Email all N actionable'
+  // on a section header, we stage a queue of entries to email and
+  // open a modal that lets her step through them one by one. Mailto:
+  // can only fire one email at a time (browser limitation), so the
+  // UX is sequential — but the modal stays open and tracks progress.
+  // bulkSession shape: { kind: 'late'|'early'|'missed', queue: entry[],
+  //                      sentIds: Set<string> }
+  const [bulkSession, setBulkSession] = useState(null);
+
   const [approvedLeaves, setApprovedLeaves]       = useState([]);
   const [approvedPermissions, setApprovedPerms]   = useState([]); // for the data date
   const [acceptedShifts, setAcceptedShifts]       = useState([]);
@@ -411,27 +420,71 @@ export default function AttendanceView({ me, employees }) {
     return () => { cancelled = true; };
   }, [csvDate]);
 
-  // P5: pre-load already-logged violations for the CSV date so re-uploading
-  // the same CSV (or revisiting after the page was closed) shows the rows
-  // that have already been emailed as already-logged.
+  // P5: pre-load already-logged violations for the data date so revisiting
+  // the same file shows the rows that have already been emailed.
+  // The map's value is the `email_sent_at` timestamp string (or true if
+  // unknown) — used by the button's idempotency UX so already-emailed
+  // rows show 'Emailed [date]' instead of the active button.
   useEffect(() => {
     if (!csvDate) { setLoggedMarkers({}); return; }
     let cancelled = false;
     (async () => {
       try {
         const rows = await directGet(
-          'attendance_violations?select=employee_id,violation_type&violation_date=eq.' + csvDate
+          'attendance_violations?select=employee_id,violation_type,email_sent_at&violation_date=eq.' + csvDate
         );
         if (cancelled) return;
         const next = {};
         (rows || []).forEach(r => {
           if (r.employee_id && r.violation_type) {
-            next[r.employee_id + ':' + r.violation_type] = true;
+            // Truthy — the timestamp if available, otherwise just true.
+            next[r.employee_id + ':' + r.violation_type] = r.email_sent_at || true;
           }
         });
         setLoggedMarkers(next);
       } catch (e) {
         if (!cancelled) setLoggedMarkers({});
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [csvDate]);
+
+  // Repeat-offender lookup. Counts each employee's violations in the
+  // current calendar month so the row can flag people with 3+ events.
+  // Visible as a red 'REPEAT × N' badge inline. Ties into the existing
+  // monthly evaluation deduction flow (which kicks in at 5).
+  // We use the data date's month so re-processing an old file shows
+  // the right context for that month, not today's month.
+  const [monthlyCounts, setMonthlyCounts] = useState({}); // key: empId → count
+  useEffect(() => {
+    if (!csvDate) { setMonthlyCounts({}); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        // Bound by the calendar month containing csvDate.
+        const d = new Date(csvDate);
+        const monthStart = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
+        const monthEnd   = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().slice(0, 10);
+        const rows = await directGet(
+          'attendance_violations?select=employee_id,violation_type,violation_date'
+          + '&violation_date=gte.' + monthStart
+          + '&violation_date=lte.' + monthEnd
+        );
+        if (cancelled) return;
+        // Count distinct (employee, date) so a single day with both
+        // a late + early flag for the same person counts as 1 incident.
+        const seen = new Set();
+        const counts = {};
+        (rows || []).forEach(r => {
+          if (!r.employee_id || !r.violation_date) return;
+          const k = r.employee_id + '|' + r.violation_date;
+          if (seen.has(k)) return;
+          seen.add(k);
+          counts[r.employee_id] = (counts[r.employee_id] || 0) + 1;
+        });
+        setMonthlyCounts(counts);
+      } catch (e) {
+        if (!cancelled) setMonthlyCounts({});
       }
     })();
     return () => { cancelled = true; };
@@ -1144,6 +1197,7 @@ export default function AttendanceView({ me, employees }) {
             iconColor="#BE123C"
             barFrom="#FB7185" barTo="#BE123C"
             empty="Nobody arrived late — well done team."
+            onBulk={(rows) => setBulkSession({ kind: 'late', queue: rows, sentIds: new Set() })}
             entries={detection.late.map(e => {
               // Detail line carries WITH/WITHOUT permission status. Bashaier
               // wants the difference visible at a glance.
@@ -1172,6 +1226,10 @@ export default function AttendanceView({ me, employees }) {
                 actionable: e.permStatus !== 'LATE_PERMITTED',
                 metaIcon: <Clock className="w-4 h-4"/>,
                 logged: !!loggedMarkers[e.employee.id + ':late'],
+                emailSentAt: typeof loggedMarkers[e.employee.id + ':late'] === 'string'
+                  ? loggedMarkers[e.employee.id + ':late']
+                  : null,
+                monthlyCount: monthlyCounts[e.employee.id] || 0,
               };
             })}
             renderButton={(entry) => entry.actionable ? (
@@ -1180,6 +1238,7 @@ export default function AttendanceView({ me, employees }) {
                 onMarkSent={() => markSent(entry.id)}
                 sent={!!sentMarkers[entry.id]}
                 logged={entry.logged}
+                emailSentAt={entry.emailSentAt}
                 label="Email lateness notice"
               />
             ) : (
@@ -1196,6 +1255,7 @@ export default function AttendanceView({ me, employees }) {
             iconColor="#A16207"
             barFrom="#FACC15" barTo="#A16207"
             empty="Nobody left early — full day attendance recorded."
+            onBulk={(rows) => setBulkSession({ kind: 'early', queue: rows, sentIds: new Set() })}
             entries={detection.early.map(e => {
               const baseDetail = 'Punched out at ' + e.punchOutStr + ' — '
                 + e.minutesEarly + ' min before scheduled ' + e.scheduledEnd
@@ -1222,6 +1282,10 @@ export default function AttendanceView({ me, employees }) {
                 actionable: e.permStatus !== 'EARLY_PERMITTED',
                 metaIcon: <Briefcase className="w-4 h-4"/>,
                 logged: !!loggedMarkers[e.employee.id + ':early_leave'],
+                emailSentAt: typeof loggedMarkers[e.employee.id + ':early_leave'] === 'string'
+                  ? loggedMarkers[e.employee.id + ':early_leave']
+                  : null,
+                monthlyCount: monthlyCounts[e.employee.id] || 0,
               };
             })}
             renderButton={(entry) => entry.actionable ? (
@@ -1230,6 +1294,7 @@ export default function AttendanceView({ me, employees }) {
                 onMarkSent={() => markSent(entry.id)}
                 sent={!!sentMarkers[entry.id]}
                 logged={entry.logged}
+                emailSentAt={entry.emailSentAt}
                 label="Email early-departure notice"
               />
             ) : (
@@ -1246,10 +1311,16 @@ export default function AttendanceView({ me, employees }) {
             iconColor="#1D4ED8"
             barFrom="#60A5FA" barTo="#1D4ED8"
             empty="All staff punched in and out — perfect compliance."
+            onBulk={(rows) => setBulkSession({ kind: 'missed', queue: rows, sentIds: new Set() })}
             entries={detection.missed.map(e => {
               const types = e.missingType === 'both' ? ['missed_in', 'missed_out']
                 : e.missingType === 'in' ? ['missed_in'] : ['missed_out'];
               const allLogged = types.every(t => loggedMarkers[e.employee.id + ':' + t]);
+              // For missed punches, "already emailed" means at least one
+              // of the missed_in/missed_out rows has email_sent_at set.
+              const sentTimestamp = types
+                .map(t => loggedMarkers[e.employee.id + ':' + t])
+                .find(v => typeof v === 'string') || null;
               return ({
                 ...e,
                 detail: (e.missingType === 'in'  ? 'Missing punch-in (no first-punch on record)'
@@ -1258,6 +1329,9 @@ export default function AttendanceView({ me, employees }) {
                   + (e.isCustomShift ? ' · ' + e.scheduleLabel : ''),
                 metaIcon: <AlertTriangle className="w-4 h-4"/>,
                 logged: allLogged,
+                actionable: true,
+                emailSentAt: sentTimestamp,
+                monthlyCount: monthlyCounts[e.employee.id] || 0,
               });
             })}
             renderButton={(entry) => (
@@ -1266,6 +1340,7 @@ export default function AttendanceView({ me, employees }) {
                 onMarkSent={() => markSent(entry.id)}
                 sent={!!sentMarkers[entry.id]}
                 logged={entry.logged}
+                emailSentAt={entry.emailSentAt}
                 label="Email reminder"
               />
             )}
@@ -1320,6 +1395,32 @@ export default function AttendanceView({ me, employees }) {
             if (kind === 'late')   handleEmailLate(entry);
             else if (kind === 'early')  handleEmailEarly(entry);
             else if (kind === 'missed') handleEmailMissed(entry);
+          }}
+        />
+      )}
+
+      {/* Bulk action modal — sequential email queue. Bashaier opens
+          the first draft, sends in her mail client, returns to mark
+          it done, then opens the next. The modal stays open across
+          the queue so progress is visible and she can stop anywhere. */}
+      {bulkSession && (
+        <BulkActionModal
+          session={bulkSession}
+          csvDate={csvDate}
+          getManagerEmail={getManagerEmail}
+          onClose={() => setBulkSession(null)}
+          onOpenDraft={(entry) => {
+            const k = bulkSession.kind;
+            if (k === 'late')   handleEmailLate(entry);
+            else if (k === 'early')  handleEmailEarly(entry);
+            else if (k === 'missed') handleEmailMissed(entry);
+            // Mark this one in the queue's sent set so the modal can
+            // strike it through. Also flips the row's UI state below.
+            setBulkSession(prev => prev ? {
+              ...prev,
+              sentIds: new Set([...(prev.sentIds || new Set()), entry.id]),
+            } : prev);
+            markSent(entry.id);
           }}
         />
       )}
@@ -1380,7 +1481,7 @@ function CountPill({ icon, label, count, color, tint }) {
   );
 }
 
-function FlaggedSection({ title, kicker, iconColor, barFrom, barTo, entries, empty, renderButton }) {
+function FlaggedSection({ title, kicker, iconColor, barFrom, barTo, entries, empty, renderButton, onBulk }) {
   if (!entries.length) {
     return (
       <div className="rounded-2xl border bg-white p-5" style={{ borderColor: '#D4C7AB' }}>
@@ -1393,10 +1494,29 @@ function FlaggedSection({ title, kicker, iconColor, barFrom, barTo, entries, emp
       </div>
     );
   }
+  // Compute how many entries are actionable AND not already emailed
+  // (no in-DB email_sent_at). The bulk button only appears when
+  // there's at least 2 such rows — single rows don't need bulk UX.
+  const bulkable = (entries || []).filter(e =>
+    (e.actionable !== false) && !e.emailSentAt && !e.sent
+  );
   return (
     <div className="rounded-2xl border bg-white p-5" style={{ borderColor: '#D4C7AB' }}>
-      <div className="text-[10px] mb-1" style={{ color: iconColor, letterSpacing: '0.25em', fontWeight: 700 }}>
-        {kicker} · {entries.length}
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-1">
+        <div className="text-[10px]" style={{ color: iconColor, letterSpacing: '0.25em', fontWeight: 700 }}>
+          {kicker} · {entries.length}
+        </div>
+        {onBulk && bulkable.length >= 2 && (
+          <button
+            type="button"
+            onClick={() => onBulk(bulkable)}
+            className="text-[11px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full"
+            style={{ background: '#0F4C2A', color: '#FFFFFF', fontWeight: 600 }}
+            title={`Step through emailing all ${bulkable.length} actionable rows in this section.`}
+          >
+            <Mail className="w-3 h-3"/> Email all actionable ({bulkable.length})
+          </button>
+        )}
       </div>
       <div className="mb-4" style={{ fontFamily: 'Georgia, serif', fontSize: '22px', color: '#1F1B16' }}>{title}</div>
       <div className="space-y-3">
@@ -1429,6 +1549,28 @@ function FlaggedSection({ title, kicker, iconColor, barFrom, barTo, entries, emp
                         {entry.permBadge.text}
                       </span>
                     )}
+                    {/* Repeat-offender flag — surfaced when this employee
+                        has 3+ violations recorded this calendar month
+                        (counted from attendance_violations, distinct
+                        days). Ties into the monthly evaluation deduction
+                        flow that triggers at 5. */}
+                    {entry.monthlyCount >= 3 && (
+                      <span
+                        className="text-[10px] tracking-wider font-bold px-2 py-0.5 rounded-md inline-flex items-center gap-1"
+                        style={{
+                          background: entry.monthlyCount >= 5 ? '#7F1D1D' : '#991B1B',
+                          color: '#FFFFFF',
+                          border: '1px solid ' + (entry.monthlyCount >= 5 ? '#7F1D1D' : '#991B1B'),
+                        }}
+                        title={
+                          entry.monthlyCount >= 5
+                            ? `${entry.monthlyCount} incidents this month — past the 5-per-month threshold for HR review.`
+                            : `${entry.monthlyCount} incidents this month — close to the 5-per-month review threshold.`
+                        }
+                      >
+                        REPEAT × {entry.monthlyCount}
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-1.5 mt-1 text-xs" style={{ color: '#0A0A0A' }}>
                     {entry.metaIcon} {entry.detail}
@@ -1446,7 +1588,16 @@ function FlaggedSection({ title, kicker, iconColor, barFrom, barTo, entries, emp
   );
 }
 
-function RowButton({ onClick, onMarkSent, sent, logged, label }) {
+function RowButton({ onClick, onMarkSent, sent, logged, emailSentAt, label }) {
+  // Three button states, in order of decreasing certainty:
+  //   1. sent (in-session)        — Bashaier just clicked Email above
+  //   2. emailSentAt (DB record)  — a row exists in attendance_violations
+  //                                  with email_sent_at set; she emailed
+  //                                  this person before
+  //   3. fresh                    — active button, no prior record
+  // The DB-backed state (#2) shows a readable date and a smaller
+  // 'Re-send' option in case a follow-up is genuinely needed. This
+  // prevents accidental double-emailing when she revisits the file.
   if (sent) {
     return (
       <div className="flex items-center gap-2">
@@ -1458,6 +1609,30 @@ function RowButton({ onClick, onMarkSent, sent, logged, label }) {
             LOGGED
           </div>
         )}
+      </div>
+    );
+  }
+  if (emailSentAt) {
+    const sentDate = new Date(emailSentAt);
+    const ago = (() => {
+      const ms = Date.now() - sentDate.getTime();
+      const days = Math.floor(ms / 86_400_000);
+      if (days === 0) return 'today';
+      if (days === 1) return 'yesterday';
+      if (days < 7)   return days + 'd ago';
+      return sentDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+    })();
+    return (
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-full" style={{ background: '#ECFDF5', color: '#0A0A0A', fontWeight: 600, border: '1px solid #A7F3D0' }} title={`Email logged at ${sentDate.toLocaleString('en-GB')}`}>
+          <CheckCircle2 className="w-3.5 h-3.5" style={{ color: '#047857' }}/> Already emailed · {ago}
+        </div>
+        <button onClick={onClick}
+          className="text-[11px] px-2.5 py-1.5 rounded-full border inline-flex items-center gap-1"
+          style={{ borderColor: '#D4C7AB', color: '#0A0A0A', background: '#FFFFFF' }}
+          title="Re-send the notice — only do this if a genuine follow-up is needed.">
+          <Mail className="w-3 h-3"/> Re-send
+        </button>
       </div>
     );
   }
@@ -1615,6 +1790,169 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, onCancel, onConf
             No email address on file for {entry.employee.name}. Please add one in the directory before sending.
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Bulk action modal ──────────────────────────────────────────────────
+// Sequential queue of email drafts. Bashaier sees the entire list with
+// names + summaries, can skip any row, and steps through opening each
+// draft in her mail client one at a time. mailto: only fires one
+// email per click, so we don't try to batch — the modal handles the
+// orchestration. Closing the modal at any point is fine; she can
+// resume by clicking the bulk button again on a re-rendered section.
+function BulkActionModal({ session, csvDate, getManagerEmail, onClose, onOpenDraft }) {
+  const { kind, queue, sentIds } = session;
+  const remaining = queue.filter(e => !sentIds.has(e.id));
+  const total = queue.length;
+  const done  = total - remaining.length;
+  const dateLong = formatDateLong(csvDate);
+
+  // Helper: build a one-line summary per kind so the queue is scannable.
+  const summarise = (entry) => {
+    if (kind === 'late') {
+      return `Late ${entry.punchInStr} · ${entry.minutesLate} min after grace`
+        + (entry.permission ? ` · permitted to ${String(entry.permission.time_to || '').slice(0,5)}` : ' · no permission');
+    }
+    if (kind === 'early') {
+      return `Left ${entry.punchOutStr} · ${entry.minutesEarly} min before ${entry.scheduledEnd}`
+        + (entry.permission ? ` · permitted from ${String(entry.permission.time_from || '').slice(0,5)}` : ' · no permission');
+    }
+    if (kind === 'missed') {
+      return entry.missingType === 'both' ? 'Both punch-in and punch-out missing'
+           : entry.missingType === 'in'   ? 'No punch-in on record'
+                                          : 'No punch-out on record';
+    }
+    return '';
+  };
+
+  const heading = kind === 'late' ? 'Late arrivals'
+                : kind === 'early' ? 'Early departures'
+                : 'Missed punches';
+
+  return (
+    <div
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        background: 'rgba(15, 23, 42, 0.55)',
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        padding: '40px 16px', overflowY: 'auto',
+      }}
+    >
+      <div
+        className="w-full max-w-2xl rounded-2xl border"
+        style={{
+          borderColor: '#D4C7AB',
+          background: '#FFFDF7',
+          boxShadow: '0 12px 40px rgba(31,27,22,0.18)',
+        }}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between px-6 py-5 border-b" style={{ borderColor: '#E5E0D5' }}>
+          <div>
+            <div className="text-[10px] tracking-[0.25em] mb-1" style={{ fontWeight: 700, color: '#0A0A0A' }}>
+              BULK EMAIL · {heading.toUpperCase()}
+            </div>
+            <h2 style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#0A0A0A', fontWeight: 500 }}>
+              {done} of {total} drafts opened
+            </h2>
+            <div className="text-xs mt-1" style={{ color: '#0A0A0A' }}>
+              {remaining.length === 0
+                ? 'All drafts have been opened. Close when done.'
+                : 'Click "Open" beside each row to launch the draft in your mail client. Send manually, then continue.'}
+            </div>
+          </div>
+          <button type="button" onClick={onClose}
+            className="p-1.5 rounded-full hover:bg-black/5 transition-colors" aria-label="Close">
+            <X className="w-4 h-4" style={{ color: '#0A0A0A' }}/>
+          </button>
+        </div>
+
+        {/* Progress bar */}
+        {total > 0 && (
+          <div className="px-6 pt-3">
+            <div className="h-1.5 rounded-full overflow-hidden" style={{ background: '#E5E0D5' }}>
+              <div className="h-full transition-all" style={{
+                width: `${(done / total) * 100}%`,
+                background: 'linear-gradient(90deg, #047857 0%, #0F4C2A 100%)',
+              }}/>
+            </div>
+          </div>
+        )}
+
+        {/* Queue */}
+        <ul className="p-3 space-y-2 max-h-[55vh] overflow-y-auto">
+          {queue.map(entry => {
+            const sent = sentIds.has(entry.id);
+            const cc   = [getManagerEmail(entry.employee), ...FIXED_CC].filter(Boolean);
+            return (
+              <li key={entry.id}
+                  className="rounded-xl border p-3 flex items-center justify-between gap-3 flex-wrap"
+                  style={{
+                    background: sent ? '#ECFDF5' : '#FFFFFF',
+                    borderColor: sent ? '#A7F3D0' : '#E5E0D5',
+                    opacity: sent ? 0.75 : 1,
+                  }}>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span style={{ fontWeight: 700, color: '#0A0A0A', fontSize: '14px' }}>
+                      {entry.employee.name}
+                    </span>
+                    <span className="text-xs" style={{ color: '#0A0A0A' }}>
+                      · {entry.employee.id}
+                    </span>
+                    {entry.permission && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded font-bold tracking-wider"
+                        style={{ background: '#FEF3C7', color: '#92400E' }}>
+                        PERMITTED
+                      </span>
+                    )}
+                    {(entry.monthlyCount || 0) >= 3 && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded font-bold tracking-wider"
+                        style={{ background: '#7F1D1D', color: '#FFFFFF' }}>
+                        REPEAT × {entry.monthlyCount}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs mt-1" style={{ color: '#0A0A0A' }}>
+                    {summarise(entry)}
+                  </div>
+                  <div className="text-[10px] mt-0.5 opacity-70" style={{ color: '#0A0A0A' }}>
+                    To: {entry.employee.email || '(no email)'} · CC: {cc.length} recipient{cc.length === 1 ? '' : 's'}
+                  </div>
+                </div>
+                {sent ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full"
+                    style={{ background: '#FFFFFF', color: '#047857', border: '1px solid #A7F3D0', fontWeight: 600 }}>
+                    <CheckCircle2 className="w-3.5 h-3.5"/> Opened
+                  </span>
+                ) : (
+                  <button type="button" onClick={() => onOpenDraft(entry)}
+                    disabled={!entry.employee.email}
+                    className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full disabled:opacity-50"
+                    style={{ background: '#0F4C2A', color: '#FFFFFF', fontWeight: 600 }}>
+                    <Mail className="w-3.5 h-3.5"/> Open draft
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+
+        {/* Footer */}
+        <div className="px-5 py-4 border-t flex items-center justify-between gap-2 flex-wrap"
+             style={{ borderColor: '#E5E0D5', background: '#FAF6EC' }}>
+          <div className="text-[11px]" style={{ color: '#0A0A0A' }}>
+            Each click opens a draft in your mail client. You still send each one manually.
+          </div>
+          <button type="button" onClick={onClose}
+            className="text-xs px-4 py-2 rounded-full"
+            style={{ background: '#0A0A0A', color: '#FFFDF7', fontWeight: 500 }}>
+            {remaining.length === 0 ? 'Done' : `Stop (${remaining.length} remaining)`}
+          </button>
+        </div>
       </div>
     </div>
   );
