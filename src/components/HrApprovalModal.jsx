@@ -4,7 +4,7 @@ import { supabase, directPatch } from '../supabaseClient.js';
 import { fmtDate } from '../lib/leaveLogic.js';
 import { logAction } from '../lib/audit.js';
 import { generateVacationFormBlob, buildEmailDraft, downloadBlob } from '../lib/vacationForm.js';
-import { SEHHATY_VERIFY_URL, classifySickLeaveBracket } from '../lib/sehhaty.js';
+import { SEHHATY_VERIFY_URL, classifySickLeaveBracket, diagnoseSehhatyCode } from '../lib/sehhaty.js';
 
 // Friendly label for a leave type id. Falls back to title-casing the
 // id when we don't have a curated name. The leaveTypes table stores
@@ -48,6 +48,21 @@ export default function HrApprovalModal({ request, employee, manager, substitute
   const [verifiedAt, setVerifiedAt] = useState(request?.sehhaty_verified_at || null);
   const [verifying, setVerifying]   = useState(false);
   const [verifyError, setVerifyError] = useState('');
+  // Confirmation modal state. When Bashaier clicks 'I've verified
+  // on Sehhaty', we don't toggle immediately — we ask her to
+  // explicitly confirm the reference matches a real certificate
+  // and capture an optional verification note. This makes the
+  // verification a deliberate act with a paper trail rather than
+  // a single button click that's easy to misfire on.
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmNote, setConfirmNote] = useState('');
+
+  // Format diagnostic for the request's stored code. Exposed to the
+  // confirmation modal so Bashaier sees any soft warnings (too short,
+  // looks like a phone number, etc.) before she clicks Yes.
+  const codeDiag = request?.sehhaty_code
+    ? diagnoseSehhatyCode(request.sehhaty_code)
+    : { severity: 'error', messages: ['No code on this request.'], normalised: '' };
 
   // Saudi Labour Law sick-day running total + bracket warning.
   // allRequests prop is optional — when provided, we compute the
@@ -66,23 +81,29 @@ export default function HrApprovalModal({ request, employee, manager, substitute
   })();
   const sickBracket = (sickYTD !== null) ? classifySickLeaveBracket(sickYTD, request?.days || 0) : null;
 
-  const verifySehhaty = useCallback(async () => {
+  // Apply the verification — called from the confirmation modal
+  // after Bashaier explicitly says yes. Writes the verification
+  // timestamp + verifier + the optional note.
+  const applyVerification = useCallback(async () => {
     if (verifying) return;
     setVerifying(true);
     setVerifyError('');
     try {
       const now = new Date().toISOString();
+      const note = confirmNote.trim();
       await directPatch('leave_requests', 'id', request.id, {
         sehhaty_verified_at: now,
         sehhaty_verified_by: me?.id || me?.auth_user_id || null,
+        sehhaty_verification_note: note || null,
       }, { timeoutMs: 10000 });
       setVerifiedAt(now);
+      setConfirmOpen(false);
       try {
         logAction(me, 'sick_leave_verified', {
           targetType: 'leave_request',
           targetId: request.id,
           targetLabel: `${employee?.name || request.employee_id} · sick leave verified on Sehhaty`,
-          details: { sehhaty_code: request.sehhaty_code },
+          details: { sehhaty_code: request.sehhaty_code, note: note || null },
         });
       } catch { /* audit best-effort */ }
     } catch (err) {
@@ -90,7 +111,16 @@ export default function HrApprovalModal({ request, employee, manager, substitute
     } finally {
       setVerifying(false);
     }
-  }, [request, me, employee, verifying]);
+  }, [request, me, employee, verifying, confirmNote]);
+
+  // Open the confirmation modal — used by both the inline 'Verify'
+  // button and the 'Approve & continue' button as a pre-approval
+  // gate when the leave is sick and not yet verified.
+  const openVerifyConfirm = useCallback(() => {
+    setConfirmNote('');
+    setVerifyError('');
+    setConfirmOpen(true);
+  }, []);
 
   // Approval gate: sick leaves must be verified before HR can finalise.
   // This is the policy enforcement — an unverified sick leave should
@@ -341,20 +371,31 @@ export default function HrApprovalModal({ request, employee, manager, substitute
                           style={{ borderColor: '#B45309', background: '#FFFFFF', color: '#B45309', fontWeight: 600 }}>
                           <ExternalLink className="w-3 h-3"/> Open Sehhaty
                         </a>
-                        <button onClick={verifySehhaty}
-                          disabled={verifying || !request.sehhaty_code}
+                        <button onClick={openVerifyConfirm}
+                          disabled={!request.sehhaty_code || codeDiag.severity === 'error'}
+                          title={codeDiag.severity === 'error' ? codeDiag.messages[0] : 'Confirm the certificate is valid on Sehhaty'}
                           className="text-[11px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full"
                           style={{
                             background: '#0F4C2A', color: '#FFFFFF',
-                            opacity: (verifying || !request.sehhaty_code) ? 0.5 : 1,
-                            cursor: (verifying || !request.sehhaty_code) ? 'not-allowed' : 'pointer',
+                            opacity: (!request.sehhaty_code || codeDiag.severity === 'error') ? 0.5 : 1,
+                            cursor: (!request.sehhaty_code || codeDiag.severity === 'error') ? 'not-allowed' : 'pointer',
                             fontWeight: 600,
                           }}>
-                          {verifying
-                            ? <><Loader2 className="w-3 h-3 animate-spin"/> Saving…</>
-                            : <><Check className="w-3 h-3"/> I've verified this on Sehhaty</>}
+                          <Check className="w-3 h-3"/> I've verified this on Sehhaty
                         </button>
                       </div>
+                      {/* Format diagnostic — surfaces soft warnings
+                          on the code (too short, looks like a phone
+                          number, etc.) before Bashaier even clicks
+                          verify. Hard 'error' severity disables the
+                          button above; 'warn' shows a yellow banner
+                          here as a heads-up. */}
+                      {request.sehhaty_code && codeDiag.severity === 'warn' && (
+                        <div className="text-[10px] mt-2 px-2 py-1.5 rounded"
+                          style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}>
+                          ⚠ {codeDiag.messages.join(' ')}
+                        </div>
+                      )}
                       {!request.sehhaty_code && (
                         <div className="text-[10px] mt-2" style={{ color: '#B91C1C' }}>
                           Cannot mark as verified — no service code on this request. Ask the requester to resubmit with the Sehhaty code.
@@ -397,24 +438,43 @@ export default function HrApprovalModal({ request, employee, manager, substitute
                         style={{ borderColor: 'var(--border-soft, #E8E5D8)' }}>
                   Cancel
                 </button>
-                <button onClick={approve}
-                        disabled={approvalBlocked}
-                        title={approvalBlocked ? 'Verify the certificate on Sehhaty before approving' : ''}
+                <button onClick={() => {
+                          // For sick leaves not yet verified, the
+                          // Approve button doubles as the verify
+                          // entry point. This makes the flow:
+                          //   click Approve → confirmation modal asks
+                          //   'is the reference valid?' → on yes,
+                          //   verification stamp lands and approval
+                          //   continues. Cleaner than a hard-disabled
+                          //   button with a separate verify step.
+                          if (approvalBlocked) {
+                            openVerifyConfirm();
+                          } else {
+                            approve();
+                          }
+                        }}
+                        disabled={isSick && !request.sehhaty_code}
+                        title={(isSick && !request.sehhaty_code)
+                          ? 'No Sehhaty code on this request'
+                          : approvalBlocked
+                          ? 'Confirm the certificate on Sehhaty before approving'
+                          : ''}
                         className="inline-flex items-center gap-1.5 px-5 py-2 rounded-full text-xs font-semibold"
                         style={{
-                          background: approvalBlocked
+                          background: (isSick && !request.sehhaty_code)
                             ? '#9CA3AF'
                             : 'linear-gradient(135deg, #2D5F3F 0%, #1F4530 100%)',
                           color: '#fff',
-                          cursor: approvalBlocked ? 'not-allowed' : 'pointer',
-                          opacity: approvalBlocked ? 0.7 : 1,
+                          cursor: (isSick && !request.sehhaty_code) ? 'not-allowed' : 'pointer',
+                          opacity: (isSick && !request.sehhaty_code) ? 0.7 : 1,
                         }}>
-                  <Check className="w-3.5 h-3.5" /> Approve & continue
+                  <Check className="w-3.5 h-3.5" />
+                  {approvalBlocked ? 'Verify & approve' : 'Approve & continue'}
                 </button>
               </div>
               {approvalBlocked && (
                 <div className="text-[10px] text-right" style={{ color: '#B45309', fontWeight: 600 }}>
-                  Verify the certificate on Sehhaty first.
+                  Approve will first ask you to confirm the Sehhaty certificate is valid.
                 </div>
               )}
             </>
@@ -492,6 +552,124 @@ export default function HrApprovalModal({ request, employee, manager, substitute
 
         </div>
       </div>
+
+      {/* Confirmation modal — opens when Bashaier clicks 'I've
+          verified this on Sehhaty' (or the Verify & approve
+          button on an unverified sick leave). Forces an explicit
+          'yes the reference matches' before the verification
+          stamp lands. The note field captures any context she
+          wants on the audit trail (e.g. 'cross-checked Iqama
+          with Sehhaty record', 'doctor name matched cert'). */}
+      {confirmOpen && (
+        <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4"
+             style={{ background: 'rgba(15,31,26,0.55)' }}
+             onClick={(e) => { if (e.target === e.currentTarget) setConfirmOpen(false); }}>
+          <div className="bg-paper rounded-t-2xl sm:rounded-2xl w-full max-w-md fade-in"
+            style={{ boxShadow: '0 12px 40px rgba(31,27,22,0.2)' }}>
+            <div className="px-5 py-4 border-b" style={{ borderColor: 'var(--border-soft)' }}>
+              <div className="text-[10px] tracking-[0.25em] font-bold mb-1" style={{ color: '#B45309' }}>
+                CONFIRM VERIFICATION
+              </div>
+              <h3 className="text-lg" style={{ fontFamily: 'Georgia, serif', color: '#0A0A0A', fontWeight: 500 }}>
+                Is the Sehhaty reference valid?
+              </h3>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <div className="text-[12px]" style={{ color: '#0A0A0A' }}>
+                Confirm you opened Sehhaty, entered the leave ID below, and the certificate matches this employee and these dates.
+              </div>
+
+              {/* Reference card — large mono code so Bashaier can
+                  visually compare against the Sehhaty result. */}
+              <div className="rounded-lg p-3"
+                style={{ background: '#FFFFFF', border: '1px solid var(--border-soft)' }}>
+                <div className="text-[9px] tracking-wider opacity-60 mb-1">SEHHATY LEAVE ID</div>
+                <div className="font-mono text-base" style={{ fontWeight: 700, color: '#0A0A0A', wordBreak: 'break-all' }}>
+                  {request?.sehhaty_code}
+                </div>
+                <div className="text-[10px] mt-2 opacity-70">
+                  Employee: <strong>{employee?.name}</strong> ({request?.employee_id})<br/>
+                  Period: {fmtDate(new Date(request.start_date))} → {fmtDate(new Date(request.end_date))}
+                  {' · '}{request.days} day{request.days === 1 ? '' : 's'}
+                </div>
+              </div>
+
+              {/* Format-level diagnostic. Soft warnings ('looks like
+                  a phone number', 'pattern looks like a test value')
+                  appear here so Bashaier sees them right at the
+                  point of decision. */}
+              {codeDiag.severity === 'warn' && (
+                <div className="rounded-lg p-2.5 text-[11px]"
+                  style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}>
+                  ⚠ <strong>Heads-up:</strong> {codeDiag.messages.join(' ')}
+                </div>
+              )}
+              {codeDiag.severity === 'error' && (
+                <div className="rounded-lg p-2.5 text-[11px]"
+                  style={{ background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}>
+                  ✕ <strong>Cannot verify:</strong> {codeDiag.messages.join(' ')}
+                </div>
+              )}
+
+              {/* Optional note field — Bashaier can record what
+                  she cross-checked. Saved into
+                  sehhaty_verification_note on the request, audited. */}
+              <div>
+                <label className="text-[10px] tracking-wider font-bold opacity-70 mb-1 block">
+                  VERIFICATION NOTE <span className="opacity-60 font-normal">(optional)</span>
+                </label>
+                <textarea value={confirmNote}
+                  onChange={e => setConfirmNote(e.target.value)}
+                  rows={2} maxLength={300}
+                  placeholder="e.g. dates match, doctor name matches certificate"
+                  className="w-full px-3 py-2 rounded-lg border text-sm bg-transparent focus:outline-none resize-none"
+                  style={{ borderColor: 'var(--border-soft)' }}/>
+                <div className="text-[9px] opacity-50 text-right mt-0.5">
+                  {confirmNote.length}/300
+                </div>
+              </div>
+
+              {verifyError && (
+                <div className="rounded-lg p-2.5 text-[11px]"
+                  style={{ background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}>
+                  Failed to save: {verifyError}
+                </div>
+              )}
+            </div>
+
+            <div className="px-5 py-3 border-t flex items-center justify-between gap-2"
+              style={{ borderColor: 'var(--border-soft)', background: '#FAF6EC' }}>
+              <a href={SEHHATY_VERIFY_URL} target="_blank" rel="noopener noreferrer"
+                className="text-[11px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border"
+                style={{ borderColor: '#B45309', background: '#FFFFFF', color: '#B45309', fontWeight: 600 }}>
+                <ExternalLink className="w-3 h-3"/> Re-open Sehhaty
+              </a>
+              <div className="flex gap-2">
+                <button onClick={() => setConfirmOpen(false)}
+                  disabled={verifying}
+                  className="text-[11px] px-3 py-1.5 rounded-full border"
+                  style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', color: '#0A0A0A' }}>
+                  No, not yet
+                </button>
+                <button onClick={applyVerification}
+                  disabled={verifying || codeDiag.severity === 'error'}
+                  className="text-[11px] inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full"
+                  style={{
+                    background: codeDiag.severity === 'error' ? '#9CA3AF' : '#0F4C2A',
+                    color: '#FFFFFF',
+                    fontWeight: 700,
+                    cursor: (verifying || codeDiag.severity === 'error') ? 'not-allowed' : 'pointer',
+                    opacity: (verifying || codeDiag.severity === 'error') ? 0.7 : 1,
+                  }}>
+                  {verifying
+                    ? <><Loader2 className="w-3 h-3 animate-spin"/> Saving…</>
+                    : <><Check className="w-3 h-3"/> Yes, reference is valid</>}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -19,12 +19,18 @@
 //     running total
 // =============================================================================
 
-// Public Sehhaty / MOH verification entry point. The exact URL has
-// shifted over the years between sehhaty.sa, my.gov.sa, and various
-// MOH subdomains — the homepage of the consumer portal is the one
-// that always redirects to the current verification flow, so we
-// link there.
-export const SEHHATY_VERIFY_URL = 'https://sehhaty.sa/';
+// Direct entry point to the MOH Sehhaty sick-leave verification
+// service. This is the page that hosts the "Launch Service" link
+// where HR enters the service code + ID number to verify the
+// certificate. Going to sehhaty.sa homepage forced an extra click
+// to find the right service; this URL drops Bashaier directly
+// onto the verification page.
+//
+// Caveat: the MOH portal occasionally renames paths (the old URL
+// was eServices/Pages/Sick-Leaves.aspx; this newer one is the
+// active Sehhaty-branded landing). If MOH moves it again, this is
+// the single line to update.
+export const SEHHATY_VERIFY_URL = 'https://www.moh.gov.sa/en/eServices/Sehhaty/Pages/Sick-Leaves.aspx';
 // Alternative for sick leaves issued ABROAD (foreign certificates
 // must be uploaded through the SEHA platform after diplomatic
 // attestation). We don't do this flow today but the URL is
@@ -85,4 +91,79 @@ export function normaliseSehhatyCode(input) {
 export function looksLikeSehhatyCode(input) {
   const norm = normaliseSehhatyCode(input);
   return /^[A-Z0-9-]{4,}$/.test(norm);
+}
+
+/**
+ * Detailed validation with diagnostic output. Used by the HR
+ * verification modal to give Bashaier a clear picture of what's
+ * suspicious about a code before she has to make the call.
+ *
+ * Returns an object with:
+ *   • severity   — 'ok' | 'warn' | 'error'
+ *   • messages   — array of human-readable issues
+ *   • normalised — the code as it'll be stored
+ *
+ * The severity ladder:
+ *   'error' — the code is unusable (empty, way too short, illegal
+ *             characters, or pure repetition like '0000'). Verify
+ *             button is hard-disabled at this level.
+ *   'warn'  — the code is technically usable but has features
+ *             that look suspicious (very short, looks like a
+ *             phone number, common test pattern). Verify is still
+ *             allowed but Bashaier sees a yellow flag.
+ *   'ok'    — looks like a normal Sehhaty code.
+ *
+ * This is ONLY a format check. The actual truthfulness of the code
+ * — whether it matches a real certificate on Sehhaty — can only be
+ * confirmed by Bashaier on the MOH portal.
+ */
+export function diagnoseSehhatyCode(input) {
+  const messages = [];
+  let severity = 'ok';
+  const norm = normaliseSehhatyCode(input);
+
+  if (!norm) {
+    return { severity: 'error', messages: ['No code provided.'], normalised: '' };
+  }
+
+  // Hard format errors — code is unusable as a Sehhaty reference.
+  if (norm.length < 4) {
+    severity = 'error';
+    messages.push(`Too short — only ${norm.length} character${norm.length === 1 ? '' : 's'}. Sehhaty codes are usually 8+.`);
+  }
+  if (!/^[A-Z0-9-]+$/.test(norm)) {
+    severity = 'error';
+    messages.push('Contains characters that aren\'t allowed (only letters, digits, and hyphens).');
+  }
+  if (/^(.)\1+$/.test(norm)) {
+    // All same character — '0000', 'AAAA' etc.
+    severity = 'error';
+    messages.push('Looks like a placeholder (all same character).');
+  }
+
+  // Soft warnings — code might be valid but worth a second look.
+  if (severity !== 'error') {
+    if (norm.length >= 4 && norm.length < 8) {
+      severity = 'warn';
+      messages.push(`Code is ${norm.length} characters — Sehhaty codes are usually 8 or more.`);
+    }
+    if (/^(?:0?5|\+?9665)\d{8}$/.test(norm.replace(/-/g, ''))) {
+      severity = 'warn';
+      messages.push('Looks like a Saudi mobile number rather than a Sehhaty code.');
+    }
+    if (/^(0?1|0?2|0?3)\d{6,}$/.test(norm.replace(/-/g, ''))) {
+      severity = 'warn';
+      messages.push('Looks like an Iqama/National ID rather than a Sehhaty code.');
+    }
+    if (/^(?:1234|0000|TEST|DEMO|ABCD)/.test(norm)) {
+      severity = 'warn';
+      messages.push('Pattern looks like a test value, not a real certificate.');
+    }
+  }
+
+  if (messages.length === 0) {
+    messages.push('Format looks plausible. Verify the certificate on Sehhaty before approving.');
+  }
+
+  return { severity, messages, normalised: norm };
 }
