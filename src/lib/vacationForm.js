@@ -1140,7 +1140,88 @@ export function buildSickLeaveApprovalEmailDraft({
   return { to, cc, subject, body, mailto };
 }
 
-// ─── helpers ──────────────────────────────────────────────────────────────────
+// ─── Leave rejection email draft ──────────────────────────────────────────────
+// Used when Bashaier or a manager wants to (re-)send the rejection
+// notice to the staff member. The body carries the standardised
+// rejection reason label, any free-text note the rejector wrote,
+// and — for sick leaves — the Sehhaty leave ID so the staff member
+// has the reference number when they go correct and resubmit.
+//
+// Tone is direct but kind: it tells them what was rejected, why,
+// what to do next. Not a long apology; not a robotic terse line.
+//
+// Inputs:
+//   employee         — staff who submitted
+//   request          — the leave_request row (with rejection_reason_*)
+//   manager          — line manager (for CC)
+//   hrApprover       — me, the rejector
+//   reasonLabel      — human label from REJECTION_REASONS catalog
+//                      (passed in because the catalog lives in
+//                      leaveLogic.js and we don't want a circular
+//                      import here)
+//   reasonNote       — free-text note Bashaier added
+export function buildLeaveRejectionEmailDraft({
+  employee, request, manager, hrApprover, reasonLabel, reasonNote,
+}) {
+  const ltKey = LEAVE_TYPE[request.leave_type_id] ? request.leave_type_id : 'annual';
+  const leaveTypeLabel = `${LEAVE_TYPE[ltKey].en} Leave`;
+  const dateRange = `${fmtDateMed(request.start_date)} - ${fmtDateMed(request.end_date)}`;
+  const isSick = request.leave_type_id === 'sick';
+
+  const decidedAt = request.hr_decided_at
+    ? new Date(request.hr_decided_at)
+    : null;
+  const decidedAtStr = decidedAt
+    ? `${fmtDateMed(decidedAt.toISOString())} at ${decidedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}`
+    : '—';
+
+  const to = [employee?.email].filter(Boolean).join(',');
+  const ccList = [manager?.email].filter(Boolean);
+  const cc = Array.from(new Set(ccList.filter(e => e !== to))).join(',');
+
+  const subject = `Leave request not approved · ${employee?.name || ''} · ${dateRange}`;
+
+  const body = [
+    `Dear ${(employee?.name || '').split(' ')[0] || 'Colleague'},`,
+    '',
+    `Your ${leaveTypeLabel.toLowerCase()} request from ${dateRange} (${request.days} day${request.days === 1 ? '' : 's'}${request.is_half_day ? ' — half day' : ''}) has not been approved.`,
+    '',
+    `REASON`,
+    `------`,
+    reasonLabel || '—',
+    reasonNote ? '' : null,
+    reasonNote ? `Note from HR: ${reasonNote}` : null,
+    '',
+    isSick && request.sehhaty_code
+      ? `Sehhaty leave ID on file: ${request.sehhaty_code}`
+      : null,
+    isSick && request.sehhaty_code ? '' : null,
+    `Decision recorded: ${decidedAtStr}`,
+    `Decided by:        ${hrApprover?.name || HR_SIGNATURE.name}`,
+    '',
+    isSick
+      ? `If you believe this rejection is in error, please verify the Sehhaty leave ID on the Sehha portal (https://www.seha.sa/#/inquiries/slenquiry) and reply to this email with the corrected reference. You may also resubmit a new request through the portal.`
+      : `If you believe this rejection is in error, please reply to this email with any clarifying information. You can also resubmit through the portal once any required corrections are in place.`,
+    '',
+    `Thanks and regards,`,
+    '',
+    HR_SIGNATURE.name,
+    HR_SIGNATURE.company,
+    HR_SIGNATURE.unit,
+    HR_SIGNATURE.address,
+    `WhatsApp: ${HR_SIGNATURE.whatsapp}`,
+    `Tel: ${HR_SIGNATURE.tel}`,
+    `Email: ${HR_SIGNATURE.email}`,
+  ].filter(line => line !== null).join('\n');
+
+  const params = new URLSearchParams();
+  if (cc) params.set('cc', cc);
+  params.set('subject', subject);
+  params.set('body', body);
+  const mailto = `mailto:${encodeURIComponent(to)}?${params.toString().replace(/\+/g, '%20')}`;
+
+  return { to, cc, subject, body, mailto };
+}
 export function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

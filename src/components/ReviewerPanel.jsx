@@ -3,7 +3,7 @@ import { supabase, directPatch, directGet } from '../supabaseClient.js';
 import { CheckCircle2, XCircle, Clock, Loader2, AlertTriangle, Sunrise, Sunset, Calendar, RefreshCw, Search, Plane, FileDown, ArrowLeftCircle, Mail } from 'lucide-react';
 import { logAction } from '../lib/audit.js';
 import HrApprovalModal from './HrApprovalModal.jsx';
-import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
+import { downloadVacationFormForRequest, buildLeaveRejectionEmailDraft } from '../lib/vacationForm.js';
 import PermissionApprovedModal from './PermissionApprovedModal.jsx';
 import RejoiningApprovedModal from './RejoiningApprovedModal.jsx';
 import { fmtDate, rejectionReasonsForLeaveType, findRejectionReason } from '../lib/leaveLogic.js';
@@ -1431,6 +1431,16 @@ function HistoryItem({ req, empMap, onReopenPermission, onReopenRejoining }) {
     ? req.return_stage === 'approved'
     : req.stage === 'approved';
 
+  // Rejected leaves carry a reason code + optional note. Both columns
+  // are nullable for backwards compatibility with rejections that
+  // pre-date the rejection_reasons migration.
+  const rejection = !wasApproved && isLeave
+    ? findRejectionReason(req.rejection_reason_code)
+    : null;
+  const rejectionNote = !wasApproved && isLeave
+    ? (req.rejection_reason_note || '').trim()
+    : '';
+
   // Icon: Plane for leave, Sunrise/Sunset for permission, ArrowLeftCircle for rejoining
   const Icon = isLeave  ? Plane
             : isRejoin ? ArrowLeftCircle
@@ -1460,77 +1470,133 @@ function HistoryItem({ req, empMap, onReopenPermission, onReopenRejoining }) {
     }
   }
 
+  // Build the rejection-email draft on demand. The email opens
+  // pre-filled with the standardised reason label, the free-text
+  // note, and (for sick leaves) the Sehhaty leave ID. Lets Bashaier
+  // re-send the rejection notice if the staff member missed it.
+  function openRejectionEmail() {
+    const employee = empMap[req.employee_id];
+    const manager  = empMap[employee?.manager_id];
+    const draft = buildLeaveRejectionEmailDraft({
+      employee,
+      request: req,
+      manager,
+      hrApprover: empMap[req.hr_decided_by] || null,
+      reasonLabel: rejection?.label,
+      reasonNote: rejectionNote,
+    });
+    window.location.href = draft.mailto;
+  }
+
   return (
-    <li className="rounded-xl px-4 py-2.5 border flex items-center gap-3"
+    <li className="rounded-xl px-4 py-2.5 border"
         style={{ background: '#FFFDF7', borderColor: 'var(--border-soft)' }}>
-      <div
-        className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
-        style={{ background: iconBg, color: iconColor }}>
-        <Icon className="w-4 h-4" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-medium" style={{ color: '#1F1B16' }}>
-            {emp?.name || req.employee_id}
-          </span>
-          {emp?.department && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded"
-                  style={{ background: 'rgba(0,0,0,0.04)', color: '#1F1B16' }}>
-              {emp.department}
+      <div className="flex items-center gap-3">
+        <div
+          className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+          style={{ background: iconBg, color: iconColor }}>
+          <Icon className="w-4 h-4" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-medium" style={{ color: '#1F1B16' }}>
+              {emp?.name || req.employee_id}
             </span>
-          )}
-          <span className="text-[11px]" style={{ color: '#1F1B16', opacity: 0.6 }}>
-            · {summary}
-          </span>
-          <span
-            className="text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1"
-            style={{
-              background: wasApproved ? '#ECFDF5' : '#FEE2E2',
-              color:      wasApproved ? '#0F4C2A' : '#B91C1C',
-              fontWeight: 700, letterSpacing: '0.1em',
-            }}>
-            {wasApproved
-              ? <><CheckCircle2 className="w-2.5 h-2.5" /> APPROVED</>
-              : <><XCircle className="w-2.5 h-2.5" /> REJECTED</>}
-          </span>
+            {emp?.department && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded"
+                    style={{ background: 'rgba(0,0,0,0.04)', color: '#1F1B16' }}>
+                {emp.department}
+              </span>
+            )}
+            <span className="text-[11px]" style={{ color: '#1F1B16', opacity: 0.6 }}>
+              · {summary}
+            </span>
+            <span
+              className="text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1"
+              style={{
+                background: wasApproved ? '#ECFDF5' : '#FEE2E2',
+                color:      wasApproved ? '#0F4C2A' : '#B91C1C',
+                fontWeight: 700, letterSpacing: '0.1em',
+              }}>
+              {wasApproved
+                ? <><CheckCircle2 className="w-2.5 h-2.5" /> APPROVED</>
+                : <><XCircle className="w-2.5 h-2.5" /> REJECTED</>}
+            </span>
+          </div>
+          <div className="text-[10px] mt-0.5" style={{ color: '#1F1B16', opacity: 0.6 }}>
+            Decided {decidedAt ? new Date(decidedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
+          </div>
         </div>
-        <div className="text-[10px] mt-0.5" style={{ color: '#1F1B16', opacity: 0.6 }}>
-          Decided {decidedAt ? new Date(decidedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
-        </div>
+
+        {wasApproved && isLeave && (
+          <button
+            type="button"
+            onClick={downloadLeaveLetter}
+            className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap inline-flex items-center gap-1"
+            style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
+            title="Re-download the leave application form"
+          >
+            <FileDown className="w-3 h-3" /> Form
+          </button>
+        )}
+        {!wasApproved && isLeave && (rejection || rejectionNote) && (
+          <button
+            type="button"
+            onClick={openRejectionEmail}
+            className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap inline-flex items-center gap-1"
+            style={{ borderColor: '#FCA5A5', color: '#B91C1C', background: '#FFFFFF' }}
+            title="Open rejection email composer pre-filled with the reason"
+          >
+            <Mail className="w-3 h-3" /> Letter / email
+          </button>
+        )}
+        {wasApproved && isPerm && (
+          <button
+            type="button"
+            onClick={onReopenPermission}
+            className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap"
+            style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
+            title="Re-open letter and email draft"
+          >
+            Letter / email
+          </button>
+        )}
+        {wasApproved && isRejoin && (
+          <button
+            type="button"
+            onClick={onReopenRejoining}
+            className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap"
+            style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
+            title="Re-open report download and email draft"
+          >
+            Letter / email
+          </button>
+        )}
       </div>
 
-      {wasApproved && isLeave && (
-        <button
-          type="button"
-          onClick={downloadLeaveLetter}
-          className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap inline-flex items-center gap-1"
-          style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
-          title="Re-download the leave application form"
-        >
-          <FileDown className="w-3 h-3" /> Form
-        </button>
-      )}
-      {wasApproved && isPerm && (
-        <button
-          type="button"
-          onClick={onReopenPermission}
-          className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap"
-          style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
-          title="Re-open letter and email draft"
-        >
-          Letter / email
-        </button>
-      )}
-      {wasApproved && isRejoin && (
-        <button
-          type="button"
-          onClick={onReopenRejoining}
-          className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap"
-          style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
-          title="Re-open report download and email draft"
-        >
-          Letter / email
-        </button>
+      {/* Rejection reason banner — surfaces under rejected leaves
+          so Bashaier sees what reason she gave + any note she added,
+          mirroring what the staff member sees on their My
+          Applications card. Hidden for approved decisions and for
+          rejections that pre-date the rejection_reasons migration
+          (no code or note recorded). */}
+      {!wasApproved && isLeave && (rejection || rejectionNote) && (
+        <div className="mt-2 ml-11 rounded-lg p-2.5"
+          style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
+          <div className="text-[10px] tracking-wider font-bold mb-1" style={{ color: '#B91C1C' }}>
+            REASON GIVEN
+          </div>
+          {rejection && (
+            <div className="text-[12px]" style={{ color: '#0A0A0A', fontWeight: 600 }}>
+              {rejection.label}
+            </div>
+          )}
+          {rejectionNote && (
+            <div className="text-[11px] mt-1" style={{ color: '#0A0A0A', opacity: 0.85 }}>
+              "{rejectionNote}"
+            </div>
+          )}
+        </div>
       )}
     </li>
   );
