@@ -103,11 +103,15 @@ export default function App() {
   // RPC lookup on the request id and shows the current state. Bypasses
   // session/loading flow entirely.
   //
-  //   /verify/<integer>          permission_requests (integer id)
-  //   /verify-leave/<uuid>       leave_requests       (uuid id)
+  //   /verify/<integer>          permission_requests   (integer id)
+  //   /verify-leave/<uuid>       leave_requests        (uuid id, leave view)
+  //   /verify-rejoin/<uuid>      leave_requests        (uuid id, rejoining view)
   //
-  // Both render the same VerifyPage component, which branches on `mode`
-  // for the RPC name, ref label, and field set.
+  // All three render the same VerifyPage component, which branches on
+  // `mode` for the RPC name, ref label, and field set. The /verify-leave
+  // and /verify-rejoin routes hit the SAME RPC (verify_leave) but render
+  // different cards — leave focuses on the original absence; rejoining
+  // focuses on the return-from-leave + payroll resumption.
   const verifyMatch = typeof window !== 'undefined'
     ? window.location.pathname.match(/^\/verify\/(\d+)\/?$/)
     : null;
@@ -119,6 +123,12 @@ export default function App() {
     : null;
   if (verifyLeaveMatch) {
     return <VerifyPage requestId={verifyLeaveMatch[1]} mode="leave" />;
+  }
+  const verifyRejoinMatch = typeof window !== 'undefined'
+    ? window.location.pathname.match(/^\/verify-rejoin\/([0-9a-f-]{8,36})\/?$/i)
+    : null;
+  if (verifyRejoinMatch) {
+    return <VerifyPage requestId={verifyRejoinMatch[1]} mode="rejoin" />;
   }
 
   if (!ready) return <SplashLoader />;

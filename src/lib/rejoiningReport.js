@@ -449,7 +449,11 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
   const returnStatus = (request.return_status || 'pending').toUpperCase();
 
   const logoBytes = await loadLogoBytes();
-  const verifyUrl = `${VERIFY_BASE_URL}/verify-leave/${request.id}`;
+  // QR points to the rejoining-specific verify page (NOT the
+  // leave-verify page) so the scanner sees a card focused on the
+  // return-from-leave + payroll resumption — not the original
+  // absence which is already history.
+  const verifyUrl = `${VERIFY_BASE_URL}/verify-rejoin/${request.id}`;
   // QR only generated after HR final approval. Until then, a scan would
   // hit a verify page that says "not approved yet" — confusing on a
   // form anyone could be carrying around. Skipping the QR makes the
