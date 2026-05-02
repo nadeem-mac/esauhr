@@ -789,11 +789,20 @@ export default function AppShell({ session, me, onRefreshMe }) {
       {selectedEmployee && (
         <EmployeeDetailModal
           employee={selectedEmployee}
+          employees={employees}
           leaveTypes={leaveTypes}
           requests={requests.filter(r => r.employee_id === selectedEmployee.id)}
           balances={balances.filter(b => b.employee_id === selectedEmployee.id)}
           typeMap={typeMap}
           me={me}
+          // After Bashaier saves, refresh the directory so other tabs
+          // (Attendance, the employees grid behind the modal, the
+          // PSN/dept lookups everywhere) reflect the change. loadAll
+          // does a silent re-fetch.
+          onSaved={(updated) => {
+            setSelectedEmployee(updated);
+            loadAll({ silent: true });
+          }}
           onClose={() => setSelectedEmployee(null)}
         />
       )}

@@ -1,12 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { X, Building2, MapPin, Calendar, Briefcase, KeyRound, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { X, Building2, MapPin, Calendar, Briefcase, KeyRound, Loader2, CheckCircle2, AlertCircle, Pencil, Save } from 'lucide-react';
 import { Avatar, Pill } from './Dashboard.jsx';
-import { supabase } from '../supabaseClient.js';
+import { supabase, directPatch } from '../supabaseClient.js';
 import {
   calculateBalance, fmtDate, fmtDateShort, yearsOfService, monthsOfService, LOCATION_LABELS,
 } from '../lib/leaveLogic.js';
 
-export default function EmployeeDetailModal({ employee, leaveTypes, requests, balances, typeMap, me, onClose }) {
+export default function EmployeeDetailModal({ employee, leaveTypes, requests, balances, typeMap, me, employees = [], onSaved, onClose }) {
   const year = new Date().getFullYear();
 
   const balByType = useMemo(() => {
@@ -56,6 +56,20 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
         </div>
 
         <div className="p-5 space-y-6">
+          {/* Edit-profile panel — visible only to admin + HR reviewer.
+              Bashaier asked for the ability to fix staff data herself
+              (typos, missing emails, wrong department, manager not yet
+              assigned). The panel writes through directPatch on the
+              employees table; success calls onSaved() so the parent
+              can refresh its in-memory directory. */}
+          {(me?.is_admin || me?.is_hr_reviewer) && employee?.id && (
+            <EditProfilePanel
+              employee={employee}
+              employees={employees}
+              onSaved={onSaved}
+            />
+          )}
+
           <div>
             <div className="text-xs tracking-widest opacity-60 mb-3">LEAVE BALANCES · {year}</div>
             <div className="grid sm:grid-cols-2 gap-3">
@@ -225,5 +239,250 @@ function ResetPinSection({ employee }) {
         </form>
       )}
     </div>
+  );
+}
+
+// ─── EditProfilePanel ────────────────────────────────────────────────────
+// Inline editor for the most fix-prone employee fields. Visible only to
+// admin + HR reviewer. Reasons Bashaier raised:
+//   • Names sometimes arrive in mixed casing in the device export but
+//     should be normalised in the directory
+//   • Email addresses missing → can't send notices
+//   • Wrong department assigned at onboarding → wrong shift cutoffs
+//   • Manager not yet linked → CC list incomplete on emails
+//
+// Updates are written via directPatch on the 'employees' table. On
+// success, onSaved(updatedEmployee) is called so the parent screen
+// can refresh its cached directory without a full reload.
+//
+// Compact UX: a single Edit button reveals the form; Cancel reverts
+// to the original values; Save persists. Disabled fields show why
+// they're disabled (e.g. PSN can't be changed because it's the FK
+// for everything else).
+function EditProfilePanel({ employee, employees, onSaved }) {
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy]       = useState(false);
+  const [error, setError]     = useState('');
+  const [done, setDone]       = useState(false);
+  const [form, setForm] = useState({
+    name:          employee.name        || '',
+    email:         employee.email       || '',
+    department:    employee.department  || '',
+    location:      employee.location    || '',
+    manager_id:    employee.manager_id  || '',
+    phone:         employee.phone       || '',
+  });
+
+  // Reset form when modal swaps to a different employee
+  React.useEffect(() => {
+    setForm({
+      name:       employee.name       || '',
+      email:      employee.email      || '',
+      department: employee.department || '',
+      location:   employee.location   || '',
+      manager_id: employee.manager_id || '',
+      phone:      employee.phone      || '',
+    });
+    setEditing(false);
+    setError('');
+    setDone(false);
+  }, [employee.id]);
+
+  const departments = useMemo(() => {
+    const set = new Set((employees || []).map(e => e.department).filter(Boolean));
+    return Array.from(set).sort();
+  }, [employees]);
+
+  const managers = useMemo(() => {
+    // Anyone in the directory can be a manager; surfaced sorted by name.
+    return (employees || [])
+      .filter(e => e.id !== employee.id) // can't be your own manager
+      .slice()
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  }, [employees, employee.id]);
+
+  async function handleSave() {
+    setBusy(true);
+    setError('');
+    setDone(false);
+    try {
+      // Build a minimal patch with only the changed fields. Empty-string
+      // values get translated to null so the column is properly cleared
+      // rather than being stored as '' (which fails some FK checks).
+      const patch = {};
+      const keys = ['name', 'email', 'department', 'location', 'manager_id', 'phone'];
+      keys.forEach(k => {
+        const cur = String(employee[k] ?? '');
+        const nxt = String(form[k] ?? '');
+        if (cur !== nxt) patch[k] = nxt === '' ? null : nxt;
+      });
+      if (Object.keys(patch).length === 0) {
+        setEditing(false);
+        setBusy(false);
+        return;
+      }
+      const updated = await directPatch('employees', 'id', employee.id, patch, { timeoutMs: 8000 });
+      setDone(true);
+      setEditing(false);
+      // Notify parent so the in-memory list reflects the change. Some
+      // call sites pass onSaved, others don't — guard.
+      if (typeof onSaved === 'function') {
+        const merged = { ...employee, ...patch };
+        try { onSaved(merged); } catch (_) { /* parent decided not to refresh */ }
+      }
+    } catch (e) {
+      setError(e?.message || 'Could not save changes.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!editing) {
+    // Read-only summary with an Edit button. Shows the same fields the
+    // editor surfaces, so Bashaier sees what's editable at a glance.
+    return (
+      <div className="rounded-xl border p-4"
+           style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}>
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <div className="text-xs tracking-widest opacity-60">PROFILE</div>
+          <button
+            type="button"
+            onClick={() => { setEditing(true); setDone(false); }}
+            className="text-[11px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border"
+            style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}
+          >
+            <Pencil className="w-3 h-3"/> Edit
+          </button>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-xs" style={{ color: '#0A0A0A' }}>
+          <ProfileLine label="Name"        value={employee.name} />
+          <ProfileLine label="Email"       value={employee.email} missing="No email on file" />
+          <ProfileLine label="Department"  value={employee.department} />
+          <ProfileLine label="Location"    value={LOCATION_LABELS[employee.location] || employee.location} />
+          <ProfileLine label="Manager"     value={(employees || []).find(e => e.id === employee.manager_id)?.name || employee.manager_id} missing="No manager linked" />
+          <ProfileLine label="Phone"       value={employee.phone} missing="—" />
+        </div>
+        {done && (
+          <div className="mt-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px]"
+               style={{ background: '#ECFDF5', color: '#047857', border: '1px solid #A7F3D0' }}>
+            <CheckCircle2 className="w-3 h-3"/> Saved
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border p-4"
+         style={{ borderColor: 'var(--evergreen-500)', background: '#F0FDF4' }}>
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <div className="text-xs tracking-widest" style={{ fontWeight: 700, color: '#047857' }}>
+          EDIT PROFILE · {employee.id}
+        </div>
+        <div className="text-[10px] opacity-60" style={{ color: '#0A0A0A' }}>
+          PSN / join date / nationality are not editable here
+        </div>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Field label="Name">
+          <input type="text" value={form.name}
+            onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+            className="w-full px-3 py-2 rounded-md text-sm"
+            style={{ border: '1px solid #86EFAC', background: '#FFFFFF', color: '#0A0A0A' }}/>
+        </Field>
+        <Field label="Email">
+          <input type="email" value={form.email}
+            onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+            placeholder="firstname.lastname@evergreen-shipping.com.sa"
+            className="w-full px-3 py-2 rounded-md text-sm"
+            style={{ border: '1px solid #86EFAC', background: '#FFFFFF', color: '#0A0A0A' }}/>
+        </Field>
+        <Field label="Department">
+          <select value={form.department}
+            onChange={e => setForm(f => ({ ...f, department: e.target.value }))}
+            className="w-full px-3 py-2 rounded-md text-sm"
+            style={{ border: '1px solid #86EFAC', background: '#FFFFFF', color: '#0A0A0A' }}>
+            <option value="">—</option>
+            {departments.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </Field>
+        <Field label="Location">
+          <select value={form.location}
+            onChange={e => setForm(f => ({ ...f, location: e.target.value }))}
+            className="w-full px-3 py-2 rounded-md text-sm"
+            style={{ border: '1px solid #86EFAC', background: '#FFFFFF', color: '#0A0A0A' }}>
+            <option value="">—</option>
+            {Object.entries(LOCATION_LABELS).map(([code, label]) => (
+              <option key={code} value={code}>{label}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Manager">
+          <select value={form.manager_id || ''}
+            onChange={e => setForm(f => ({ ...f, manager_id: e.target.value }))}
+            className="w-full px-3 py-2 rounded-md text-sm"
+            style={{ border: '1px solid #86EFAC', background: '#FFFFFF', color: '#0A0A0A' }}>
+            <option value="">— (no manager)</option>
+            {managers.map(m => (
+              <option key={m.id} value={m.id}>
+                {m.name} · {m.id} · {m.department || ''}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Phone">
+          <input type="tel" value={form.phone}
+            onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
+            placeholder="+966 5X XXX XXXX"
+            className="w-full px-3 py-2 rounded-md text-sm"
+            style={{ border: '1px solid #86EFAC', background: '#FFFFFF', color: '#0A0A0A' }}/>
+        </Field>
+      </div>
+
+      {error && (
+        <div className="mt-3 px-3 py-2 rounded-md text-xs flex items-start gap-2"
+             style={{ background: '#FEE2E2', color: '#0A0A0A', border: '1px solid #FECACA' }}>
+          <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0"/> {error}
+        </div>
+      )}
+
+      <div className="mt-4 flex items-center gap-2">
+        <button type="button" onClick={() => { setEditing(false); setError(''); }}
+          disabled={busy}
+          className="text-xs px-4 py-2 rounded-full border disabled:opacity-50"
+          style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A', background: '#FFFFFF' }}>
+          Cancel
+        </button>
+        <button type="button" onClick={handleSave}
+          disabled={busy}
+          className="text-xs px-4 py-2 rounded-full inline-flex items-center gap-1.5 disabled:opacity-50"
+          style={{ background: '#047857', color: '#FFFFFF', fontWeight: 600 }}>
+          {busy ? <><Loader2 className="w-3 h-3 animate-spin"/> Saving…</> : <><Save className="w-3 h-3"/> Save changes</>}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ProfileLine({ label, value, missing }) {
+  const empty = !value;
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-2">
+      <span className="text-[10px] tracking-wider font-semibold opacity-70">{label.toUpperCase()}</span>
+      <span style={{ fontWeight: empty ? 400 : 600, color: empty ? '#B45309' : '#0A0A0A' }}>
+        {empty ? (missing || '—') : value}
+      </span>
+    </div>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <label className="block">
+      <span className="text-[10px] tracking-wider font-semibold block mb-1" style={{ color: '#0A0A0A' }}>
+        {label.toUpperCase()}
+      </span>
+      {children}
+    </label>
   );
 }

@@ -457,11 +457,36 @@ export default function AttendanceView({ me, employees }) {
   }, [acceptedShifts]);
 
   // Build employee lookup by ID (PSN) and name
+  // Build employee lookup. Three indices, each robust to a different
+  // failure mode in the data:
+  //   • empById: exact-string match on id/psn (preserved for backward
+  //     compat — fastest, catches the well-formed cases)
+  //   • empByDigits: digits-only canonical key (strips H prefix, leading
+  //     zeros, any non-digit). The Time Card xlsx omits the H prefix
+  //     and may also omit leading zeros — e.g. file shows '4458' for
+  //     Badria whose directory id is 'H04458' (or sometimes 'H4458').
+  //     Digits-only matching collapses both to '4458' and matches.
+  // Detection below tries empById first (preserves the strict path),
+  // then falls back to empByDigits which always wins when the digit
+  // sequences agree.
+  const psnDigits = (s) => {
+    const digits = String(s || '').replace(/[^0-9]/g, '');
+    // Strip leading zeros so '04458' and '4458' compare equal.
+    return digits.replace(/^0+/, '') || '0';
+  };
   const empById = useMemo(() => {
     const m = {};
     (employees || []).forEach(e => {
       if (e.id) m[String(e.id).toUpperCase()] = e;
       if (e.psn) m[String(e.psn).toUpperCase()] = e;
+    });
+    return m;
+  }, [employees]);
+  const empByDigits = useMemo(() => {
+    const m = {};
+    (employees || []).forEach(e => {
+      const k = psnDigits(e.id || e.psn);
+      if (k) m[k] = e;
     });
     return m;
   }, [employees]);
@@ -506,9 +531,18 @@ export default function AttendanceView({ me, employees }) {
     parsed.rows.forEach((row, idx) => {
       const empIdRaw = row['Employee ID'] || row['employee_id'] || row['EmployeeID'] || row['ID'] || '';
       const empId = String(empIdRaw).trim();
-      // Some CSVs have integer IDs without H prefix; tolerant lookup
+      // Tolerant lookup with three layers, in order of strictness:
+      //   1. Exact-string match (e.g. 'H94590' → 'H94590')
+      //   2. Exact match after explicit H-prefix prepend
+      //   3. Digit-only canonical match — collapses leading zeros and
+      //      missing/extra H prefixes. Catches cases like file '4458'
+      //      vs directory 'H04458', or directory 'H4458' vs file '4458',
+      //      regardless of how the device export was formatted.
       const lookupKey = empId.toUpperCase().startsWith('H') ? empId.toUpperCase() : ('H' + empId).toUpperCase();
-      const emp = empById[empId.toUpperCase()] || empById[lookupKey] || null;
+      const emp = empById[empId.toUpperCase()]
+               || empById[lookupKey]
+               || empByDigits[psnDigits(empId)]
+               || null;
       if (!emp) {
         out.unknownEmp.push({ id: 'row-' + idx, row, empId, csvName: row['First Name'] || '' });
         return;
@@ -642,7 +676,7 @@ export default function AttendanceView({ me, employees }) {
       }
     });
     return out;
-  }, [parsed.rows, empById, onLeaveOnDate, csvIsWeekend, shiftOverrideById, permIndex]);
+  }, [parsed.rows, empById, empByDigits, onLeaveOnDate, csvIsWeekend, shiftOverrideById, permIndex]);
 
   // File handling
   const handleFile = useCallback(async (file) => {
@@ -1253,13 +1287,15 @@ export default function AttendanceView({ me, employees }) {
           {detection.unknownEmp.length > 0 && (
             <div className="rounded-2xl border p-5" style={{ borderColor: '#FCA5A5', background: '#FEF2F2' }}>
               <div className="text-[10px] mb-1" style={{ color: '#991B1B', letterSpacing: '0.25em', fontWeight: 700 }}>
-                ⚠ UNRECOGNISED EMPLOYEES IN CSV ({detection.unknownEmp.length})
+                ⚠ UNRECOGNISED EMPLOYEES IN FILE ({detection.unknownEmp.length})
               </div>
-              <div className="text-sm" style={{ color: '#1F1B16' }}>
-                These IDs were in the CSV but are not in the employee directory.
-                Check the IDs and re-upload, or ask Admin to add the missing employees.
+              <div className="text-sm" style={{ color: '#0A0A0A' }}>
+                These PSNs are in the file but not in the employee directory. The matcher already
+                tries digit-only fallbacks (so '4458' will find 'H04458'), so a no-match here means the
+                staff member truly isn't in the directory yet — open the Employees tab to add them, or
+                check that their PSN was entered correctly when they were onboarded.
               </div>
-              <ul className="mt-2 text-sm space-y-1" style={{ color: '#1F1B16' }}>
+              <ul className="mt-2 text-sm space-y-1" style={{ color: '#0A0A0A' }}>
                 {detection.unknownEmp.map(u => (
                   <li key={u.id}><span style={{ fontWeight: 600 }}>{u.empId}</span> — {u.csvName || 'unknown'}</li>
                 ))}
