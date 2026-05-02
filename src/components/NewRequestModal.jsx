@@ -1,11 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { X, AlertTriangle, AlertCircle, Calendar, ShieldCheck, ExternalLink } from 'lucide-react';
+import { X, AlertTriangle, AlertCircle, Calendar, ShieldCheck } from 'lucide-react';
 import {
   calculateRequestDays, calculateBalance, findOverlappingRequests, checkEligibility,
   todayISO, fmtDateShort, LOCATION_LABELS,
 } from '../lib/leaveLogic.js';
 import {
-  SEHHATY_VERIFY_URL, normaliseSehhatyCode, looksLikeSehhatyCode,
+  normaliseSehhatyCode, looksLikeSehhatyCode,
   classifySickLeaveBracket,
 } from '../lib/sehhaty.js';
 
@@ -26,16 +26,21 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
   const [isHalfDay, setIsHalfDay] = useState(false);
   const [halfDayPeriod, setHalfDayPeriod] = useState('morning');
   const [reason, setReason] = useState('');
-  const [attachmentUrl, setAttachmentUrl] = useState('');
+  // Attachment URL was a manual link field for cert uploads. With
+  // Sehhaty as the source of truth for sick-leave certificates we no
+  // longer ask for a separate URL — HR validates the leave ID
+  // against Sehhaty directly. State retained as null so the column
+  // value remains stable for downstream queries that still read it.
   const [empSearch, setEmpSearch] = useState('');
   const [substituteIds, setSubstituteIds] = useState([]);
   const [substituteSearch, setSubstituteSearch] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   // Sehhaty fields — only shown / required when leave type is 'sick'.
+  // Staff provides only the leave ID (the certificate's verification
+  // code). Issue date and clinic are not collected from the staff;
+  // HR sees them on Sehhaty itself when they verify the leave ID.
   const [sehhatyCode, setSehhatyCode] = useState('');
-  const [sehhatyIssueDate, setSehhatyIssueDate] = useState(todayISO());
-  const [sehhatyClinic, setSehhatyClinic] = useState('');
 
   const employee = employees.find(e => e.id === employeeId);
   const leaveType = leaveTypes.find(t => t.id === leaveTypeId);
@@ -99,16 +104,15 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
     isSick ? classifySickLeaveBracket(sickYTD, requestDays) : null
   , [isSick, sickYTD, requestDays]);
 
-  // Sehhaty validation: when sick leave is selected, both code and
-  // issue date are required for submission. Code must look plausible
-  // (alphanumeric ≥4 chars). The portal can't verify the code itself
-  // — that's HR's job after the request lands — but we ensure the
-  // field isn't empty so HR has something to check against.
+  // Sehhaty validation: when sick leave is selected, the leave ID
+  // must look plausible (alphanumeric ≥4 chars). The portal can't
+  // verify the ID itself — that's HR's job after the request lands —
+  // but we ensure the field isn't empty so HR has something to
+  // check against.
   const sehhatyCodeValid = !isSick || looksLikeSehhatyCode(sehhatyCode);
-  const sehhatyDateValid = !isSick || !!sehhatyIssueDate;
 
   const canSubmit = employee && leaveType && requestDays > 0 && eligibility.ok
-    && sehhatyCodeValid && sehhatyDateValid;
+    && sehhatyCodeValid;
 
   const submit = async (e) => {
     e.preventDefault();
@@ -150,7 +154,7 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
         reason: leaveTypeId === 'other' && customLeaveType
           ? `Other (${customLeaveType}): ${reason || ''}`.trim().replace(/: $/, '')
           : (reason || null),
-        attachment_url: attachmentUrl || null,
+        attachment_url: null,
         // Sick leaves carry an empty substitutes set — the column is
         // an array so '[]' is a valid value, and substitute_decisions
         // stays as '{}'. This preserves schema shape for downstream
@@ -161,12 +165,13 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
         // they go straight to the manager so the substitute-accept
         // gate doesn't block a back-dated illness submission.
         stage: isSick ? 'pending_manager' : 'pending_substitutes',
-        // Sehhaty fields — only present when sick leave is selected.
-        // Stored normalised (uppercase, no whitespace) so the values
-        // are stable across edits and HR's manual cross-check.
+        // Sehhaty fields. Staff provides only the leave ID
+        // (sehhaty_code). Issue date and clinic are left null —
+        // HR sees them directly on Sehhaty during verification, so
+        // we don't ask the staff member to copy that information.
         sehhaty_code:        isSick ? normaliseSehhatyCode(sehhatyCode) : null,
-        sehhaty_issue_date:  isSick ? sehhatyIssueDate : null,
-        sehhaty_clinic:      isSick ? (sehhatyClinic.trim() || null) : null,
+        sehhaty_issue_date:  null,
+        sehhaty_clinic:      null,
       });
     } catch (err) {
       setError(err.message || 'Failed to submit');
@@ -390,16 +395,6 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
             </Warning>
           )}
 
-          {leaveType?.requires_attachment && (
-            <div>
-              <Label>Attachment URL <span className="opacity-60">(certificate, document)</span></Label>
-              <input type="url" value={attachmentUrl} onChange={e => setAttachmentUrl(e.target.value)}
-                placeholder="https://…"
-                className="w-full px-3 py-2.5 rounded-lg border bg-transparent text-sm focus:outline-none"
-                style={{ borderColor: 'var(--border-soft)' }}/>
-            </div>
-          )}
-
           {/* Sehhaty (صحتي) details — required for sick leave per
               Saudi Labour Law. Since 2022 only Sehhaty-issued
               certificates are accepted; HR uses the service code
@@ -412,44 +407,27 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
               <div className="flex items-center gap-2 mb-3">
                 <ShieldCheck className="w-4 h-4" style={{ color: '#047857' }}/>
                 <div className="text-xs tracking-widest" style={{ fontWeight: 700, color: '#047857' }}>
-                  SEHHATY · MEDICAL CERTIFICATE DETAILS
+                  SEHHATY MEDICAL CERTIFICATE
                 </div>
               </div>
               <p className="text-[11px] mb-3" style={{ color: '#0A0A0A' }}>
-                Saudi Labour Law accepts only Sehhaty-issued certificates. Enter the service code from the certificate so HR can verify it on the Sehhaty portal.
+                Enter the leave ID printed on your Sehhaty certificate. HR will verify it on the Sehhaty portal before approving.
               </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <Label>Sehhaty service code <span style={{ color: '#B91C1C' }}>*</span></Label>
-                  <input type="text" value={sehhatyCode}
-                    onChange={e => setSehhatyCode(e.target.value)}
-                    placeholder="e.g. GSL-1234567"
-                    className="w-full px-3 py-2.5 rounded-lg border text-sm font-mono uppercase"
-                    style={{
-                      borderColor: sehhatyCode && !sehhatyCodeValid ? '#B91C1C' : 'var(--border-soft)',
-                      background: '#FFFFFF', color: '#0A0A0A',
-                    }}/>
-                  {sehhatyCode && !sehhatyCodeValid && (
-                    <div className="text-[10px] mt-1" style={{ color: '#B91C1C' }}>
-                      Code looks too short. Sehhaty codes are typically 4+ characters.
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <Label>Issue date <span style={{ color: '#B91C1C' }}>*</span></Label>
-                  <input type="date" value={sehhatyIssueDate}
-                    onChange={e => setSehhatyIssueDate(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-lg border text-sm"
-                    style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', color: '#0A0A0A' }}/>
-                </div>
-                <div className="sm:col-span-2">
-                  <Label>Clinic / hospital <span className="opacity-60">(optional)</span></Label>
-                  <input type="text" value={sehhatyClinic}
-                    onChange={e => setSehhatyClinic(e.target.value)}
-                    placeholder="e.g. Dr. Sulaiman Al Habib Hospital"
-                    className="w-full px-3 py-2.5 rounded-lg border text-sm"
-                    style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', color: '#0A0A0A' }}/>
-                </div>
+              <div>
+                <Label>Sehhaty leave ID <span style={{ color: '#B91C1C' }}>*</span></Label>
+                <input type="text" value={sehhatyCode}
+                  onChange={e => setSehhatyCode(e.target.value)}
+                  placeholder="e.g. GSL-1234567"
+                  className="w-full px-3 py-2.5 rounded-lg border text-sm font-mono uppercase"
+                  style={{
+                    borderColor: sehhatyCode && !sehhatyCodeValid ? '#B91C1C' : 'var(--border-soft)',
+                    background: '#FFFFFF', color: '#0A0A0A',
+                  }}/>
+                {sehhatyCode && !sehhatyCodeValid && (
+                  <div className="text-[10px] mt-1" style={{ color: '#B91C1C' }}>
+                    ID looks too short. Sehhaty leave IDs are typically 4+ characters.
+                  </div>
+                )}
               </div>
 
               {/* Saudi Labour Law bracket warning — visible whenever
@@ -492,17 +470,6 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
                   </div>
                 </div>
               )}
-
-              <div className="mt-3 flex items-center gap-2 flex-wrap">
-                <a href={SEHHATY_VERIFY_URL} target="_blank" rel="noopener noreferrer"
-                  className="text-[11px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border"
-                  style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', color: '#0A0A0A' }}>
-                  <ExternalLink className="w-3 h-3"/> Open Sehhaty
-                </a>
-                <span className="text-[10px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
-                  HR will verify the code on Sehhaty before approving.
-                </span>
-              </div>
             </div>
           )}
 
