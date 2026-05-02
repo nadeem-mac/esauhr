@@ -3,7 +3,7 @@ import { supabase, directPatch, directGet } from '../supabaseClient.js';
 import { CheckCircle2, XCircle, Clock, Loader2, AlertTriangle, Sunrise, Sunset, Calendar, RefreshCw, Search, Plane, FileDown, ArrowLeftCircle, Mail } from 'lucide-react';
 import { logAction } from '../lib/audit.js';
 import HrApprovalModal from './HrApprovalModal.jsx';
-import { downloadVacationFormForRequest, buildLeaveRejectionEmailDraft } from '../lib/vacationForm.js';
+import { downloadVacationFormForRequest, buildLeaveRejectionEmailDraft, buildEmailDraft, buildSickLeaveApprovalEmailDraft } from '../lib/vacationForm.js';
 import PermissionApprovedModal from './PermissionApprovedModal.jsx';
 import RejoiningApprovedModal from './RejoiningApprovedModal.jsx';
 import { fmtDate, rejectionReasonsForLeaveType, findRejectionReason } from '../lib/leaveLogic.js';
@@ -1540,6 +1540,35 @@ function HistoryItem({ req, empMap, onReopenPermission, onReopenRejoining }) {
     }
   }
 
+  // Open the approval email composer for an already-approved leave.
+  // Sick leaves use the Sehhaty-aware draft (with the cross-check
+  // block, the print-and-stamp instructions, and the Badria/Fahad
+  // CC routing); other leave types use the standard substitute-aware
+  // approval draft. Lets Bashaier re-send the approval email later
+  // if the staff member missed it or didn't get around to printing
+  // and stamping the form.
+  function openApprovalEmail() {
+    const employee   = empMap[req.employee_id];
+    const manager    = empMap[employee?.manager_id];
+    const hrApprover = empMap[req.hr_decided_by] || null;
+    const isSickReq  = req.leave_type_id === 'sick';
+    const substitutes = (req.substitute_ids || [])
+      .map(sid => empMap[sid])
+      .filter(Boolean);
+    const draft = isSickReq
+      ? buildSickLeaveApprovalEmailDraft({
+          employee, request: req, manager, hrApprover,
+          payBracketLabel: null, // not recomputed here; the email
+                                 // body still renders cleanly without it
+          badria: empMap?.['H94458'] || null,
+          fahad:  empMap?.['H94712'] || null,
+        })
+      : buildEmailDraft({
+          employee, request: req, manager, hrApprover, substitutes,
+        });
+    window.location.href = draft.mailto;
+  }
+
   // Build the rejection-email draft on demand. The email opens
   // pre-filled with the standardised reason label, the free-text
   // note, and (for sick leaves) the Sehhaty leave ID. Lets Bashaier
@@ -1607,6 +1636,17 @@ function HistoryItem({ req, empMap, onReopenPermission, onReopenRejoining }) {
             title="Re-download the leave application form"
           >
             <FileDown className="w-3 h-3" /> Form
+          </button>
+        )}
+        {wasApproved && isLeave && (
+          <button
+            type="button"
+            onClick={openApprovalEmail}
+            className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap inline-flex items-center gap-1"
+            style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
+            title="Re-open the approval email pre-filled for this leave"
+          >
+            <Mail className="w-3 h-3" /> Letter / email
           </button>
         )}
         {!wasApproved && isLeave && (rejection || rejectionNote) && (
