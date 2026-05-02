@@ -81,7 +81,25 @@ export async function loadOcrEngine() {
  */
 export async function extractFromImage(imageInput) {
   const worker = await loadOcrEngine();
-  const result = await worker.recognize(imageInput);
+  // Preprocess the image before OCR. Two transforms applied:
+  //   1. Scale up to ~2x if the source is small (<1500px wide).
+  //      Tesseract's accuracy on Arabic glyphs degrades sharply
+  //      below ~30px per character; scaling up a tight Sehhaty
+  //      screenshot to roughly print-quality resolution gives the
+  //      OCR engine more pixels per glyph to work with.
+  //   2. Convert to greyscale and slightly increase contrast.
+  //      Removes Sehhaty's faint blue/grey backdrop and makes the
+  //      black-on-white text crisper.
+  // If preprocessing fails for any reason (e.g. the image input
+  // is already a string URL we can't process), we fall back to
+  // recognising the original input directly.
+  let inputForOcr = imageInput;
+  try {
+    inputForOcr = await preprocessImage(imageInput);
+  } catch {
+    // fall through to raw input
+  }
+  const result = await worker.recognize(inputForOcr);
   const text = result?.data?.text || '';
   const confidence = result?.data?.confidence ?? 0;
 
@@ -103,6 +121,78 @@ export async function extractFromImage(imageInput) {
     confidence,
     rawText:    text,
   };
+}
+
+/**
+ * Preprocess a Blob/File for OCR.
+ *   • Loads the image into a canvas
+ *   • Scales up if narrower than 1500px (target ~2x source width
+ *     up to a 3000px ceiling; bigger doesn't help and just slows
+ *     OCR down)
+ *   • Greyscales each pixel and applies a mild contrast bump
+ *     (multiply around mid-grey) so faint text gets pulled toward
+ *     pure black and faint backdrop tints get pushed toward white.
+ *   • Returns a Blob (PNG) ready for tesseract.recognize.
+ *
+ * Runs entirely on the canvas — no server round-trip, no extra
+ * libraries.
+ */
+async function preprocessImage(blob) {
+  if (typeof blob === 'string') return blob; // already a data URL
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = url;
+    });
+    // Target width: 2x source, capped at 3000px, but never less
+    // than the source. Small screenshots benefit most from
+    // upscaling; a 2400px source gets passed through unchanged.
+    const targetW = Math.min(3000, Math.max(img.naturalWidth, img.naturalWidth * 2));
+    const scale = targetW / img.naturalWidth;
+    const targetH = Math.round(img.naturalHeight * scale);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext('2d');
+    // imageSmoothingEnabled with 'high' quality scales bicubically
+    // — preserves glyph shapes much better than nearest-neighbor
+    // for Arabic, which has a lot of curved strokes.
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, targetW, targetH);
+    ctx.drawImage(img, 0, 0, targetW, targetH);
+
+    // Greyscale + contrast bump. The contrast curve here is a
+    // simple linear push around midpoint:
+    //   out = clamp(((in - 128) * 1.4) + 128, 0, 255)
+    // with a slightly lower midpoint pivot (110) so light-grey
+    // backdrop pushes white faster than dark text pushes black.
+    const data = ctx.getImageData(0, 0, targetW, targetH);
+    const px = data.data;
+    for (let i = 0; i < px.length; i += 4) {
+      // luma weights — keeps Arabic glyphs more uniform than a
+      // simple average since Arabic ink is typically pure black
+      const lum = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+      let v = (lum - 110) * 1.4 + 128;
+      if (v < 0) v = 0;
+      else if (v > 255) v = 255;
+      px[i] = v; px[i + 1] = v; px[i + 2] = v;
+    }
+    ctx.putImageData(data, 0, 0);
+
+    // Return as Blob — Tesseract can take any of (Blob, File,
+    // canvas, dataURL, ImageData), but Blob is the lightest path.
+    return await new Promise((resolve) =>
+      canvas.toBlob((b) => resolve(b || blob), 'image/png')
+    );
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 // ─── Field extractors ─────────────────────────────────────────────────────────
@@ -213,27 +303,66 @@ function matchDays(text) {
   return small ?? candidates[0];
 }
 
-/** Patient name — Arabic text after 'الاسم:' label. We grab the
- *  3-5 Arabic words that follow. Approximate; Bashaier reviews. */
+/** Patient name — Arabic text after 'الاسم:' label.
+ *  Robustness work:
+ *    • Allow whitespace OR a colon-like character (Arabic colon
+ *      '：', Latin ':', or none) between label and value.
+ *    • Allow the value to span newlines — Tesseract often inserts
+ *      a line break between label and value.
+ *    • Accept Arabic letters AND the special hamza/ligature codepoints
+ *      that fall outside U+0600-U+06FF (e.g. ﺍ, ﺑ — presentation forms).
+ *    • Strip trailing label-like text that may have been over-captured. */
 function matchPatientName(text) {
-  // Look for the Arabic label 'الاسم' then capture the next line of
-  // Arabic content. Tesseract may render the label as 'الاسم' or
-  // close variants depending on font confidence.
-  const m = text.match(/الاسم[:：]?\s*([\u0600-\u06FF\s]{3,80})/);
-  return m ? m[1].trim().replace(/\s+/g, ' ') : null;
+  // The label can OCR as 'الاسم' or with ﻻ ligatures or with stray
+  // characters. We anchor on the consonant skeleton 'الاسم'.
+  const m = text.match(/الاسم[:：\s]*\n?[\s]*([\u0600-\u06FF\uFB50-\uFEFC\s]{3,120})/);
+  if (!m) return null;
+  return cleanArabicValue(m[1]);
 }
 
-/** Doctor name — 'اسم الطبيب' label. */
+/** Doctor name — 'اسم الطبيب' label.
+ *  Fixes for the user-reported 'doctor name was missing' miss:
+ *    • Tolerate the label spelling variants Tesseract produces
+ *      ('اسم الطبيب', 'اسم الطبيب:', 'اسم الطبيب :', 'اسم الطبيب\n')
+ *    • Allow newlines between label and value
+ *    • Accept Arabic presentation forms (U+FB50-U+FEFC range) — Tesseract
+ *      sometimes outputs these instead of the basic Arabic block.
+ *    • Length cap raised from 80 to 120 — Saudi doctor names are often
+ *      4-5 words ('دانه محمد بن عبدالله الغامدي') and the previous cap
+ *      was clipping them. */
 function matchDoctorName(text) {
-  const m = text.match(/اسم\s*الطبيب[:：]?\s*([\u0600-\u06FF\s]{3,80})/);
-  return m ? m[1].trim().replace(/\s+/g, ' ') : null;
+  const m = text.match(/اسم\s*الطبيب[:：\s]*\n?[\s]*([\u0600-\u06FF\uFB50-\uFEFC\s]{3,120})/);
+  if (!m) return null;
+  return cleanArabicValue(m[1]);
 }
 
 /** Specialty — 'المسمى الوظيفي' label. Often 'طب بشري' (Human
  *  Medicine), 'طب الأسنان', 'طب الأطفال', etc. */
 function matchSpecialty(text) {
-  const m = text.match(/المسمى\s*الوظيفي[:：]?\s*([\u0600-\u06FF\s]{2,40})/);
-  return m ? m[1].trim().replace(/\s+/g, ' ') : null;
+  const m = text.match(/المسمى\s*الوظيفي[:：\s]*\n?[\s]*([\u0600-\u06FF\uFB50-\uFEFC\s]{2,60})/);
+  if (!m) return null;
+  return cleanArabicValue(m[1]);
+}
+
+/** Shared cleanup for any captured Arabic value:
+ *    • Trim leading/trailing whitespace
+ *    • Collapse internal whitespace runs (Tesseract sometimes inserts
+ *      newlines mid-word)
+ *    • Cut at the first occurrence of a known label fragment, in
+ *      case the regex over-captured into the next field. */
+function cleanArabicValue(raw) {
+  if (!raw) return null;
+  let v = raw.trim().replace(/\s+/g, ' ');
+  // If the next field's label leaked in (e.g. captured 'دانه ... المسمى الوظيفي'),
+  // truncate before the label.
+  const stopLabels = ['تاريخ', 'تبدأ', 'وحتى', 'المدة', 'اسم الطبيب', 'المسمى', 'الوظيفي'];
+  for (const lbl of stopLabels) {
+    const idx = v.indexOf(lbl);
+    if (idx > 0) {
+      v = v.slice(0, idx).trim();
+    }
+  }
+  return v || null;
 }
 
 /**

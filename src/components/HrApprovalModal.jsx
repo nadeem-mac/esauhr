@@ -35,7 +35,7 @@ const labelFor = (id) => LEAVE_TYPE_LABELS[id]
 //      and toggles the request as verified. Approval is gated on
 //      verification (or on an explicit override) so an unverified
 //      sick leave never reaches the 'approved' stage by accident.
-export default function HrApprovalModal({ request, employee, manager, substitutes, me, allRequests, onClose, onApproved }) {
+export default function HrApprovalModal({ request, employee, manager, substitutes, me, allRequests, empMap, onClose, onApproved }) {
   const [step, setStep]     = useState('review');   // 'review' | 'approving' | 'done'
   const [error, setError]   = useState('');
   const [draft, setDraft]   = useState(null);
@@ -354,6 +354,13 @@ export default function HrApprovalModal({ request, employee, manager, substitute
             manager,
             hrApprover: me,
             payBracketLabel: sickBracket?.endBracket?.label,
+            // HR deputies (Badria + Fahad SUP) — looked up from empMap
+            // by their fixed PSNs. Used in CC alongside the manager
+            // and exec routing so they're in the loop on every sick
+            // leave approval. Falls back gracefully to null if the
+            // PSN isn't in the directory (e.g. they leave the org).
+            badria: empMap?.['H94458'] || null,
+            fahad:  empMap?.['H94712'] || null,
           })
         : buildEmailDraft({ request, employee, manager, hrApprover: me, substitutes }));
       setStep('done');

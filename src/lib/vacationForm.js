@@ -1057,6 +1057,7 @@ export function buildEmailDraft({ employee, request, manager, hrApprover, substi
 // share the same launch logic (window.location.href = mailto).
 export function buildSickLeaveApprovalEmailDraft({
   employee, request, manager, hrApprover, payBracketLabel,
+  badria, fahad,
 }) {
   const dateRange = `${fmtDateMed(request.start_date)} - ${fmtDateMed(request.end_date)}`;
   const dayCount  = `${request.days} day${request.days === 1 ? '' : 's'}${request.is_half_day ? ' — half day' : ''}`;
@@ -1083,14 +1084,23 @@ export function buildSickLeaveApprovalEmailDraft({
   if (request.sehhaty_seen_specialty)   seenLines.push(`Specialty:               ${request.sehhaty_seen_specialty}`);
 
   const to = [employee?.email].filter(Boolean).join(',');
+  // CC — line manager, exec routing (CEO + Country Head), and the
+  // two HR deputies (Badria + Fahad SUP) who own visibility on
+  // every sick-leave approval. Dedup against `to` and against each
+  // other so a manager who happens to also be one of the deputies
+  // doesn't show up twice.
   const ccList = [
     manager?.email,
+    badria?.email,
+    fahad?.email,
     CEO_EMAIL,
     COUNTRY_HEAD_EMAIL,
   ].filter(Boolean);
   const cc = Array.from(new Set(ccList.filter(e => e !== to))).join(',');
 
   const subject = `Sick leave approved & validated on Sehhaty · ${employee?.name || ''} · ${dateRange}`;
+
+  const managerName = manager?.name || 'your line manager';
 
   const body = [
     `Dear ${(employee?.name || '').split(' ')[0] || 'Colleague'},`,
@@ -1113,10 +1123,9 @@ export function buildSickLeaveApprovalEmailDraft({
     seenLines.length > 0 ? `--------------------` : null,
     ...seenLines,
     '',
-    `The certificate above has been cross-checked on the Sehhaty/Seha platform`,
-    `and the data certified by the doctor matches your leave request on file.`,
+    `The certificate above has been cross-checked on the Sehhaty/Seha platform and the data certified by the doctor matches your leave request on file.`,
     '',
-    `Take care, get well soon, and please share an update with your manager once you're back.`,
+    `Please find the leave form attached. Kindly print the form, have your line manager (${managerName}) sign and stamp it, and drop the signed copy at the HR office at your earliest convenience to close the file on our side.`,
     '',
     `If you have any questions about pay treatment for these days, please reply to this email.`,
     '',
@@ -1129,7 +1138,7 @@ export function buildSickLeaveApprovalEmailDraft({
     `WhatsApp: ${HR_SIGNATURE.whatsapp}`,
     `Tel: ${HR_SIGNATURE.tel}`,
     `Email: ${HR_SIGNATURE.email}`,
-  ].filter(Boolean).join('\n');
+  ].filter(line => line !== null).join('\n');
 
   const params = new URLSearchParams();
   if (cc) params.set('cc', cc);
