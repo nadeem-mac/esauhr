@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, Calendar as CalIcon, Sunrise, Sunset } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Calendar as CalIcon, Sunrise, Sunset, Briefcase, X, Sun } from 'lucide-react';
 import { Card, Avatar, Pill, Empty } from './Dashboard.jsx';
 import { toISO, todayISO, fmtDateShort, KSA_WEEKEND } from '../lib/leaveLogic.js';
 import { directGet } from '../supabaseClient.js';
@@ -32,6 +32,12 @@ export default function CalendarView({ requests, permissions: permsProp, empMap,
   const [showShifts, setShowShifts]           = useState(false);
   const [showHolidays, setShowHolidays]       = useState(true);
   const [personFilter, setPersonFilter]       = useState('all');
+  // Hovered cell — used for the rich preview tooltip that appears
+  // anchored to the cell. Stored as the ISO date so we can derive
+  // the per-cell event lists at render time without a re-fetch.
+  const [hoveredISO, setHoveredISO] = useState(null);
+  // Clicked cell — opens the day detail modal grouped by person.
+  const [clickedISO, setClickedISO] = useState(null);
 
   // Permissions: prefer the prop but fall back to a self-fetch so the
   // calendar still works on routes that don't pre-load permissions.
@@ -213,7 +219,16 @@ export default function CalendarView({ requests, permissions: permsProp, empMap,
             else if (isWeekend) bg = 'rgba(247,243,234,0.5)';
 
             return (
-              <div key={i} className="min-h-[88px] sm:min-h-[112px] border-r border-b p-1.5"
+              <div key={i}
+                onMouseEnter={() => d && setHoveredISO(iso)}
+                onMouseLeave={() => setHoveredISO(prev => prev === iso ? null : prev)}
+                onClick={() => {
+                  if (!d) return;
+                  const hasAny = leaves.length + perms.length + dayShifts.length > 0 || !!holiday;
+                  if (hasAny) setClickedISO(iso);
+                }}
+                className={"min-h-[88px] sm:min-h-[112px] border-r border-b p-1.5 relative transition-colors " +
+                  (d ? "cursor-pointer hover:bg-black/[0.02]" : "")}
                    style={{ borderColor: 'var(--border-soft)', background: bg }}>
                 {d && (
                   <>
@@ -225,13 +240,12 @@ export default function CalendarView({ requests, permissions: permsProp, empMap,
                       <div className="flex items-center gap-1">
                         {dayShifts.length > 0 && showShifts && (
                           <span className="text-[9px] px-1 rounded font-bold tracking-wider"
-                            style={{ background: 'rgba(147,51,234,0.15)', color: '#7E22CE' }}
-                            title={dayShifts.length + ' shift(s) assigned'}>
+                            style={{ background: 'rgba(147,51,234,0.15)', color: '#7E22CE' }}>
                             {dayShifts.length}S
                           </span>
                         )}
                         {holiday && (
-                          <div className="text-[9px] uppercase tracking-wider" style={{ color: '#0A0A0A', opacity: 0.7 }} title={holiday.name}>
+                          <div className="text-[9px] uppercase tracking-wider" style={{ color: '#0A0A0A', opacity: 0.7 }}>
                             HOLIDAY
                           </div>
                         )}
@@ -249,7 +263,6 @@ export default function CalendarView({ requests, permissions: permsProp, empMap,
                         return (
                           <div key={r.id}
                             className="text-[10px] px-1.5 py-0.5 rounded truncate"
-                            title={emp.name + ' · ' + (tp?.name || '')}
                             style={{ background: (tp?.color || '#000') + '25', color: tp?.color }}>
                             {emp.name.split(' ')[0]}
                           </div>
@@ -262,16 +275,12 @@ export default function CalendarView({ requests, permissions: permsProp, empMap,
                     {perms.length > 0 && (
                       <div className="flex items-center gap-0.5 mt-1 flex-wrap">
                         {perms.slice(0, 4).map(p => {
-                          const emp = empMap[p.employee_id];
                           const Icon = p.type === 'late_arrival' ? Sunrise : Sunset;
                           const color = p.type === 'late_arrival' ? '#1D4ED8' : '#A16207';
-                          const tipName = (emp && emp.name) || p.employee_id;
-                          const tipType = p.type === 'late_arrival' ? 'Late arrival' : 'Early leave';
                           return (
                             <span key={p.id}
                               className="inline-flex items-center justify-center w-4 h-4 rounded-full"
-                              style={{ background: color + '18' }}
-                              title={tipName + ' · ' + tipType + ' · ' + String(p.time_from || '').slice(0,5) + '–' + String(p.time_to || '').slice(0,5)}>
+                              style={{ background: color + '18' }}>
                               <Icon className="w-2.5 h-2.5" style={{ color: color }}/>
                             </span>
                           );
@@ -281,6 +290,31 @@ export default function CalendarView({ requests, permissions: permsProp, empMap,
                         )}
                       </div>
                     )}
+
+                    {/* Hover preview — anchored to this cell, shows
+                        every event for the day grouped by type. The
+                        cell that owns the tooltip is the only one
+                        rendering it (hoveredISO === iso) so React
+                        only paints one floating layer at a time.
+                        Click anywhere on the cell opens the detail
+                        modal with the same data plus per-person
+                        grouping and richer formatting. */}
+                    {hoveredISO === iso && (leaves.length + perms.length + dayShifts.length > 0 || holiday) && (
+                      <HoverTooltip
+                        iso={iso}
+                        leaves={leaves}
+                        perms={perms}
+                        shifts={dayShifts}
+                        holiday={holiday}
+                        empMap={empMap}
+                        typeMap={typeMap}
+                        // Position above the cell when in the bottom
+                        // half of the grid, otherwise below — keeps
+                        // the tooltip from getting clipped by the
+                        // calendar's bottom edge.
+                        anchorAbove={Math.floor(i / 7) >= Math.floor(cells.length / 7) - 2}
+                      />
+                    )}
                   </>
                 )}
               </div>
@@ -288,6 +322,21 @@ export default function CalendarView({ requests, permissions: permsProp, empMap,
           })}
         </div>
       </div>
+
+      {/* Day detail modal — opens on cell click. Shows every event for
+          the day grouped by person, with full type/time/duration text. */}
+      {clickedISO && (
+        <DayDetailModal
+          iso={clickedISO}
+          leaves={requests.filter(r => r.status === 'approved' && r.start_date <= clickedISO && r.end_date >= clickedISO && (personFilter === 'all' || r.employee_id === personFilter))}
+          perms={permissions.filter(p => p.permission_date === clickedISO && (personFilter === 'all' || p.employee_id === personFilter))}
+          shifts={shifts.filter(s => s.shift_date === clickedISO && (personFilter === 'all' || s.employee_id === personFilter))}
+          holiday={holidayMap[clickedISO] || null}
+          empMap={empMap}
+          typeMap={typeMap}
+          onClose={() => setClickedISO(null)}
+        />
+      )}
 
       <Card title="Approved leaves this month" subtitle={monthLeaves.length + ' entries'}>
         {monthLeaves.length === 0 ? (
@@ -333,5 +382,337 @@ function FilterChip({ active, onClick, label, dot }) {
       <span className="inline-block w-2 h-2 rounded-full" style={{ background: dot }}/>
       {label}
     </button>
+  );
+}
+
+// ─── HoverTooltip ───────────────────────────────────────────────────────
+// Floating preview anchored to a calendar cell. Shows every event for
+// the day grouped by type with the responsible staff member's name.
+// Compact — one line per event — so a busy day stays scannable.
+//
+// Positioning: by default appears below the cell. If anchorAbove is
+// true (cell is in the bottom two rows), it flips to above. Always
+// horizontally centred on the cell with overflow guards via min/max
+// width.
+//
+// Pointer-events disabled so the tooltip never intercepts clicks
+// — the underlying cell stays clickable for the detail modal.
+function HoverTooltip({ iso, leaves, perms, shifts, holiday, empMap, typeMap, anchorAbove }) {
+  const dateLabel = new Date(iso).toLocaleDateString('en-GB', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
+  const totalCount = leaves.length + perms.length + shifts.length;
+
+  return (
+    <div className="absolute z-50 pointer-events-none"
+      style={{
+        ...(anchorAbove
+          ? { bottom: '100%', marginBottom: '6px' }
+          : { top: '100%', marginTop: '6px' }),
+        left: '50%',
+        transform: 'translateX(-50%)',
+        minWidth: '240px',
+        maxWidth: '320px',
+      }}>
+      <div className="rounded-xl shadow-lg p-3"
+        style={{
+          background: '#FFFDF7',
+          border: '1px solid var(--border-soft)',
+          boxShadow: '0 8px 24px rgba(31, 27, 22, 0.12)',
+        }}>
+        <div className="text-[10px] tracking-widest mb-2"
+          style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.7 }}>
+          {dateLabel.toUpperCase()}
+          {totalCount > 0 && <span style={{ marginLeft: '6px' }}>· {totalCount} event{totalCount === 1 ? '' : 's'}</span>}
+        </div>
+
+        {holiday && (
+          <div className="text-xs mb-2 px-2 py-1 rounded inline-block"
+            style={{ background: 'rgba(196,155,97,0.18)', color: '#0A0A0A', fontWeight: 600 }}>
+            {holiday.name}
+          </div>
+        )}
+
+        {leaves.length > 0 && (
+          <div className="mb-2">
+            <div className="text-[9px] tracking-wider mb-1"
+              style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.6 }}>
+              LEAVES · {leaves.length}
+            </div>
+            <ul className="space-y-1">
+              {leaves.map(r => {
+                const emp = empMap[r.employee_id];
+                const tp  = typeMap[r.leave_type_id];
+                return (
+                  <li key={r.id} className="flex items-center gap-1.5 text-[11px]" style={{ color: '#0A0A0A' }}>
+                    <span className="inline-block w-1.5 h-1.5 rounded-full flex-shrink-0"
+                      style={{ background: tp?.color || '#000' }}/>
+                    <span style={{ fontWeight: 600 }}>{emp?.name || r.employee_id}</span>
+                    <span style={{ opacity: 0.7 }}>· {tp?.name || r.leave_type_id}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        {perms.length > 0 && (
+          <div className="mb-2">
+            <div className="text-[9px] tracking-wider mb-1"
+              style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.6 }}>
+              PERMISSIONS · {perms.length}
+            </div>
+            <ul className="space-y-1">
+              {perms.map(p => {
+                const emp = empMap[p.employee_id];
+                const Icon = p.type === 'late_arrival' ? Sunrise : Sunset;
+                const color = p.type === 'late_arrival' ? '#1D4ED8' : '#A16207';
+                const label = p.type === 'late_arrival' ? 'Late arrival' : 'Early leave';
+                return (
+                  <li key={p.id} className="flex items-center gap-1.5 text-[11px]" style={{ color: '#0A0A0A' }}>
+                    <Icon className="w-3 h-3 flex-shrink-0" style={{ color }}/>
+                    <span style={{ fontWeight: 600 }}>{emp?.name || p.employee_id}</span>
+                    <span style={{ opacity: 0.7 }}>
+                      · {label} · {String(p.time_from || '').slice(0,5)}–{String(p.time_to || '').slice(0,5)}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        {shifts.length > 0 && (
+          <div className="mb-1">
+            <div className="text-[9px] tracking-wider mb-1"
+              style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.6 }}>
+              SHIFTS · {shifts.length}
+            </div>
+            <ul className="space-y-1">
+              {shifts.map(s => {
+                const emp = empMap[s.employee_id];
+                return (
+                  <li key={s.id} className="flex items-center gap-1.5 text-[11px]" style={{ color: '#0A0A0A' }}>
+                    <Briefcase className="w-3 h-3 flex-shrink-0" style={{ color: '#7E22CE' }}/>
+                    <span style={{ fontWeight: 600 }}>{emp?.name || s.employee_id}</span>
+                    <span style={{ opacity: 0.7 }}>
+                      {s.shift_start && s.shift_end
+                        ? ` · ${String(s.shift_start).slice(0,5)}–${String(s.shift_end).slice(0,5)}`
+                        : ''}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        <div className="text-[9px] mt-2 pt-2 border-t" style={{ color: '#0A0A0A', opacity: 0.5, borderColor: 'var(--border-soft)' }}>
+          Click for full detail
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── DayDetailModal ─────────────────────────────────────────────────────
+// Opens when a calendar cell is clicked. Shows every event for that
+// day grouped by person — each staff member gets their own row with
+// all their events (leaves + permissions + shifts) accumulated.
+// Sorted alphabetically by name so the order is stable across opens.
+function DayDetailModal({ iso, leaves, perms, shifts, holiday, empMap, typeMap, onClose }) {
+  const dateLabel = new Date(iso).toLocaleDateString('en-GB', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
+
+  // Group every event by employee_id so each staff member's events
+  // sit together in the modal. byEmp shape:
+  //   key: 'H94590'
+  //   value: { employee, leaves: [], perms: [], shifts: [] }
+  const byEmp = useMemo(() => {
+    const m = new Map();
+    const ensure = (empId) => {
+      if (!m.has(empId)) {
+        m.set(empId, {
+          employee: empMap[empId] || { id: empId, name: '(unknown)', department: '', location: '' },
+          leaves: [],
+          perms: [],
+          shifts: [],
+        });
+      }
+      return m.get(empId);
+    };
+    leaves.forEach(r => ensure(r.employee_id).leaves.push(r));
+    perms.forEach(p  => ensure(p.employee_id).perms.push(p));
+    shifts.forEach(s => ensure(s.employee_id).shifts.push(s));
+    return m;
+  }, [leaves, perms, shifts, empMap]);
+
+  // Stable sort by name. People with their own events show up in the
+  // same order every time the modal opens.
+  const sortedEntries = useMemo(() => {
+    return Array.from(byEmp.values()).sort((a, b) =>
+      String(a.employee.name || '').localeCompare(String(b.employee.name || ''))
+    );
+  }, [byEmp]);
+
+  const totalEvents = leaves.length + perms.length + shifts.length;
+
+  return (
+    <div
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        background: 'rgba(15, 23, 42, 0.55)',
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        padding: '40px 16px', overflowY: 'auto',
+      }}>
+      <div
+        className="w-full max-w-2xl rounded-2xl border"
+        style={{
+          borderColor: 'var(--border-soft)',
+          background: '#FFFDF7',
+          boxShadow: '0 12px 40px rgba(31,27,22,0.18)',
+        }}>
+        {/* Header */}
+        <div className="flex items-start justify-between px-5 sm:px-6 py-4 border-b" style={{ borderColor: 'var(--border-soft)' }}>
+          <div>
+            <div className="text-[10px] tracking-[0.25em] mb-1" style={{ fontWeight: 700, color: '#0A0A0A' }}>
+              CALENDAR · DAY DETAIL
+            </div>
+            <h2 style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#0A0A0A', fontWeight: 500 }}>
+              {dateLabel}
+            </h2>
+            <div className="text-xs mt-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+              {totalEvents === 0
+                ? (holiday ? holiday.name : 'No events recorded.')
+                : `${sortedEntries.length} ${sortedEntries.length === 1 ? 'person' : 'people'} · ${totalEvents} event${totalEvents === 1 ? '' : 's'}`}
+            </div>
+          </div>
+          <button onClick={onClose}
+            className="p-1.5 rounded-full hover:bg-black/5 transition-colors"
+            aria-label="Close">
+            <X className="w-4 h-4" style={{ color: '#0A0A0A' }}/>
+          </button>
+        </div>
+
+        {/* Holiday banner */}
+        {holiday && (
+          <div className="mx-5 sm:mx-6 mt-4 px-3 py-2 rounded-lg flex items-center gap-2"
+            style={{ background: 'rgba(196,155,97,0.18)', border: '1px solid rgba(196,155,97,0.4)' }}>
+            <Sun className="w-4 h-4 flex-shrink-0" style={{ color: '#92400E' }}/>
+            <div>
+              <div className="text-[10px] tracking-wider font-bold" style={{ color: '#0A0A0A' }}>HOLIDAY</div>
+              <div className="text-sm" style={{ color: '#0A0A0A', fontWeight: 500 }}>{holiday.name}</div>
+            </div>
+          </div>
+        )}
+
+        {/* Per-person rows */}
+        <div className="p-5 sm:p-6">
+          {sortedEntries.length === 0 ? (
+            <div className="text-center py-6 text-sm" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+              {holiday
+                ? 'No staff events on this day — only the public holiday.'
+                : 'No events on this day.'}
+            </div>
+          ) : (
+            <ul className="space-y-3">
+              {sortedEntries.map(({ employee, leaves: empLeaves, perms: empPerms, shifts: empShifts }) => (
+                <li key={employee.id}
+                  className="rounded-xl p-3 sm:p-4"
+                  style={{ background: '#FFFFFF', border: '1px solid var(--border-soft)' }}>
+                  {/* Person header */}
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
+                    <span className="text-[11px] font-mono px-1.5 py-0.5 rounded"
+                      style={{ background: '#F4F4EE', color: '#0A0A0A' }}>
+                      {employee.id}
+                    </span>
+                    <span className="text-sm" style={{ color: '#0A0A0A', fontWeight: 700 }}>
+                      {employee.name}
+                    </span>
+                    {(employee.department || employee.location) && (
+                      <span className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+                        · {[employee.department, employee.location].filter(Boolean).join(' · ')}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Person's events */}
+                  <ul className="space-y-1.5">
+                    {empLeaves.map(r => {
+                      const tp = typeMap[r.leave_type_id];
+                      const dayNum = (() => {
+                        const start = new Date(r.start_date);
+                        const here  = new Date(iso);
+                        return Math.round((here - start) / 86_400_000) + 1;
+                      })();
+                      return (
+                        <li key={r.id} className="flex items-start gap-2 text-[12px]" style={{ color: '#0A0A0A' }}>
+                          <span className="inline-block w-2 h-2 rounded-full mt-1.5 flex-shrink-0"
+                            style={{ background: tp?.color || '#000' }}/>
+                          <div>
+                            <span style={{ fontWeight: 600 }}>{tp?.name || r.leave_type_id}</span>
+                            <span style={{ opacity: 0.75 }}>
+                              {' · '}{r.days} day{r.days === 1 ? '' : 's'} ({fmtDateShort(r.start_date)} → {fmtDateShort(r.end_date)})
+                              {r.days > 1 && ` · day ${dayNum} of ${r.days}`}
+                            </span>
+                          </div>
+                        </li>
+                      );
+                    })}
+                    {empPerms.map(p => {
+                      const Icon = p.type === 'late_arrival' ? Sunrise : Sunset;
+                      const color = p.type === 'late_arrival' ? '#1D4ED8' : '#A16207';
+                      const label = p.type === 'late_arrival' ? 'Late arrival permission' : 'Early leave permission';
+                      return (
+                        <li key={p.id} className="flex items-start gap-2 text-[12px]" style={{ color: '#0A0A0A' }}>
+                          <Icon className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color }}/>
+                          <div>
+                            <span style={{ fontWeight: 600 }}>{label}</span>
+                            <span style={{ opacity: 0.75 }}>
+                              {' · '}{String(p.time_from || '').slice(0,5)}–{String(p.time_to || '').slice(0,5)}
+                              {p.hours ? ` · ${p.hours}h` : ''}
+                            </span>
+                            {p.reason && (
+                              <div className="text-[11px] italic mt-0.5" style={{ opacity: 0.7 }}>
+                                "{p.reason}"
+                              </div>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                    {empShifts.map(s => (
+                      <li key={s.id} className="flex items-start gap-2 text-[12px]" style={{ color: '#0A0A0A' }}>
+                        <Briefcase className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: '#7E22CE' }}/>
+                        <div>
+                          <span style={{ fontWeight: 600 }}>Shift assignment</span>
+                          <span style={{ opacity: 0.75 }}>
+                            {s.shift_start && s.shift_end
+                              ? ` · ${String(s.shift_start).slice(0,5)}–${String(s.shift_end).slice(0,5)}`
+                              : ''}
+                            {s.status ? ` · ${s.status}` : ''}
+                          </span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 sm:px-6 py-3 border-t flex items-center justify-end" style={{ borderColor: 'var(--border-soft)', background: '#FAF6EC' }}>
+          <button onClick={onClose}
+            className="text-xs px-4 py-2 rounded-full"
+            style={{ background: '#0A0A0A', color: '#FFFDF7', fontWeight: 500 }}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
