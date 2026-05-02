@@ -242,6 +242,15 @@ export default function ReviewerPanel({ me }) {
         const orFilter = auth
           ? `(hr_decided_by.eq.${psn},hr_decided_by.eq.${auth})`
           : `(hr_decided_by.eq.${psn})`;
+        // Manager-stage decisions live on different columns
+        // (manager_decided_at / manager_decided_by). Without this
+        // second query, items where Bashaier or a manager rejected
+        // at pending_manager (or approved at pending_manager and
+        // it then went to pending_hr) wouldn't surface in MY RECENT
+        // DECISIONS — only HR-stage final decisions would.
+        const orFilterMgr = auth
+          ? `(manager_decided_by.eq.${psn},manager_decided_by.eq.${auth})`
+          : `(manager_decided_by.eq.${psn})`;
 
         // Permission decisions
         const permHistQs = `select=*&or=${orFilter}&hr_decided_at=gte.${cutoffISO}&order=hr_decided_at.desc`;
@@ -252,11 +261,25 @@ export default function ReviewerPanel({ me }) {
           setRecentDecisions([]);
         }
 
-        // Leave decisions
-        const leaveHistQs = `select=*&or=${orFilter}&hr_decided_at=gte.${cutoffISO}&order=hr_decided_at.desc`;
+        // Leave decisions — merge two queries:
+        //  (1) HR-stage final decisions (hr_decided_at >= cutoff)
+        //  (2) Manager-stage decisions where the user was the
+        //      manager (manager_decided_at >= cutoff). Includes
+        //      rejected_by_manager rows AND pending_hr rows that
+        //      were approved at manager stage (those still belong
+        //      in the user's recent activity feed).
+        // Dedup by id so the same row doesn't appear twice when
+        // the same user happens to be both manager and HR.
         try {
-          const lhist = await directGet('leave_requests', leaveHistQs, { timeoutMs: 10000 });
-          setRecentLeaveDecisions(Array.isArray(lhist) ? lhist : []);
+          const hrLeaveQs = `select=*&or=${orFilter}&hr_decided_at=gte.${cutoffISO}&order=hr_decided_at.desc`;
+          const mgrLeaveQs = `select=*&or=${orFilterMgr}&manager_decided_at=gte.${cutoffISO}&order=manager_decided_at.desc`;
+          const [lhistHr, lhistMgr] = await Promise.all([
+            directGet('leave_requests', hrLeaveQs,  { timeoutMs: 10000 }).catch(() => []),
+            directGet('leave_requests', mgrLeaveQs, { timeoutMs: 10000 }).catch(() => []),
+          ]);
+          const merged = new Map();
+          [...(lhistHr || []), ...(lhistMgr || [])].forEach(r => merged.set(r.id, r));
+          setRecentLeaveDecisions(Array.from(merged.values()));
         } catch {
           setRecentLeaveDecisions([]);
         }
@@ -449,8 +472,17 @@ export default function ReviewerPanel({ me }) {
         },
       });
       await load();
-    } catch (err) { alert(err.message); }
-    finally       { setBusyId(null); }
+    } catch (err) {
+      // Re-throw so callers (e.g. RejectLeaveModal) can surface
+      // the error in their own UI. The legacy inline-button path
+      // doesn't have a try/catch around decideLeave so we still
+      // alert here as a fallback for that path. Modal callers
+      // catch first and the alert never fires.
+      alert(err.message);
+      throw err;
+    } finally {
+      setBusyId(null);
+    }
   }
 
   async function decidePerm(req, action) {
@@ -1431,6 +1463,18 @@ function HistoryItem({ req, empMap, onReopenPermission, onReopenRejoining }) {
     ? req.return_stage === 'approved'
     : req.stage === 'approved';
 
+  // For leaves, the row could have been rejected at either the
+  // manager stage (rejected_by_manager) or the HR stage
+  // (rejected_by_hr). The decided-at timestamp lives on different
+  // columns: manager_decided_at vs hr_decided_at. Pick the right
+  // one so the 'Decided …' line below shows the actual decision
+  // time, not a missing field.
+  const decidedAt = isRejoin
+    ? req.return_hr_decided_at
+    : isLeave
+      ? (req.hr_decided_at || req.manager_decided_at)
+      : req.hr_decided_at;
+
   // Rejected leaves carry a reason code + optional note. Both columns
   // are nullable for backwards compatibility with rejections that
   // pre-date the rejection_reasons migration.
@@ -1458,8 +1502,6 @@ function HistoryItem({ req, empMap, onReopenPermission, onReopenRejoining }) {
     : isRejoin
       ? `Rejoining · returned ${fmtDate(req.actual_return_date)}${req.balance_after > 0 ? ` · +${req.balance_after}d credited` : ''}`
       : `${PERMISSION_TYPES[req.type]?.label || req.type} · ${Number(req.hours)}h · ${fmtDate(req.permission_date)}`;
-
-  const decidedAt = isRejoin ? req.return_hr_decided_at : req.hr_decided_at;
 
   async function downloadLeaveLetter() {
     try {
