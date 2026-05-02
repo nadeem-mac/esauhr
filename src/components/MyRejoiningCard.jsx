@@ -234,10 +234,23 @@ export default function MyRejoiningCard({ me, employees = [] }) {
                       <input
                         type="text"
                         value={form.notes}
-                        onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))}
-                        placeholder="e.g. medical certificate attached, returned 1 day early"
+                        // Force uppercase + strip line breaks. The notes
+                        // field prints onto an HR record — Bashaier wants
+                        // it in the same all-caps register the rest of
+                        // the form uses, on a single line. Done at the
+                        // setter level so paste, IME input, and direct
+                        // typing all behave identically.
+                        onChange={(e) => {
+                          const cleaned = e.target.value
+                            .replace(/[\r\n]+/g, ' ')   // newlines → space
+                            .toUpperCase();
+                          setForm(f => ({ ...f, notes: cleaned }));
+                        }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
+                        maxLength={120}
+                        placeholder="E.G. MEDICAL CERTIFICATE ATTACHED, RETURNED 1 DAY EARLY"
                         className="w-full px-2 py-1.5 rounded text-sm"
-                        style={{ border: '1px solid #86EFAC', background: '#FFFFFF', color: '#0A0A0A' }}
+                        style={{ border: '1px solid #86EFAC', background: '#FFFFFF', color: '#0A0A0A', textTransform: 'uppercase' }}
                       />
                     </label>
                   </div>
