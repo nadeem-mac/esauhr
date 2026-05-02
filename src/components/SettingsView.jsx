@@ -4,6 +4,41 @@ import ReviewerPermissionsCard from './ReviewerPermissionsCard.jsx';
 import ManagerAssignmentsCard from './ManagerAssignmentsCard.jsx';
 import MigrationsPanel from './MigrationsPanel.jsx';
 
+// Defensive boundary — if MigrationsPanel (a relatively new and
+// complex card) crashes for any reason, we don't want the entire
+// Settings page to white-screen. The rest of the cards (leave
+// types, summary, calculation engine info) continue to render and
+// the user can still admin the system. The boundary surfaces the
+// underlying error so we can debug, rather than hiding it.
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    // eslint-disable-next-line no-console
+    console.error('[SettingsView ErrorBoundary]', error, info);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="rounded-xl border p-4"
+          style={{ borderColor: '#FCA5A5', background: '#FEF2F2', color: '#991B1B' }}>
+          <div className="text-[10px] tracking-widest font-bold mb-1">SECTION FAILED TO RENDER</div>
+          <div className="text-xs font-mono">{String(this.state.error?.message || this.state.error)}</div>
+          <div className="text-[10px] mt-2 opacity-70">
+            The rest of Settings continues to work. Open the browser console for the full stack trace.
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function SettingsView({ leaveTypes, onUpdateType, employees, requests, holidays, me }) {
   const isAdmin = Boolean(me?.is_admin);
   return (
@@ -20,7 +55,9 @@ export default function SettingsView({ leaveTypes, onUpdateType, employees, requ
         <ManagerAssignmentsCard employees={employees} me={me} />
       )}
       {isAdmin && (
-        <MigrationsPanel me={me} />
+        <ErrorBoundary>
+          <MigrationsPanel me={me} />
+        </ErrorBoundary>
       )}
 
       <Card title="Leave types" subtitle="Rename categories and adjust entitlements to match company policy">
