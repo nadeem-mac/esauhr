@@ -307,8 +307,8 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
                   if (!d) return;
                   if (hasEvents) setClickedISO(iso);
                 }}
-                className={"min-h-[96px] sm:min-h-[120px] p-2 relative transition-all duration-150 " +
-                  (d && hasEvents ? "cursor-pointer hover:shadow-md" : d ? "cursor-default" : "")}
+                className={"min-h-[64px] sm:min-h-[78px] p-1.5 relative transition-all duration-150 " +
+                  (d && hasEvents ? "cursor-pointer hover:shadow-md hover:z-10" : d ? "cursor-default" : "")}
                 style={{
                   borderRight:  dow < 6 ? '1px solid #E8DEC4' : 'none',
                   borderBottom: '1px solid #E8DEC4',
@@ -325,109 +325,100 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
                 )}
                 {d && (
                   <>
-                    <div className="flex items-center justify-between mb-1.5 gap-1">
-                      {/* Date number — circular for today, bold for
-                          weekend/holiday so visual hierarchy reads
-                          before any chips. */}
+                    <div className="flex items-center justify-between gap-1">
+                      {/* Date number — circular for today; coloured for
+                          weekend/holiday. Tighter sizing for the smaller
+                          cell footprint. */}
                       {isToday ? (
-                        <div className="flex items-center justify-center w-7 h-7 rounded-full text-xs"
-                          style={{ background: '#0F4C2A', color: '#FFFFFF', fontWeight: 700 }}>
+                        <div className="flex items-center justify-center w-6 h-6 rounded-full text-[11px]"
+                          style={{
+                            background: 'linear-gradient(135deg, #0F4C2A 0%, #047857 100%)',
+                            color: '#FFFFFF', fontWeight: 700,
+                            boxShadow: '0 2px 4px rgba(15,76,42,0.3)',
+                          }}>
                           {d}
                         </div>
                       ) : (
-                        <div className="text-sm" style={{
+                        <div className="text-[12px]" style={{
                           fontWeight: holiday ? 700 : isWeekend ? 600 : 500,
-                          color: holiday ? '#B45309' : '#0A0A0A',
+                          color: holiday ? '#B45309' : isWeekend ? '#7C5E2E' : '#0A0A0A',
                         }}>{d}</div>
                       )}
-                      <div className="flex items-center gap-1">
-                        {dayShifts.length > 0 && showShifts && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded font-bold tracking-wider"
-                            style={{ background: '#9333EA', color: '#FFFFFF' }}>
-                            {dayShifts.length}S
-                          </span>
-                        )}
-                        {totalEvents >= 4 && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded font-bold tracking-wider"
-                            style={{ background: '#0F4C2A', color: '#FFFFFF' }}
-                            title={`${totalEvents} events on this day`}>
-                            {totalEvents}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    {holiday && (
-                      <div className="text-[10px] leading-tight mb-1.5 truncate"
-                        style={{ color: '#B45309', fontWeight: 700, letterSpacing: '0.02em' }}>
-                        {holiday.name}
-                      </div>
-                    )}
-                    {/* Leave chips — solid colour with white text for
-                        readability. Each chip carries a coloured left
-                        border so the leave type stays visually distinct
-                        even when several stack up on the same day. */}
-                    <div className="space-y-1">
-                      {leaves.slice(0, 3).map(r => {
-                        const emp = empMap[r.employee_id]; const tp = typeMap[r.leave_type_id];
-                        if (!emp) return null;
-                        const tpColor = tp?.color || '#0F4C2A';
-                        return (
-                          <div key={r.id}
-                            className="text-[10px] px-1.5 py-0.5 rounded truncate flex items-center gap-1"
-                            style={{
-                              background: tpColor,
-                              color: '#FFFFFF',
-                              fontWeight: 600,
-                              boxShadow: '0 1px 2px rgba(0,0,0,0.08)',
-                            }}>
-                            {emp.name.split(' ')[0]}
-                          </div>
-                        );
-                      })}
-                      {leaves.length > 3 && (
-                        <div className="text-[10px] px-1.5"
-                          style={{ color: '#0A0A0A', fontWeight: 600 }}>
-                          +{leaves.length - 3} more
-                        </div>
+                      {totalEvents > 0 && (
+                        <span className="text-[9px] px-1.5 rounded-full font-bold leading-tight"
+                          style={{
+                            background: '#0F4C2A', color: '#FFFFFF',
+                            minWidth: '16px', textAlign: 'center', paddingTop: '2px', paddingBottom: '2px',
+                          }}
+                          title={`${totalEvents} event${totalEvents === 1 ? '' : 's'}`}>
+                          {totalEvents}
+                        </span>
                       )}
                     </div>
-                    {/* Permission icons — bigger and more visible than
-                        before. Solid coloured dot with white icon, so
-                        they read at a glance as 'something time-bound
-                        happens here'. */}
-                    {perms.length > 0 && (
-                      <div className="flex items-center gap-1 mt-1.5 flex-wrap">
-                        {perms.slice(0, 4).map(p => {
-                          const Icon = p.type === 'late_arrival' ? Sunrise : Sunset;
-                          const color = p.type === 'late_arrival' ? '#1D4ED8' : '#D97706';
+
+                    {/* Colour-density dot row — one tiny dot per event,
+                        coloured by type. Gives the cell instant visual
+                        identity even when there's no room for full
+                        chips. Same colour palette as the filter chips
+                        so they cross-reference at a glance. */}
+                    {(leaves.length + perms.length + dayShifts.length) > 0 && (
+                      <div className="flex items-center gap-0.5 mt-1 flex-wrap">
+                        {leaves.slice(0, 6).map(r => {
+                          const tp = typeMap[r.leave_type_id];
                           return (
-                            <span key={p.id}
-                              className="inline-flex items-center justify-center w-5 h-5 rounded-full"
-                              style={{
-                                background: color,
-                                boxShadow: '0 1px 2px rgba(0,0,0,0.12)',
-                              }}>
-                              <Icon className="w-3 h-3" style={{ color: '#FFFFFF' }} strokeWidth={2.5}/>
-                            </span>
+                            <span key={'l-' + r.id}
+                              className="inline-block w-1.5 h-1.5 rounded-full"
+                              style={{ background: tp?.color || '#0F4C2A' }}/>
                           );
                         })}
-                        {perms.length > 4 && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold"
-                            style={{ background: '#0A0A0A', color: '#FFFFFF' }}>
-                            +{perms.length - 4}
-                          </span>
-                        )}
+                        {perms.slice(0, 6).map(p => (
+                          <span key={'p-' + p.id}
+                            className="inline-block w-1.5 h-1.5 rounded-full"
+                            style={{ background: p.type === 'late_arrival' ? '#1D4ED8' : '#D97706' }}/>
+                        ))}
+                        {dayShifts.slice(0, 6).map(s => (
+                          <span key={'s-' + s.id}
+                            className="inline-block w-1.5 h-1.5 rounded-full"
+                            style={{ background: '#9333EA' }}/>
+                        ))}
                       </div>
                     )}
 
-                    {/* Hover preview — anchored to this cell, shows
-                        every event for the day grouped by type. The
-                        cell that owns the tooltip is the only one
-                        rendering it (hoveredISO === iso) so React
-                        only paints one floating layer at a time.
-                        Click anywhere on the cell opens the detail
-                        modal with the same data plus per-person
-                        grouping and richer formatting. */}
+                    {/* Holiday label — compact one-line copper text */}
+                    {holiday && (
+                      <div className="text-[9px] leading-tight mt-1 truncate"
+                        style={{ color: '#B45309', fontWeight: 700 }}>
+                        {holiday.name}
+                      </div>
+                    )}
+
+                    {/* One leave chip max in compact view — solid
+                        colour with white text. The rest collapse to
+                        a small +N indicator. Click cell for full list. */}
+                    {leaves.length > 0 && (
+                      <div className="mt-1">
+                        {leaves.slice(0, 1).map(r => {
+                          const emp = empMap[r.employee_id]; const tp = typeMap[r.leave_type_id];
+                          if (!emp) return null;
+                          const tpColor = tp?.color || '#0F4C2A';
+                          return (
+                            <div key={r.id}
+                              className="text-[9px] px-1.5 py-0.5 rounded truncate"
+                              style={{
+                                background: tpColor,
+                                color: '#FFFFFF',
+                                fontWeight: 600,
+                                boxShadow: '0 1px 2px rgba(0,0,0,0.08)',
+                              }}>
+                              {emp.name.split(' ')[0]}
+                              {leaves.length > 1 && <span style={{ opacity: 0.85 }}> +{leaves.length - 1}</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Hover preview */}
                     {hoveredISO === iso && (leaves.length + perms.length + dayShifts.length > 0 || holiday) && (
                       <HoverTooltip
                         iso={iso}
@@ -437,10 +428,6 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
                         holiday={holiday}
                         empMap={empMap}
                         typeMap={typeMap}
-                        // Position above the cell when in the bottom
-                        // half of the grid, otherwise below — keeps
-                        // the tooltip from getting clipped by the
-                        // calendar's bottom edge.
                         anchorAbove={Math.floor(i / 7) >= Math.floor(cells.length / 7) - 2}
                       />
                     )}
