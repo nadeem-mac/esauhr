@@ -728,6 +728,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
         )}
         {tab === 'calendar' && (
           <CalendarView
+            me={me}
             requests={requests} permissions={permissions}
             empMap={empMap} typeMap={typeMap} holidays={holidays}
           />

@@ -16,11 +16,22 @@ import { directGet } from '../supabaseClient.js';
 // when investigating a specific staff member's pattern.
 // ─────────────────────────────────────────────────────────────────────────
 
-export default function CalendarView({ requests, permissions: permsProp, empMap, typeMap, holidays }) {
+export default function CalendarView({ me, requests, permissions: permsProp, empMap, typeMap, holidays }) {
   const [viewDate, setViewDate] = useState(new Date());
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
   const monthName = viewDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+
+  // Access scope. Bashaier (HR reviewer) and Nadeem (admin) see every
+  // staff member's events — that's the workforce-wide visibility the
+  // calendar was built for. Regular staff see only their own events
+  // (their own leaves, their own permissions, their own shifts) so
+  // colleague absences and time-off remain private.
+  // Defense in depth: enforced here AND inside the self-fetch queries
+  // below, so even if a future change passes unfiltered props the
+  // CalendarView never renders other people's data to a regular user.
+  const canSeeAll = Boolean(me?.is_admin || me?.is_hr_reviewer);
+  const scopeId   = me?.id || null;
 
   const firstDay = new Date(year, month, 1);
   const lastDay = new Date(year, month + 1, 0);
@@ -49,11 +60,18 @@ export default function CalendarView({ requests, permissions: permsProp, empMap,
       try {
         const monthStart = toISO(firstDay);
         const monthEnd   = toISO(lastDay);
+        // For regular staff, scope the query to their own PSN so
+        // we never even pull other people's permissions over the
+        // wire — defense in depth on top of the client-side filter.
+        const scopeQs = (!canSeeAll && scopeId)
+          ? '&employee_id=eq.' + encodeURIComponent(scopeId)
+          : '';
         const data = await directGet(
           'permission_requests?select=id,employee_id,type,permission_date,time_from,time_to,hours,stage'
           + '&stage=eq.approved'
           + '&permission_date=gte.' + monthStart
           + '&permission_date=lte.' + monthEnd
+          + scopeQs
           + '&order=permission_date.asc'
         );
         if (!cancelled) setPermsLocal(data || []);
@@ -62,10 +80,18 @@ export default function CalendarView({ requests, permissions: permsProp, empMap,
       }
     })();
     return () => { cancelled = true; };
-  }, [permsProp, year, month]);
-  const permissions = Array.isArray(permsProp) ? permsProp : permsLocal;
+  }, [permsProp, year, month, canSeeAll, scopeId]);
+  // When the parent passes permissions and the user can't see all,
+  // clip the prop to the user's own rows so we don't leak even via
+  // accidentally-broad parent fetches.
+  const permissions = useMemo(() => {
+    const source = Array.isArray(permsProp) ? permsProp : permsLocal;
+    if (canSeeAll || !scopeId) return source;
+    return source.filter(p => p.employee_id === scopeId);
+  }, [permsProp, permsLocal, canSeeAll, scopeId]);
 
-  // Shifts: self-fetch the visible month.
+  // Shifts: self-fetch the visible month, scoped to the user when
+  // they're not allowed to see everyone's.
   const [shifts, setShifts] = useState([]);
   useEffect(() => {
     let cancelled = false;
@@ -73,10 +99,14 @@ export default function CalendarView({ requests, permissions: permsProp, empMap,
       try {
         const monthStart = toISO(firstDay);
         const monthEnd   = toISO(lastDay);
+        const scopeQs = (!canSeeAll && scopeId)
+          ? '&employee_id=eq.' + encodeURIComponent(scopeId)
+          : '';
         const data = await directGet(
           'employee_shifts?select=id,employee_id,shift_date,shift_start,shift_end,status'
           + '&shift_date=gte.' + monthStart
           + '&shift_date=lte.' + monthEnd
+          + scopeQs
           + '&order=shift_date.asc'
         );
         if (!cancelled) setShifts(data || []);
@@ -85,7 +115,15 @@ export default function CalendarView({ requests, permissions: permsProp, empMap,
       }
     })();
     return () => { cancelled = true; };
-  }, [year, month]);
+  }, [year, month, canSeeAll, scopeId]);
+
+  // Leaves come in as a pre-loaded prop — filter them client-side
+  // for non-admin/HR users. Memoised so the lookup helpers below
+  // stay stable.
+  const scopedRequests = useMemo(() => {
+    if (canSeeAll || !scopeId) return requests;
+    return (requests || []).filter(r => r.employee_id === scopeId);
+  }, [requests, canSeeAll, scopeId]);
 
   const holidayMap = useMemo(() => {
     const m = {};
@@ -100,7 +138,7 @@ export default function CalendarView({ requests, permissions: permsProp, empMap,
   const leavesOnDay = (day) => {
     if (!day || !showLeaves) return [];
     const iso = toISO(new Date(year, month, day));
-    return requests.filter(r =>
+    return scopedRequests.filter(r =>
       r.status === 'approved'
       && r.start_date <= iso && r.end_date >= iso
       && (personFilter === 'all' || r.employee_id === personFilter)
@@ -129,7 +167,7 @@ export default function CalendarView({ requests, permissions: permsProp, empMap,
     const ids = new Set();
     const monthStart = toISO(firstDay);
     const monthEnd   = toISO(lastDay);
-    requests.forEach(r => {
+    scopedRequests.forEach(r => {
       if (r.status === 'approved' && !(r.end_date < monthStart || r.start_date > monthEnd)) {
         ids.add(r.employee_id);
       }
@@ -139,16 +177,16 @@ export default function CalendarView({ requests, permissions: permsProp, empMap,
     return Array.from(ids).map(id => empMap[id]).filter(Boolean).sort((a,b) =>
       String(a.name||'').localeCompare(String(b.name||''))
     );
-  }, [requests, permissions, shifts, empMap, year, month]);
+  }, [scopedRequests, permissions, shifts, empMap, year, month]);
 
   const monthLeaves = useMemo(() => {
     const monthStart = toISO(firstDay);
     const monthEnd = toISO(lastDay);
-    return requests
+    return scopedRequests
       .filter(r => r.status === 'approved' && !(r.end_date < monthStart || r.start_date > monthEnd))
       .filter(r => personFilter === 'all' || r.employee_id === personFilter)
       .sort((a, b) => a.start_date.localeCompare(b.start_date));
-  }, [requests, year, month, personFilter]);
+  }, [scopedRequests, year, month, personFilter]);
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -181,7 +219,7 @@ export default function CalendarView({ requests, permissions: permsProp, empMap,
           <FilterChip active={showShifts}      onClick={() => setShowShifts(v => !v)}      label="Shifts"      dot="#9333EA" />
           <FilterChip active={showHolidays}    onClick={() => setShowHolidays(v => !v)}    label="Holidays"    dot="#C49B61" />
         </div>
-        {peopleInMonth.length > 1 && (
+        {canSeeAll && peopleInMonth.length > 1 && (
           <select value={personFilter} onChange={e => setPersonFilter(e.target.value)}
             className="text-xs px-3 py-1.5 rounded-full border ml-auto"
             style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', color: '#0A0A0A' }}>
@@ -328,7 +366,7 @@ export default function CalendarView({ requests, permissions: permsProp, empMap,
       {clickedISO && (
         <DayDetailModal
           iso={clickedISO}
-          leaves={requests.filter(r => r.status === 'approved' && r.start_date <= clickedISO && r.end_date >= clickedISO && (personFilter === 'all' || r.employee_id === personFilter))}
+          leaves={scopedRequests.filter(r => r.status === 'approved' && r.start_date <= clickedISO && r.end_date >= clickedISO && (personFilter === 'all' || r.employee_id === personFilter))}
           perms={permissions.filter(p => p.permission_date === clickedISO && (personFilter === 'all' || p.employee_id === personFilter))}
           shifts={shifts.filter(s => s.shift_date === clickedISO && (personFilter === 'all' || s.employee_id === personFilter))}
           holiday={holidayMap[clickedISO] || null}
