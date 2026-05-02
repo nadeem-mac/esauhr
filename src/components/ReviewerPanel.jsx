@@ -554,12 +554,32 @@ export default function ReviewerPanel({ me }) {
 
         if (queueTotal === 0) {
           return (
-            <AllCaughtUpHero
-              recentLeaveDecisions={recentLeaveDecisions}
-              recentPermDecisions={recentDecisions}
-              recentRejoinDecisions={recentRejoinDecisions}
-              showHistory={canPerm}
-            />
+            <>
+              <AllCaughtUpHero
+                recentLeaveDecisions={recentLeaveDecisions}
+                recentPermDecisions={recentDecisions}
+                recentRejoinDecisions={recentRejoinDecisions}
+                showHistory={canPerm}
+              />
+              {/* Even with an empty queue the reviewer still wants to
+                  see her own 90-day decision log — searchable, with
+                  re-download / re-email actions on each row. Renders
+                  below the hero so the page reads: 'You're done →
+                  here's what you've done lately.' */}
+              {canPerm && (recentDecisions.length > 0 || recentLeaveDecisions.length > 0 || recentRejoinDecisions.length > 0) && (
+                <HistorySection
+                  recentLeaveDecisions={recentLeaveDecisions}
+                  recentDecisions={recentDecisions}
+                  recentRejoinDecisions={recentRejoinDecisions}
+                  empMap={empMap}
+                  query={historyQuery}
+                  setQuery={setHistoryQuery}
+                  setApprovedPermission={setApprovedPermission}
+                  setApprovedRejoining={setApprovedRejoining}
+                  isAdmin={isAdmin}
+                />
+              )}
+            </>
           );
         }
 
