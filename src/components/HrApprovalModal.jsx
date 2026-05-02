@@ -847,133 +847,29 @@ export default function HrApprovalModal({ request, employee, manager, substitute
                 onPick={onPickImage}
               />
 
-              {/* Reference card — leave ID + format diagnostic */}
-              <div className="rounded-lg p-3"
-                style={{ background: '#FFFFFF', border: '1px solid var(--border-soft)' }}>
-                <div className="text-[9px] tracking-wider opacity-60 mb-1">SEHHATY LEAVE ID (from request)</div>
-                <div className="font-mono text-base" style={{ fontWeight: 700, color: '#0A0A0A', wordBreak: 'break-all' }}>
-                  {request?.sehhaty_code}
-                </div>
-                {codeDiag.severity === 'warn' && (
-                  <div className="text-[10px] mt-2 px-2 py-1 rounded inline-block"
-                    style={{ background: '#FEF3C7', color: '#92400E' }}>
-                    ⚠ {codeDiag.messages.join(' ')}
-                  </div>
-                )}
-                {codeDiag.severity === 'error' && (
-                  <div className="text-[10px] mt-2 px-2 py-1 rounded inline-block"
-                    style={{ background: '#FEE2E2', color: '#991B1B' }}>
-                    ✕ {codeDiag.messages.join(' ')}
-                  </div>
-                )}
-              </div>
-
-              {/* Cross-check grid — two columns: 'request says' on
-                  the left as read-only references, 'Sehhaty shows'
-                  on the right as inputs. Pre-filled with request
-                  values so the happy path is just visual confirm. */}
-              <div className="rounded-lg overflow-hidden"
-                style={{ border: '1px solid var(--border-soft)', background: '#FFFFFF' }}>
-                <div className="grid grid-cols-12 text-[10px] tracking-wider font-bold px-3 py-2"
-                  style={{ background: '#F4EFDC', color: '#0F4C2A', borderBottom: '1px solid var(--border-soft)' }}>
-                  <div className="col-span-4">FIELD</div>
-                  <div className="col-span-4">REQUEST SAYS</div>
-                  <div className="col-span-4">SEHHATY SHOWS (type in)</div>
-                </div>
-
-                {/* NAME */}
-                <CrossRow label="Patient name"
-                  requestValue={employee?.name || '—'}
-                  field="name"
-                  mismatches={crossCheck.mismatches}>
-                  <input type="text" value={seenName}
-                    onChange={e => setSeenName(e.target.value)}
-                    placeholder="Name on Sehhaty (Arabic OK)"
-                    className="w-full px-2 py-1 rounded border text-[12px]"
-                    style={{ borderColor: 'var(--border-soft)', background: '#FAFAF7', color: '#0A0A0A' }}/>
-                </CrossRow>
-
-                {/* ID NUMBER */}
-                <CrossRow label="National ID / Iqama"
-                  requestValue={<span className="opacity-60 italic">not on file</span>}
-                  field="idNumber"
-                  mismatches={crossCheck.mismatches}>
-                  <input type="text" value={seenIdNumber}
-                    onChange={e => setSeenIdNumber(e.target.value)}
-                    placeholder="e.g. 1127754297"
-                    className="w-full px-2 py-1 rounded border text-[12px] font-mono"
-                    style={{ borderColor: 'var(--border-soft)', background: '#FAFAF7', color: '#0A0A0A' }}/>
-                </CrossRow>
-
-                {/* START */}
-                <CrossRow label="Start date"
-                  requestValue={request.start_date}
-                  field="Start date"
-                  mismatches={crossCheck.mismatches}>
-                  <input type="date" value={seenStart}
-                    onChange={e => setSeenStart(e.target.value)}
-                    className="w-full px-2 py-1 rounded border text-[12px]"
-                    style={{ borderColor: 'var(--border-soft)', background: '#FAFAF7', color: '#0A0A0A' }}/>
-                </CrossRow>
-
-                {/* END */}
-                <CrossRow label="End date"
-                  requestValue={request.end_date}
-                  field="End date"
-                  mismatches={crossCheck.mismatches}>
-                  <input type="date" value={seenEnd}
-                    onChange={e => setSeenEnd(e.target.value)}
-                    className="w-full px-2 py-1 rounded border text-[12px]"
-                    style={{ borderColor: 'var(--border-soft)', background: '#FAFAF7', color: '#0A0A0A' }}/>
-                </CrossRow>
-
-                {/* DAYS */}
-                <CrossRow label="Days certified"
-                  requestValue={request.days}
-                  field="Days"
-                  mismatches={crossCheck.mismatches}>
-                  <input type="number" min="1" max="120" value={seenDays}
-                    onChange={e => setSeenDays(e.target.value)}
-                    className="w-full px-2 py-1 rounded border text-[12px]"
-                    style={{ borderColor: 'var(--border-soft)', background: '#FAFAF7', color: '#0A0A0A' }}/>
-                </CrossRow>
-
-                {/* ISSUE DATE */}
-                <CrossRow label="Cert issue date"
-                  requestValue={<span className="opacity-60 italic">not on file</span>}
-                  field="Issue date"
-                  mismatches={crossCheck.mismatches}>
-                  <input type="date" value={seenIssueDate}
-                    onChange={e => setSeenIssueDate(e.target.value)}
-                    className="w-full px-2 py-1 rounded border text-[12px]"
-                    style={{ borderColor: 'var(--border-soft)', background: '#FAFAF7', color: '#0A0A0A' }}/>
-                </CrossRow>
-
-                {/* DOCTOR */}
-                <CrossRow label="Doctor name"
-                  requestValue={<span className="opacity-60 italic">not on file</span>}
-                  field="doctor"
-                  mismatches={crossCheck.mismatches}>
-                  <input type="text" value={seenDoctor}
-                    onChange={e => setSeenDoctor(e.target.value)}
-                    placeholder="Doctor name from certificate"
-                    className="w-full px-2 py-1 rounded border text-[12px]"
-                    style={{ borderColor: 'var(--border-soft)', background: '#FAFAF7', color: '#0A0A0A' }}/>
-                </CrossRow>
-
-                {/* SPECIALTY */}
-                <CrossRow label="Specialty"
-                  requestValue={<span className="opacity-60 italic">not on file</span>}
-                  field="specialty"
-                  mismatches={crossCheck.mismatches}
-                  isLast>
-                  <input type="text" value={seenSpecialty}
-                    onChange={e => setSeenSpecialty(e.target.value)}
-                    placeholder="e.g. Family Medicine, ENT"
-                    className="w-full px-2 py-1 rounded border text-[12px]"
-                    style={{ borderColor: 'var(--border-soft)', background: '#FAFAF7', color: '#0A0A0A' }}/>
-                </CrossRow>
-              </div>
+              {/* Sehhaty mirror — visually matches the inquiry result
+                  page on seha.sa: top two boxes for GSL leave ID +
+                  Iqama/National ID, then a gray rounded card with
+                  the Arabic-labeled fields in a two-column RTL grid.
+                  Each field is auto-filled by the OCR paste above
+                  and stays click-to-edit if Bashaier needs to correct
+                  anything. The four critical validation points
+                  (leave ID, Iqama, dates, days) get inline match
+                  badges so she can scan for any red at a glance. */}
+              <SehhatyMirror
+                request={request}
+                employee={employee}
+                seenName={seenName}              setSeenName={setSeenName}
+                seenIdNumber={seenIdNumber}      setSeenIdNumber={setSeenIdNumber}
+                seenStart={seenStart}            setSeenStart={setSeenStart}
+                seenEnd={seenEnd}                setSeenEnd={setSeenEnd}
+                seenDays={seenDays}              setSeenDays={setSeenDays}
+                seenIssueDate={seenIssueDate}    setSeenIssueDate={setSeenIssueDate}
+                seenDoctor={seenDoctor}          setSeenDoctor={setSeenDoctor}
+                seenSpecialty={seenSpecialty}    setSeenSpecialty={setSeenSpecialty}
+                codeDiag={codeDiag}
+                crossCheck={crossCheck}
+              />
 
               {/* Mismatch summary — appears when crossCheck flags
                   any blocker or warning. 'block' severity refuses
@@ -1263,6 +1159,256 @@ function OcrPasteZone({ busy, error, thumb, lastRun, onDrop, onPick }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── SehhatyMirror ──────────────────────────────────────────────────────────
+// Visual reproduction of the Seha.sa inquiry result page. Bashaier
+// pastes her Sehhaty screenshot into the OCR zone above; this card
+// then mirrors what she'd see on the actual Sehhaty website with
+// the same Arabic labels, two-column RTL layout, and the GSL/Iqama
+// boxes at the top.
+//
+// All values are click-to-edit so OCR misreads can be corrected
+// without leaving the layout. Inline match badges appear on the
+// four critical validation points:
+//   • Leave ID — must equal request.sehhaty_code
+//   • Iqama    — informational (no canonical Iqama on the leave row)
+//   • Start    — must equal request.start_date
+//   • End      — must equal request.end_date
+//   • Days     — must equal request.days
+// Mismatches show a small red X badge; matches show a small green
+// check. The aggregate mismatch banner from crossCheck still drives
+// the verify button enable/disable state below this component.
+function SehhatyMirror({
+  request, employee,
+  seenName,       setSeenName,
+  seenIdNumber,   setSeenIdNumber,
+  seenStart,      setSeenStart,
+  seenEnd,        setSeenEnd,
+  seenDays,       setSeenDays,
+  seenIssueDate,  setSeenIssueDate,
+  seenDoctor,     setSeenDoctor,
+  seenSpecialty,  setSeenSpecialty,
+  codeDiag,
+  crossCheck,
+}) {
+  // Match-status helpers. Each returns 'match' | 'mismatch' | 'na'.
+  const dateMatch = (seen, expected) => {
+    if (!seen) return 'na';
+    return seen === expected ? 'match' : 'mismatch';
+  };
+  const numMatch = (seen, expected) => {
+    if (seen === '' || seen == null) return 'na';
+    return Number(seen) === Number(expected) ? 'match' : 'mismatch';
+  };
+
+  const idStatus      = 'na'; // Iqama not stored on leave row; record-only
+  const startStatus   = dateMatch(seenStart,    request.start_date);
+  const endStatus     = dateMatch(seenEnd,      request.end_date);
+  const daysStatus    = numMatch(seenDays,      request.days);
+
+  return (
+    <div className="space-y-3">
+      {/* Top: GSL box (leave ID from request, validated against
+          OCR-extracted code in the OCR step itself) and Iqama box
+          (typed/auto-filled, recorded for audit only). */}
+      <div className="space-y-2">
+        <SehhatyTopBox
+          value={request?.sehhaty_code || ''}
+          editable={false}
+          monoLg
+          status={codeDiag.severity === 'error' ? 'mismatch' : codeDiag.severity === 'warn' ? 'na' : 'match'}
+          rightLabel="LEAVE ID (from request)"
+        />
+        <SehhatyTopBox
+          value={seenIdNumber}
+          onChange={setSeenIdNumber}
+          placeholder="National ID / Iqama"
+          monoLg
+          status={idStatus}
+          rightLabel="IQAMA"
+        />
+      </div>
+
+      {/* The gray result card. dir='rtl' puts the Arabic labels in
+          their natural reading order; the grid columns then flow
+          right-to-left automatically. */}
+      <div className="rounded-lg p-5"
+        style={{ background: '#F2F2EF', border: '1px solid #E5E5E0' }}
+        dir="rtl">
+        <div className="grid grid-cols-2 gap-x-6 gap-y-5">
+          {/* Row 1 — Name (right column) | Issue date (left column) */}
+          <SehhatyField
+            arabic="الاسم:"
+            english="Name"
+            value={seenName}
+            onChange={setSeenName}
+            placeholder="غلا نواف على الشريف"
+            isArabic
+          />
+          <SehhatyField
+            arabic="تاريخ إصدار تقرير الإجازة:"
+            english="Issue date"
+            value={seenIssueDate}
+            onChange={setSeenIssueDate}
+            type="date"
+          />
+
+          {/* Row 2 — Start date | End date */}
+          <SehhatyField
+            arabic="تبدأ من:"
+            english="Start"
+            value={seenStart}
+            onChange={setSeenStart}
+            type="date"
+            status={startStatus}
+          />
+          <SehhatyField
+            arabic="وحتى:"
+            english="End"
+            value={seenEnd}
+            onChange={setSeenEnd}
+            type="date"
+            status={endStatus}
+          />
+
+          {/* Row 3 — Days | Doctor */}
+          <SehhatyField
+            arabic="المدة بالأيام:"
+            english="Days"
+            value={seenDays}
+            onChange={setSeenDays}
+            type="number"
+            status={daysStatus}
+          />
+          <SehhatyField
+            arabic="اسم الطبيب:"
+            english="Doctor"
+            value={seenDoctor}
+            onChange={setSeenDoctor}
+            placeholder="دانه محمد بن عبدالله الغامدي"
+            isArabic
+          />
+
+          {/* Row 4 — Specialty (single, left-side under Doctor in
+              real Sehhaty page; we put it in the right column of
+              row 4 which renders on the visual right under Days). */}
+          <SehhatyField
+            arabic="المسمى الوظيفي:"
+            english="Specialty"
+            value={seenSpecialty}
+            onChange={setSeenSpecialty}
+            placeholder="طب بشري"
+            isArabic
+          />
+          <div /> {/* empty cell to keep the 2-column grid balanced */}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── SehhatyTopBox ─────────────────────────────────────────────────────────
+// Reproduces the rounded white input boxes that appear above the
+// gray card on the actual Sehhaty page. Read-only when given the
+// recorded leave ID from the request; editable for the Iqama input.
+function SehhatyTopBox({ value, onChange, placeholder, editable = true, monoLg, status, rightLabel }) {
+  const statusBadge = status === 'match'    ? { ico: '✓', bg: '#D1FAE5', col: '#065F46' }
+                    : status === 'mismatch' ? { ico: '✕', bg: '#FEE2E2', col: '#991B1B' }
+                    : null;
+  return (
+    <div className="rounded-lg flex items-center justify-between px-4 py-3 gap-3"
+      style={{ background: '#FFFFFF', border: '1px solid #E5E5E0' }}>
+      <div className="text-[9px] tracking-wider font-bold whitespace-nowrap" style={{ color: '#0A0A0A', opacity: 0.5 }}>
+        {rightLabel}
+        {statusBadge && (
+          <span className="ml-2 inline-flex items-center justify-center w-4 h-4 rounded-full text-[9px] font-bold"
+            style={{ background: statusBadge.bg, color: statusBadge.col }}>
+            {statusBadge.ico}
+          </span>
+        )}
+      </div>
+      {editable ? (
+        <input
+          type="text"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="text-right bg-transparent focus:outline-none flex-1"
+          style={{
+            fontFamily: monoLg ? 'ui-monospace, SFMono-Regular, monospace' : 'inherit',
+            fontSize: monoLg ? '15px' : '14px',
+            fontWeight: 600,
+            color: '#0A0A0A',
+            direction: 'ltr',
+            textAlign: 'right',
+          }}
+        />
+      ) : (
+        <div className="flex-1 text-right"
+          style={{
+            fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+            fontSize: '15px',
+            fontWeight: 700,
+            color: '#0A0A0A',
+            wordBreak: 'break-all',
+          }}>
+          {value || '—'}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── SehhatyField ───────────────────────────────────────────────────────────
+// One label+value cell inside the gray result card. The Arabic
+// label sits above the value, exactly like the real Sehhaty page.
+// The value is an inline-styled input (no border, no padding) so
+// it visually reads as text but stays editable for OCR corrections.
+function SehhatyField({ arabic, english, value, onChange, placeholder, type, isArabic, status }) {
+  const statusBadge = status === 'match'    ? { ico: '✓', bg: '#D1FAE5', col: '#065F46' }
+                    : status === 'mismatch' ? { ico: '✕', bg: '#FEE2E2', col: '#991B1B' }
+                    : null;
+
+  // Date inputs need ltr direction; Arabic name/doctor inputs read
+  // right-to-left and we let them inherit the parent rtl.
+  // Numbers and English/transliterated fields are ltr too.
+  const inputDir = type === 'date' || type === 'number' || !isArabic ? 'ltr' : 'rtl';
+
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <span className="text-[13px]" style={{ color: '#0A0A0A', fontWeight: 700 }}>
+          {arabic}
+        </span>
+        {statusBadge && (
+          <span className="inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold"
+            style={{ background: statusBadge.bg, color: statusBadge.col }}>
+            {statusBadge.ico}
+          </span>
+        )}
+        <span className="text-[9px] tracking-wider font-bold ml-auto"
+          style={{ color: '#0A0A0A', opacity: 0.45, direction: 'ltr' }}>
+          {english}
+        </span>
+      </div>
+      <input
+        type={type || 'text'}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full bg-transparent focus:outline-none focus:bg-white focus:border-amber-400 rounded px-2 py-1 transition-colors"
+        style={{
+          fontSize: '14px',
+          color: '#0A0A0A',
+          fontWeight: 500,
+          direction: inputDir,
+          textAlign: isArabic && type !== 'date' && type !== 'number' ? 'right' : 'left',
+          border: '1px solid transparent',
+        }}
+      />
     </div>
   );
 }
