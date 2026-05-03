@@ -491,8 +491,19 @@ function matchDays(text) {
  *     adjacent to the Arabic). Prefer the Arabic if both are present.
  *  2. Fall back to the English 'Name' label if the Arabic anchor fails. */
 function matchPatientName(text) {
-  // Try Arabic label first. Match either spelling variant.
-  const arabicLabel = text.match(/ا?الاسم[:：\s]*\n?[\s]*([\u0600-\u06FF\uFB50-\uFEFC\s]{3,120})/);
+  // The Arabic word for 'name' (with definite article) is الاسم —
+  // alif-lam-alif-sin-mim. PDF text extraction can reorder or
+  // duplicate alifs depending on how the original cert encoded
+  // the ligature, producing variants like:
+  //   الاسم   (canonical: ا ل ا س م)
+  //   االسم   (text-stitched variant: ا ا ل س م — TWO alifs at
+  //            start, NO alif between ل and س)
+  //   ﻻﺳم    (presentation forms range)
+  // Match any string of 1-3 alifs followed by ل, optional alif,
+  // then سم. This catches all observed variants without false-
+  // matching unrelated Arabic words.
+  const arabicRe = /[\u0627\u0623\u0625\u0622]{1,3}\u0644\u0627?\u0633\u0645[:：\s]*\n?[\s]*([\u0600-\u06FF\uFB50-\uFEFC\s]{3,120})/;
+  const arabicLabel = text.match(arabicRe);
   if (arabicLabel) {
     const cleaned = cleanArabicValue(arabicLabel[1]);
     if (cleaned) return cleaned;
@@ -500,11 +511,16 @@ function matchPatientName(text) {
 
   // Fallback: English 'Name' label. The PDF format places the
   // English transliteration BEFORE the 'Name' label (right-to-left
-  // table reading order). Capture the 3-5 uppercase Latin words
-  // immediately preceding 'Name' as a standalone token.
-  const englishBefore = text.match(/([A-Z][A-Z\s]{4,80}[A-Z])\s+Name\b/);
+  // table reading order). Capture the uppercase Latin word run
+  // immediately preceding 'Name' as a standalone token. Accepts
+  // single-letter middle initials (e.g. 'HASSAN SALEH I ALTASSAN').
+  const englishBefore = text.match(/((?:[A-Z]{1,}(?:\s+[A-Z]{1,})+))\s+Name\b/);
   if (englishBefore) {
-    return englishBefore[1].trim().replace(/\s+/g, ' ');
+    const candidate = englishBefore[1].trim().replace(/\s+/g, ' ');
+    // Reject obvious non-name matches (e.g. 'Practitioner Name'
+    // captured 'Practitioner' as the value). Saudi names typically
+    // have 3+ words — fewer is suspicious.
+    if (candidate.split(' ').length >= 2) return candidate;
   }
 
   return null;

@@ -194,10 +194,28 @@ export default function SickLeaveModal({ employee, onClose, onCreated, declaredV
     setExtracting(true);
     try {
       const result = await extractFromPdf(file);
-      // Validate the extracted fields make sense before locking them in:
-      //   • leaveId is required (extractor enforces this; throws NOT_SEHHATY)
-      //   • dates should be present, but absence is allowed if leaveId is
-      //     valid — Bashaier still verifies on Sehhaty itself.
+      // Log extraction details to the browser console so we have
+      // visibility into what the matchers saw vs. what the PDF
+      // actually contained. When a field comes up empty in the
+      // preview, the user can open DevTools console, copy the
+      // [sehhaty] entry, and send it back so we can fix the
+      // matcher with concrete data instead of guessing.
+      // eslint-disable-next-line no-console
+      console.log('[sehhaty] PDF extraction complete:', {
+        source:    result.source,
+        fields:    {
+          leaveId:   result.leaveId,
+          idNumber:  result.idNumber,
+          startDate: result.startDate,
+          endDate:   result.endDate,
+          days:      result.days,
+          issueDate: result.issueDate,
+          name:      result.name,
+          doctor:    result.doctor,
+          specialty: result.specialty,
+        },
+        rawText:   result.rawText,
+      });
       setExtracted(result);
     } catch (e) {
       // The extractor throws with .code so we can show the right message.
