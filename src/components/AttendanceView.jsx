@@ -387,6 +387,118 @@ function missedPunchEmailContent({ employee, dateLong, missingType }) {
   return { subject, body };
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// TEMP / PRE-LAUNCH EMAIL VARIANTS
+// ─────────────────────────────────────────────────────────────────────────
+// While the ESAU HR Portal is in pre-launch testing, Bashaier needs a
+// way to send violation notices that DO NOT reference the portal or the
+// esauhr.netlify.app URL. Once the portal is officially announced to
+// staff, the temp buttons disappear and only the live versions remain.
+//
+// Design constraint: the live wording (lateEmailContent /
+// earlyLeaveEmailContent / missedPunchEmailContent above) was carefully
+// reviewed by Nadeem and IS LOCKED. The temp variants are deliberately
+// kept as separate functions rather than parameterizing the live ones
+// with a `mode` flag — this way, future tweaks to the test wording
+// can never accidentally drift the production wording.
+//
+// Differences vs the live versions:
+//   1. Late + early temps drop the entire "submit a permission request
+//      via the ESAU HR Portal" paragraph.
+//   2. The action becomes "reply to this email with a valid reason"
+//      since portal-tracked permission submission isn't available
+//      pre-launch.
+//   3. The "evaluation record" / "unexcused violation" language is
+//      softened to just stating the violation has been recorded —
+//      formal evaluation tracking goes through the portal which
+//      isn't live yet.
+//   4. Missed-punch temp is identical to its live version because
+//      the live version already routes through manager confirmation
+//      (no portal mention). Both functions are kept symmetric so
+//      the UI plumbing treats all three violation types uniformly.
+// ─────────────────────────────────────────────────────────────────────────
+
+function lateEmailContentTemp({ employee, dateLong, punchInStr, minutesLate, scheduledStart, lateCutoff }) {
+  const psn = String(employee.id || employee.psn || '').toUpperCase();
+  const fullName = String(employee.name || '').toUpperCase();
+  const subject = 'Late Arrival Notice — ' + psn + ' ' + fullName + ' — ' + dateLong;
+  const firstName = (employee.first_name || (employee.name || '').split(' ')[0] || '').trim();
+  const greetName = firstName
+    ? firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase()
+    : 'colleague';
+
+  // Same policy bullets as the live version — these are factual policy
+  // statements, not portal-related, so they stay verbatim.
+  const policyBullets = [
+    '\u2022 The official clock-in time is 8:00 AM on regular working days.',
+    '\u2022 A 15-minute grace period is allowed; arrivals after 8:15 AM are recorded as late.',
+    '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
+  ];
+
+  const divider = '='.repeat(71);
+
+  // Body — same opening + policy block as live, but the action paragraph
+  // routes the explanation through email reply rather than portal
+  // submission. The closing "evaluation record" line is softened to
+  // just confirming the violation is on file.
+  const body =
+    'Dear ' + greetName + ',\n\n' +
+    'HR\u2019s daily attendance review for ' + dateLong + ' shows your punch-in at ' + punchInStr + ', ' + minutesLate + ' minutes past the 15-minute grace period and with no approved permission on file. This is recorded as a late-arrival violation.\n\n' +
+    'As a reminder, according to the ESAU attendance policy:\n\n' +
+    divider + '\n' +
+    policyBullets.join('\n') + '\n' +
+    divider + '\n\n' +
+    'If you had a valid reason for this lateness (medical, official, or other documented circumstances), please reply to this email within two working days with the supporting details so HR can record it on file. Your line manager is copied on this email and may be consulted as part of the review.\n\n' +
+    HR_SIGNATURE;
+  return { subject, body };
+}
+
+function earlyLeaveEmailContentTemp({ employee, dateLong, punchOutStr, scheduledEnd, minutesEarly }) {
+  const psn = String(employee.id || employee.psn || '').toUpperCase();
+  const fullName = String(employee.name || '').toUpperCase();
+  const subject = 'Early Departure Notice — ' + psn + ' ' + fullName + ' — ' + dateLong;
+  const firstName = (employee.first_name || (employee.name || '').split(' ')[0] || '').trim();
+  const greetName = firstName
+    ? firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase()
+    : 'colleague';
+
+  // Personalized clock-out times — same logic as the live version.
+  const endStr12h    = fmtTime12h(scheduledEnd);
+  const cutoffStr    = addMinutesToTime(scheduledEnd, -15);
+  const cutoffStr12h = fmtTime12h(cutoffStr);
+
+  const policyBullets = [
+    '\u2022 Your scheduled clock-out time is ' + endStr12h + ' on regular working days.',
+    '\u2022 A 15-minute grace period is allowed; departures before ' + cutoffStr12h + ' are recorded as early leave.',
+    '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
+  ];
+
+  const divider = '='.repeat(71);
+
+  // Body — same shape as the late-arrival temp variant. Action shifts
+  // to email reply within the same two-working-day window.
+  const body =
+    'Dear ' + greetName + ',\n\n' +
+    'HR\u2019s daily attendance review for ' + dateLong + ' shows your punch-out at ' + punchOutStr + ', ' + minutesEarly + ' minutes before your scheduled ' + endStr12h + ' clock-out time and with no approved permission on file. This is recorded as an early-departure violation.\n\n' +
+    'As a reminder, according to the ESAU attendance policy:\n\n' +
+    divider + '\n' +
+    policyBullets.join('\n') + '\n' +
+    divider + '\n\n' +
+    'If you had a valid reason for leaving early (medical, official, or other documented circumstances), please reply to this email within two working days with the supporting details so HR can record it on file. Your line manager is copied on this email and may be consulted as part of the review.\n\n' +
+    HR_SIGNATURE;
+  return { subject, body };
+}
+
+function missedPunchEmailContentTemp(args) {
+  // The live missed-punch email already routes through line-manager
+  // confirmation (no portal mention), so the temp variant is a thin
+  // pass-through. Kept as a named function for UI plumbing symmetry —
+  // every kind ('late', 'early', 'missed') has both a live and a temp
+  // content function, so the dispatch logic doesn't need a special
+  // case for missed punches.
+  return missedPunchEmailContent(args);
+}
+
 // Build a mailto: URL with the proper TO + CC + subject + body.
 function buildMailto({ to, cc, subject, body }) {
   // We use encodeURIComponent (not URLSearchParams) because URLSearchParams encodes
@@ -427,7 +539,10 @@ export default function AttendanceView({ me, employees }) {
   // Per-row email confirm modal state. Holds the entry being
   // emailed so the modal can show a TO/CC/SUBJECT preview before
   // the mailto fires.
-  const [confirmEntry, setConfirmEntry] = useState(null); // { entry, kind: 'late'|'early'|'missed' }
+  // Shape: { entry, kind: 'late'|'early'|'missed', mode: 'live'|'test' }
+  // Default mode is 'live'. The Test buttons set mode='test' which
+  // routes to the temp email content functions (no portal references).
+  const [confirmEntry, setConfirmEntry] = useState(null);
 
   // Bulk-action session. When Bashaier clicks 'Email all N actionable'
   // on a section header, we stage a queue of entries to email and
@@ -436,7 +551,27 @@ export default function AttendanceView({ me, employees }) {
   // UX is sequential — but the modal stays open and tracks progress.
   // bulkSession shape: { kind: 'late'|'early'|'missed', queue: entry[],
   //                      sentIds: Set<string> }
+  // Bulk currently sends in live mode only. If pre-launch test bulk is
+  // ever needed, extend this shape with a mode field — for now Bashaier
+  // uses per-row Test buttons during the pre-launch period.
   const [bulkSession, setBulkSession] = useState(null);
+
+  // View mode for the daily review. The xlsx file's date relative to
+  // today determines what checks are meaningful:
+  //   • 'morning' — file is for TODAY. Staff haven't punched out yet,
+  //                 so only the Late check is reliable. Early-departure
+  //                 and Missed-punch detection on a same-day file would
+  //                 produce false positives (everyone "looks incomplete"
+  //                 because they haven't left work yet).
+  //   • 'eod'     — file is for a previous day. Full check applies:
+  //                 late + early + missed are all real signals because
+  //                 the day's punches are complete.
+  //
+  // Auto-detected from `dateSanity.kind === 'TODAY'` below. Bashaier
+  // can override via the banner button (e.g. she wants to peek at
+  // partial early-departure data on today's file for any reason). The
+  // override is ephemeral — it resets every time a new file loads.
+  const [viewModeOverride, setViewModeOverride] = useState(null); // null | 'morning' | 'eod'
 
   const [approvedLeaves, setApprovedLeaves]       = useState([]);
   const [approvedPermissions, setApprovedPerms]   = useState([]); // for the data date
@@ -1047,9 +1182,16 @@ export default function AttendanceView({ me, employees }) {
     }
   }, [csvDate, me]);
 
-  const handleEmailLate = (entry) => {
+  // mode: 'live' (production wording, references the ESAU HR Portal)
+  //     | 'test' (pre-launch wording, drops portal references and asks
+  //               for an email-reply explanation instead)
+  // Default is 'live' so any caller that doesn't pass the param gets
+  // the production behaviour. The per-row Test buttons explicitly pass
+  // mode='test'.
+  const handleEmailLate = (entry, mode = 'live') => {
     const dateLong = formatDateLong(csvDate);
-    const { subject, body } = lateEmailContent({
+    const contentFn = mode === 'test' ? lateEmailContentTemp : lateEmailContent;
+    const { subject, body } = contentFn({
       employee: entry.employee,
       dateLong,
       punchInStr: entry.punchInStr,
@@ -1059,6 +1201,9 @@ export default function AttendanceView({ me, employees }) {
     });
     const cc = [getManagerEmail(entry.employee), ...FIXED_CC].filter(Boolean);
     const url = buildMailto({ to: entry.employee.email, cc, subject, body });
+    // Both modes log to attendance_violations — the email is real
+    // either way, just with different wording. Audit trail stays
+    // consistent so re-imports don't flag the same row twice.
     logViolation({
       entry,
       violationType: 'late',
@@ -1070,9 +1215,10 @@ export default function AttendanceView({ me, employees }) {
     window.location.href = url;
   };
 
-  const handleEmailEarly = (entry) => {
+  const handleEmailEarly = (entry, mode = 'live') => {
     const dateLong = formatDateLong(csvDate);
-    const { subject, body } = earlyLeaveEmailContent({
+    const contentFn = mode === 'test' ? earlyLeaveEmailContentTemp : earlyLeaveEmailContent;
+    const { subject, body } = contentFn({
       employee: entry.employee,
       dateLong,
       punchOutStr: entry.punchOutStr,
@@ -1092,9 +1238,10 @@ export default function AttendanceView({ me, employees }) {
     window.location.href = url;
   };
 
-  const handleEmailMissed = (entry) => {
+  const handleEmailMissed = (entry, mode = 'live') => {
     const dateLong = formatDateLong(csvDate);
-    const { subject, body } = missedPunchEmailContent({
+    const contentFn = mode === 'test' ? missedPunchEmailContentTemp : missedPunchEmailContent;
+    const { subject, body } = contentFn({
       employee: entry.employee,
       dateLong,
       missingType: entry.missingType,
@@ -1136,6 +1283,23 @@ export default function AttendanceView({ me, employees }) {
     const ageDays = Math.round(ageMs / 86_400_000);
     if (ageDays > 7) return { kind: 'STALE', label: `${ageDays} days old`, ageDays };
     return null;
+  }, [csvDate]);
+
+  // viewMode — combines auto-detection with the manual override.
+  // Auto rule: TODAY → 'morning', anything else → 'eod'. Override
+  // forces a specific mode regardless of the file's date. See the
+  // viewModeOverride state declaration above for the rationale.
+  const viewMode = useMemo(() => {
+    if (viewModeOverride) return viewModeOverride;
+    return dateSanity?.kind === 'TODAY' ? 'morning' : 'eod';
+  }, [dateSanity, viewModeOverride]);
+
+  // Reset the override whenever a new file is loaded so the auto-detect
+  // takes precedence on the next import. Without this, Bashaier could
+  // import yesterday's file with override='morning' still active from a
+  // previous session and miss the early/missed sections she's expecting.
+  useEffect(() => {
+    setViewModeOverride(null);
   }, [csvDate]);
 
   // Anomaly detection — if a high fraction of rows are INCOMPLETE
@@ -1387,6 +1551,55 @@ export default function AttendanceView({ me, employees }) {
 
       {hasFile && !csvIsWeekend && (
         <>
+          {/* Daily review mode banner — explains which checks apply
+              based on the file date relative to today, plus an
+              override for edge cases (e.g. Bashaier wants to peek
+              at partial early-departure data on a same-day file).
+              See viewMode + viewModeOverride state declarations
+              for the full rationale. */}
+          <div className="rounded-2xl border p-4 flex items-start gap-3"
+               style={{
+                 borderColor: viewMode === 'morning' ? '#1D4ED8' : '#0F4C2A',
+                 background:  viewMode === 'morning' ? '#EFF6FF' : '#F0FDF4',
+               }}>
+            <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+                 style={{ background: viewMode === 'morning' ? '#DBEAFE' : '#DCFCE7' }}>
+              {viewMode === 'morning'
+                ? <Clock className="w-5 h-5" style={{ color: '#1D4ED8' }}/>
+                : <CheckCircle2 className="w-5 h-5" style={{ color: '#0F4C2A' }}/>}
+            </div>
+            <div className="text-sm flex-1" style={{ color: '#0A0A0A' }}>
+              <div className="font-bold mb-1">
+                {viewMode === 'morning'
+                  ? 'Morning review — late arrivals only'
+                  : 'End-of-day review — full attendance audit'}
+              </div>
+              <div style={{ lineHeight: 1.55 }}>
+                {viewMode === 'morning' ? (
+                  <>This file is for today, so most staff haven\u2019t punched out yet. Only the
+                  <strong> late-arrival</strong> check is meaningful right now.
+                  Re-import the same file tomorrow to run the
+                  <strong> early-departure</strong> and <strong>missed-punch</strong> checks
+                  on a complete day.</>
+                ) : (
+                  <>The file is for a previous working day, so all three checks
+                  &mdash; <strong>late</strong>, <strong>early departure</strong>, and
+                  <strong> missed punches</strong> &mdash; are running on complete data.</>
+                )}
+              </div>
+              {/* Override toggle — small affordance, low visual weight,
+                  for the edge case where Bashaier wants the other view. */}
+              <button type="button"
+                onClick={() => setViewModeOverride(viewMode === 'morning' ? 'eod' : 'morning')}
+                className="mt-2 text-[11px] underline inline-flex items-center gap-1"
+                style={{ color: '#0A0A0A' }}>
+                {viewMode === 'morning'
+                  ? 'Show all sections anyway (early + missed too)'
+                  : 'Switch to morning view (late only)'}
+              </button>
+            </div>
+          </div>
+
           <FlaggedSection
             title="Late arrivals"
             kicker={'AFTER ' + LATE_CUTOFF}
@@ -1436,7 +1649,8 @@ export default function AttendanceView({ me, employees }) {
               </span>
             ) : entry.actionable ? (
               <RowButton
-                onClick={() => setConfirmEntry({ entry, kind: 'late' })}
+                onClick={() => setConfirmEntry({ entry, kind: 'late', mode: 'live' })}
+                onClickTest={() => setConfirmEntry({ entry, kind: 'late', mode: 'test' })}
                 onMarkSent={() => markSent(entry.id)}
                 sent={!!sentMarkers[entry.id]}
                 logged={entry.logged}
@@ -1451,6 +1665,13 @@ export default function AttendanceView({ me, employees }) {
             )}
           />
 
+          {/* Early + missed punch sections only render in 'eod' mode.
+              In 'morning' mode (today's file) staff haven't punched out
+              yet, so detection would produce false positives across the
+              board. The mode is auto-detected from csvDate vs today,
+              with an override toggle in the banner above for edge cases. */}
+          {viewMode === 'eod' && (
+          <>
           <FlaggedSection
             title="Early departures"
             kicker="LEFT BEFORE GRACE WINDOW"
@@ -1498,7 +1719,8 @@ export default function AttendanceView({ me, employees }) {
               </span>
             ) : entry.actionable ? (
               <RowButton
-                onClick={() => setConfirmEntry({ entry, kind: 'early' })}
+                onClick={() => setConfirmEntry({ entry, kind: 'early', mode: 'live' })}
+                onClickTest={() => setConfirmEntry({ entry, kind: 'early', mode: 'test' })}
                 onMarkSent={() => markSent(entry.id)}
                 sent={!!sentMarkers[entry.id]}
                 logged={entry.logged}
@@ -1550,7 +1772,8 @@ export default function AttendanceView({ me, employees }) {
               </span>
             ) : (
               <RowButton
-                onClick={() => setConfirmEntry({ entry, kind: 'missed' })}
+                onClick={() => setConfirmEntry({ entry, kind: 'missed', mode: 'live' })}
+                onClickTest={() => setConfirmEntry({ entry, kind: 'missed', mode: 'test' })}
                 onMarkSent={() => markSent(entry.id)}
                 sent={!!sentMarkers[entry.id]}
                 logged={entry.logged}
@@ -1559,6 +1782,8 @@ export default function AttendanceView({ me, employees }) {
               />
             )}
           />
+          </>
+          )}{/* end viewMode === 'eod' wrapper for Early + Missed sections */}
 
           {/* Approved leaves (excluded) */}
           {detection.onLeave.length > 0 && (
@@ -1604,11 +1829,11 @@ export default function AttendanceView({ me, employees }) {
           getManagerEmail={getManagerEmail}
           onCancel={() => setConfirmEntry(null)}
           onConfirm={() => {
-            const { entry, kind } = confirmEntry;
+            const { entry, kind, mode = 'live' } = confirmEntry;
             setConfirmEntry(null);
-            if (kind === 'late')   handleEmailLate(entry);
-            else if (kind === 'early')  handleEmailEarly(entry);
-            else if (kind === 'missed') handleEmailMissed(entry);
+            if (kind === 'late')   handleEmailLate(entry, mode);
+            else if (kind === 'early')  handleEmailEarly(entry, mode);
+            else if (kind === 'missed') handleEmailMissed(entry, mode);
           }}
         />
       )}
@@ -1855,7 +2080,7 @@ function FlaggedSection({ title, kicker, iconColor, barFrom, barTo, entries, emp
   );
 }
 
-function RowButton({ onClick, onMarkSent, sent, logged, emailSentAt, label }) {
+function RowButton({ onClick, onClickTest, onMarkSent, sent, logged, emailSentAt, label }) {
   // Three button states, in order of decreasing certainty:
   //   1. sent (in-session)        — Bashaier just clicked Email above
   //   2. emailSentAt (DB record)  — a row exists in attendance_violations
@@ -1865,6 +2090,13 @@ function RowButton({ onClick, onMarkSent, sent, logged, emailSentAt, label }) {
   // The DB-backed state (#2) shows a readable date and a smaller
   // 'Re-send' option in case a follow-up is genuinely needed. This
   // prevents accidental double-emailing when she revisits the file.
+  //
+  // Pre-launch period (Test button): when onClickTest is provided,
+  // the fresh state renders a secondary yellow-bordered "Test" button
+  // alongside the primary green "Email" button. Test sends the same
+  // email but with no portal/esauhr.netlify.app references. Once the
+  // portal is officially announced, callers can stop passing
+  // onClickTest and the second button silently disappears.
   if (sent) {
     return (
       <div className="flex items-center gap-2">
@@ -1890,30 +2122,47 @@ function RowButton({ onClick, onMarkSent, sent, logged, emailSentAt, label }) {
       return sentDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
     })();
     return (
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <div className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-full" style={{ background: '#ECFDF5', color: '#0A0A0A', fontWeight: 600, border: '1px solid #A7F3D0' }} title={`Email logged at ${sentDate.toLocaleString('en-GB')}`}>
           <CheckCircle2 className="w-3.5 h-3.5" style={{ color: '#047857' }}/> Already emailed · {ago}
         </div>
         <button onClick={onClick}
           className="text-[11px] px-2.5 py-1.5 rounded-full border inline-flex items-center gap-1"
           style={{ borderColor: '#D4C7AB', color: '#0A0A0A', background: '#FFFFFF' }}
-          title="Re-send the notice — only do this if a genuine follow-up is needed.">
-          <Mail className="w-3 h-3"/> Re-send
+          title="Re-send the production-wording notice — only do this if a genuine follow-up is needed.">
+          <Mail className="w-3 h-3"/> Re-send (Live)
         </button>
+        {onClickTest && (
+          <button onClick={onClickTest}
+            className="text-[11px] px-2.5 py-1.5 rounded-full border inline-flex items-center gap-1"
+            style={{ borderColor: '#FDE68A', color: '#92400E', background: '#FFFBEB' }}
+            title="Re-send the pre-launch (test) wording — no portal references.">
+            <Mail className="w-3 h-3"/> Re-send (Test)
+          </button>
+        )}
       </div>
     );
   }
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 flex-wrap">
       <button onClick={onClick}
         className="text-xs px-3 py-2 rounded-full text-white flex items-center gap-1.5"
-        style={{ background: '#0F4C2A', fontWeight: 600 }}>
+        style={{ background: '#0F4C2A', fontWeight: 600 }}
+        title="Send the production-wording email (references the ESAU HR Portal).">
         <Mail className="w-4 h-4"/> {label}
       </button>
+      {onClickTest && (
+        <button onClick={onClickTest}
+          className="text-xs px-3 py-2 rounded-full inline-flex items-center gap-1.5 border"
+          style={{ background: '#FFFBEB', color: '#92400E', borderColor: '#FDE68A', fontWeight: 600 }}
+          title="Send the pre-launch (test) wording — no references to esauhr.netlify.app or the HR Portal. For use until the portal is officially launched to staff.">
+          <Mail className="w-4 h-4"/> Test
+        </button>
+      )}
       <button onClick={onMarkSent}
         className="text-xs px-2 py-2 rounded-full border"
         style={{ borderColor: '#D4C7AB', color: '#1F1B16' }}
-        title="Mark as sent">
+        title="Mark as sent (no email opened — use this if you sent the notice through another channel).">
         ✓
       </button>
       {logged && (
@@ -1931,16 +2180,19 @@ function RowButton({ onClick, onMarkSent, sent, logged, emailSentAt, label }) {
 // RejoiningApprovedModal — Bashaier reviews the recipients,
 // confirms, the email opens in her client. No silent sends.
 function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, onCancel, onConfirm }) {
-  const { entry, kind } = confirm;
+  const { entry, kind, mode = 'live' } = confirm;
   const dateLong = formatDateLong(csvDate);
   const cc = [getManagerEmail(entry.employee), ...FIXED_CC].filter(Boolean);
 
   // Compute preview subject + a short summary line. The full body goes
   // out via the existing handleEmail* path; we don't duplicate it here.
+  // mode='test' routes the preview to the temp content functions so the
+  // subject + summary match what's actually about to be sent.
   let subject = '';
   let summary = '';
   if (kind === 'late') {
-    const c = lateEmailContent({
+    const fn = mode === 'test' ? lateEmailContentTemp : lateEmailContent;
+    const c = fn({
       employee: entry.employee, dateLong,
       punchInStr: entry.punchInStr,
       minutesLate: entry.minutesLate,
@@ -1950,7 +2202,8 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, onCancel, onConf
     subject = c.subject;
     summary = `Late arrival on ${dateLong} — punched in ${entry.punchInStr}, ${entry.minutesLate} min after grace.`;
   } else if (kind === 'early') {
-    const c = earlyLeaveEmailContent({
+    const fn = mode === 'test' ? earlyLeaveEmailContentTemp : earlyLeaveEmailContent;
+    const c = fn({
       employee: entry.employee, dateLong,
       punchOutStr: entry.punchOutStr,
       scheduledEnd: entry.scheduledEnd,
@@ -1959,12 +2212,21 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, onCancel, onConf
     subject = c.subject;
     summary = `Early departure on ${dateLong} — punched out ${entry.punchOutStr}, ${entry.minutesEarly} min before scheduled ${entry.scheduledEnd}.`;
   } else if (kind === 'missed') {
-    const c = missedPunchEmailContent({
+    const fn = mode === 'test' ? missedPunchEmailContentTemp : missedPunchEmailContent;
+    const c = fn({
       employee: entry.employee, dateLong, missingType: entry.missingType,
     });
     subject = c.subject;
     summary = `Missing punch on ${dateLong} — ${entry.missingType === 'both' ? 'both in and out' : entry.missingType === 'in' ? 'punch-in' : 'punch-out'} not recorded.`;
   }
+
+  // Test-mode banner copy varies by kind. For missed-punch the test
+  // wording is identical to live (the live version doesn't reference
+  // the portal anyway), so we surface that fact rather than implying
+  // a difference that isn't there.
+  const testBannerCopy = kind === 'missed'
+    ? 'TEST DRAFT — the missed-punch email has no portal references in either Live or Test wording, so this is identical to the Live version. The button is shown for UI consistency.'
+    : 'TEST DRAFT — pre-launch wording with no references to esauhr.netlify.app or the HR Portal. The recipient is asked to reply with their explanation rather than submit a portal request.';
 
   return (
     <div
@@ -1988,12 +2250,21 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, onCancel, onConf
         <div className="flex items-start justify-between px-6 py-5 border-b" style={{ borderColor: '#E5E0D5' }}>
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
-                 style={{ background: '#FEF3C7', border: '1px solid #FDE68A' }}>
-              <Mail className="w-5 h-5" style={{ color: '#A16207' }}/>
+                 style={{
+                   background: mode === 'test' ? '#FEF3C7' : '#FEF3C7',
+                   border:     mode === 'test' ? '1px solid #FDE68A' : '1px solid #FDE68A',
+                 }}>
+              <Mail className="w-5 h-5" style={{ color: mode === 'test' ? '#92400E' : '#A16207' }}/>
             </div>
             <div>
               <h2 style={{ fontFamily: 'Georgia, serif', fontSize: '18px', color: '#0A0A0A', fontWeight: 500 }}>
                 Confirm before sending
+                {mode === 'test' && (
+                  <span className="ml-2 align-middle text-[10px] px-2 py-0.5 rounded-full"
+                        style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A', fontWeight: 700, letterSpacing: '0.18em' }}>
+                    TEST DRAFT
+                  </span>
+                )}
               </h2>
               <div className="text-xs mt-1" style={{ color: '#0A0A0A' }}>
                 Review the recipients and content. Your mail client will open the draft — you still need to click Send there.
@@ -2005,6 +2276,16 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, onCancel, onConf
             <X className="w-4 h-4" style={{ color: '#0A0A0A' }}/>
           </button>
         </div>
+
+        {/* Test-mode banner — explains the wording differences vs live */}
+        {mode === 'test' && (
+          <div className="px-6 py-3 border-b text-[11px]"
+               style={{ borderColor: '#E5E0D5', background: '#FFFBEB', color: '#92400E', lineHeight: 1.5 }}>
+            <strong style={{ letterSpacing: '0.1em', fontWeight: 700 }}>{testBannerCopy.split(' — ')[0]}</strong>
+            {' — '}
+            {testBannerCopy.split(' — ').slice(1).join(' — ')}
+          </div>
+        )}
 
         {/* Recipient + subject preview */}
         <div className="px-6 py-4 border-b text-xs" style={{ borderColor: '#E5E0D5', color: '#0A0A0A' }}>
@@ -2047,8 +2328,10 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, onCancel, onConf
           </button>
           <button type="button" onClick={onConfirm} disabled={!entry.employee.email}
             className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm transition-colors disabled:opacity-50"
-            style={{ background: '#0A0A0A', color: '#FFFDF7', fontWeight: 500 }}>
-            <Send className="w-4 h-4"/> Open email draft
+            style={mode === 'test'
+              ? { background: '#92400E', color: '#FFFDF7', fontWeight: 500 }
+              : { background: '#0A0A0A', color: '#FFFDF7', fontWeight: 500 }}>
+            <Send className="w-4 h-4"/> {mode === 'test' ? 'Open test draft' : 'Open email draft'}
           </button>
         </div>
 
