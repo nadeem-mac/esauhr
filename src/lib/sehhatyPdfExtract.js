@@ -209,26 +209,51 @@ async function loadPdfjs() {
 /**
  * Stitch pdfjs text items into a single string, preserving line breaks
  * where the y-coordinate jumps. Sehhaty PDFs have a fairly clean layout
- * so a simple y-bucket-then-x-sort approach gives us text in the order
- * a human reads it.
+ * but Arabic and Latin glyphs in the same row of a bilingual table can
+ * have slightly different y-coordinates (one at 520.3, another at
+ * 519.6) due to font metric differences. Strict integer rounding
+ * splits them into separate "lines" which breaks downstream line-
+ * based field extraction.
+ *
+ * Solution: tolerance-based bucketing. Two items are considered to be
+ * on the same line if their y-coordinates differ by less than
+ * Y_TOLERANCE (3 units — comfortably less than a line of text height,
+ * but enough to absorb sub-pixel drift between fonts).
  */
+const Y_TOLERANCE = 3;
+
 function stitchTextItems(items) {
   if (!items || !items.length) return '';
-  // Group items by y-coordinate (rounded to nearest integer to absorb
-  // sub-pixel drift). transform[5] is the y position; transform[4] is x.
-  const lines = new Map();
-  for (const item of items) {
-    if (!item.str) continue;
-    const y = Math.round(item.transform[5]);
+  // Sort items by y descending first (PDF coords are bottom-up; we
+  // want top-down reading order). Then walk through and bucket
+  // consecutive items into lines if their y-coordinates are within
+  // Y_TOLERANCE of the bucket's anchor.
+  const itemsWithStr = items.filter(it => it.str);
+  const sorted = [...itemsWithStr].sort((a, b) => b.transform[5] - a.transform[5]);
+
+  const lines = [];
+  let currentBucket = null;
+  let currentY = null;
+  for (const item of sorted) {
+    const y = item.transform[5];
     const x = item.transform[4];
-    if (!lines.has(y)) lines.set(y, []);
-    lines.get(y).push({ x, str: item.str });
+    if (currentBucket && Math.abs(currentY - y) <= Y_TOLERANCE) {
+      currentBucket.push({ x, str: item.str });
+    } else {
+      currentBucket = [{ x, str: item.str }];
+      lines.push(currentBucket);
+      currentY = y;
+    }
   }
-  // Sort lines by y descending (PDF coords go bottom-up, but we want
-  // top-down reading order). Within each line, sort items by x ascending.
-  const sortedYs = [...lines.keys()].sort((a, b) => b - a);
-  return sortedYs
-    .map(y => lines.get(y).sort((a, b) => a.x - b.x).map(it => it.str).join(' '))
+
+  // Within each line, sort items by x ascending so words appear in
+  // visual left-to-right order. Note that for RTL Arabic text, the
+  // visual reading order IS right-to-left, but the joined string
+  // still reads correctly because the regex extractors treat each
+  // word as a unit (their internal character order is preserved by
+  // pdfjs).
+  return lines
+    .map(line => line.sort((a, b) => a.x - b.x).map(it => it.str).join(' '))
     .join('\n');
 }
 

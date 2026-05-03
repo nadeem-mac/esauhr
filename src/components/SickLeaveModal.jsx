@@ -876,14 +876,28 @@ function PreviewField({ label, value, mono, wide, required, matchStatus }) {
             return (
               <div
                 key={i}
+                // dir attribute keeps each script's INTERNAL reading
+                // order correct (Arabic words flow right-to-left as
+                // a unit, Latin words flow left-to-right).
                 dir={isArabic ? 'rtl' : 'ltr'}
                 style={{
                   fontSize: '13px',
                   fontFamily: mono ? 'ui-monospace, SFMono-Regular, monospace' : 'inherit',
                   fontWeight: i === 0 ? 600 : 500,
                   color: '#0A0A0A',
-                  textAlign: isArabic ? 'right' : 'left',
+                  // Both lines start at the SAME left edge of the cell
+                  // for tidy visual stacking. The Arabic line still
+                  // reads right-to-left as a connected text block —
+                  // textAlign:left controls where the BLOCK sits
+                  // within its container, not the script direction.
+                  // unicode-bidi: plaintext keeps the bidi algorithm
+                  // working correctly within the block.
+                  textAlign: 'left',
+                  unicodeBidi: 'plaintext',
                   lineHeight: 1.5,
+                  // Render Arabic in a sans Arabic font when available
+                  // for cleaner weight matching with the Latin font.
+                  fontFamilyFallback: isArabic ? '"Noto Sans Arabic", "Tahoma", sans-serif' : undefined,
                 }}
               >
                 {line}

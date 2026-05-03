@@ -562,6 +562,54 @@ function findLine(text, predicate) {
   return null;
 }
 
+/** Find ALL adjacent lines belonging to the same field row.
+ *
+ *  When pdfjs's y-bucketing puts the Arabic and Latin halves of one
+ *  bilingual table row onto SEPARATE lines (because the two scripts
+ *  rendered with slightly different y-coordinates), we need to
+ *  combine them. This helper finds the line matching the predicate
+ *  AND extends the match to include immediately-adjacent neighbour
+ *  lines that don't themselves match a different field's predicate.
+ *
+ *  @param text         full extracted text
+ *  @param predicate    line-match function for the target field
+ *  @param otherPredicates  array of predicates for OTHER fields,
+ *                          used to know when to STOP extending
+ *  @returns combined string, or null if no match found
+ */
+function findFieldLines(text, predicate, otherPredicates = []) {
+  const lines = text.split('\n');
+  let firstIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (predicate(lines[i])) { firstIdx = i; break; }
+  }
+  if (firstIdx < 0) return null;
+
+  // Walk both directions from the matched line. Include neighbours
+  // that DON'T match any of the other-field predicates — they're
+  // assumed to belong to the same field row that pdfjs split into
+  // multiple "lines".
+  const isOtherField = (line) => otherPredicates.some(p => p(line));
+
+  const collected = [lines[firstIdx]];
+
+  // Walk backwards (towards earlier lines)
+  for (let i = firstIdx - 1; i >= 0 && i >= firstIdx - 2; i--) {
+    if (isOtherField(lines[i])) break;
+    if (predicate(lines[i])) break; // already matched in own group
+    collected.unshift(lines[i]);
+  }
+
+  // Walk forwards (towards later lines)
+  for (let i = firstIdx + 1; i < lines.length && i <= firstIdx + 2; i++) {
+    if (isOtherField(lines[i])) break;
+    if (predicate(lines[i])) break;
+    collected.push(lines[i]);
+  }
+
+  return collected.join(' ');
+}
+
 /** Extract Arabic and Latin value runs from a single field line.
  *  Filters out known label tokens from each script.
  *  Returns { arabic, latin } with each being a space-joined string
@@ -598,70 +646,56 @@ function extractValuesFromLine(line) {
   return { arabic, latin };
 }
 
+// Predicates for each bilingual field. Used both to LOCATE a
+// field's row and (passed as 'other' predicates to findFieldLines)
+// to know when to STOP extending into adjacent lines.
+const PRED_PATIENT_NAME = (l) =>
+  // Plain 'Name' but NOT 'Patient Name', 'Practitioner Name',
+  // 'Doctor Name' (those would match other fields).
+  (/\bName\b/.test(l) && !/Practitioner|Doctor/.test(l)) ||
+  /[\u0627\u0623\u0625\u0622]{1,3}\u0644\u0627?\u0633\u0645/.test(l);
+
+const PRED_DOCTOR = (l) =>
+  /Practitioner\s*Name|Doctor\s*Name|اسم\s*الممارس|اسم\s*الطبيب/.test(l);
+
+const PRED_SPECIALTY = (l) =>
+  /\b(?:Position|Specialty|Speciality)\b/i.test(l) ||
+  /المسمى\s*الوظيف[يى]/.test(l);
+
+// Other-field predicates used as boundaries when extending field
+// matches across adjacent lines. Includes the major neighbours
+// each bilingual field could collide with.
+const PRED_IQAMA      = (l) => /\bIqama\b|\bID\b|رقم\s*الهوية|الإقامة/.test(l);
+const PRED_NATIONALITY = (l) => /\bNationality\b|الجنسية/.test(l);
+const PRED_EMPLOYER   = (l) => /\bEmployer\b|جهة\s*العمل/.test(l);
+const PRED_DATES      = (l) =>
+  /\bAdmission\s*Date\b|\bDischarge\s*Date\b|\bIssue\s*Date\b|تاريخ\s*(?:الدخول|الخروج|إصدار)/i.test(l);
+
 /** Patient name. */
 function matchPatientName(text) {
-  // Find the line that contains the 'Name' English label OR the
-  // 'الاسم' Arabic label (any alif-variant). The two are usually
-  // on the same line in the bilingual table — finding one finds
-  // the row.
-  const line = findLine(text, l =>
-    /\bName\b/.test(l) ||
-    /[\u0627\u0623\u0625\u0622]{1,3}\u0644\u0627?\u0633\u0645/.test(l)
-  );
-  if (!line) return null;
-
-  // Skip if this line is actually 'Practitioner Name' / 'Doctor Name'
-  // — those should match matchDoctorName, not matchPatientName.
-  if (/Practitioner|Doctor|اسم\s*الممارس|اسم\s*الطبيب/.test(line)) {
-    return null;
-  }
-
-  const { arabic, latin } = extractValuesFromLine(line);
+  // Boundaries: any other labelled row stops extension.
+  const others = [PRED_DOCTOR, PRED_SPECIALTY, PRED_IQAMA, PRED_NATIONALITY, PRED_EMPLOYER, PRED_DATES];
+  const combined = findFieldLines(text, PRED_PATIENT_NAME, others);
+  if (!combined) return null;
+  const { arabic, latin } = extractValuesFromLine(combined);
   return joinBilingualName(arabic, latin);
 }
 
 /** Doctor / practitioner name. */
 function matchDoctorName(text) {
-  // The doctor row uses 'Practitioner Name' (English) or
-  // 'اسم الطبيب' / 'اسم الممارس' (Arabic) labels. The doctor name
-  // sometimes wraps onto a 2nd line in tight PDF layouts (a long
-  // Saudi name plus 'Practitioner Name' label can exceed the
-  // text-box width), so we also collect words from the line
-  // immediately following the labelled line.
-  const lines = text.split('\n');
-  let labelIdx = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (/Practitioner\s*Name|Doctor\s*Name|اسم\s*الممارس|اسم\s*الطبيب/.test(lines[i])) {
-      labelIdx = i;
-      break;
-    }
-  }
-  if (labelIdx < 0) return null;
-
-  // Combine the label line + next line (the wrap, if any). The
-  // next line's content stops contributing if it looks like a new
-  // labelled row (contains 'Position', 'Specialty', 'المسمى', etc.).
-  let combined = lines[labelIdx];
-  if (labelIdx + 1 < lines.length) {
-    const next = lines[labelIdx + 1];
-    if (!/Position|Specialty|Speciality|المسمى/.test(next)) {
-      combined += ' ' + next;
-    }
-  }
-
+  const others = [PRED_PATIENT_NAME, PRED_SPECIALTY, PRED_IQAMA, PRED_NATIONALITY, PRED_EMPLOYER, PRED_DATES];
+  const combined = findFieldLines(text, PRED_DOCTOR, others);
+  if (!combined) return null;
   const { arabic, latin } = extractValuesFromLine(combined);
   return joinBilingualName(arabic, latin);
 }
 
 /** Specialty / position. */
 function matchSpecialty(text) {
-  const line = findLine(text, l =>
-    /\b(?:Position|Specialty|Speciality)\b/i.test(l) ||
-    /المسمى\s*الوظيف[يى]/.test(l)
-  );
-  if (!line) return null;
-
-  const { arabic, latin } = extractValuesFromLine(line);
+  const others = [PRED_PATIENT_NAME, PRED_DOCTOR, PRED_IQAMA, PRED_NATIONALITY, PRED_EMPLOYER, PRED_DATES];
+  const combined = findFieldLines(text, PRED_SPECIALTY, others);
+  if (!combined) return null;
+  const { arabic, latin } = extractValuesFromLine(combined);
   return joinBilingualName(arabic, latin);
 }
 
