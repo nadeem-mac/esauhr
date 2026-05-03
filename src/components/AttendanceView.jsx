@@ -1977,69 +1977,135 @@ export default function AttendanceView({ me, employees }) {
 
   // PDF generator — same import pattern as InsightsView. Lazy-loaded
   // so jspdf only ships in the bundle once it's actually clicked.
+  //
+  // LANDSCAPE A4 because: (1) portrait was overflowing the header line
+  // and cutting "Generated YYYY-MM-DD" off the right edge; (2) the
+  // 7-column body table wraps in portrait once a name is more than ~16
+  // chars. Per Nadeem: cleaner reads better than narrower, even at the
+  // cost of a wider page.
+  //
+  // ASCII-only text in jspdf's default helvetica — Unicode arrows like
+  // U+2192 render as garbage glyphs ("!\\'" in earlier output). Use
+  // " to " for the date-range separator everywhere in the PDF.
   const exportWeekendPdf = useCallback(async () => {
     if (!weekendSorted.length) return;
     try {
       const { jsPDF } = await import('jspdf');
       await import('jspdf-autotable');
-      const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
       const W = doc.internal.pageSize.getWidth();
-      // Header band — Evergreen brand green
-      doc.setFillColor(15, 76, 42); doc.rect(0, 0, W, 64, 'F');
-      doc.setTextColor(255); doc.setFontSize(16); doc.setFont('helvetica', 'bold');
-      doc.text('Weekend Attendance Report', 40, 32);
+      // Header band — Evergreen brand green. Slightly taller than the
+      // portrait version so the title + subtitle line both have
+      // breathing room and the descenders don't sit on the band edge.
+      doc.setFillColor(15, 76, 42); doc.rect(0, 0, W, 78, 'F');
+      doc.setTextColor(255); doc.setFontSize(18); doc.setFont('helvetica', 'bold');
+      doc.text('Weekend Attendance Report', 40, 36);
       doc.setFontSize(10); doc.setFont('helvetica', 'normal');
-      const yDate = formatDateLong(yesterdayDate);
-      const tDate = formatDateLong(csvDate);
-      doc.text(`Window: ${yDate} → ${tDate}  ·  Generated ${new Date().toLocaleString('en-GB')}`, 40, 50);
+      const genStamp = new Date().toLocaleString('en-GB', {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit',
+      });
+      doc.text(`Window: ${yesterdayDate} to ${csvDate}   |   Generated: ${genStamp}`, 40, 58);
 
-      // Group by date — one table per weekend day
+      // Group by date — one block per weekend day. Within each block,
+      // entries are already sorted (location → department → check-in).
+      // Subtotal rows added after each location's run; a day-total
+      // row caps each block.
       const byDate = new Map();
       weekendSorted.forEach(e => {
         if (!byDate.has(e.dateLabel)) byDate.set(e.dateLabel, []);
         byDate.get(e.dateLabel).push(e);
       });
 
-      let cursorY = 88;
+      const subtotalFill   = [232, 245, 233];   // light green for location subtotals
+      const dayTotalFill   = [187, 222, 192];   // darker green for day totals
+      const altRowFill     = [250, 246, 236];   // brand cream for zebra stripes
+      const headerFill     = [15, 76, 42];
+
+      let cursorY = 100;
       byDate.forEach((rows, date) => {
+        const totalHrs = rows.reduce((s, e) => s + (e.hoursDecimal || 0), 0);
         doc.setTextColor(15, 76, 42); doc.setFontSize(12); doc.setFont('helvetica', 'bold');
-        doc.text(`${formatDateLong(date)}  ·  ${rows.length} staff`, 40, cursorY);
-        cursorY += 6;
-        const body = rows.map(e => [
-          e.location || '—',
-          e.department || '—',
-          e.employee.id || '',
-          e.employee.name || '',
-          e.punchInStr || '—',
-          e.punchOutStr || '—',
-          e.hoursDecimal != null ? e.hoursDecimal.toFixed(2) : '—',
+        doc.text(`${formatDateLong(date)}   |   ${rows.length} staff   |   ${totalHrs.toFixed(2)} total hours`, 40, cursorY);
+        cursorY += 8;
+
+        // Build body rows with location subtotals interleaved.
+        const body = [];
+        let prevLoc  = null;
+        let locStaff = 0;
+        let locHours = 0;
+        const flushLocSubtotal = () => {
+          if (prevLoc !== null) {
+            body.push([
+              { content: `${prevLoc} subtotal`, colSpan: 4, styles: { fontStyle: 'bold', fillColor: subtotalFill, halign: 'right' } },
+              { content: '',                                styles: { fillColor: subtotalFill } },
+              { content: `${locStaff} staff`,               styles: { fontStyle: 'bold', fillColor: subtotalFill, halign: 'right' } },
+              { content: locHours.toFixed(2),               styles: { fontStyle: 'bold', fillColor: subtotalFill, halign: 'right' } },
+            ]);
+          }
+        };
+        rows.forEach(e => {
+          if (e.location !== prevLoc) {
+            flushLocSubtotal();
+            prevLoc  = e.location;
+            locStaff = 0;
+            locHours = 0;
+          }
+          body.push([
+            e.location || '-',
+            e.department || '-',
+            e.employee.id || '',
+            e.employee.name || '',
+            e.punchInStr || '-',
+            e.punchOutStr || '-',
+            e.hoursDecimal != null ? e.hoursDecimal.toFixed(2) : '-',
+          ]);
+          locStaff += 1;
+          locHours += (e.hoursDecimal || 0);
+        });
+        flushLocSubtotal();
+        // Day total row — capped at the bottom of the day's table.
+        body.push([
+          { content: 'Day total',     colSpan: 4, styles: { fontStyle: 'bold', fillColor: dayTotalFill, halign: 'right', textColor: [15, 76, 42] } },
+          { content: '',                          styles: { fillColor: dayTotalFill } },
+          { content: `${rows.length} staff`,      styles: { fontStyle: 'bold', fillColor: dayTotalFill, halign: 'right', textColor: [15, 76, 42] } },
+          { content: totalHrs.toFixed(2),         styles: { fontStyle: 'bold', fillColor: dayTotalFill, halign: 'right', textColor: [15, 76, 42] } },
         ]);
+
         doc.autoTable({
           startY: cursorY,
           head: [['Location', 'Department', 'PSN', 'Name', 'Punch In', 'Punch Out', 'Hours']],
           body,
           theme: 'grid',
-          headStyles: { fillColor: [15, 76, 42], textColor: 255, fontStyle: 'bold', fontSize: 9 },
-          styles: { fontSize: 9, cellPadding: 5, textColor: [10, 10, 10] },
-          alternateRowStyles: { fillColor: [250, 246, 236] },
+          // overflow: 'visible' lets a long name push slightly past the
+          // cell boundary instead of wrapping to a second line — but
+          // we've sized the columns generously so this should never
+          // actually trigger. cellPadding stays uniform across every
+          // cell since we don't override it per-cell anywhere.
+          styles: {
+            fontSize: 9, cellPadding: 6, textColor: [10, 10, 10],
+            overflow: 'visible', valign: 'middle',
+          },
+          headStyles: { fillColor: headerFill, textColor: 255, fontStyle: 'bold', fontSize: 10, cellPadding: 7 },
+          alternateRowStyles: { fillColor: altRowFill },
           columnStyles: {
-            0: { cellWidth: 60 },
-            1: { cellWidth: 60 },
-            2: { cellWidth: 50 },
-            3: { cellWidth: 'auto' },
-            4: { cellWidth: 55, halign: 'center' },
-            5: { cellWidth: 55, halign: 'center' },
-            6: { cellWidth: 45, halign: 'right' },
+            0: { cellWidth:  90 },                  // Location
+            1: { cellWidth:  85 },                  // Department
+            2: { cellWidth:  60 },                  // PSN
+            3: { cellWidth: 'auto' },               // Name (takes leftover)
+            4: { cellWidth:  70, halign: 'center' }, // Punch In
+            5: { cellWidth:  70, halign: 'center' }, // Punch Out
+            6: { cellWidth:  65, halign: 'right'  }, // Hours
           },
           margin: { left: 40, right: 40 },
         });
-        cursorY = doc.lastAutoTable.finalY + 24;
+        cursorY = doc.lastAutoTable.finalY + 28;
       });
 
       // Footer
       const pageH = doc.internal.pageSize.getHeight();
       doc.setTextColor(120); doc.setFontSize(8); doc.setFont('helvetica', 'normal');
-      doc.text('ESAU HR · Evergreen Shipping Agency Saudi Co. (LLC)', 40, pageH - 24);
+      doc.text('ESAU HR  |  Evergreen Shipping Agency Saudi Co. (LLC)', 40, pageH - 20);
 
       const fname = `Weekend_Attendance_${yesterdayDate}_to_${csvDate}.pdf`;
       doc.save(fname);
@@ -2049,10 +2115,10 @@ export default function AttendanceView({ me, employees }) {
     }
   }, [weekendSorted, csvDate, yesterdayDate]);
 
-  // Email builder — TO Mr John, CC James + DMN SUP team. Body
-  // contains a brief greeting + a per-day plain-text table so the
-  // information is readable even before the PDF is opened. Bashaier
-  // attaches the PDF manually after exporting it.
+  // Email builder — TO Mr John, CC James + DMN SUP team. Body is a
+  // brief summary only; the detailed staff list lives in the PDF
+  // (which Bashaier attaches before sending). Per Nadeem: don't
+  // duplicate the data in the body when the PDF is attached.
   const emailWeekendReport = useCallback(() => {
     if (!weekendSorted.length) return;
     const to = 'johnho@evergreen-shipping.com.sa';
@@ -2066,29 +2132,29 @@ export default function AttendanceView({ me, employees }) {
     const tDate = formatDateLong(csvDate);
     const subject = `Weekend Attendance Report — ${yesterdayDate} to ${csvDate}`;
 
-    // Group by date for the body
+    // Per-day staff count + total hours — high-level summary numbers
+    // only, no per-employee rows.
     const byDate = new Map();
     weekendSorted.forEach(e => {
       if (!byDate.has(e.dateLabel)) byDate.set(e.dateLabel, []);
       byDate.get(e.dateLabel).push(e);
     });
+    const totalHours = weekendSorted.reduce((s, e) => s + (e.hoursDecimal || 0), 0);
 
     const lines = [];
     lines.push('Dear Mr John,');
     lines.push('');
-    lines.push(`Please find below the weekend attendance summary for the window ${yDate} \u2192 ${tDate}.`);
-    lines.push(`Total staff who attended on the weekend: ${weekendSorted.length}.`);
+    lines.push(`Please find attached the weekend attendance report covering ${yDate} to ${tDate}.`);
     lines.push('');
-    lines.push('The detailed PDF report is attached separately to this email.');
-    lines.push('');
+    lines.push('Summary:');
     byDate.forEach((rows, date) => {
-      lines.push(`--- ${formatDateLong(date)} (${rows.length} staff) ---`);
-      rows.forEach(e => {
-        const hrs = e.hoursDecimal != null ? `${e.hoursDecimal.toFixed(2)}h` : 'no clock-out';
-        lines.push(`${e.location || '—'} · ${e.department || '—'} · ${e.employee.id} ${e.employee.name} · ${e.punchInStr}\u2013${e.punchOutStr || '—'} · ${hrs}`);
-      });
-      lines.push('');
+      const hrs = rows.reduce((s, e) => s + (e.hoursDecimal || 0), 0);
+      lines.push(`  - ${formatDateLong(date)}: ${rows.length} staff, ${hrs.toFixed(2)} hours`);
     });
+    lines.push(`  - Total: ${weekendSorted.length} staff, ${totalHours.toFixed(2)} hours`);
+    lines.push('');
+    lines.push('The full breakdown by location and department is in the attached PDF.');
+    lines.push('');
     lines.push('Kindly let me know if any clarification is needed.');
     lines.push('');
     lines.push(HR_SIGNATURE);
