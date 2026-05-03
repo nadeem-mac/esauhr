@@ -1215,6 +1215,30 @@ export default function AttendanceView({ me, employees }) {
       });
     });
 
+    // Sort every bucket consistently: who came first → who came last.
+    // For arrival-keyed buckets (late, missedOut, onTime, weekend),
+    // that's punch-in ascending. For departure-keyed (early), it's
+    // punch-out ascending (who left first → who left last). For
+    // bucket entries that don't carry a time at all (missedIn, onLeave,
+    // unknownEmp), fall back to name/PSN alphabetical so the order is
+    // still deterministic between renders.
+    const byPunchIn  = (a, b) => (a.punchInMin  || 0) - (b.punchInMin  || 0);
+    const byPunchOut = (a, b) => (a.punchOutMin || 0) - (b.punchOutMin || 0);
+    const byName     = (a, b) =>
+      String(a.employee?.name || '').localeCompare(String(b.employee?.name || ''));
+    const byPsn      = (a, b) =>
+      String(a.empId || a.employee?.id || '').localeCompare(String(b.empId || b.employee?.id || ''));
+    out.late.sort(byPunchIn);
+    out.early.sort(byPunchOut);
+    out.missedOut.sort(byPunchIn);    // they punched in but not out — use the in time
+    out.onTime.sort(byPunchIn);
+    out.missedIn.sort(byName);        // no punch-in available; use name
+    out.onLeave.sort(byName);
+    out.unknownEmp.sort(byPsn);
+    // weekend already sorted (location → dept → check-in) by the
+    // weekendSorted memo downstream — leave the raw out.weekend in
+    // file order so the memo's sort owns the canonical order.
+
     return out;
   }, [parsed.rows, parsed.weekendRows, csvDate, yesterdayDate, empById, empByDigits, onLeaveOnDate, shiftOverrideById, permIndex]);
 
