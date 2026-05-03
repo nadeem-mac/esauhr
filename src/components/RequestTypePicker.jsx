@@ -47,36 +47,24 @@ export default function RequestTypePicker({ onPick, onClose }) {
       borderColor: 'var(--evergreen-200)',
     },
     {
-      // The "front door" sick declaration. Staff taps this when they
-      // wake up unwell and decide not to come in — before they have any
-      // certificate. Creates a leave_requests row in pending_certificate
-      // stage and starts the 48h-after-return tracker.
+      // Single unified entry for ALL sick-leave scenarios. Internal
+      // toggle (inside SickLeaveModal) decides whether the staff is
+      // declaring without a certificate yet ("Not yet") or submitting
+      // a Sehhaty certificate they already have ("Yes, I have it").
       //
-      // This sits ABOVE the "Submit sick leave" tile because it's the
-      // more common action — most staff declare in the morning, then
-      // upload the certificate later.
-      id: 'sick_declare',
+      // Two paths, one tile — the previous design had a "Submit sick
+      // leave" tile sitting next to "I'm sick today" and the difference
+      // was easy to miss. Folding both into a single entry, with the
+      // path selection happening as the FIRST question in the modal,
+      // makes the consequence of each choice impossible to overlook.
+      id: 'sick_unified',
       icon: HeartPulse,
-      title: "I'm sick today",
-      description: "Declare a sick day now. You'll upload your Sehhaty certificate within 48 hours of returning.",
+      title: 'Sick leave — I am sick today or I have a Sehhaty Certificate',
+      titleArabic: 'إجازة مرضية — أنا مريض اليوم أو لدي شهادة صحتي',
+      description: 'Declare a sick day with or without a Sehhaty certificate. The form will guide you.',
       iconBg: '#FEE2E2',
       iconColor: '#B91C1C',
       borderColor: '#FCA5A5',
-    },
-    {
-      // The "with-cert-in-hand" sick submission. Used when the staff
-      // already has a Sehhaty leave ID — either they declared earlier
-      // and now have the cert (in which case the existing
-      // pending_certificate row is the better target, not a fresh
-      // submission — handled in commit 3), or they were already off
-      // and are submitting retroactively with the cert ready.
-      id: 'sick',
-      icon: HeartPulse,
-      title: 'Submit sick leave',
-      description: 'You already have your Sehhaty leave ID and want to submit it now.',
-      iconBg: '#FEF2F2',
-      iconColor: '#991B1B',
-      borderColor: '#FECACA',
     },
     {
       id: 'late_arrival',
@@ -166,6 +154,12 @@ export default function RequestTypePicker({ onPick, onClose }) {
                   <div className="text-sm font-semibold" style={{ color: '#1F1B16' }}>
                     {opt.title}
                   </div>
+                  {opt.titleArabic && (
+                    <div className="text-[12px] mt-0.5" dir="rtl"
+                      style={{ color: '#1F1B16', fontWeight: 500 }}>
+                      {opt.titleArabic}
+                    </div>
+                  )}
                   <div className="text-[11px] mt-0.5" style={{ color: '#1F1B16' }}>
                     {opt.description}
                   </div>

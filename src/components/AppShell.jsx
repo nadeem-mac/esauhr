@@ -15,7 +15,7 @@ import SettingsView from './SettingsView.jsx';
 import ConnectivityTest from './ConnectivityTest.jsx';
 import NewRequestModal from './NewRequestModal.jsx';
 import RequestTypePicker from './RequestTypePicker.jsx';
-import SickDeclarationModal from './SickDeclarationModal.jsx';
+import SickLeaveModal from './SickLeaveModal.jsx';
 import PermissionRequestModal from './PermissionRequestModal.jsx';
 import EmployeeDetailModal from './EmployeeDetailModal.jsx';
 import ShiftAcknowledgmentModal from './ShiftAcknowledgmentModal.jsx';
@@ -808,17 +808,12 @@ export default function AppShell({ session, me, onRefreshMe }) {
           onPick={(type) => setRequestFlow(type)}
         />
       )}
-      {(requestFlow === 'leave' || requestFlow === 'sick') && (
+      {requestFlow === 'leave' && (
         <NewRequestModal
           me={me}
           employees={employees} leaveTypes={leaveTypes}
           requests={requests} balances={balances} holidays={holidays}
-          // When the picker route is 'sick', the leave-type field is
-          // pre-set and locked. Picking 'Sick leave' from the menu is
-          // a commitment — the user shouldn't be able to swap to
-          // annual mid-form. For the regular 'leave' route the
-          // selector behaves as before with annual as default.
-          lockedLeaveType={requestFlow === 'sick' ? 'sick' : null}
+          lockedLeaveType={null}
           onClose={() => setRequestFlow(null)}
           onSubmit={async (payload) => {
             await createRequest(payload);
@@ -826,21 +821,19 @@ export default function AppShell({ session, me, onRefreshMe }) {
           }}
         />
       )}
-      {/* sick_declare → front-door declaration with no certificate
-          yet. Creates a leave_requests row directly in
-          stage='pending_certificate' via SickDeclarationModal. The
-          certificate is uploaded later through the tracker card.
-          This route is the most common path — staff declare in the
-          morning, doctor visit happens during the day, certificate
-          arrives that evening or the next day. */}
-      {requestFlow === 'sick_declare' && (
-        <SickDeclarationModal
+      {/* sick_unified → unified sick-leave entry. Internal toggle
+          decides whether the staff is declaring without a cert (Path A,
+          creates a leave_requests row in pending_certificate stage) or
+          submitting a Sehhaty PDF they already have (Path B, sub-commit
+          B will add the upload + extraction pipeline).
+          Replaces the previous split between 'sick' and 'sick_declare'
+          routes — one tile, one modal, two paths. */}
+      {requestFlow === 'sick_unified' && (
+        <SickLeaveModal
           employee={me}
           onClose={() => setRequestFlow(null)}
           onCreated={() => {
             setRequestFlow(null);
-            // Force a refresh so the new pending_certificate row
-            // shows up in MyApplicationsCard immediately.
             if (typeof loadAll === 'function') loadAll({ silent: true });
           }}
         />
