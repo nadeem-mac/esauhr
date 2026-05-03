@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Plane, Sunrise, Sunset, ChevronRight, HeartPulse } from 'lucide-react';
+import { X, Plane, Sunrise, Sunset, ChevronRight, HeartPulse, AlertTriangle, Upload } from 'lucide-react';
 
 // =============================================================================
 // RequestTypePicker
@@ -35,7 +35,7 @@ import { X, Plane, Sunrise, Sunset, ChevronRight, HeartPulse } from 'lucide-reac
 // staff are most likely to be submitting requests in the moment.
 // =============================================================================
 
-export default function RequestTypePicker({ onPick, onClose }) {
+export default function RequestTypePicker({ onPick, onClose, blockingDeclaration = null }) {
   const options = [
     {
       // Sick leave — promoted to the top of the picker. Sick days
@@ -138,45 +138,104 @@ export default function RequestTypePicker({ onPick, onClose }) {
           </button>
         </div>
 
+        {/* Soft pressure block — visible only when the staff has at
+            least one pending_certificate row that's overdue. The banner
+            disables every option except the cert-upload escape hatch
+            (which routes to SickLeaveModal Path B with the Path picker
+            skipped). Mirrors the DB trigger's logic so the messaging
+            matches what would be enforced server-side.
+            See getBlockingDeclarations in lib/sickDeclaration.js. */}
+        {blockingDeclaration && (
+          <div className="mx-4 mt-4 mb-2 rounded-xl px-4 py-3 border flex items-start gap-3"
+               style={{ background: '#FEE2E2', borderColor: '#FCA5A5' }}>
+            <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: '#991B1B' }} />
+            <div className="text-[12px] flex-1" style={{ color: '#0A0A0A' }}>
+              <div className="font-semibold mb-1">
+                Submit your Sehhaty certificate first
+              </div>
+              <div style={{ opacity: 0.85 }}>
+                You declared sick on {blockingDeclaration.start_date}
+                {blockingDeclaration.end_date && blockingDeclaration.end_date !== blockingDeclaration.start_date
+                  ? ` (through ${blockingDeclaration.end_date})`
+                  : ''}
+                {' '}and the cert is overdue. New requests are blocked until you upload it.
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Options */}
         <div className="p-4 space-y-2.5">
-          {options.map(opt => {
-            const Icon = opt.icon;
-            return (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={() => onPick(opt.id)}
-                className="w-full text-left flex items-center gap-3 p-3.5 rounded-xl border transition-colors hover:bg-white/60 group"
-                style={{ borderColor: opt.borderColor, background: '#FFFFFF' }}
+          {/* When blocked: show ONE prominent action — Submit certificate
+              — instead of the full option list. Tapping it opens the
+              SickLeaveModal directly to Path B (cert upload), skipping
+              the path picker. The escape hatch keeps the staff from
+              being stuck with a useless picker. */}
+          {blockingDeclaration ? (
+            <button
+              type="button"
+              onClick={() => onPick('sick_unified_cert_only')}
+              className="w-full text-left flex items-center gap-3 p-4 rounded-xl border transition-colors hover:bg-white/60 group"
+              style={{ borderColor: '#0F4C2A', background: '#F0FDF4' }}
+            >
+              <div
+                className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{ background: '#DCFCE7', color: '#0F4C2A', border: '1px solid #0F4C2A' }}
               >
-                <div
-                  className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
-                  style={{ background: opt.iconBg, color: opt.iconColor, border: `1px solid ${opt.borderColor}` }}
+                <Upload className="w-5 h-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold" style={{ color: '#0F4C2A' }}>
+                  Submit Sehhaty certificate
+                </div>
+                <div className="text-[11px] mt-0.5" style={{ color: '#0A0A0A', opacity: 0.85 }}>
+                  Upload the cert PDF and the system will attach it to your declaration.
+                </div>
+              </div>
+              <ChevronRight
+                className="w-4 h-4 flex-shrink-0 opacity-50 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all"
+                style={{ color: '#0F4C2A' }}
+              />
+            </button>
+          ) : (
+            options.map(opt => {
+              const Icon = opt.icon;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => onPick(opt.id)}
+                  className="w-full text-left flex items-center gap-3 p-3.5 rounded-xl border transition-colors hover:bg-white/60 group"
+                  style={{ borderColor: opt.borderColor, background: '#FFFFFF' }}
                 >
-                  <Icon className="w-5 h-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold" style={{ color: '#1F1B16' }}>
-                    {opt.title}
+                  <div
+                    className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+                    style={{ background: opt.iconBg, color: opt.iconColor, border: `1px solid ${opt.borderColor}` }}
+                  >
+                    <Icon className="w-5 h-5" />
                   </div>
-                  {opt.titleArabic && (
-                    <div className="text-[12px] mt-0.5" dir="rtl"
-                      style={{ color: '#1F1B16', fontWeight: 500 }}>
-                      {opt.titleArabic}
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold" style={{ color: '#1F1B16' }}>
+                      {opt.title}
                     </div>
-                  )}
-                  <div className="text-[11px] mt-0.5" style={{ color: '#1F1B16' }}>
-                    {opt.description}
+                    {opt.titleArabic && (
+                      <div className="text-[12px] mt-0.5" dir="rtl"
+                        style={{ color: '#1F1B16', fontWeight: 500 }}>
+                        {opt.titleArabic}
+                      </div>
+                    )}
+                    <div className="text-[11px] mt-0.5" style={{ color: '#1F1B16' }}>
+                      {opt.description}
+                    </div>
                   </div>
-                </div>
-                <ChevronRight
-                  className="w-4 h-4 flex-shrink-0 opacity-30 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all"
-                  style={{ color: '#1F1B16' }}
+                  <ChevronRight
+                    className="w-4 h-4 flex-shrink-0 opacity-30 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all"
+                    style={{ color: '#1F1B16' }}
                 />
               </button>
             );
-          })}
+          })
+          )}
         </div>
       </div>
     </div>,

@@ -186,3 +186,112 @@ export function formatDeclarationRange(req) {
   if (!req.end_date || req.end_date === req.start_date) return req.start_date;
   return `${req.start_date} → ${req.end_date} · ${req.days || '?'}d`;
 }
+
+/**
+ * Total cap on declaration days for a single uninterrupted illness via
+ * the front-door (Path A) flow. Once a declaration spans this many days,
+ * it can no longer be extended — the staff must submit a Sehhaty cert
+ * (Path B) for any longer absence.
+ *
+ * 7 days picked because:
+ *   • Path A's "A few days" picker already caps at start + 7 (initial
+ *     declaration window).
+ *   • Anything longer is a serious illness that warrants a clinic visit
+ *     and a real Sehhaty cert.
+ *   • Closes the loophole where daily extensions could push end_date
+ *     forward indefinitely while never tripping the cert-overdue block.
+ */
+export const MAX_DECLARATION_SPAN_DAYS = 7;
+
+/**
+ * Mirror of the DB check_pending_sick_cert trigger. Returns the list of
+ * declarations that are CURRENTLY blocking new submissions for the
+ * employee.
+ *
+ * A declaration is blocking when:
+ *   • stage = 'pending_certificate'
+ *   • sick_cert_exempt = false
+ *   • EITHER sick_returned_at is set AND > 48 hours ago,
+ *   • OR     no return signal AND end_date is more than 2 days in
+ *            the past (proxy for "should have come back by now").
+ *
+ * Used client-side to surface the block at the picker / modal level
+ * with friendly messaging instead of relying on the server's P0001
+ * exception (which staff hit AFTER going through the whole flow).
+ */
+export function getBlockingDeclarations(declarations = []) {
+  const nowMs = Date.now();
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const twoDaysAgo = new Date(today); twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+  const twoDaysAgoStr = twoDaysAgo.toISOString().slice(0, 10);
+
+  return declarations.filter(d => {
+    if (d.stage !== 'pending_certificate') return false;
+    if (d.sick_cert_exempt) return false;
+    if (d.sick_returned_at) {
+      const hoursSinceReturn = (nowMs - new Date(d.sick_returned_at).getTime()) / (1000 * 60 * 60);
+      return hoursSinceReturn > 48;
+    }
+    return d.end_date && d.end_date < twoDaysAgoStr;
+  });
+}
+
+/**
+ * Find the most recent declaration that can be extended by one day
+ * (or more) up to today.
+ *
+ * Returns at most ONE row — the most recently-ended pending_certificate
+ * row whose extension to today won't bust the MAX_DECLARATION_SPAN_DAYS
+ * cap. Returns null when:
+ *   • No pending_certificate rows exist for this staff
+ *   • The most recent row already covers today (end_date >= today)
+ *   • The most recent row is too old (end_date < today - 7d) — that's
+ *     a different illness, not an extension candidate
+ *   • Extending would push the span past MAX_DECLARATION_SPAN_DAYS
+ *   • The row is currently in the BLOCKING set — staff must submit
+ *     cert before any further declaration activity.
+ *
+ * Caller passes the staff's declarations (filter by employee_id first).
+ */
+export function getExtendableDeclaration(declarations = []) {
+  const blockingIds = new Set(getBlockingDeclarations(declarations).map(d => d.id));
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const sevenDaysAgo = new Date(); sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const sevenDaysAgoStr = sevenDaysAgo.toISOString().slice(0, 10);
+
+  const candidates = declarations
+    .filter(d => d.stage === 'pending_certificate' && !d.sick_cert_exempt)
+    .filter(d => !blockingIds.has(d.id))
+    // end_date must be in the past (not already covering today)
+    .filter(d => d.end_date && d.end_date < todayStr)
+    // and recent enough to still be the same illness
+    .filter(d => d.end_date >= sevenDaysAgoStr)
+    // and extending to today must not exceed the span cap
+    .filter(d => {
+      const start = new Date(d.start_date);
+      const today = new Date(todayStr);
+      const spanIfExtended = Math.round((today - start) / 86_400_000) + 1;
+      return spanIfExtended <= MAX_DECLARATION_SPAN_DAYS;
+    })
+    .sort((a, b) => (b.end_date || '').localeCompare(a.end_date || ''));
+
+  return candidates[0] || null;
+}
+
+/**
+ * Build the PATCH payload for extending a declaration to today. Caller
+ * is responsible for sending the patch via directPatch and refreshing
+ * the UI. The patch only changes end_date and days — start_date,
+ * stage, reason, etc. all stay the same so the audit trail of the
+ * original declaration is preserved.
+ */
+export function buildExtensionPatch(declaration, todayStr = new Date().toISOString().slice(0, 10)) {
+  const start = new Date(declaration.start_date);
+  const today = new Date(todayStr);
+  const newDays = Math.round((today - start) / 86_400_000) + 1;
+  return {
+    end_date: todayStr,
+    days: Math.max(1, newDays),
+  };
+}

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { HeartPulse, X, Loader2, AlertTriangle, FileText, Check, Upload, RefreshCw } from 'lucide-react';
 import { directPost, directGet, directPatch } from '../supabaseClient.js';
 import { extractFromPdf } from '../lib/sehhatyPdfExtract.js';
+import { getExtendableDeclaration, buildExtensionPatch, formatDeclarationRange, MAX_DECLARATION_SPAN_DAYS } from '../lib/sickDeclaration.js';
 
 // =============================================================================
 // SickLeaveModal
@@ -75,11 +76,27 @@ const REASON_OPTIONS = [
   { id: 'OTHER',              label: 'OTHER (DESCRIBE BELOW)' },
 ];
 
-export default function SickLeaveModal({ employee, onClose, onCreated, declaredVia = 'staff', isOnBehalf = false }) {
+export default function SickLeaveModal({
+  employee,
+  onClose,
+  onCreated,
+  declaredVia = 'staff',
+  isOnBehalf = false,
+  // forceCertPath — when true, skip the Path A/B picker and start
+  // directly in Path B (cert upload). Set by AppShell when the staff
+  // arrived via the soft-block escape hatch on RequestTypePicker
+  // (their prior declaration is overdue, only path forward is cert).
+  forceCertPath = false,
+  // myDeclarations — the staff's leave_requests rows. Passed in so
+  // the modal can find an extendable pending_certificate row and
+  // surface the extend-by-1-day prompt before the Path A form opens.
+  myDeclarations = [],
+}) {
   // path: null until the staff picks. 'declare' = Path A, 'submit' = Path B.
-  // Forcing the user to make this choice first makes the consequence
-  // of each path impossible to miss.
-  const [path, setPath] = useState(null);
+  // When forceCertPath=true we initialise straight to 'submit', skipping
+  // the picker — the staff is on the cert-only escape route from the
+  // soft block and the picker would be a useless extra click.
+  const [path, setPath] = useState(forceCertPath ? 'submit' : null);
 
   // Path A state — declare-now flow
   const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -180,7 +197,56 @@ export default function SickLeaveModal({ employee, onClose, onCreated, declaredV
     return () => { cancelled = true; };
   }, [path, employee?.id]);
 
+  // Extension — if the staff has a recent pending_certificate row that
+  // doesn't already cover today and isn't blocking, surface an extend-
+  // by-1-day option BEFORE the Path A form. Most "I'm still sick today"
+  // sequences should extend the existing record rather than create a
+  // duplicate row, which keeps the cert obligation tied to a single
+  // illness (and prevents fragmenting the audit trail).
+  //
+  // The extension is hidden when:
+  //   • forceCertPath is true (user is on the cert-only escape route)
+  //   • path !== 'declare' (only shown on Path A — Path B doesn't need it)
+  //   • The user has explicitly chosen 'No, this is a new illness'
+  //     (extensionDismissed)
+  //
+  // NOTE: Hooks must run unconditionally — these go ABOVE the
+  // `if (!employee) return null` early return below.
+  const extendable = useMemo(
+    () => forceCertPath ? null : getExtendableDeclaration(myDeclarations),
+    [myDeclarations, forceCertPath],
+  );
+  const [extensionDismissed, setExtensionDismissed] = useState(false);
+  const [extending, setExtending] = useState(false);
+
   if (!employee) return null;
+  const showExtensionPrompt = path === 'declare' && extendable && !extensionDismissed;
+
+  async function handleExtendDeclaration() {
+    if (extending || !extendable) return;
+    setExtending(true);
+    setError('');
+    try {
+      const patch = buildExtensionPatch(extendable);
+      // Append a small note to the reason so the audit trail records
+      // that this row was extended (and to what end_date). The original
+      // reason is preserved and the extension marker is appended.
+      const todayStr = patch.end_date;
+      const extensionNote = `Extended to ${todayStr} via portal`;
+      const newReason = extendable.reason
+        ? `${extendable.reason} · ${extensionNote}`
+        : extensionNote;
+      const fullPatch = { ...patch, reason: newReason };
+      await directPatch('leave_requests', 'id', extendable.id, fullPatch, { timeoutMs: 12000 });
+      // Pass _extended=true so AppShell's onCreated handler renders
+      // the extension-specific toast instead of the new-submission one.
+      onCreated?.({ ...extendable, ...fullPatch, _extended: true });
+    } catch (e) {
+      setError(e?.message || 'Could not extend your declaration. Please try again.');
+    } finally {
+      setExtending(false);
+    }
+  }
 
   // Path A submit guard
   const reasonObj = REASON_OPTIONS.find(r => r.id === reasonId);
@@ -533,6 +599,93 @@ export default function SickLeaveModal({ employee, onClose, onCreated, declaredV
         {/* PATH A — declare-now flow */}
         {path === 'declare' && (
           <div className="px-6 py-5 space-y-4">
+            {/* Extension prompt — surfaces when there's a recent
+                pending_certificate row that doesn't already cover today
+                and the staff probably wants to extend it rather than
+                create a fresh record. Tapping "Yes, extend" PATCHes the
+                existing row's end_date forward to today (one continuous
+                illness, one row, audit trail preserved). Tapping "No,
+                this is new" dismisses the prompt and falls through to
+                the normal declare-new form below. */}
+            {showExtensionPrompt && (() => {
+              const todayStr = new Date().toISOString().slice(0, 10);
+              const projected = buildExtensionPatch(extendable, todayStr);
+              return (
+                <div className="rounded-xl border p-4"
+                     style={{ background: '#FFFBEB', borderColor: '#FCD34D' }}>
+                  <div className="flex items-start gap-2 mb-3">
+                    <HeartPulse className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: '#92400E' }} />
+                    <div className="flex-1">
+                      <div className="text-[12px] font-semibold mb-0.5" style={{ color: '#0A0A0A' }}>
+                        Still unwell from your declaration on {extendable.start_date}?
+                      </div>
+                      <div className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.85 }}>
+                        Existing declaration: {formatDeclarationRange(extendable)}.
+                        Extending it to today ({todayStr}) keeps your record as
+                        one continuous illness — total {projected.days} day{projected.days === 1 ? '' : 's'}.
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <button
+                      type="button"
+                      onClick={handleExtendDeclaration}
+                      disabled={extending}
+                      className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-[12px] font-semibold disabled:opacity-50"
+                      style={{ background: '#92400E', color: '#FFFFFF' }}
+                    >
+                      {extending
+                        ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Extending…</>
+                        : <>Yes, extend by 1 day</>}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setExtensionDismissed(true)}
+                      disabled={extending}
+                      className="flex-1 px-3 py-2 rounded-lg text-[12px] border bg-white disabled:opacity-50"
+                      style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}
+                    >
+                      No, this is a new illness
+                    </button>
+                  </div>
+                  {extending && error && (
+                    <div className="mt-2 px-3 py-2 rounded-lg text-[11px]"
+                         style={{ background: '#FEE2E2', color: '#991B1B' }}>
+                      {error}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Span-cap notice — when the staff has already used up
+                the 7-day total declaration window, the extendable
+                helper returns null but we still want to be transparent
+                about why no extension is offered. This block surfaces
+                only when there's a recent pending_certificate row but
+                its span has already hit the cap. */}
+            {!showExtensionPrompt && !extensionDismissed && (() => {
+              const today = new Date().toISOString().slice(0, 10);
+              const recent = (myDeclarations || [])
+                .filter(d => d.stage === 'pending_certificate' && !d.sick_cert_exempt)
+                .filter(d => d.end_date && d.end_date < today)
+                .sort((a, b) => (b.end_date || '').localeCompare(a.end_date || ''))[0];
+              if (!recent) return null;
+              const start = new Date(recent.start_date);
+              const todayD = new Date(today);
+              const span = Math.round((todayD - start) / 86_400_000) + 1;
+              if (span <= MAX_DECLARATION_SPAN_DAYS) return null;
+              return (
+                <div className="rounded-xl border px-4 py-3 text-[11px]"
+                     style={{ background: '#FEF2F2', borderColor: '#FCA5A5', color: '#0A0A0A' }}>
+                  Your existing declaration from {recent.start_date} has reached
+                  the {MAX_DECLARATION_SPAN_DAYS}-day cap for cert-less sick leave.
+                  For a longer absence, please use "Yes, I have it" above and
+                  upload your Sehhaty certificate.
+                </div>
+              );
+            })()}
+
             {/* Start date */}
             <div>
               <label className="text-[11px] tracking-wider font-bold mb-1.5 block" style={{ color: '#0A0A0A' }}>

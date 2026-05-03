@@ -18,6 +18,7 @@ import RequestTypePicker from './RequestTypePicker.jsx';
 import SickLeaveModal from './SickLeaveModal.jsx';
 import PermissionRequestModal from './PermissionRequestModal.jsx';
 import SuccessToast, { bodyForStage } from './SuccessToast.jsx';
+import { getBlockingDeclarations, getExtendableDeclaration } from '../lib/sickDeclaration.js';
 import EmployeeDetailModal from './EmployeeDetailModal.jsx';
 import ShiftAcknowledgmentModal from './ShiftAcknowledgmentModal.jsx';
 import InsightsView from './InsightsView.jsx';
@@ -843,13 +844,36 @@ export default function AppShell({ session, me, onRefreshMe }) {
       </main>
 
       {/* Request flow router — picker first, then either the leave form or
-          the permission form depending on what the staff member chose. */}
-      {requestFlow === 'pick' && (
-        <RequestTypePicker
-          onClose={() => setRequestFlow(null)}
-          onPick={(type) => setRequestFlow(type)}
-        />
-      )}
+          the permission form depending on what the staff member chose.
+
+          Soft pressure (commit 3) — the picker is block-aware. If the
+          staff has any pending_certificate row that's overdue (per the
+          DB trigger's logic, mirrored client-side via
+          getBlockingDeclarations), the picker hides every option except
+          a cert-upload escape hatch. The 'sick_unified_cert_only' route
+          is what that escape hatch routes to: opens SickLeaveModal with
+          forceCertPath=true so the path picker is skipped.
+
+          Why compute here vs. in a useMemo at the top: this only runs
+          while the picker is open, which is rare and cheap. Hoisting
+          to a useMemo would couple AppShell's state to a per-render
+          filter that 99% of renders don't use. */}
+      {(() => {
+        const myDeclarations = (requests || []).filter(r => r.employee_id === me?.id);
+        const blocking = getBlockingDeclarations(myDeclarations);
+        const blockingDecl = blocking[0] || null;
+        return (
+          <>
+            {requestFlow === 'pick' && (
+              <RequestTypePicker
+                onClose={() => setRequestFlow(null)}
+                onPick={(type) => setRequestFlow(type)}
+                blockingDeclaration={blockingDecl}
+              />
+            )}
+          </>
+        );
+      })()}
       {requestFlow === 'leave' && (
         <NewRequestModal
           me={me}
@@ -869,10 +893,24 @@ export default function AppShell({ session, me, onRefreshMe }) {
           submitting a Sehhaty PDF they already have (Path B, sub-commit
           B will add the upload + extraction pipeline).
           Replaces the previous split between 'sick' and 'sick_declare'
-          routes — one tile, one modal, two paths. */}
-      {requestFlow === 'sick_unified' && (
+          routes — one tile, one modal, two paths.
+
+          sick_unified_cert_only — alternate entry routed FROM
+          RequestTypePicker's blocking-state escape hatch. Same modal,
+          but forceCertPath=true tells SickLeaveModal to skip the path
+          picker and go straight to Path B (cert upload). The user
+          arrived because their prior declaration is overdue; they
+          can't declare a new sick day, only submit the missing cert.
+
+          Both entries also pass `myDeclarations` so SickLeaveModal can
+          surface the extend-by-1-day prompt when there's an extendable
+          (still-pending, not-yet-blocking) declaration in the staff's
+          recent history. */}
+      {(requestFlow === 'sick_unified' || requestFlow === 'sick_unified_cert_only') && (
         <SickLeaveModal
           employee={me}
+          forceCertPath={requestFlow === 'sick_unified_cert_only'}
+          myDeclarations={(requests || []).filter(r => r.employee_id === me?.id)}
           onClose={() => setRequestFlow(null)}
           onCreated={(created) => {
             setRequestFlow(null);
@@ -882,6 +920,22 @@ export default function AppShell({ session, me, onRefreshMe }) {
             // submit the Sehhaty cert when they have it. Path B
             // (cert provided up-front) goes to pending_manager
             // and the body reflects that.
+            //
+            // The extension flow re-uses this onCreated path with
+            // _extended=true on the returned row, which we pick up
+            // here to render a different toast title.
+            if (created?._extended) {
+              setSubmissionToast({
+                title: 'Sick declaration extended',
+                body: `Your declaration now ends ${created.end_date} (${created.days} day${created.days === 1 ? '' : 's'}). Submit your Sehhaty certificate when you receive it.`,
+                actionLabel: 'View in your applications',
+                onAction: () => {
+                  const el = document.getElementById('your-applications');
+                  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                },
+              });
+              return;
+            }
             const stage = created?.stage || 'pending_certificate';
             setSubmissionToast({
               title: stage === 'pending_certificate'
