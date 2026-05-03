@@ -58,11 +58,13 @@
 // =============================================================================
 
 import React, { useState, useMemo } from 'react';
-import { HeartPulse, ChevronRight, ShieldCheck, Loader2, Inbox, Bell } from 'lucide-react';
+import { HeartPulse, ChevronRight, ShieldCheck, Loader2, Inbox, Bell, AlertTriangle, Send } from 'lucide-react';
 import { classifyPressure, PRESSURE_LABELS, formatDeclarationRange } from '../lib/sickDeclaration.js';
 import { reminderStatus, reminderKindLabel } from '../lib/sickReminderEmail.js';
+import { groupViolationsBySource, findStaffNeedingDigest, AUTO_UNMARK_WINDOW_DAYS } from '../lib/sickHardPressure.js';
 import CertExemptModal from './CertExemptModal.jsx';
 import SendReminderModal from './SendReminderModal.jsx';
+import UnauthorizedDigestModal from './UnauthorizedDigestModal.jsx';
 
 // Sort key: overdue first (hard > soft), then by declaration date desc.
 // Returns a numeric sort value; lower = appears earlier (we want
@@ -94,16 +96,34 @@ export default function PendingSickCertsCard({
   empMap,          // { employee_id: employee_row }
   me,              // current viewer; used as actor for the exempt action
   reminders = [],  // sick_reminders rows for the visible declarations
+  violations = [], // attendance_violations rows of type unauthorized_absence
   onRowOpen,       // (req) => void  — invoked when a row is tapped, opens HrApprovalModal
   onChanged,       // () => void     — invoked after exempt or reminder send
   loading,         // boolean — showing spinner while initial data arrives
 }) {
-  // Track which row (if any) is the active modal target. At most one
-  // modal is open at a time; the two states are independent because the
-  // exempt flow takes a different path through the row's trailing-action
-  // column than the reminder flow.
+  // Modal targets — at most one modal open at a time.
   const [exemptingReq,  setExemptingReq]  = useState(null);
   const [remindingReq,  setRemindingReq]  = useState(null);
+  // Digest modal — true when the "Send weekly digest" CTA is clicked.
+  // The modal lists every staff with active unauthorized_absence rows
+  // that haven't been notified yet (email_sent_at IS NULL).
+  const [digestOpen,    setDigestOpen]    = useState(false);
+
+  // Group violations by the declaration that produced them, so each
+  // row in the card knows whether it's been auto-marked and how many
+  // days. groupViolationsBySource only counts ACTIVE violations
+  // (auto_unmarked_at IS NULL); un-marked rows fall out automatically.
+  const violationsByDecl = useMemo(
+    () => groupViolationsBySource(violations),
+    [violations],
+  );
+
+  // Staff who need a digest email — at least one active unauthorized
+  // violation with no email_sent_at. Drives the top-of-card CTA.
+  const digestTargets = useMemo(
+    () => findStaffNeedingDigest(violations),
+    [violations],
+  );
 
   // Decorate each row with classifyPressure result + a sort key. Done in
   // useMemo so we don't re-compute on every render (could be 50+ rows).
@@ -114,6 +134,10 @@ export default function PendingSickCertsCard({
     return rows
       .map(r => {
         const pressure = classifyPressure(r, []).pressure;
+        // Count of active unauthorized_absence violations linked to
+        // this declaration. Drives the "MARKED UNAUTHORIZED · N days"
+        // badge alongside the pressure / reminder pills.
+        const markedViolations = violationsByDecl.get(r.id) || [];
         return {
           req: r,
           emp: empMap?.[r.employee_id] || null,
@@ -123,6 +147,7 @@ export default function PendingSickCertsCard({
           // pressure is in_grace / soft_overdue / hard_overdue) and the
           // "Last reminder: X on Y" subtitle on each row.
           reminder: reminderStatus(r, pressure, reminders),
+          markedDays: markedViolations.length,
         };
       })
       .sort((a, b) => {
@@ -133,7 +158,7 @@ export default function PendingSickCertsCard({
         const bT = b.req.sick_declared_at || b.req.requested_at || '';
         return bT.localeCompare(aT);
       });
-  }, [rows, empMap, reminders]);
+  }, [rows, empMap, reminders, violationsByDecl]);
 
   // Counts shown in the section header so Bashaier can see at-a-glance
   // how many overdue items there are without scrolling.
@@ -146,11 +171,15 @@ export default function PendingSickCertsCard({
     return c;
   }, [decorated]);
 
-  // Hide the card entirely when there are no pending certs and we're not
-  // loading. No reason to take up space when there's nothing to track.
+  // Hide the card entirely when there are no pending certs AND no
+  // unsent digest targets. The latter matters because a staff who
+  // submitted their cert (declaration moved out of pending_certificate)
+  // could still have unsent unauthorized notifications waiting — we
+  // want Bashaier to be able to send those even after the row leaves
+  // the pending list.
   // We DO show the card during loading so the dashboard layout doesn't
   // jump as data trickles in.
-  if (!loading && counts.total === 0) {
+  if (!loading && counts.total === 0 && digestTargets.length === 0) {
     return null;
   }
 
@@ -199,6 +228,47 @@ export default function PendingSickCertsCard({
         )}
       </header>
 
+      {/* Weekly digest CTA — visible only when there are staff with
+          active unauthorized_absence violations that haven't been
+          notified yet. Tapping it opens UnauthorizedDigestModal which
+          lists each affected staff, lets Bashaier review and send
+          their personalized notification email, and stamps email_sent_at
+          on the violations once dispatched.
+
+          We surface it as a banner inside the card (rather than a
+          separate top-level card) so the digest queue stays anchored
+          to the certificate-tracker context — they're the same
+          workflow at different escalation tiers. */}
+      {digestTargets.length > 0 && !loading && (
+        <div
+          className="mx-4 mt-3 mb-1 rounded-xl px-4 py-3 border flex items-start gap-3"
+          style={{ background: '#FEF2F2', borderColor: '#FCA5A5' }}
+        >
+          <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: '#991B1B' }} />
+          <div className="flex-1 text-[12px]" style={{ color: '#0A0A0A' }}>
+            <div className="font-semibold mb-0.5">
+              {digestTargets.length === 1
+                ? '1 staff member needs an unauthorized-absence notification'
+                : `${digestTargets.length} staff members need unauthorized-absence notifications`}
+            </div>
+            <div style={{ opacity: 0.85 }}>
+              The system auto-marked their declared sick days as unauthorized after the cert went 5+ working days overdue. Review and send the digest emails before the {AUTO_UNMARK_WINDOW_DAYS}-day auto-undo window expires.
+            </div>
+          </div>
+          {!!me?.is_hr_reviewer && (
+            <button
+              type="button"
+              onClick={() => setDigestOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold tracking-wider hover:opacity-90"
+              style={{ background: '#991B1B', color: '#FFFFFF' }}
+            >
+              <Send className="w-3 h-3" />
+              REVIEW &amp; SEND
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Body — list of declaration rows or a loading/empty state. */}
       {loading ? (
         <div className="px-4 py-6 flex items-center gap-2 text-sm" style={{ color: '#0A0A0A', opacity: 0.7 }}>
@@ -206,16 +276,20 @@ export default function PendingSickCertsCard({
           Loading pending certificates…
         </div>
       ) : decorated.length === 0 ? (
-        // This branch is unreachable given the early-return above, but
-        // keep it defensive in case parent toggles `loading` without
-        // re-rendering rows.
-        <div className="px-4 py-6 flex items-center gap-2 text-sm" style={{ color: '#0A0A0A', opacity: 0.7 }}>
-          <Inbox className="w-4 h-4" />
-          Nothing pending — all certificates received.
-        </div>
+        // No active pending_certificate rows. If there are digest
+        // targets, the banner above is doing the work and we can
+        // keep the body empty without an extra "nothing pending"
+        // line that visually competes. Otherwise show the original
+        // empty state.
+        digestTargets.length > 0 ? null : (
+          <div className="px-4 py-6 flex items-center gap-2 text-sm" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+            <Inbox className="w-4 h-4" />
+            Nothing pending — all certificates received.
+          </div>
+        )
       ) : (
         <ul className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
-          {decorated.map(({ req, emp, pressure, reminder }) => {
+          {decorated.map(({ req, emp, pressure, reminder, markedDays }) => {
             const tint = rowTint(pressure);
             const pressureMeta = PRESSURE_LABELS[pressure] || PRESSURE_LABELS.still_out;
             const empName = emp?.name || req.employee_id;
@@ -294,6 +368,24 @@ export default function PendingSickCertsCard({
                         >
                           <Bell className="w-2.5 h-2.5" />
                           REMINDER DUE
+                        </span>
+                      )}
+                      {/* MARKED UNAUTHORIZED — surfaces when the sweep
+                          has produced active unauthorized_absence
+                          violations linked to this declaration. The
+                          number is the count of active (not yet
+                          un-marked) days. Tooltip mentions the 14-day
+                          auto-undo window so Bashaier knows the row
+                          is reversible by the staff submitting the
+                          cert. */}
+                      {markedDays > 0 && (
+                        <span
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider"
+                          style={{ background: '#7F1D1D', color: '#FFFFFF' }}
+                          title={`Auto-marked as unauthorized absence. Auto-undoes if cert submitted within ${AUTO_UNMARK_WINDOW_DAYS} days.`}
+                        >
+                          <AlertTriangle className="w-2.5 h-2.5" />
+                          MARKED UNAUTHORIZED · {markedDays} day{markedDays === 1 ? '' : 's'}
                         </span>
                       )}
                       {req.reason && (
@@ -396,6 +488,29 @@ export default function PendingSickCertsCard({
           onClose={() => setRemindingReq(null)}
           onSent={() => {
             setRemindingReq(null);
+            onChanged?.();
+          }}
+        />
+      )}
+
+      {/* Weekly digest modal — opens from the top-of-card "REVIEW &
+          SEND" CTA when there are staff with unsent unauthorized-absence
+          notifications. Iterates through the affected staff, lets
+          Bashaier review each personalized email, opens mailto for the
+          selected one, and stamps email_sent_at on the underlying
+          violations once dispatched. */}
+      {digestOpen && (
+        <UnauthorizedDigestModal
+          targets={digestTargets}
+          empMap={empMap}
+          violations={violations}
+          rows={rows}
+          me={me}
+          onClose={() => setDigestOpen(false)}
+          onSent={() => {
+            // The digest modal manages its own per-target send loop;
+            // we re-fetch on close so the parent's view updates with
+            // the freshly-stamped email_sent_at values.
             onChanged?.();
           }}
         />

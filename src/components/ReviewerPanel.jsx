@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { supabase, directPatch, directGet } from '../supabaseClient.js';
+import { supabase, directPatch, directGet, directPost } from '../supabaseClient.js';
 import { CheckCircle2, XCircle, Clock, Loader2, AlertTriangle, Sunrise, Sunset, Calendar, RefreshCw, Search, Plane, ArrowLeftCircle, Mail } from 'lucide-react';
 import { logAction } from '../lib/audit.js';
 import HrApprovalModal from './HrApprovalModal.jsx';
@@ -8,6 +8,11 @@ import PermissionApprovedModal from './PermissionApprovedModal.jsx';
 import RejoiningApprovedModal from './RejoiningApprovedModal.jsx';
 import LeaveApprovedModal     from './LeaveApprovedModal.jsx';
 import PendingSickCertsCard   from './PendingSickCertsCard.jsx';
+import {
+  findMarkableDeclarations,
+  buildUnauthorizedRowsForDeclaration,
+  findAutoUnmarkableViolations,
+} from '../lib/sickHardPressure.js';
 import { fmtDate, rejectionReasonsForLeaveType, findRejectionReason } from '../lib/leaveLogic.js';
 import { PERMISSION_TYPES, summariseMonth } from '../lib/permissionLogic.js';
 
@@ -67,6 +72,15 @@ export default function ReviewerPanel({ me }) {
   // alongside pendingCerts on every load() so a freshly-sent reminder
   // is reflected as soon as Bashaier closes the SendReminderModal.
   const [sickReminders, setSickReminders] = useState([]);
+  // Unauthorized-absence attendance_violations linked to the visible
+  // pending_certificate rows (or to declarations whose source rows
+  // have since moved out of pending_certificate but were once auto-
+  // marked). Drives the per-row "MARKED UNAUTHORIZED" badge and the
+  // weekly digest CTA. Includes both active (auto_unmarked_at IS NULL)
+  // and previously-unmarked rows; downstream consumers filter as
+  // appropriate. Fetch is HR/admin-scoped; non-privileged reviewers
+  // never see this data.
+  const [sickViolations, setSickViolations] = useState([]);
   // After Bashaier issues the FINAL HR approval on a permission, this holds
   // the freshly-approved row so PermissionApprovedModal opens with the
   // download letter / open email draft actions.
@@ -262,9 +276,134 @@ export default function ReviewerPanel({ me }) {
         const reminderQs = 'select=*&order=sent_at.desc&limit=500';
         const rr = await directGet('sick_reminders', reminderQs, { timeoutMs: 8000 }).catch(() => []);
         setSickReminders(rr || []);
+
+        // Pull unauthorized_absence attendance_violations. We need ALL
+        // rows with violation_type='unauthorized_absence' regardless of
+        // stage/active status because:
+        //   (a) Active rows drive the "MARKED UNAUTHORIZED" badge.
+        //   (b) Auto-undo eligibility checks the marked-at timestamp
+        //       against TODAY for rows whose source declaration may
+        //       have moved out of pending_certificate (and thus isn't
+        //       in our cr fetch above).
+        // We also need source_request_id so the sweep can join.
+        const vrQs = 'select=*&violation_type=eq.unauthorized_absence&order=violation_date.desc&limit=2000';
+        const vr = await directGet('attendance_violations', vrQs, { timeoutMs: 10000 }).catch(() => []);
+
+        // ── HARD-PRESSURE SWEEP ─────────────────────────────────────
+        // Runs once per dashboard load. Two passes:
+        //   1. MARK   — find pending_certificate rows that crossed
+        //               the 5-working-day threshold and don't yet
+        //               have unauthorized_absence violations linked.
+        //               Insert one row per working day in [start_date,
+        //               end_date]. The unique constraint on
+        //               (employee_id, violation_date, violation_type)
+        //               protects against duplicate inserts even if
+        //               two HR users open the dashboard at the same
+        //               moment.
+        //   2. UNMARK — find unauthorized_absence rows whose source
+        //               declaration is no longer pending_certificate
+        //               (cert was submitted, or row was exempted),
+        //               AND were auto-marked within the 14-day
+        //               window. Soft-delete via auto_unmarked_at /
+        //               auto_unmarked_by='system'.
+        // Both passes are best-effort; failures are logged but don't
+        // block the rest of load() because the reviewer's main
+        // queue must still render even if attendance_violations is
+        // unavailable.
+        try {
+          // Build a lookup of declarations by id, including BOTH the
+          // currently-pending ones (cr) AND the source declarations
+          // for any active unauthorized violations. The latter set is
+          // necessary because un-marking checks "is the source row
+          // still pending?" — those source rows might not be in cr
+          // anymore (cert was submitted → pending_manager / approved).
+          const declLookupIds = new Set();
+          (vr || []).forEach(v => { if (v.source_request_id) declLookupIds.add(v.source_request_id); });
+          const declLookupRows = (cr || []).slice();
+          const idsToFetch = [...declLookupIds].filter(id => !declLookupRows.some(d => d.id === id));
+          if (idsToFetch.length) {
+            const inList = idsToFetch.map(id => `"${id}"`).join(',');
+            const extraQs = `select=*&id=in.(${inList})`;
+            const extra = await directGet('leave_requests', extraQs, { timeoutMs: 8000 }).catch(() => []);
+            (extra || []).forEach(d => declLookupRows.push(d));
+          }
+          const declsById = new Map(declLookupRows.map(d => [d.id, d]));
+
+          // Pass 1: MARK
+          const markable = findMarkableDeclarations(cr || [], vr || [], new Date());
+          for (const decl of markable) {
+            const rows = buildUnauthorizedRowsForDeclaration(decl, me?.id || null);
+            for (const row of rows) {
+              try {
+                await directPost('attendance_violations', row, { timeoutMs: 8000 });
+              } catch (insertErr) {
+                // 23505 (unique violation) means the row already exists
+                // — likely a previous sweep run got partway. Treat as
+                // success and move on.
+                const msg = String(insertErr?.message || insertErr);
+                if (!msg.includes('23505') && !msg.includes('duplicate key')) {
+                  console.warn('[hard-pressure] mark insert failed:', insertErr);
+                }
+              }
+            }
+            try {
+              await logAction(me, 'sick_auto_marked', {
+                targetType: 'leave_request',
+                targetId:   decl.id,
+                targetLabel: `${empMap?.[decl.employee_id]?.name || decl.employee_id} · ${rows.length} day${rows.length === 1 ? '' : 's'} unauthorized`,
+                meta: {
+                  source_request_id: decl.id,
+                  start_date:        decl.start_date,
+                  end_date:          decl.end_date,
+                  day_count:         rows.length,
+                },
+              });
+            } catch { /* audit failure is non-fatal */ }
+          }
+
+          // Pass 2: UNMARK (auto-undo within 14 days)
+          const unmarkable = findAutoUnmarkableViolations(vr || [], declsById, new Date());
+          for (const v of unmarkable) {
+            try {
+              await directPatch('attendance_violations', 'id', v.id, {
+                auto_unmarked_at: new Date().toISOString(),
+                auto_unmarked_by: 'system',
+              }, { timeoutMs: 8000 });
+            } catch (patchErr) {
+              console.warn('[hard-pressure] unmark patch failed:', patchErr);
+            }
+          }
+          if (unmarkable.length) {
+            try {
+              await logAction(me, 'sick_auto_unmarked', {
+                targetType: 'attendance_violations',
+                targetId:   null,
+                targetLabel: `Auto-undo · ${unmarkable.length} day${unmarkable.length === 1 ? '' : 's'} (cert submitted within 14d window)`,
+                meta: {
+                  count: unmarkable.length,
+                  ids:   unmarkable.map(v => v.id),
+                },
+              });
+            } catch { /* non-fatal */ }
+          }
+
+          // Re-pull violations after the sweep so the UI reflects
+          // the freshly inserted/updated rows. The double-fetch is
+          // a small cost paid once per dashboard load.
+          if (markable.length || unmarkable.length) {
+            const refreshed = await directGet('attendance_violations', vrQs, { timeoutMs: 10000 }).catch(() => vr || []);
+            setSickViolations(refreshed || []);
+          } else {
+            setSickViolations(vr || []);
+          }
+        } catch (sweepErr) {
+          console.warn('[hard-pressure] sweep failed:', sweepErr);
+          setSickViolations(vr || []);
+        }
       } else {
         setPendingCerts([]);
         setSickReminders([]);
+        setSickViolations([]);
       }
 
       // History pull — HR/admin reviewers see everything they've decided
@@ -709,6 +848,7 @@ export default function ReviewerPanel({ me }) {
         <PendingSickCertsCard
           rows={pendingCerts}
           reminders={sickReminders}
+          violations={sickViolations}
           empMap={empMap}
           me={me}
           loading={loading}

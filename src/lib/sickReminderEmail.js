@@ -238,6 +238,72 @@ export function reminderKindLabel(kind) {
 }
 
 /**
+ * Build the unauthorized-absence digest email for a single staff
+ * member. Sent (manually, via mailto) by Bashaier when the weekly
+ * digest CTA fires on her dashboard.
+ *
+ * Distinct from the reminder emails because the consequence has
+ * already happened — these days ARE in the system as unauthorized.
+ * The email's job is to tell the staff and explain how to undo it
+ * (submit cert within 14 days for auto-undo; later requires HR
+ * intervention).
+ *
+ * @param {object} params
+ * @param {object} params.employee     staff record (must have .email and .name)
+ * @param {object[]} params.violations unauthorized_absence rows for this staff
+ * @param {object[]} params.declarations the source pending_certificate rows
+ *                                       (joined by source_request_id)
+ * @param {object} params.hrApprover   sender (Bashaier)
+ *
+ * @returns {{ to, cc, subject, body, mailto }} same shape as buildSickReminderEmail
+ */
+export function buildUnauthorizedAbsenceDigestEmail({
+  employee,
+  violations = [],
+  declarations = [],
+  hrApprover,
+}) {
+  const firstName = (employee?.name || '').split(' ')[0] || 'Colleague';
+  const dayCount = violations.length;
+  const dayList = [...new Set(violations.map(v => v.violation_date))]
+    .sort()
+    .map(d => fmtDate(d));
+  const declarationsLine = declarations.length
+    ? declarations.map(d => formatDeclarationCompact(d)).join(', ')
+    : '—';
+
+  const to = (employee?.email || '').trim();
+  const cc = ''; // staff only; the digest is a private notice
+
+  const subject = `Unauthorized absence recorded — ${dayCount} day${dayCount === 1 ? '' : 's'}`;
+  const body = [
+    `Dear ${firstName},`,
+    '',
+    `Because the Sehhaty certificate for your sick leave (${declarationsLine}) is now more than five working days overdue, the following day${dayCount === 1 ? ' has' : 's have'} been recorded as unauthorized absence on your attendance record:`,
+    '',
+    ...dayList.map(d => `  • ${d}`),
+    '',
+    'How to clear this:',
+    '  1. Submit your Sehhaty certificate within 14 days of this notice via the HR portal (Sick leave → "Yes, I have it"). The unauthorized status will be removed automatically.',
+    '  2. After 14 days, the unauthorized status becomes final and only HR can adjust it on documented grounds.',
+    '',
+    'Unauthorized absence may be deducted from your salary per the Evergreen HR policy. Please contact HR if you believe this notice was sent in error.',
+    '',
+    'Thanks,',
+    ...signatureBlock(hrApprover),
+  ].join('\n');
+
+  const mailto = buildMailto(to, cc, subject, body);
+  return { to, cc, subject, body, mailto };
+}
+
+function formatDeclarationCompact(d) {
+  if (!d) return '—';
+  if (!d.end_date || d.start_date === d.end_date) return fmtDate(d.start_date);
+  return `${fmtDate(d.start_date)} – ${fmtDate(d.end_date)}`;
+}
+
+/**
  * Given the existing reminders for a declaration, decide whether the
  * "natural next" reminder kind for the row's current pressure has
  * already been sent. Used by PendingSickCertsCard to surface a
