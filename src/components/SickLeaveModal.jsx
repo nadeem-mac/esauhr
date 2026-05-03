@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { HeartPulse, X, Loader2, AlertTriangle, FileText, Check } from 'lucide-react';
-import { directPost, directGet } from '../supabaseClient.js';
+import { HeartPulse, X, Loader2, AlertTriangle, FileText, Check, Upload, RefreshCw } from 'lucide-react';
+import { directPost, directGet, directPatch } from '../supabaseClient.js';
+import { extractFromPdf } from '../lib/sehhatyPdfExtract.js';
 
 // =============================================================================
 // SickLeaveModal
@@ -95,6 +96,26 @@ export default function SickLeaveModal({ employee, onClose, onCreated, declaredV
   // row that the new submission could attach to.
   const [priorPending, setPriorPending] = useState(null);
 
+  // Path B state — submit-with-cert flow.
+  //   pdfFile        — the File the staff dropped/picked (kept in memory only,
+  //                    never uploaded; we extract fields and discard per the
+  //                    privacy decision).
+  //   extracted      — the structured fields the extractor returned, or null.
+  //                    Locked once set: the staff cannot edit individual
+  //                    fields — if extraction is wrong, they re-upload.
+  //   extractError   — error from a failed extraction, surfaced inline.
+  //   extracting     — true while the PDF is being read. Disables UI.
+  //   attachToPrior  — staff's choice when a priorPending exists: true
+  //                    means PATCH that row, false means create a fresh
+  //                    sick leave anyway. Defaults true (single-illness-
+  //                    single-record is the integrity-preserving default).
+  const [pdfFile,       setPdfFile]       = useState(null);
+  const [extracted,     setExtracted]     = useState(null);
+  const [extractError,  setExtractError]  = useState('');
+  const [extracting,    setExtracting]    = useState(false);
+  const [attachToPrior, setAttachToPrior] = useState(true);
+  const fileInputRef = useRef(null);
+
   // When the staff picks Path B, look up any open pending_certificate
   // row for them. Sub-commit B uses this to drive the "attach to
   // existing declaration" banner. We do this here in sub-commit A so
@@ -157,6 +178,158 @@ export default function SickLeaveModal({ employee, onClose, onCreated, declaredV
       onCreated?.(created);
     } catch (e) {
       setError(e?.message || 'Could not save your sick declaration. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ─── Path B handlers ────────────────────────────────────────────────────
+
+  /** Read the picked/dropped File, run the extractor, surface result or error. */
+  async function handlePdfFile(file) {
+    if (!file) return;
+    setPdfFile(file);
+    setExtracted(null);
+    setExtractError('');
+    setExtracting(true);
+    try {
+      const result = await extractFromPdf(file);
+      // Validate the extracted fields make sense before locking them in:
+      //   • leaveId is required (extractor enforces this; throws NOT_SEHHATY)
+      //   • dates should be present, but absence is allowed if leaveId is
+      //     valid — Bashaier still verifies on Sehhaty itself.
+      setExtracted(result);
+    } catch (e) {
+      // The extractor throws with .code so we can show the right message.
+      // Generic fallback covers the case of an unknown error.
+      setExtractError(e?.message || 'Could not read this PDF. Please try again with the original Sehhaty certificate.');
+      setPdfFile(null);
+    } finally {
+      setExtracting(false);
+    }
+  }
+
+  /** Reset upload state — staff clicked "Looks wrong? Upload another". */
+  function handleResetExtraction() {
+    setPdfFile(null);
+    setExtracted(null);
+    setExtractError('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  /** Drag-and-drop handlers for the upload zone. */
+  function handleDragOver(e) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+  function handleDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const file = e.dataTransfer?.files?.[0];
+    if (file) handlePdfFile(file);
+  }
+
+  // True when Path B is ready to submit: an extraction has completed
+  // successfully (leave ID found at minimum). Other fields might still
+  // be null — that's OK because Bashaier validates against Sehhaty itself.
+  const canSubmitB = !!extracted?.leaveId && !extracting;
+
+  /** Submit Path B. Two branches:
+   *
+   *  1) Prior pending_certificate row exists AND staff said "yes, attach":
+   *     PATCH that row with the extracted fields. Stage transitions from
+   *     'pending_certificate' to 'pending_manager' so it enters the normal
+   *     review flow. The original declaration's reason is preserved. If
+   *     the cert dates extend beyond the original declaration, end_date
+   *     is updated silently — Bashaier sees the change in the audit trail.
+   *
+   *  2) No prior row, OR staff said "no, this is separate":
+   *     INSERT a fresh leave_requests row in 'pending_manager' stage with
+   *     the extracted fields. Acts like a normal sick-leave submission
+   *     except no manual typing was required.
+   */
+  async function handleSubmitWithCert() {
+    if (busy || !canSubmitB) return;
+    setBusy(true);
+    setError('');
+    try {
+      const ex = extracted;
+      // Compute days from start/end if the extractor didn't directly
+      // return it. End date may equal start date for single-day certs.
+      const startDate = ex.startDate || new Date().toISOString().slice(0, 10);
+      const endDate   = ex.endDate || startDate;
+      const days = ex.days || (() => {
+        const a = new Date(startDate); const b = new Date(endDate);
+        const diff = Math.round((b - a) / 86400000) + 1;
+        return diff > 0 ? diff : 1;
+      })();
+
+      // Compose a reason note that records the source of the data.
+      // Bashaier sees this in the leave row and the approval email so
+      // it's clear the staff submitted via the PDF flow vs. manual entry.
+      const reasonText = `Submitted via Sehhaty PDF · extracted ${ex.source === 'text_layer' ? 'from PDF text layer' : 'via OCR fallback'}`;
+
+      const useAttach = !!(priorPending && attachToPrior);
+
+      if (useAttach) {
+        // Branch 1: PATCH the prior pending_certificate row.
+        const patch = {
+          stage:                  'pending_manager',
+          sehhaty_code:           ex.leaveId,
+          start_date:             startDate,
+          end_date:               endDate,
+          days:                   days,
+          // Cross-check fields — same shape Bashaier types into the
+          // HrApprovalModal cross-check view. Pre-populating these from
+          // the staff-side extraction means Bashaier's cross-check is
+          // already filled in when she opens the row, and she just
+          // confirms against Sehhaty.
+          sehhaty_seen_name:      ex.name      || null,
+          sehhaty_seen_id_number: ex.idNumber  || null,
+          sehhaty_seen_start:     ex.startDate || null,
+          sehhaty_seen_end:       ex.endDate   || null,
+          sehhaty_seen_days:      ex.days      ?? null,
+          sehhaty_seen_issue_date: ex.issueDate || null,
+          sehhaty_seen_doctor:    ex.doctor    || null,
+          sehhaty_seen_specialty: ex.specialty || null,
+          // Append the submission note to the existing reason without
+          // overwriting the staff's original declared reason. The audit
+          // trail can reconstruct exactly what happened.
+          reason: priorPending.reason
+            ? `${priorPending.reason} · ${reasonText}`
+            : reasonText,
+        };
+        await directPatch('leave_requests', 'id', priorPending.id, patch, { timeoutMs: 12000 });
+        onCreated?.({ ...priorPending, ...patch });
+      } else {
+        // Branch 2: fresh sick leave submission.
+        const row = {
+          employee_id:            employee.id,
+          leave_type_id:          'sick',
+          start_date:             startDate,
+          end_date:               endDate,
+          days:                   days,
+          is_half_day:            false,
+          stage:                  'pending_manager',
+          reason:                 reasonText,
+          sehhaty_code:           ex.leaveId,
+          sehhaty_seen_name:      ex.name      || null,
+          sehhaty_seen_id_number: ex.idNumber  || null,
+          sehhaty_seen_start:     ex.startDate || null,
+          sehhaty_seen_end:       ex.endDate   || null,
+          sehhaty_seen_days:      ex.days      ?? null,
+          sehhaty_seen_issue_date: ex.issueDate || null,
+          sehhaty_seen_doctor:    ex.doctor    || null,
+          sehhaty_seen_specialty: ex.specialty || null,
+          // No sick_declared_at on this branch — this is a normal
+          // submission that came in WITH the cert, never went through
+          // the pending_certificate stage.
+        };
+        const created = await directPost('leave_requests', row, { timeoutMs: 12000 });
+        onCreated?.(created);
+      }
+    } catch (e) {
+      setError(e?.message || 'Could not submit your sick leave. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -350,32 +523,149 @@ export default function SickLeaveModal({ employee, onClose, onCreated, declaredV
           </div>
         )}
 
-        {/* PATH B — submit-with-cert (placeholder in sub-commit A;
-            sub-commit B replaces this block with the PDF upload zone,
-            extracted-fields preview, and prior-declaration banner). */}
+        {/* PATH B — submit with Sehhaty PDF.
+            Three sub-states based on extraction progress:
+              1. No file picked yet → upload zone (drag-drop or click)
+              2. Extracting → loader with "Reading your certificate…"
+              3. Extracted successfully → locked field preview + reset btn
+            Errors from extraction render inline above the zone. */}
         {path === 'submit' && (
           <div className="px-6 py-5 space-y-4">
+            {/* Prior-declaration banner.
+                When a pending_certificate row exists, we surface it AND let
+                the staff opt out of attaching ('No, this is a separate
+                illness'). Default is to attach because that preserves
+                single-illness-single-record integrity, which is what we
+                want 95% of the time. */}
             {priorPending && (
-              <div className="rounded-lg p-3 text-[11px]"
+              <div className="rounded-lg p-3 space-y-2 text-[11px]"
                    style={{ background: '#DBEAFE', color: '#1E3A8A', border: '1px solid #BFDBFE' }}>
-                <strong>You declared sick on {priorPending.start_date}.</strong>{' '}
-                When you submit your certificate, it will be attached to that
-                declaration so the system keeps a single record per illness.
+                <div>
+                  <strong>You declared sick on {priorPending.start_date}.</strong>{' '}
+                  Is this the certificate for that declaration?
+                </div>
+                <div className="flex gap-2">
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      checked={attachToPrior === true}
+                      onChange={() => setAttachToPrior(true)}
+                      style={{ accentColor: '#1E3A8A' }}
+                    />
+                    <span>Yes, attach to my declaration</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      checked={attachToPrior === false}
+                      onChange={() => setAttachToPrior(false)}
+                      style={{ accentColor: '#1E3A8A' }}
+                    />
+                    <span>No, this is separate</span>
+                  </label>
+                </div>
               </div>
             )}
-            <div className="rounded-lg p-6 text-center"
-                 style={{ background: '#FFFFFF', border: '2px dashed #E5E5E0' }}>
-              <FileText className="w-10 h-10 mx-auto mb-2" style={{ color: '#9CA3AF' }} />
-              <div className="text-sm" style={{ fontWeight: 600, color: '#0A0A0A' }}>
-                Sehhaty PDF upload — coming next
+
+            {/* Extraction error — strict failure as per design. */}
+            {extractError && (
+              <div className="rounded-lg p-3 text-[11px] flex items-start gap-2"
+                   style={{ background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}>
+                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                <div>{extractError}</div>
               </div>
-              <div className="text-[11px] mt-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>
-                The next portal update will let you drop your Sehhaty PDF here. The system reads the leave ID, dates, and doctor automatically — no typing.
+            )}
+
+            {/* State 1 — empty upload zone */}
+            {!pdfFile && !extracting && (
+              <div
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click(); }}
+                className="rounded-lg p-8 text-center cursor-pointer transition-colors hover:bg-amber-50"
+                style={{ background: '#FFFFFF', border: '2px dashed #FCA5A5' }}
+              >
+                <Upload className="w-10 h-10 mx-auto mb-3" style={{ color: '#B91C1C' }} />
+                <div className="text-sm" style={{ fontWeight: 600, color: '#0A0A0A' }}>
+                  Drop your Sehhaty PDF here, or click to choose
+                </div>
+                <div className="text-[11px] mt-1.5" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+                  The system will read the leave ID, dates, and doctor automatically.
+                </div>
+                <div className="text-[10px] mt-2" style={{ color: '#0A0A0A', opacity: 0.55 }}>
+                  Original PDF from Seha.sa only. Photos and screenshots aren't accepted.
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  onChange={(e) => handlePdfFile(e.target.files?.[0])}
+                  className="hidden"
+                />
               </div>
-              <div className="text-[10px] mt-3" style={{ color: '#0A0A0A', opacity: 0.5 }}>
-                For now, please use "Not yet" above and HR will reconcile the certificate when you provide it.
+            )}
+
+            {/* State 2 — extracting */}
+            {extracting && (
+              <div className="rounded-lg p-8 text-center"
+                   style={{ background: '#FFFFFF', border: '2px dashed #FCA5A5' }}>
+                <Loader2 className="w-10 h-10 mx-auto mb-3 animate-spin" style={{ color: '#B91C1C' }} />
+                <div className="text-sm" style={{ fontWeight: 600, color: '#0A0A0A' }}>
+                  Reading your certificate…
+                </div>
+                <div className="text-[10px] mt-1" style={{ color: '#0A0A0A', opacity: 0.6 }}>
+                  Usually takes a couple of seconds.
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* State 3 — extracted successfully, show locked preview */}
+            {extracted && !extracting && (
+              <div className="rounded-lg overflow-hidden"
+                   style={{ background: '#FFFFFF', border: '1px solid #A7F3D0' }}>
+                <div className="flex items-center justify-between px-3 py-2 border-b"
+                     style={{ background: '#ECFDF5', borderColor: '#A7F3D0' }}>
+                  <div className="flex items-center gap-2 text-[11px]" style={{ color: '#065F46', fontWeight: 600 }}>
+                    <Check className="w-3.5 h-3.5" />
+                    Certificate read successfully
+                    {extracted.source === 'ocr_fallback' && (
+                      <span className="text-[9px] tracking-wider opacity-70">VIA OCR</span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleResetExtraction}
+                    disabled={busy}
+                    className="text-[10px] inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-white"
+                    style={{ color: '#065F46' }}
+                  >
+                    <RefreshCw className="w-3 h-3" /> Looks wrong? Upload another
+                  </button>
+                </div>
+                <div className="p-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
+                  <PreviewField label="Leave ID"   value={extracted.leaveId} mono required />
+                  <PreviewField label="Iqama / ID" value={extracted.idNumber || '—'} mono />
+                  <PreviewField label="Start"      value={extracted.startDate || '—'} />
+                  <PreviewField label="End"        value={extracted.endDate || '—'} />
+                  <PreviewField label="Days"       value={extracted.days || '—'} />
+                  <PreviewField label="Issue date" value={extracted.issueDate || '—'} />
+                  <PreviewField label="Doctor"     value={extracted.doctor || '—'} wide />
+                  <PreviewField label="Specialty"  value={extracted.specialty || '—'} wide />
+                </div>
+                <div className="px-3 pb-3 text-[10px]" style={{ color: '#0A0A0A', opacity: 0.6 }}>
+                  These values are read from the PDF and cannot be edited. If anything looks wrong, click "Upload another" above.
+                </div>
+              </div>
+            )}
+
+            {error && (
+              <div className="px-3 py-2 rounded-lg text-[11px]" style={{ background: '#FEE2E2', color: '#991B1B' }}>
+                {error}
+              </div>
+            )}
           </div>
         )}
 
@@ -406,12 +696,15 @@ export default function SickLeaveModal({ employee, onClose, onCreated, declaredV
           {path === 'submit' && (
             <button
               type="button"
-              disabled
-              className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm opacity-50 cursor-not-allowed"
+              onClick={handleSubmitWithCert}
+              disabled={busy || !canSubmitB}
+              className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm transition-colors disabled:opacity-50"
               style={{ background: '#0F4C2A', color: '#FFFFFF', fontWeight: 600 }}
-              title="PDF upload available in the next portal update"
+              title={canSubmitB ? 'Submit this certificate to HR for review' : 'Upload your Sehhaty PDF first'}
             >
-              <Check className="w-4 h-4" /> Submit sick leave for HR review
+              {busy
+                ? <><Loader2 className="w-4 h-4 animate-spin" /> Submitting…</>
+                : <><Check className="w-4 h-4" /> Submit sick leave for HR review</>}
             </button>
           )}
         </div>
@@ -450,5 +743,42 @@ function PathButton({ selected, accent, onClick, title, titleArabic, hint, icon 
         {hint}
       </div>
     </button>
+  );
+}
+
+// PreviewField — single read-only field row in the Path B extracted-
+// preview card. Label above value, value rendered as plain text (not
+// an input) to make it visually clear this is locked. The 'wide' prop
+// makes the cell span both columns for fields that can be long
+// (Doctor name, Specialty in Arabic). The 'mono' prop gives monospace
+// font for IDs/codes. The 'required' prop adds a small red badge if
+// the field is the leave ID and present.
+function PreviewField({ label, value, mono, wide, required }) {
+  return (
+    <div style={wide ? { gridColumn: 'span 2' } : undefined}>
+      <div className="flex items-center gap-1.5 mb-0.5">
+        <span className="text-[9px] tracking-wider font-bold"
+              style={{ color: '#0A0A0A', opacity: 0.55 }}>
+          {label}
+        </span>
+        {required && value && value !== '—' && (
+          <span className="inline-flex items-center justify-center w-3 h-3 rounded-full text-[8px] font-bold"
+                style={{ background: '#D1FAE5', color: '#065F46' }}>
+            ✓
+          </span>
+        )}
+      </div>
+      <div
+        style={{
+          fontSize: '13px',
+          fontFamily: mono ? 'ui-monospace, SFMono-Regular, monospace' : 'inherit',
+          fontWeight: 600,
+          color: '#0A0A0A',
+          wordBreak: 'break-word',
+        }}
+      >
+        {value}
+      </div>
+    </div>
   );
 }

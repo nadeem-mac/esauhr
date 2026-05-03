@@ -103,11 +103,24 @@ export async function extractFromImage(imageInput) {
   const text = result?.data?.text || '';
   const confidence = result?.data?.confidence ?? 0;
 
-  // Field-by-field regex extraction. The Sehhaty layout is fixed
-  // and the labels are predictable, so regex is more reliable than
-  // a heuristic. Each field is independently optional — if the
-  // regex doesn't match, we return null for that field rather than
-  // failing the whole extraction.
+  return {
+    ...extractFieldsFromText(text),
+    confidence,
+    rawText: text,
+  };
+}
+
+/**
+ * Pure text-to-fields extractor. Takes raw text (from any source —
+ * Tesseract OCR, PDF text-layer extraction, paste-from-clipboard) and
+ * runs the same regex pipeline. Returns the same field shape as
+ * extractFromImage minus confidence/rawText (which are OCR-specific).
+ *
+ * Exported so the PDF extractor (sehhatyPdfExtract.js) can reuse the
+ * same matchers without duplicating the patterns. Single source of
+ * truth for "what does a Sehhaty cert look like as text".
+ */
+export function extractFieldsFromText(text) {
   return {
     leaveId:    matchLeaveId(text),
     idNumber:   matchIdNumber(text),
@@ -118,8 +131,6 @@ export async function extractFromImage(imageInput) {
     name:       matchPatientName(text),
     doctor:     matchDoctorName(text),
     specialty:  matchSpecialty(text),
-    confidence,
-    rawText:    text,
   };
 }
 
