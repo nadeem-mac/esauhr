@@ -550,10 +550,12 @@ export default function AttendanceView({ me, employees }) {
   // can only fire one email at a time (browser limitation), so the
   // UX is sequential — but the modal stays open and tracks progress.
   // bulkSession shape: { kind: 'late'|'early'|'missed', queue: entry[],
-  //                      sentIds: Set<string> }
-  // Bulk currently sends in live mode only. If pre-launch test bulk is
-  // ever needed, extend this shape with a mode field — for now Bashaier
-  // uses per-row Test buttons during the pre-launch period.
+  //                      sentIds: Set<string>, mode: 'live'|'test' }
+  // The mode field defaults to 'live' (production wording) but Bashaier
+  // can flip to 'test' inside the bulk modal during the pre-launch
+  // period — same as the per-row Test button, but applied across the
+  // whole queue. Mirrors the per-row mode toggle so a bulk session and
+  // a per-row click never produce divergent wording for the same kind.
   const [bulkSession, setBulkSession] = useState(null);
 
   // View mode for the daily review. The xlsx file's date relative to
@@ -1606,7 +1608,7 @@ export default function AttendanceView({ me, employees }) {
             iconColor="#BE123C"
             barFrom="#FB7185" barTo="#BE123C"
             empty="Nobody arrived late — well done team."
-            onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'late', queue: rows, sentIds: new Set() }) : null}
+            onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'late', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
             entries={detection.late.map(e => {
               // Detail line carries WITH/WITHOUT permission status. Bashaier
               // wants the difference visible at a glance.
@@ -1678,7 +1680,7 @@ export default function AttendanceView({ me, employees }) {
             iconColor="#A16207"
             barFrom="#FACC15" barTo="#A16207"
             empty="Nobody left early — full day attendance recorded."
-            onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'early', queue: rows, sentIds: new Set() }) : null}
+            onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'early', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
             entries={detection.early.map(e => {
               const baseDetail = 'Punched out at ' + e.punchOutStr + ' — '
                 + e.minutesEarly + ' min before scheduled ' + e.scheduledEnd
@@ -1741,7 +1743,7 @@ export default function AttendanceView({ me, employees }) {
             iconColor="#1D4ED8"
             barFrom="#60A5FA" barTo="#1D4ED8"
             empty="All staff punched in and out — perfect compliance."
-            onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'missed', queue: rows, sentIds: new Set() }) : null}
+            onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'missed', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
             entries={detection.missed.map(e => {
               const types = e.missingType === 'both' ? ['missed_in', 'missed_out']
                 : e.missingType === 'in' ? ['missed_in'] : ['missed_out'];
@@ -1841,18 +1843,23 @@ export default function AttendanceView({ me, employees }) {
       {/* Bulk action modal — sequential email queue. Bashaier opens
           the first draft, sends in her mail client, returns to mark
           it done, then opens the next. The modal stays open across
-          the queue so progress is visible and she can stop anywhere. */}
+          the queue so progress is visible and she can stop anywhere.
+          Mode toggle (Live/Test) lives inside the modal — the parent
+          just passes the current session and updates `mode` when
+          the toggle is clicked. */}
       {bulkSession && (
         <BulkActionModal
           session={bulkSession}
           csvDate={csvDate}
           getManagerEmail={getManagerEmail}
           onClose={() => setBulkSession(null)}
+          onSetMode={(nextMode) => setBulkSession(prev => prev ? { ...prev, mode: nextMode } : prev)}
           onOpenDraft={(entry) => {
             const k = bulkSession.kind;
-            if (k === 'late')   handleEmailLate(entry);
-            else if (k === 'early')  handleEmailEarly(entry);
-            else if (k === 'missed') handleEmailMissed(entry);
+            const m = bulkSession.mode || 'live';
+            if (k === 'late')   handleEmailLate(entry, m);
+            else if (k === 'early')  handleEmailEarly(entry, m);
+            else if (k === 'missed') handleEmailMissed(entry, m);
             // Mark this one in the queue's sent set so the modal can
             // strike it through. Also flips the row's UI state below.
             setBulkSession(prev => prev ? {
@@ -2352,8 +2359,9 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, onCancel, onConf
 // email per click, so we don't try to batch — the modal handles the
 // orchestration. Closing the modal at any point is fine; she can
 // resume by clicking the bulk button again on a re-rendered section.
-function BulkActionModal({ session, csvDate, getManagerEmail, onClose, onOpenDraft }) {
+function BulkActionModal({ session, csvDate, getManagerEmail, onClose, onOpenDraft, onSetMode }) {
   const { kind, queue, sentIds } = session;
+  const mode = session.mode || 'live';
   const remaining = queue.filter(e => !sentIds.has(e.id));
   const total = queue.length;
   const done  = total - remaining.length;
@@ -2381,6 +2389,21 @@ function BulkActionModal({ session, csvDate, getManagerEmail, onClose, onOpenDra
                 : kind === 'early' ? 'Early departures'
                 : 'Missed punches';
 
+  // Per-kind visual cues — buttons + accent colours flip based on mode
+  // so Bashaier can tell at a glance which wording the queue is using.
+  // Live = the production green we use elsewhere; Test = the same
+  // amber/yellow that the per-row Test button uses, so the visual
+  // language is consistent across single and bulk actions.
+  const isTest = mode === 'test';
+  const draftBtnBg     = isTest ? '#FFFBEB' : '#0F4C2A';
+  const draftBtnFg     = isTest ? '#92400E' : '#FFFFFF';
+  const draftBtnBorder = isTest ? '1px solid #FDE68A' : 'none';
+  const headerKickerBg = isTest ? '#FEF3C7' : '#0A0A0A';
+  const headerKickerFg = isTest ? '#92400E' : '#FFFDF7';
+  const modeNotice     = isTest
+    ? 'Pre-launch wording — no portal references. Switch to Live once the portal is announced.'
+    : 'Production wording — includes the ESAU HR Portal links.';
+
   return (
     <div
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
@@ -2401,9 +2424,12 @@ function BulkActionModal({ session, csvDate, getManagerEmail, onClose, onOpenDra
       >
         {/* Header */}
         <div className="flex items-start justify-between px-6 py-5 border-b" style={{ borderColor: '#E5E0D5' }}>
-          <div>
-            <div className="text-[10px] tracking-[0.25em] mb-1" style={{ fontWeight: 700, color: '#0A0A0A' }}>
-              BULK EMAIL · {heading.toUpperCase()}
+          <div className="min-w-0 flex-1">
+            <div className="inline-flex items-center gap-2 mb-2">
+              <span className="text-[10px] tracking-[0.25em] px-2 py-0.5 rounded-full"
+                    style={{ fontWeight: 700, background: headerKickerBg, color: headerKickerFg }}>
+                BULK · {heading.toUpperCase()} · {isTest ? 'TEST' : 'LIVE'}
+              </span>
             </div>
             <h2 style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#0A0A0A', fontWeight: 500 }}>
               {done} of {total} drafts opened
@@ -2413,9 +2439,50 @@ function BulkActionModal({ session, csvDate, getManagerEmail, onClose, onOpenDra
                 ? 'All drafts have been opened. Close when done.'
                 : 'Click "Open" beside each row to launch the draft in your mail client. Send manually, then continue.'}
             </div>
+            {/* Mode toggle — segmented control. Disabled mid-queue so a
+                half-sent batch never mixes Live and Test wording. */}
+            <div className="mt-3 inline-flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] tracking-[0.18em]" style={{ fontWeight: 700, color: '#0A0A0A' }}>
+                MODE
+              </span>
+              <div className="inline-flex rounded-full overflow-hidden border" style={{ borderColor: '#D4C7AB', background: '#FFFFFF' }}>
+                <button type="button"
+                  onClick={() => onSetMode && onSetMode('live')}
+                  disabled={done > 0 || !onSetMode}
+                  className="text-[11px] px-3 py-1.5 disabled:opacity-50"
+                  style={{
+                    background: !isTest ? '#0F4C2A' : 'transparent',
+                    color:      !isTest ? '#FFFFFF' : '#0A0A0A',
+                    fontWeight: !isTest ? 700 : 500,
+                  }}
+                  title="Production wording — references the ESAU HR Portal.">
+                  Live
+                </button>
+                <button type="button"
+                  onClick={() => onSetMode && onSetMode('test')}
+                  disabled={done > 0 || !onSetMode}
+                  className="text-[11px] px-3 py-1.5 disabled:opacity-50"
+                  style={{
+                    background: isTest ? '#FEF3C7' : 'transparent',
+                    color:      isTest ? '#92400E' : '#0A0A0A',
+                    fontWeight: isTest ? 700 : 500,
+                  }}
+                  title="Pre-launch wording — no portal references. For use until the portal is officially announced.">
+                  Test
+                </button>
+              </div>
+              {done > 0 && (
+                <span className="text-[10px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+                  Locked — {done} draft{done === 1 ? '' : 's'} already opened in this mode.
+                </span>
+              )}
+            </div>
+            <div className="text-[11px] mt-2" style={{ color: '#0A0A0A', opacity: 0.85 }}>
+              {modeNotice}
+            </div>
           </div>
           <button type="button" onClick={onClose}
-            className="p-1.5 rounded-full hover:bg-black/5 transition-colors" aria-label="Close">
+            className="p-1.5 rounded-full hover:bg-black/5 transition-colors flex-shrink-0" aria-label="Close">
             <X className="w-4 h-4" style={{ color: '#0A0A0A' }}/>
           </button>
         </div>
@@ -2426,7 +2493,9 @@ function BulkActionModal({ session, csvDate, getManagerEmail, onClose, onOpenDra
             <div className="h-1.5 rounded-full overflow-hidden" style={{ background: '#E5E0D5' }}>
               <div className="h-full transition-all" style={{
                 width: `${(done / total) * 100}%`,
-                background: 'linear-gradient(90deg, #047857 0%, #0F4C2A 100%)',
+                background: isTest
+                  ? 'linear-gradient(90deg, #FBBF24 0%, #92400E 100%)'
+                  : 'linear-gradient(90deg, #047857 0%, #0F4C2A 100%)',
               }}/>
             </div>
           </div>
@@ -2482,8 +2551,11 @@ function BulkActionModal({ session, csvDate, getManagerEmail, onClose, onOpenDra
                   <button type="button" onClick={() => onOpenDraft(entry)}
                     disabled={!entry.employee.email}
                     className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full disabled:opacity-50"
-                    style={{ background: '#0F4C2A', color: '#FFFFFF', fontWeight: 600 }}>
-                    <Mail className="w-3.5 h-3.5"/> Open draft
+                    style={{ background: draftBtnBg, color: draftBtnFg, fontWeight: 600, border: draftBtnBorder }}
+                    title={isTest
+                      ? 'Open the pre-launch (test) draft — no portal references.'
+                      : 'Open the production draft — references the ESAU HR Portal.'}>
+                    <Mail className="w-3.5 h-3.5"/> Open {isTest ? 'test ' : ''}draft
                   </button>
                 )}
               </li>
