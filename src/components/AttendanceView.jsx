@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom';
 import {
   Upload, FileText, Clock, AlertTriangle, Mail, CheckCircle2,
-  X, Calendar, Briefcase, Users, Send, Sparkles, Layers, Sunrise
+  X, Calendar, Briefcase, Users, Send, Sparkles
 } from 'lucide-react';
 import { directGet, directPost } from '../supabaseClient.js';
 import { parseTimeCardXlsx, TimeCardParseError } from '../lib/timeCard.js';
@@ -212,6 +212,20 @@ function isKsaWeekend(yyyymmdd) {
   const d = new Date(yyyymmdd + 'T00:00:00');
   const day = d.getDay();
   return day === 5 || day === 6;
+}
+
+// Most-recent working day before the given date. Skips KSA weekend
+// (Fri+Sat). e.g. Sun → Thu (skip Sat+Fri); Tue → Mon. Used for the
+// 2-day file workflow: when Bashaier uploads a file on day X, "yesterday"
+// for end-of-day checks (early departures + missed punch-out) is the
+// previous working day, not necessarily X-1.
+function previousWorkingDay(yyyymmdd) {
+  if (!yyyymmdd) return null;
+  const d = new Date(yyyymmdd + 'T00:00:00');
+  do {
+    d.setDate(d.getDate() - 1);
+  } while (isKsaWeekend(d.toISOString().slice(0, 10)));
+  return d.toISOString().slice(0, 10);
 }
 
 function formatDateLong(yyyymmdd) {
@@ -559,22 +573,11 @@ export default function AttendanceView({ me, employees }) {
   // a per-row click never produce divergent wording for the same kind.
   const [bulkSession, setBulkSession] = useState(null);
 
-  // View mode for the daily review. The xlsx file's date relative to
-  // today determines what checks are meaningful:
-  //   • 'morning' — file is for TODAY. Staff haven't punched out yet,
-  //                 so only the Late check is reliable. Early-departure
-  //                 and Missed-punch detection on a same-day file would
-  //                 produce false positives (everyone "looks incomplete"
-  //                 because they haven't left work yet).
-  //   • 'eod'     — file is for a previous day. Full check applies:
-  //                 late + early + missed are all real signals because
-  //                 the day's punches are complete.
-  //
-  // Auto-detected from `dateSanity.kind === 'TODAY'` below. Bashaier
-  // can override via the banner button (e.g. she wants to peek at
-  // partial early-departure data on today's file for any reason). The
-  // override is ephemeral — it resets every time a new file loads.
-  const [viewModeOverride, setViewModeOverride] = useState(null); // null | 'morning' | 'eod'
+  // View mode is no longer needed — the 2-day workflow runs both
+  // morning (today's late + missed-in) and end-of-day (yesterday's
+  // early + missed-out) checks simultaneously off a single upload.
+  // The previous viewMode + viewModeOverride state was retired when
+  // the workflow shifted; one upload now covers both passes.
 
   const [approvedLeaves, setApprovedLeaves]       = useState([]);
   const [approvedPermissions, setApprovedPerms]   = useState([]); // for the data date
@@ -600,27 +603,34 @@ export default function AttendanceView({ me, employees }) {
   // shape here once at ingestion time so detection stays untouched —
   // less risk of regressing the shift-override and weekend handling
   // that already work.
-  // Shape parsed rows for the detection logic, AND filter to just the
-  // file's data date. The xlsx export sometimes contains rows for
-  // adjacent dates (we've seen 3-day windows in real exports — likely
-  // a device firmware quirk where the daily file pulls a small look-
-  // back). Without filtering, those off-date rows feed into detection
-  // and produce ghost violations against staff for days that aren't
-  // even being reviewed (e.g. a Saturday partial punch flagged as a
-  // weekday late arrival). Confirmed via real-file repro May 3 2026:
-  // employee H94091 appeared as both LATE 10:33 and EARLY 13:07 because
-  // his actual May 3 row (07:43–17:13, on time) was being shadowed by
-  // a Saturday May 2 row (a KSA weekend, no review expected at all).
+  // ── Two-day data window ──────────────────────────────────────────────
+  // The new daily workflow asks Bashaier to download a TWO-DAY export
+  // (yesterday + today) so a single upload covers both passes:
   //
-  // Filter rule: keep rows where r.date === parsedData.dataDate. The
-  // off-date row count is surfaced via parsed.offDateCount so we can
-  // optionally warn the user that the file is multi-day.
+  //   Today's data      → late arrivals + missed punch-in
+  //   Yesterday's data  → early departures + missed punch-out
+  //
+  // Each row in the parsed result carries its own date. `csvDate` is the
+  // file's primary (latest) date; `yesterdayDate` is the most recent
+  // working day before it. Both are used to filter rows + fetch leaves
+  // and permissions covering the full window.
+  const csvDate = useMemo(() => parsedData.dataDate || null, [parsedData.dataDate]);
+  const yesterdayDate = useMemo(() => previousWorkingDay(csvDate), [csvDate]);
+  const csvIsWeekend = isKsaWeekend(csvDate);
+
+  // Shape parsed rows for the detection logic, AND filter to today + yesterday.
+  // The xlsx export sometimes contains rows for dates outside the
+  // 2-day window (legacy single-day flow used to land here too;
+  // multi-day exports occasionally include a small lookback). Anything
+  // outside today + yesterday is dropped, with the count surfaced via
+  // parsed.offDateCount so a small inline warning can appear in the
+  // file summary.
   const parsed = useMemo(() => {
     const allRows = parsedData.rows || [];
-    const targetDate = parsedData.dataDate;
-    const onDate = targetDate ? allRows.filter(r => r.date === targetDate) : allRows;
-    const offDateCount = allRows.length - onDate.length;
-    const rows = onDate.map(r => ({
+    const inWindow = (r) => r.date === csvDate || r.date === yesterdayDate;
+    const onWindow = (csvDate || yesterdayDate) ? allRows.filter(inWindow) : allRows;
+    const offDateCount = allRows.length - onWindow.length;
+    const rows = onWindow.map(r => ({
       'Employee ID': r.psn,
       'First Name':  r.name,
       'Date':        r.date,
@@ -630,20 +640,25 @@ export default function AttendanceView({ me, employees }) {
       // uniqueCount / midDayPunches / rawPunches without re-parsing.
       _tc: r,
     }));
-    return { headers: ['Employee ID','First Name','Date','First Punch','Last Punch'], rows, offDateCount };
-  }, [parsedData]);
+    // Convenience flags so render can hide sections when the file
+    // doesn't actually contain that day's data.
+    const hasTodayData     = rows.some(r => r['Date'] === csvDate);
+    const hasYesterdayData = !!yesterdayDate && rows.some(r => r['Date'] === yesterdayDate);
+    return {
+      headers: ['Employee ID','First Name','Date','First Punch','Last Punch'],
+      rows, offDateCount, hasTodayData, hasYesterdayData,
+    };
+  }, [parsedData, csvDate, yesterdayDate]);
 
-  const csvDate = useMemo(() => parsedData.dataDate || null, [parsedData.dataDate]);
-  const csvIsWeekend = isKsaWeekend(csvDate);
-
-  // Fetch approved leaves for the CSV date
+  // Fetch approved leaves overlapping the 2-day window.
   useEffect(() => {
     if (!csvDate) { setApprovedLeaves([]); return; }
     let cancelled = false;
+    const windowStart = yesterdayDate || csvDate;
     (async () => {
       try {
         const data = await directGet(
-          'leave_requests?select=employee_id,start_date,end_date,status&status=eq.approved&start_date=lte.' + csvDate + '&end_date=gte.' + csvDate
+          'leave_requests?select=employee_id,start_date,end_date,status&status=eq.approved&start_date=lte.' + csvDate + '&end_date=gte.' + windowStart
         );
         if (!cancelled) setApprovedLeaves(data || []);
       } catch (e) {
@@ -652,7 +667,7 @@ export default function AttendanceView({ me, employees }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [csvDate]);
+  }, [csvDate, yesterdayDate]);
 
   // Fetch approved permission_requests for the data date so the
   // detection step can split late/early into WITH-permission vs
@@ -666,9 +681,13 @@ export default function AttendanceView({ me, employees }) {
     let cancelled = false;
     (async () => {
       try {
+        // Two-day window: pull permissions for both today and yesterday
+        // so the detection cross-ref works against both day's rows.
+        const dates = [csvDate, yesterdayDate].filter(Boolean);
+        const inList = '(' + dates.map(d => '"' + d + '"').join(',') + ')';
         const data = await directGet(
           'permission_requests?select=id,employee_id,permission_date,type,time_from,time_to,hours,reason,stage,status'
-          + '&permission_date=eq.' + csvDate
+          + '&permission_date=in.' + inList
           + '&stage=eq.approved'
         );
         if (!cancelled) setApprovedPerms(data || []);
@@ -678,7 +697,7 @@ export default function AttendanceView({ me, employees }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [csvDate]);
+  }, [csvDate, yesterdayDate]);
 
   // P4: fetch employee_shifts the staff have accepted for the CSV's date.
   // These take precedence over the default 08:00–17:00 / SUP 08:00–16:00.
@@ -773,8 +792,18 @@ export default function AttendanceView({ me, employees }) {
     return () => { cancelled = true; };
   }, [csvDate]);
 
-  const onLeaveOnDate = useCallback((empId) => {
-    return approvedLeaves.some(l => String(l.employee_id) === String(empId));
+  // Date-aware leave check. The 2-day file flow needs to evaluate
+  // leave coverage independently for today's rows vs yesterday's rows,
+  // so the date is part of the lookup. Returns true when the
+  // employee has an approved leave whose [start,end] range straddles
+  // the given date.
+  const onLeaveOnDate = useCallback((empId, dateStr) => {
+    if (!dateStr) return false;
+    return approvedLeaves.some(l =>
+      String(l.employee_id) === String(empId)
+      && l.start_date <= dateStr
+      && l.end_date   >= dateStr
+    );
   }, [approvedLeaves]);
 
   // P4: fast lookup of accepted-shift override for the current csvDate, keyed
@@ -845,8 +874,11 @@ export default function AttendanceView({ me, employees }) {
   const permIndex = useMemo(() => {
     const m = new Map();
     (approvedPermissions || []).forEach(p => {
-      if (!p?.employee_id || !p?.type) return;
-      const key = String(p.employee_id).toUpperCase() + '|' + p.type;
+      if (!p?.employee_id || !p?.type || !p?.permission_date) return;
+      // Key includes the date so a 2-day file can cross-ref permissions
+      // independently for today vs yesterday. Same employee can have a
+      // permission on one day and not the other.
+      const key = String(p.employee_id).toUpperCase() + '|' + p.type + '|' + p.permission_date;
       // If multiple, keep the widest window (defensive — should be 1).
       const prev = m.get(key);
       const span = (a) => {
@@ -859,40 +891,59 @@ export default function AttendanceView({ me, employees }) {
     return m;
   }, [approvedPermissions]);
 
-  // Run detection
+  // Run detection — TWO-DAY FLOW
+  //
+  // Each row carries its own date. We evaluate it differently based on
+  // whether it's TODAY's data (csvDate) or YESTERDAY's data (yesterdayDate):
+  //
+  //   TODAY's rows      → check Late arrival + Missed punch-in
+  //                       (early-departure + missed-out checks would be
+  //                       false positives — staff are still working)
+  //
+  //   YESTERDAY's rows  → check Early departure + Missed punch-out
+  //                       (late-arrival check is skipped — already done
+  //                       on yesterday's morning import)
+  //
+  // Buckets: late + missedIn live on TODAY; early + missedOut live on
+  // YESTERDAY. on-time, on-leave, unknown all combine across both days.
   const detection = useMemo(() => {
-    const out = { late: [], early: [], missed: [], onTime: [], onLeave: [], unknownEmp: [] };
-    if (!parsed.rows.length || csvIsWeekend) return out;
+    const out = {
+      late: [], missedIn: [],
+      early: [], missedOut: [],
+      onTime: [], onLeave: [], unknownEmp: [],
+    };
+    if (!parsed.rows.length) return out;
 
     parsed.rows.forEach((row, idx) => {
+      const rowDate = row['Date'];
+      const isToday     = !!csvDate       && rowDate === csvDate;
+      const isYesterday = !!yesterdayDate && rowDate === yesterdayDate;
+      if (!isToday && !isYesterday) return; // guarded already by parsed filter, defensive
+
+      // Skip the entire day if it's a KSA weekend.
+      if (isKsaWeekend(rowDate)) return;
+
       const empIdRaw = row['Employee ID'] || row['employee_id'] || row['EmployeeID'] || row['ID'] || '';
       const empId = String(empIdRaw).trim();
-      // Tolerant lookup with three layers, in order of strictness:
-      //   1. Exact-string match (e.g. 'H94590' → 'H94590')
-      //   2. Exact match after explicit H-prefix prepend
-      //   3. Digit-only canonical match — collapses leading zeros and
-      //      missing/extra H prefixes. Catches cases like file '4458'
-      //      vs directory 'H04458', or directory 'H4458' vs file '4458',
-      //      regardless of how the device export was formatted.
       const lookupKey = empId.toUpperCase().startsWith('H') ? empId.toUpperCase() : ('H' + empId).toUpperCase();
       const emp = empById[empId.toUpperCase()]
                || empById[lookupKey]
                || empByDigits[psnDigits(empId)]
                || null;
       if (!emp) {
-        out.unknownEmp.push({ id: 'row-' + idx, row, empId, csvName: row['First Name'] || '' });
+        out.unknownEmp.push({ id: 'row-' + idx, row, empId, csvName: row['First Name'] || '', dateLabel: rowDate });
         return;
       }
-      // Skip if on approved leave
-      if (onLeaveOnDate(emp.id)) {
-        out.onLeave.push({ id: 'row-' + idx, employee: emp });
+      // Skip if on approved leave for THAT specific date.
+      if (onLeaveOnDate(emp.id, rowDate)) {
+        // De-dup across days: if an employee is on leave both today AND
+        // yesterday, only show once. The shared bucket holds one entry
+        // per employee regardless of date.
+        if (!out.onLeave.some(x => x.employee?.id === emp.id)) {
+          out.onLeave.push({ id: 'row-' + idx, employee: emp });
+        }
         return;
       }
-      const dept = (row['Department'] || emp.department || '').trim();
-      // P4: per-day shift override takes precedence over the team default.
-      // If staff accepted a custom schedule for this date, build a one-shot
-      // schedule object with a 15-min grace on each end (matching the policy
-      // applied to the 08:00 default). Otherwise use the team default.
       const empKey = String(emp.id || '').toUpperCase();
       const override = shiftOverrideById[empKey];
       const sched = override
@@ -905,148 +956,128 @@ export default function AttendanceView({ me, employees }) {
             isCustom: true,
           }
         : scheduleFor(emp);
-      const lateCutoffMin = timeToMinutes(sched.lateCutoffStr);
-      const punchInStr = (row['First Punch'] || '').trim();
-      const punchOutStr = (row['Last Punch'] || '').trim();
-      const punchInMin = timeToMinutes(punchInStr);
+      const lateCutoffMin   = timeToMinutes(sched.lateCutoffStr);
+      const earlyCutoffMin  = timeToMinutes(sched.earlyCutoffStr);
+      const scheduledEndMin = timeToMinutes(sched.endStr);
+      const punchInStr  = (row['First Punch'] || '').trim();
+      const punchOutStr = (row['Last Punch']  || '').trim();
+      const punchInMin  = timeToMinutes(punchInStr);
       const punchOutMin = timeToMinutes(punchOutStr);
 
-      // Missed punch first — supersedes late/early since we don't have data
-      const missingIn  = !punchInMin;
-      const missingOut = !punchOutMin;
-      if (missingIn || missingOut) {
-        out.missed.push({
-          id: 'row-' + idx,
-          employee: emp,
-          row,
-          missingType: missingIn && missingOut ? 'both' : (missingIn ? 'in' : 'out'),
-          punchInStr, punchOutStr,
-          scheduledStart: sched.startStr,
-          scheduledEnd: sched.endStr,
-          lateCutoff: sched.lateCutoffStr,
-          scheduleLabel: sched.label,
-          isCustomShift: !!sched.isCustom,
-        });
+      // ── TODAY's rows: Late arrival + Missed punch-in ─────────────────
+      if (isToday) {
+        // Missed punch-in: no first punch on file. Treat as the bigger
+        // problem and skip the late check (we don't know when they
+        // arrived). Includes "both missing" (probably absent).
+        if (!punchInMin) {
+          out.missedIn.push({
+            id: 'row-' + idx, employee: emp, row,
+            missingType: !punchOutMin ? 'both' : 'in',
+            punchInStr, punchOutStr,
+            scheduledStart: sched.startStr,
+            scheduledEnd: sched.endStr,
+            lateCutoff: sched.lateCutoffStr,
+            scheduleLabel: sched.label,
+            isCustomShift: !!sched.isCustom,
+            dateLabel: rowDate,
+          });
+          return;
+        }
+        // Late check: punched in but past the grace cutoff.
+        if (punchInMin > lateCutoffMin) {
+          const permKey = String(emp.id).toUpperCase() + '|late_arrival|' + rowDate;
+          const perm = permIndex.get(permKey) || null;
+          let permStatus = 'LATE_NO_PERMISSION';
+          let minutesBeyond = null;
+          if (perm) {
+            const permEndMin = timeToMinutes(String(perm.time_to || '').slice(0, 5));
+            if (Number.isFinite(permEndMin) && punchInMin > permEndMin) {
+              permStatus = 'LATE_BEYOND';
+              minutesBeyond = punchInMin - permEndMin;
+            } else {
+              permStatus = 'LATE_PERMITTED';
+            }
+          }
+          out.late.push({
+            id: 'row-' + idx, employee: emp, row,
+            punchInStr, punchInMin,
+            minutesLate: punchInMin - lateCutoffMin,
+            scheduledStart: sched.startStr,
+            scheduledEnd: sched.endStr,
+            lateCutoff: sched.lateCutoffStr,
+            scheduleLabel: sched.label,
+            isCustomShift: !!sched.isCustom,
+            permission: perm, permStatus, minutesBeyond,
+            dateLabel: rowDate,
+          });
+          return;
+        }
+        // On-time: arrived within grace window. We don't know about
+        // their departure yet (they're still working) — that's
+        // tomorrow's yesterday-pass job.
+        out.onTime.push({ id: 'row-' + idx, employee: emp, punchInStr, punchOutStr, dateLabel: rowDate });
         return;
       }
 
-      let flagged = false;
-      // Late check
-      if (punchInMin > lateCutoffMin) {
-        // Cross-reference with approved late_arrival permissions for
-        // this employee on this date. Three sub-cases:
-        //   • no permission           → LATE_NO_PERMISSION (actionable)
-        //   • permission, within      → LATE_PERMITTED  (audit-only)
-        //   • permission, beyond      → LATE_BEYOND     (actionable + context)
-        const permKey = String(emp.id).toUpperCase() + '|late_arrival';
-        const perm = permIndex.get(permKey) || null;
-        let permStatus = 'LATE_NO_PERMISSION';
-        let minutesBeyond = null;
-        if (perm) {
-          const permEndMin = timeToMinutes(String(perm.time_to || '').slice(0, 5));
-          if (Number.isFinite(permEndMin) && punchInMin > permEndMin) {
-            permStatus = 'LATE_BEYOND';
-            minutesBeyond = punchInMin - permEndMin;
-          } else {
-            permStatus = 'LATE_PERMITTED';
-          }
+      // ── YESTERDAY's rows: Early departure + Missed punch-out ─────────
+      if (isYesterday) {
+        // Missed punch-out: had a punch-in but no punch-out by EOD.
+        // Could be a real missed punch (forgot to clock out) or rare
+        // device sync issue. Either way, actionable.
+        if (!punchOutMin) {
+          out.missedOut.push({
+            id: 'row-' + idx, employee: emp, row,
+            missingType: !punchInMin ? 'both' : 'out',
+            punchInStr, punchOutStr,
+            scheduledStart: sched.startStr,
+            scheduledEnd: sched.endStr,
+            lateCutoff: sched.lateCutoffStr,
+            scheduleLabel: sched.label,
+            isCustomShift: !!sched.isCustom,
+            dateLabel: rowDate,
+          });
+          return;
         }
-        out.late.push({
-          id: 'row-' + idx,
-          employee: emp,
-          row,
-          punchInStr,
-          punchInMin,
-          minutesLate: punchInMin - lateCutoffMin,
-          scheduledStart: sched.startStr,
-          scheduledEnd: sched.endStr,
-          lateCutoff: sched.lateCutoffStr,
-          scheduleLabel: sched.label,
-          isCustomShift: !!sched.isCustom,
-          permission: perm,
-          permStatus,
-          minutesBeyond,
-        });
-        flagged = true;
-      }
-      // Early-leave check
-      const earlyCutoffMin = timeToMinutes(sched.earlyCutoffStr);
-      const scheduledEndMin = timeToMinutes(sched.endStr);
-      if (punchOutMin < earlyCutoffMin) {
-        // Same WITH/WITHOUT permission split, mirror of the late branch.
-        const permKey = String(emp.id).toUpperCase() + '|early_leave';
-        const perm = permIndex.get(permKey) || null;
-        let permStatus = 'EARLY_NO_PERMISSION';
-        let minutesBeyond = null;
-        if (perm) {
-          const permStartMin = timeToMinutes(String(perm.time_from || '').slice(0, 5));
-          if (Number.isFinite(permStartMin) && punchOutMin < permStartMin) {
-            permStatus = 'EARLY_BEYOND';
-            minutesBeyond = permStartMin - punchOutMin;
-          } else {
-            permStatus = 'EARLY_PERMITTED';
+        // Early-leave check: punched out before the early cutoff.
+        if (punchOutMin < earlyCutoffMin) {
+          const permKey = String(emp.id).toUpperCase() + '|early_leave|' + rowDate;
+          const perm = permIndex.get(permKey) || null;
+          let permStatus = 'EARLY_NO_PERMISSION';
+          let minutesBeyond = null;
+          if (perm) {
+            const permStartMin = timeToMinutes(String(perm.time_from || '').slice(0, 5));
+            if (Number.isFinite(permStartMin) && punchOutMin < permStartMin) {
+              permStatus = 'EARLY_BEYOND';
+              minutesBeyond = permStartMin - punchOutMin;
+            } else {
+              permStatus = 'EARLY_PERMITTED';
+            }
           }
+          out.early.push({
+            id: 'row-' + idx, employee: emp, row,
+            punchOutStr, punchOutMin,
+            scheduledStart: sched.startStr,
+            scheduledEnd: sched.endStr,
+            lateCutoff: sched.lateCutoffStr,
+            earlyCutoff: sched.earlyCutoffStr,
+            scheduleLabel: sched.label,
+            isCustomShift: !!sched.isCustom,
+            minutesEarly: scheduledEndMin - punchOutMin,
+            isSup: isSupTeam(emp),
+            permission: perm, permStatus, minutesBeyond,
+            dateLabel: rowDate,
+          });
+          return;
         }
-        out.early.push({
-          id: 'row-' + idx,
-          employee: emp,
-          row,
-          punchOutStr,
-          punchOutMin,
-          scheduledStart: sched.startStr,
-          scheduledEnd: sched.endStr,
-          lateCutoff: sched.lateCutoffStr,
-          earlyCutoff: sched.earlyCutoffStr,
-          scheduleLabel: sched.label,
-          isCustomShift: !!sched.isCustom,
-          minutesEarly: scheduledEndMin - punchOutMin,
-          isSup: isSupTeam(emp),
-          permission: perm,
-          permStatus,
-          minutesBeyond,
-        });
-        flagged = true;
-      }
-      if (!flagged) {
-        out.onTime.push({ id: 'row-' + idx, employee: emp, punchInStr, punchOutStr });
+        // No yesterday violation — staff worked a full day. We don't
+        // add them to onTime here because that bucket is reserved for
+        // today's arrival (yesterday's on-time was already counted
+        // yesterday's morning import).
       }
     });
-
-    // Partial-day collapse: an employee who was BOTH late AND early on
-    // the same day was previously listed in both sections — producing
-    // two separate notices for what is really a single partial-day
-    // event (e.g. came in 10:33, left 13:07). That created duplicate
-    // emails and inflated the summary counts. Collapse: keep them in
-    // LATE only, and decorate that entry with alsoEarly so the row
-    // can show "ALSO LEFT EARLY at HH:MM" without needing a second
-    // section. Single entry, single email, single button — minimal
-    // dispute surface area.
-    //
-    // Why LATE not EARLY: chronologically the late arrival is the
-    // first violation of the day, and the late email is the more
-    // common recipient flow Bashaier already exercises. Keeping it
-    // in the early bucket would break the "came in / left early"
-    // mental model.
-    const earlyByEmpId = new Map(out.early.map(e => [e.employee.id, e]));
-    out.late = out.late.map(l => {
-      const matchingEarly = earlyByEmpId.get(l.employee.id);
-      if (!matchingEarly) return l;
-      return {
-        ...l,
-        alsoEarly: {
-          punchOutStr:  matchingEarly.punchOutStr,
-          minutesEarly: matchingEarly.minutesEarly,
-          scheduledEnd: matchingEarly.scheduledEnd,
-          permission:   matchingEarly.permission,
-          permStatus:   matchingEarly.permStatus,
-        },
-      };
-    });
-    const lateEmpIds = new Set(out.late.map(l => l.employee.id));
-    out.early = out.early.filter(e => !lateEmpIds.has(e.employee.id));
 
     return out;
-  }, [parsed.rows, empById, empByDigits, onLeaveOnDate, csvIsWeekend, shiftOverrideById, permIndex]);
+  }, [parsed.rows, csvDate, yesterdayDate, empById, empByDigits, onLeaveOnDate, shiftOverrideById, permIndex]);
 
   // File handling
   const handleFile = useCallback(async (file) => {
@@ -1209,7 +1240,11 @@ export default function AttendanceView({ me, employees }) {
     const ensuredUploadId = await ensureUploadRecorded();
     const row = {
       employee_id: empId,
-      violation_date: csvDate,                 // ISO yyyy-mm-dd from csvDate
+      // Date the violation actually occurred on. With the 2-day flow,
+      // late/missedIn entries are dated TODAY but early/missedOut are
+      // dated YESTERDAY — entry.dateLabel carries the correct day.
+      // Fall back to csvDate for any pre-2-day entry shape.
+      violation_date: entry.dateLabel || csvDate,
       violation_type: violationType,           // 'late' | 'early_leave' | 'missed_in' | 'missed_out'
       minutes_off: minutesOff ?? null,
       punch_in_time:  punchInTime  || null,
@@ -1253,7 +1288,11 @@ export default function AttendanceView({ me, employees }) {
   // the production behaviour. The per-row Test buttons explicitly pass
   // mode='test'.
   const handleEmailLate = (entry, mode = 'live') => {
-    const dateLong = formatDateLong(csvDate);
+    // Use the entry's own date label so the email correctly says
+    // "today" or "yesterday" relative to the event, not the file's
+    // primary date. Late entries always come from today, but
+    // dateLabel is still the source of truth — defensive.
+    const dateLong = formatDateLong(entry.dateLabel || csvDate);
     const contentFn = mode === 'test' ? lateEmailContentTemp : lateEmailContent;
     const { subject, body } = contentFn({
       employee: entry.employee,
@@ -1280,7 +1319,10 @@ export default function AttendanceView({ me, employees }) {
   };
 
   const handleEmailEarly = (entry, mode = 'live') => {
-    const dateLong = formatDateLong(csvDate);
+    // Early-departure entries come from YESTERDAY's data in the
+    // 2-day workflow. Use entry.dateLabel so the email correctly
+    // references the day the staff actually left early on.
+    const dateLong = formatDateLong(entry.dateLabel || csvDate);
     const contentFn = mode === 'test' ? earlyLeaveEmailContentTemp : earlyLeaveEmailContent;
     const { subject, body } = contentFn({
       employee: entry.employee,
@@ -1303,7 +1345,11 @@ export default function AttendanceView({ me, employees }) {
   };
 
   const handleEmailMissed = (entry, mode = 'live') => {
-    const dateLong = formatDateLong(csvDate);
+    // Missed-punch entries come from EITHER day in the 2-day flow:
+    //   • missedIn  → today  (no clock-in by file pull time)
+    //   • missedOut → yesterday (no clock-out by EOD)
+    // Use entry.dateLabel so the email body references the right date.
+    const dateLong = formatDateLong(entry.dateLabel || csvDate);
     const contentFn = mode === 'test' ? missedPunchEmailContentTemp : missedPunchEmailContent;
     const { subject, body } = contentFn({
       employee: entry.employee,
@@ -1349,23 +1395,6 @@ export default function AttendanceView({ me, employees }) {
     return null;
   }, [csvDate]);
 
-  // viewMode — combines auto-detection with the manual override.
-  // Auto rule: TODAY → 'morning', anything else → 'eod'. Override
-  // forces a specific mode regardless of the file's date. See the
-  // viewModeOverride state declaration above for the rationale.
-  const viewMode = useMemo(() => {
-    if (viewModeOverride) return viewModeOverride;
-    return dateSanity?.kind === 'TODAY' ? 'morning' : 'eod';
-  }, [dateSanity, viewModeOverride]);
-
-  // Reset the override whenever a new file is loaded so the auto-detect
-  // takes precedence on the next import. Without this, Bashaier could
-  // import yesterday's file with override='morning' still active from a
-  // previous session and miss the early/missed sections she's expecting.
-  useEffect(() => {
-    setViewModeOverride(null);
-  }, [csvDate]);
-
   // ─── Review-log upsert ───────────────────────────────────────────────
   // Each time a file is loaded (or mode toggles), record the pass into
   // attendance_review_log. The table has one row per review_date; the
@@ -1377,19 +1406,28 @@ export default function AttendanceView({ me, employees }) {
   // there's no expectation of a daily attendance review for them.
   useEffect(() => {
     if (!csvDate || !me?.id) return;
-    if (isKsaWeekend(csvDate)) return;
     const nowIso = new Date().toISOString();
-    const row = viewMode === 'morning'
-      ? { review_date: csvDate, morning_at: nowIso, morning_by: me.id }
-      : { review_date: csvDate, eod_at: nowIso, eod_by: me.id };
-    directPost('attendance_review_log', row, {
+    // 2-day workflow: a single upload covers BOTH today's morning pass
+    // AND yesterday's end-of-day pass. Write both rows so the
+    // "pending EOD review" banner clears automatically — Bashaier no
+    // longer has to come back the next day to re-import yesterday's
+    // file. Each row is independent (one per review_date), so the
+    // upsert with on_conflict=review_date is safe to run twice.
+    const writes = [];
+    if (parsed.hasTodayData && !isKsaWeekend(csvDate)) {
+      writes.push({ review_date: csvDate, morning_at: nowIso, morning_by: me.id });
+    }
+    if (parsed.hasYesterdayData && yesterdayDate && !isKsaWeekend(yesterdayDate)) {
+      writes.push({ review_date: yesterdayDate, eod_at: nowIso, eod_by: me.id });
+    }
+    if (writes.length === 0) return;
+    Promise.all(writes.map(row => directPost('attendance_review_log', row, {
       timeoutMs: 5000,
       upsert: true,
       onConflict: 'review_date',
-    })
-      .then(() => setReviewLogTick(t => t + 1))
+    }))).then(() => setReviewLogTick(t => t + 1))
       .catch(() => { /* non-blocking; tracker is best-effort */ });
-  }, [csvDate, viewMode, me?.id]);
+  }, [csvDate, yesterdayDate, parsed.hasTodayData, parsed.hasYesterdayData, me?.id]);
 
   // ─── Pending-EOD fetch ───────────────────────────────────────────────
   // Pull the last 14 calendar days of review log and surface any date
@@ -1656,13 +1694,16 @@ export default function AttendanceView({ me, employees }) {
           totalRows={parsed.rows.length}
           offDateCount={parsed.offDateCount}
           counts={{
-            late: detection.late.length,
-            early: detection.early.length,
-            missed: detection.missed.length,
-            onTime: detection.onTime.length,
-            onLeave: detection.onLeave.length,
-            unknown: detection.unknownEmp.length,
+            late:      detection.late.length,
+            missedIn:  detection.missedIn.length,
+            early:     detection.early.length,
+            missedOut: detection.missedOut.length,
+            onTime:    detection.onTime.length,
+            onLeave:   detection.onLeave.length,
+            unknown:   detection.unknownEmp.length,
           }}
+          dates={{ today: csvDate, yesterday: yesterdayDate }}
+          windowAvail={{ today: parsed.hasTodayData, yesterday: parsed.hasYesterdayData }}
           detection={detection}
           actionsEnabled={actionsEnabled}
           onToggleActions={() => setActionsEnabled(v => !v)}
@@ -1770,79 +1811,16 @@ export default function AttendanceView({ me, employees }) {
 
       {hasFile && !csvIsWeekend && (
         <>
-          {/* Daily review mode banner — explains which checks apply
-              based on the file date relative to today, plus an
-              override for edge cases (e.g. Bashaier wants to peek
-              at partial early-departure data on a same-day file).
-              See viewMode + viewModeOverride state declarations
-              for the full rationale. */}
-          <div className="rounded-2xl border p-4 flex items-start gap-3"
-               style={{
-                 borderColor: viewMode === 'morning' ? '#1D4ED8' : '#0F4C2A',
-                 background:  viewMode === 'morning' ? '#EFF6FF' : '#F0FDF4',
-               }}>
-            <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
-                 style={{ background: viewMode === 'morning' ? '#DBEAFE' : '#DCFCE7' }}>
-              {viewMode === 'morning'
-                ? <Clock className="w-5 h-5" style={{ color: '#1D4ED8' }}/>
-                : <CheckCircle2 className="w-5 h-5" style={{ color: '#0F4C2A' }}/>}
-            </div>
-            <div className="text-sm flex-1" style={{ color: '#0A0A0A' }}>
-              <div className="font-bold mb-1">
-                {viewMode === 'morning'
-                  ? 'Morning review — late arrivals only'
-                  : 'End-of-day review — full attendance audit'}
-              </div>
-              <div style={{ lineHeight: 1.55 }}>
-                {viewMode === 'morning' ? (
-                  <>This file is for today, so most staff haven\u2019t punched out yet. Only the
-                  <strong> late-arrival</strong> check is meaningful right now.
-                  Re-import the same file tomorrow to run the
-                  <strong> early-departure</strong> and <strong>missed-punch</strong> checks
-                  on a complete day.</>
-                ) : (
-                  <>The file is for a previous working day, so all three checks
-                  &mdash; <strong>late</strong>, <strong>early departure</strong>, and
-                  <strong> missed punches</strong> &mdash; are running on complete data.</>
-                )}
-              </div>
-              {/* Override toggle — high-contrast filled button so the
-                  affordance reads at a glance, not as a subtle inline
-                  link. The fill colour matches the banner accent so it
-                  remains visually anchored to this panel rather than
-                  competing with top-level CTAs. Icon swaps on mode to
-                  reinforce the action: Layers (show all) vs Sunrise
-                  (back to morning view). */}
-              <button type="button"
-                onClick={() => setViewModeOverride(viewMode === 'morning' ? 'eod' : 'morning')}
-                className="mt-3 inline-flex items-center gap-2 px-4 py-2.5 rounded-full text-sm shadow-sm hover:shadow transition-shadow"
-                style={{
-                  color: '#FFFFFF',
-                  background: viewMode === 'morning' ? '#1D4ED8' : '#0F4C2A',
-                  fontWeight: 600,
-                  letterSpacing: '0.01em',
-                }}>
-                {viewMode === 'morning' ? (
-                  <>
-                    <Layers className="w-4 h-4" />
-                    Show all sections (early + missed too)
-                  </>
-                ) : (
-                  <>
-                    <Sunrise className="w-4 h-4" />
-                    Switch to morning view (late only)
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-
+          {/* Late arrivals — TODAY's data only. Hidden when the file
+              doesn't include today's rows (e.g. she uploaded only
+              yesterday's export). */}
+          {parsed.hasTodayData && (
           <FlaggedSection
             title="Late arrivals"
-            kicker={'AFTER ' + LATE_CUTOFF}
+            kicker={'AFTER ' + LATE_CUTOFF + ' · TODAY'}
             iconColor="#BE123C"
             barFrom="#FB7185" barTo="#BE123C"
-            empty="Nobody arrived late — well done team."
+            empty="Nobody arrived late today — well done team."
             onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'late', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
             entries={detection.late.map(e => {
               // Detail line carries WITH/WITHOUT permission status. Bashaier
@@ -1864,15 +1842,6 @@ export default function AttendanceView({ me, employees }) {
                 permBadge = { tone: 'red', text: 'BEYOND PERMISSION' };
               } else {
                 permBadge = { tone: 'red', text: 'NO PERMISSION' };
-              }
-              // Partial-day suffix: this employee was also flagged for
-              // early departure on the same day. We've collapsed both
-              // into this single late entry to avoid duplicate emails;
-              // surface the early-leave info so Bashaier sees the full
-              // picture before deciding what to do.
-              if (e.alsoEarly) {
-                detail = detail + ' · Also left early at ' + e.alsoEarly.punchOutStr
-                  + ' (' + e.alsoEarly.minutesEarly + ' min before ' + e.alsoEarly.scheduledEnd + ')';
               }
               return {
                 ...e,
@@ -1910,20 +1879,66 @@ export default function AttendanceView({ me, employees }) {
               </span>
             )}
           />
+          )}
 
-          {/* Early + missed punch sections only render in 'eod' mode.
-              In 'morning' mode (today's file) staff haven't punched out
-              yet, so detection would produce false positives across the
-              board. The mode is auto-detected from csvDate vs today,
-              with an override toggle in the banner above for edge cases. */}
-          {viewMode === 'eod' && (
-          <>
+          {/* Missed punch-in — TODAY's data. Staff who don't have a
+              first-punch recorded by the time the file was pulled.
+              Same email path as before (missingType='in' or 'both'). */}
+          {parsed.hasTodayData && (
+          <FlaggedSection
+            title="Missed punch-in"
+            kicker="NO CLOCK-IN ON RECORD · TODAY"
+            iconColor="#4338CA"
+            barFrom="#818CF8" barTo="#4338CA"
+            empty="Every staff member has a punch-in on record for today."
+            onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'missedIn', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
+            entries={detection.missedIn.map(e => {
+              const types = e.missingType === 'both' ? ['missed_in', 'missed_out'] : ['missed_in'];
+              const allLogged = types.every(t => loggedMarkers[e.employee.id + ':' + t]);
+              const sentTimestamp = types
+                .map(t => loggedMarkers[e.employee.id + ':' + t])
+                .find(v => typeof v === 'string') || null;
+              return ({
+                ...e,
+                detail: (e.missingType === 'both'
+                  ? 'No punch-in or punch-out on record — likely absent today'
+                  : 'No punch-in on record')
+                  + (e.isCustomShift ? ' · ' + e.scheduleLabel : ''),
+                metaIcon: <AlertTriangle className="w-4 h-4"/>,
+                logged: allLogged,
+                actionable: true,
+                emailSentAt: sentTimestamp,
+                monthlyCount: monthlyCounts[e.employee.id] || 0,
+              });
+            })}
+            renderButton={(entry) => !actionsEnabled ? (
+              <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
+                style={{ background: '#F4F4EE', color: '#0A0A0A', border: '1px solid #E5E0D5' }}>
+                READ-ONLY
+              </span>
+            ) : (
+              <RowButton
+                onClick={() => setConfirmEntry({ entry, kind: 'missedIn', mode: 'live' })}
+                onClickTest={() => setConfirmEntry({ entry, kind: 'missedIn', mode: 'test' })}
+                onMarkSent={() => markSent(entry.id)}
+                sent={!!sentMarkers[entry.id]}
+                logged={entry.logged}
+                emailSentAt={entry.emailSentAt}
+                label="Email missed punch-in notice"
+              />
+            )}
+          />
+          )}
+
+          {/* Early departures — YESTERDAY's data. Hidden when the
+              file doesn't include yesterday's rows. */}
+          {parsed.hasYesterdayData && (
           <FlaggedSection
             title="Early departures"
-            kicker="LEFT BEFORE GRACE WINDOW"
+            kicker="LEFT BEFORE GRACE WINDOW · YESTERDAY"
             iconColor="#A16207"
             barFrom="#FACC15" barTo="#A16207"
-            empty="Nobody left early — full day attendance recorded."
+            empty="Nobody left early yesterday — full day attendance recorded."
             onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'early', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
             entries={detection.early.map(e => {
               const baseDetail = 'Punched out at ' + e.punchOutStr + ' — '
@@ -1959,8 +1974,7 @@ export default function AttendanceView({ me, employees }) {
             })}
             renderButton={(entry) => !actionsEnabled ? (
               <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
-                style={{ background: '#F4F4EE', color: '#0A0A0A', border: '1px solid #E5E0D5' }}
-                title="Read-only mode — toggle 'Actions on' in the file summary above to enable emailing.">
+                style={{ background: '#F4F4EE', color: '#0A0A0A', border: '1px solid #E5E0D5' }}>
                 READ-ONLY
               </span>
             ) : entry.actionable ? (
@@ -1980,28 +1994,31 @@ export default function AttendanceView({ me, employees }) {
               </span>
             )}
           />
+          )}
 
+          {/* Missed punch-out — YESTERDAY's data. Staff who punched in
+              but never punched out by end of day yesterday. Likely
+              forgot to clock out (most common cause). Same email path
+              with missingType='out' or 'both'. */}
+          {parsed.hasYesterdayData && (
           <FlaggedSection
-            title="Missed punches"
-            kicker="REMINDER + ESCALATION NOTE"
-            iconColor="#1D4ED8"
-            barFrom="#60A5FA" barTo="#1D4ED8"
-            empty="All staff punched in and out — perfect compliance."
-            onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'missed', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
-            entries={detection.missed.map(e => {
-              const types = e.missingType === 'both' ? ['missed_in', 'missed_out']
-                : e.missingType === 'in' ? ['missed_in'] : ['missed_out'];
+            title="Missed punch-out"
+            kicker="NO CLOCK-OUT ON RECORD · YESTERDAY"
+            iconColor="#7E22CE"
+            barFrom="#C084FC" barTo="#7E22CE"
+            empty="Every staff member has a punch-out on record for yesterday."
+            onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'missedOut', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
+            entries={detection.missedOut.map(e => {
+              const types = e.missingType === 'both' ? ['missed_in', 'missed_out'] : ['missed_out'];
               const allLogged = types.every(t => loggedMarkers[e.employee.id + ':' + t]);
-              // For missed punches, "already emailed" means at least one
-              // of the missed_in/missed_out rows has email_sent_at set.
               const sentTimestamp = types
                 .map(t => loggedMarkers[e.employee.id + ':' + t])
                 .find(v => typeof v === 'string') || null;
               return ({
                 ...e,
-                detail: (e.missingType === 'in'  ? 'Missing punch-in (no first-punch on record)'
-                      : e.missingType === 'out' ? 'Missing punch-out (no last-punch on record)'
-                      : 'Missing both punch-in and punch-out')
+                detail: (e.missingType === 'both'
+                  ? 'No punch-in or punch-out on record — likely absent yesterday'
+                  : 'No punch-out on record (punch-in: ' + (e.punchInStr || '—') + ')')
                   + (e.isCustomShift ? ' · ' + e.scheduleLabel : ''),
                 metaIcon: <AlertTriangle className="w-4 h-4"/>,
                 logged: allLogged,
@@ -2012,24 +2029,22 @@ export default function AttendanceView({ me, employees }) {
             })}
             renderButton={(entry) => !actionsEnabled ? (
               <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
-                style={{ background: '#F4F4EE', color: '#0A0A0A', border: '1px solid #E5E0D5' }}
-                title="Read-only mode — toggle 'Actions on' in the file summary above to enable emailing.">
+                style={{ background: '#F4F4EE', color: '#0A0A0A', border: '1px solid #E5E0D5' }}>
                 READ-ONLY
               </span>
             ) : (
               <RowButton
-                onClick={() => setConfirmEntry({ entry, kind: 'missed', mode: 'live' })}
-                onClickTest={() => setConfirmEntry({ entry, kind: 'missed', mode: 'test' })}
+                onClick={() => setConfirmEntry({ entry, kind: 'missedOut', mode: 'live' })}
+                onClickTest={() => setConfirmEntry({ entry, kind: 'missedOut', mode: 'test' })}
                 onMarkSent={() => markSent(entry.id)}
                 sent={!!sentMarkers[entry.id]}
                 logged={entry.logged}
                 emailSentAt={entry.emailSentAt}
-                label="Email reminder"
+                label="Email missed punch-out notice"
               />
             )}
           />
-          </>
-          )}{/* end viewMode === 'eod' wrapper for Early + Missed sections */}
+          )}
 
           {/* Approved leaves (excluded) */}
           {detection.onLeave.length > 0 && (
@@ -2079,7 +2094,7 @@ export default function AttendanceView({ me, employees }) {
             setConfirmEntry(null);
             if (kind === 'late')   handleEmailLate(entry, mode);
             else if (kind === 'early')  handleEmailEarly(entry, mode);
-            else if (kind === 'missed') handleEmailMissed(entry, mode);
+            else if (kind === 'missed' || kind === 'missedIn' || kind === 'missedOut') handleEmailMissed(entry, mode);
           }}
         />
       )}
@@ -2103,7 +2118,7 @@ export default function AttendanceView({ me, employees }) {
             const m = bulkSession.mode || 'live';
             if (k === 'late')   handleEmailLate(entry, m);
             else if (k === 'early')  handleEmailEarly(entry, m);
-            else if (k === 'missed') handleEmailMissed(entry, m);
+            else if (k === 'missed' || k === 'missedIn' || k === 'missedOut') handleEmailMissed(entry, m);
             // Mark this one in the queue's sent set so the modal can
             // strike it through. Also flips the row's UI state below.
             setBulkSession(prev => prev ? {
@@ -2120,11 +2135,30 @@ export default function AttendanceView({ me, employees }) {
 
 // ─── Sub-components ──────────────────────────────────────────────────────
 
-function FileSummary({ fileName, csvDate, isWeekend, totalRows, offDateCount = 0, counts, detection, actionsEnabled, onToggleActions, isDuplicate, onReset }) {
-  // Drill-down state — which category's list is currently open in
-  // the breakdown modal. null = closed. Clicking any tile sets this;
-  // the modal portals over the page until dismissed.
+function FileSummary({
+  fileName, csvDate, isWeekend, totalRows, offDateCount = 0,
+  counts, dates, windowAvail, detection,
+  actionsEnabled, onToggleActions, isDuplicate, onReset,
+}) {
+  // Drill-down state — which tile's list is currently expanded inline
+  // beneath the tile grid. null = collapsed. Clicking the same tile
+  // twice closes; clicking another tile switches. The expansion lives
+  // INSIDE this card (no portal, no popup) so all functions stay on
+  // one scrollable page — Bashaier never has to chase data into a
+  // modal overlay.
   const [drillKind, setDrillKind] = useState(null);
+
+  const today     = dates?.today;
+  const yesterday = dates?.yesterday;
+  const hasToday     = windowAvail?.today;
+  const hasYesterday = windowAvail?.yesterday;
+
+  // Short day labels for tile subtext (e.g. "Sun 3 May")
+  const shortDate = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  };
 
   return (
     <div className="rounded-2xl border bg-white p-3 sm:p-5" style={{ borderColor: '#D4C7AB' }}>
@@ -2139,22 +2173,28 @@ function FileSummary({ fileName, csvDate, isWeekend, totalRows, offDateCount = 0
           <div className="text-sm mt-2" style={{ color: '#0A0A0A' }}>
             <strong>Date detected:</strong> {csvDate ? formatDateLong(csvDate) : 'unknown'}
             {isWeekend && <span style={{ color: '#A16207', marginLeft: '8px' }}>(KSA weekend — skipped)</span>}
-            {' · '}<strong>{totalRows}</strong> rows parsed
+            {' · '}<strong>{totalRows}</strong> rows in 2-day window
           </div>
-          {/* Off-date warning — surfaces when the export contains
-              rows for dates other than the file's primary date.
-              Mohiadeen's May 3 2026 case: the file held 8 rows for
-              May 1, 19 rows for May 2, and 52 rows for May 3. The
-              detection only acts on the May 3 rows now, but Bashaier
-              should know the file is multi-day so she can spot a
-              wrong export early. */}
+          {/* Two-day workflow note — describe what's being checked
+              against which day so Bashaier sees the scope at a glance. */}
+          <div className="text-xs mt-1" style={{ color: '#0A0A0A', opacity: 0.85 }}>
+            {hasToday && hasYesterday ? (
+              <>Today ({shortDate(today)}) → late arrivals + missed punch-in. Yesterday ({shortDate(yesterday)}) → early departures + missed punch-out.</>
+            ) : hasToday ? (
+              <>Today only ({shortDate(today)}) → late arrivals + missed punch-in. Yesterday's data not in this file — early departures + missed punch-out won't appear.</>
+            ) : hasYesterday ? (
+              <>Yesterday only ({shortDate(yesterday)}) → early departures + missed punch-out.</>
+            ) : null}
+          </div>
+          {/* Off-window warning — rows for dates outside the today+
+              yesterday pair are silently dropped from detection. Show
+              the count so the user notices a wrong export early. */}
           {offDateCount > 0 && (
             <div className="text-xs mt-1.5 inline-flex items-center gap-1.5 px-2 py-1 rounded-md"
                  style={{ background: '#FFFBEB', border: '1px solid #FDE68A', color: '#0A0A0A' }}>
               <AlertTriangle className="w-3.5 h-3.5" style={{ color: '#92400E' }}/>
               <span>
-                <strong>{offDateCount}</strong> row{offDateCount === 1 ? '' : 's'} for other dates ignored.
-                Detection runs on the {totalRows}-row {csvDate ? formatDateLong(csvDate) : ''} subset only.
+                <strong>{offDateCount}</strong> row{offDateCount === 1 ? '' : 's'} for dates outside the today/yesterday window were ignored.
               </span>
             </div>
           )}
@@ -2193,228 +2233,243 @@ function FileSummary({ fileName, csvDate, isWeekend, totalRows, offDateCount = 0
       </div>
 
       {!isWeekend && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-4">
-          <CountPill kind="onTime"  icon="✓"  label="On time"     count={counts.onTime}  color="#047857" tint="#ECFDF5" onClick={() => setDrillKind('onTime')}/>
-          <CountPill kind="late"    icon="⚠"  label="Late"        count={counts.late}    color="#BE123C" tint="#FFF1F2" onClick={() => setDrillKind('late')}/>
-          <CountPill kind="early"   icon="⏰" label="Left early"   count={counts.early}   color="#A16207" tint="#FEFCE8" onClick={() => setDrillKind('early')}/>
-          <CountPill kind="missed"  icon="🔇" label="Missed punch" count={counts.missed}  color="#1D4ED8" tint="#EFF6FF" onClick={() => setDrillKind('missed')}/>
-          <CountPill kind="onLeave" icon="🌴" label="On leave"     count={counts.onLeave} color="#0E7490" tint="#ECFEFF" onClick={() => setDrillKind('onLeave')}/>
-          <CountPill kind="unknown" icon="?"  label="Unknown"      count={counts.unknown} color="#991B1B" tint="#FEF2F2" onClick={() => setDrillKind('unknown')}/>
-        </div>
-      )}
+        <div className="mt-5 space-y-4">
+          {/* TODAY's bucket — late arrivals + missed punch-in */}
+          {hasToday && (
+            <div>
+              <div className="flex items-baseline gap-2 mb-2">
+                <span className="text-[10px] tracking-[0.25em]" style={{ fontWeight: 700, color: '#0A0A0A' }}>
+                  TODAY
+                </span>
+                <span className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+                  {shortDate(today)} · arrival checks
+                </span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <CountPill kind="onTime"   icon="✓"  label="On time"          count={counts.onTime}   color="#047857" tint="#ECFDF5" subtext="punched in by 8:15"          isOpen={drillKind === 'onTime'}   onClick={() => setDrillKind(drillKind === 'onTime'   ? null : 'onTime')}/>
+                <CountPill kind="late"     icon="⚠"  label="Late arrival"     count={counts.late}     color="#BE123C" tint="#FFF1F2" subtext="punched in after 8:15"      isOpen={drillKind === 'late'}     onClick={() => setDrillKind(drillKind === 'late'     ? null : 'late')}/>
+                <CountPill kind="missedIn" icon="🚫" label="Missed punch-in" count={counts.missedIn} color="#4338CA" tint="#EEF2FF" subtext="no first-punch on record"   isOpen={drillKind === 'missedIn'} onClick={() => setDrillKind(drillKind === 'missedIn' ? null : 'missedIn')}/>
+              </div>
+            </div>
+          )}
 
-      {/* Breakdown modal — opens when any tile is clicked. Lists every
-          employee in the chosen category with their relevant detail
-          line. Read-only — actions still happen in the per-section
-          rows below. This is purely a "who's in this bucket?"
-          drill-down so Bashaier can scan a category at a glance. */}
-      {drillKind && detection && (
-        <BreakdownModal
-          kind={drillKind}
-          detection={detection}
-          csvDate={csvDate}
-          onClose={() => setDrillKind(null)}
-        />
+          {/* YESTERDAY's bucket — early departures + missed punch-out */}
+          {hasYesterday && (
+            <div>
+              <div className="flex items-baseline gap-2 mb-2">
+                <span className="text-[10px] tracking-[0.25em]" style={{ fontWeight: 700, color: '#0A0A0A' }}>
+                  YESTERDAY
+                </span>
+                <span className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+                  {shortDate(yesterday)} · departure checks
+                </span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <CountPill kind="early"     icon="⏰" label="Early departure"  count={counts.early}     color="#A16207" tint="#FEFCE8" subtext="left before grace cutoff"   isOpen={drillKind === 'early'}     onClick={() => setDrillKind(drillKind === 'early'     ? null : 'early')}/>
+                <CountPill kind="missedOut" icon="🚪" label="Missed punch-out" count={counts.missedOut} color="#7E22CE" tint="#FAF5FF" subtext="no last-punch on record"    isOpen={drillKind === 'missedOut'} onClick={() => setDrillKind(drillKind === 'missedOut' ? null : 'missedOut')}/>
+                <CountPill kind="onLeave"   icon="🌴" label="On leave"         count={counts.onLeave}   color="#0E7490" tint="#ECFEFF" subtext="approved leave on file"     isOpen={drillKind === 'onLeave'}   onClick={() => setDrillKind(drillKind === 'onLeave'   ? null : 'onLeave')}/>
+              </div>
+            </div>
+          )}
+
+          {/* Inline drill-down panel — appears beneath the tile grid
+              when a tile is clicked. Renders ON THIS PAGE, no popup.
+              Click the same tile again to close, click another to
+              switch. This replaces the previous BreakdownModal which
+              opened a portal overlay; per Nadeem's feedback, the
+              full review should stay on one scrollable page. */}
+          {drillKind && detection && (
+            <BreakdownPanel
+              kind={drillKind}
+              detection={detection}
+              onClose={() => setDrillKind(null)}
+            />
+          )}
+
+          {/* Unrecognised employees — only surfaces when count > 0,
+              and stays out of the main day-grouped grid since it's
+              a data-quality issue, not a daily attendance violation
+              we'd email about. */}
+          {counts.unknown > 0 && (
+            <div>
+              <CountPill
+                kind="unknown" icon="?" label="Unrecognised"
+                count={counts.unknown} color="#991B1B" tint="#FEF2F2"
+                subtext="not in employee directory"
+                isOpen={drillKind === 'unknown'}
+                onClick={() => setDrillKind(drillKind === 'unknown' ? null : 'unknown')}
+              />
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
 }
 
-function CountPill({ icon, label, count, color, tint, onClick }) {
+function CountPill({ icon, label, count, color, tint, subtext, isOpen, onClick }) {
   const isInteractive = typeof onClick === 'function' && count > 0;
   const Tag = isInteractive ? 'button' : 'div';
-  // When interactive (count > 0), render as a button with a subtle
-  // hover lift and a focus ring matching the tile's accent colour.
-  // When count is zero, drop the affordance — there's nothing to
-  // drill into, so the tile reads as static at a glance.
   return (
     <Tag
       type={isInteractive ? 'button' : undefined}
       onClick={isInteractive ? onClick : undefined}
       className={
-        'rounded-xl p-3 text-left transition-all '
+        'rounded-xl p-3 text-left transition-all w-full '
         + (isInteractive
             ? 'cursor-pointer hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 focus:outline-none focus:ring-2 focus:ring-offset-1'
             : 'cursor-default')
       }
-      style={{ background: tint, ...(isInteractive ? { outlineColor: color } : {}) }}
-      title={isInteractive ? `View all ${count} ${label.toLowerCase()} entries` : undefined}>
+      style={{
+        background: tint,
+        outlineColor: color,
+        boxShadow: isOpen ? `0 0 0 2px ${color}, 0 4px 12px rgba(31,27,22,0.08)` : undefined,
+      }}
+      title={isInteractive ? `Click to ${isOpen ? 'collapse' : 'expand'} the list of ${count} ${label.toLowerCase()} below` : undefined}>
       <div className="flex items-center gap-2" style={{ color }}>
         <span style={{ fontSize: '16px' }}>{icon}</span>
         <span className="text-[10px]" style={{ letterSpacing: '0.18em', fontWeight: 700, color: '#1F1B16' }}>{label.toUpperCase()}</span>
       </div>
-      <div className="mt-1 flex items-baseline gap-2">
+      <div className="mt-1 flex items-baseline gap-2 flex-wrap">
         <span style={{ fontSize: '24px', fontWeight: 700, color, lineHeight: 1 }}>{count}</span>
         {isInteractive && (
           <span className="text-[10px]" style={{ color, opacity: 0.7, fontWeight: 600 }}>
-            view →
+            {isOpen ? '▾ open' : 'view ▸'}
           </span>
         )}
       </div>
+      {subtext && (
+        <div className="text-[10px] mt-0.5" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+          {subtext}
+        </div>
+      )}
     </Tag>
   );
 }
 
-// ─── Breakdown modal ─────────────────────────────────────────────────────
-// Opens when a CountPill is clicked. Renders the full list of employees
-// in the chosen category. Pure read-only — no email/action buttons here
-// (those still live in the per-section Late / Early / Missed cards
-// below). The point is to let Bashaier scan the bucket at a glance:
-// "Who are the 22 late people?" without scrolling through the full
-// section. Especially useful for ON-TIME and ON-LEAVE which don't have
-// dedicated sections lower down on the page.
-function BreakdownModal({ kind, detection, csvDate, onClose }) {
-  // Body scroll lock + Esc-to-close, same pattern as PermissionTimelineModal.
-  useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => {
-      document.body.style.overflow = prev;
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [onClose]);
-
+// ─── Inline breakdown panel ─────────────────────────────────────────────
+// Renders below the tile grid (inside FileSummary) when a tile is
+// clicked. Shows the full list of employees in that bucket. Replaces
+// the previous BreakdownModal which used a portal overlay — Nadeem
+// asked for everything to live on one scrollable page so HR doesn't
+// chase data into popups.
+//
+// Read-only — actions still live in the per-section cards lower down
+// the page. This panel exists purely as an "expand to see the list"
+// drill-down, especially useful for ON-TIME and ON-LEAVE which don't
+// have dedicated action sections.
+function BreakdownPanel({ kind, detection, onClose }) {
   const config = {
-    onTime:  { title: 'On time',     accent: '#047857', tint: '#ECFDF5', icon: '✓',  empty: 'No one on time on this date.' },
-    late:    { title: 'Late',        accent: '#BE123C', tint: '#FFF1F2', icon: '⚠',  empty: 'Nobody arrived late — well done team.' },
-    early:   { title: 'Left early',  accent: '#A16207', tint: '#FEFCE8', icon: '⏰', empty: 'Nobody left early.' },
-    missed:  { title: 'Missed punch',accent: '#1D4ED8', tint: '#EFF6FF', icon: '🔇', empty: 'No missed punches recorded.' },
-    onLeave: { title: 'On leave',    accent: '#0E7490', tint: '#ECFEFF', icon: '🌴', empty: 'Nobody on approved leave today.' },
-    unknown: { title: 'Unknown',     accent: '#991B1B', tint: '#FEF2F2', icon: '?',  empty: 'No unrecognised employees in the file.' },
+    onTime:    { title: 'On time',         accent: '#047857', tint: '#ECFDF5', icon: '✓',  empty: 'No on-time entries.' },
+    late:      { title: 'Late arrival',    accent: '#BE123C', tint: '#FFF1F2', icon: '⚠',  empty: 'Nobody arrived late — well done team.' },
+    missedIn:  { title: 'Missed punch-in', accent: '#4338CA', tint: '#EEF2FF', icon: '🚫', empty: 'All staff have a punch-in on record.' },
+    early:     { title: 'Early departure', accent: '#A16207', tint: '#FEFCE8', icon: '⏰', empty: 'Nobody left early.' },
+    missedOut: { title: 'Missed punch-out',accent: '#7E22CE', tint: '#FAF5FF', icon: '🚪', empty: 'All staff have a punch-out on record.' },
+    onLeave:   { title: 'On leave',        accent: '#0E7490', tint: '#ECFEFF', icon: '🌴', empty: 'Nobody on approved leave today.' },
+    unknown:   { title: 'Unrecognised',    accent: '#991B1B', tint: '#FEF2F2', icon: '?',  empty: 'No unrecognised employees in the file.' },
   };
   const cfg = config[kind] || config.late;
-  const entries = detection[kind === 'unknown' ? 'unknownEmp' : kind] || [];
+  // Map kind → detection bucket key (unknown is stored under unknownEmp).
+  const bucketKey = kind === 'unknown' ? 'unknownEmp' : kind;
+  const entries = detection[bucketKey] || [];
 
-  // Per-kind detail line. Each branch handles the entry shape that
-  // detection.* produces — they're not all identical.
+  // Per-kind one-line detail. Tries to give Bashaier the most useful
+  // single-glance fact about each entry.
   const detailFor = (e) => {
     if (kind === 'late') {
       let d = `Punched in at ${e.punchInStr} · ${e.minutesLate} min after grace`;
-      if (e.permission) d += ` · permitted to ${String(e.permission.time_to || '').slice(0,5)}`;
-      else d += ' · no permission';
-      if (e.alsoEarly) d += ` · also left early at ${e.alsoEarly.punchOutStr}`;
+      d += e.permission ? ` · permitted to ${String(e.permission.time_to || '').slice(0,5)}` : ' · no permission';
       return d;
     }
     if (kind === 'early') {
       let d = `Punched out at ${e.punchOutStr} · ${e.minutesEarly} min before ${e.scheduledEnd}`;
-      if (e.permission) d += ` · permitted from ${String(e.permission.time_from || '').slice(0,5)}`;
-      else d += ' · no permission';
+      d += e.permission ? ` · permitted from ${String(e.permission.time_from || '').slice(0,5)}` : ' · no permission';
       return d;
     }
-    if (kind === 'missed') {
-      return e.missingType === 'both' ? 'Both punch-in and punch-out missing'
-           : e.missingType === 'in'   ? 'No punch-in on record'
-                                      : 'No punch-out on record';
+    if (kind === 'missedIn') {
+      return e.missingType === 'both' ? 'Both punch-in and punch-out missing — likely absent'
+                                      : 'No punch-in on record';
     }
-    if (kind === 'onTime') {
-      return `In ${e.punchInStr || '—'} · Out ${e.punchOutStr || '—'}`;
+    if (kind === 'missedOut') {
+      return e.missingType === 'both' ? 'Both punch-in and punch-out missing — likely absent'
+                                      : `No punch-out on record (punch-in: ${e.punchInStr || '—'})`;
     }
-    if (kind === 'onLeave') {
-      return 'Approved leave on file — excluded from violation checks';
-    }
-    if (kind === 'unknown') {
-      return `File listed: "${e.csvName || '(no name)'}" · ID ${e.empId || '?'} — not in employee directory`;
-    }
+    if (kind === 'onTime')  return `In ${e.punchInStr || '—'} · Out ${e.punchOutStr || '—'}`;
+    if (kind === 'onLeave') return 'Approved leave on file — excluded from violation checks';
+    if (kind === 'unknown') return `File listed: "${e.csvName || '(no name)'}" · ID ${e.empId || '?'} — not in employee directory`;
     return '';
   };
 
-  // Resolve display name + employee id for each entry shape.
   const nameOf = (e) => e.employee?.name || e.csvName || '(unknown)';
   const psnOf  = (e) => e.employee?.id   || e.empId   || '';
   const deptOf = (e) => e.employee?.department || '';
 
-  return createPortal(
-    <div
-      onClick={(ev) => { if (ev.target === ev.currentTarget) onClose(); }}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 100,
-        background: 'rgba(15, 23, 42, 0.55)',
-        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
-        padding: '40px 16px', overflowY: 'auto',
-      }}>
-      <div
-        className="w-full max-w-2xl rounded-2xl border"
-        style={{
-          borderColor: '#D4C7AB',
-          background: '#FFFDF7',
-          boxShadow: '0 12px 40px rgba(31,27,22,0.18)',
-        }}>
-        {/* Header */}
-        <div className="flex items-start justify-between px-6 py-5 border-b"
-             style={{ borderColor: '#E5E0D5', background: cfg.tint }}>
-          <div>
-            <div className="inline-flex items-center gap-2 mb-1">
-              <span style={{ fontSize: '18px' }}>{cfg.icon}</span>
-              <span className="text-[10px] tracking-[0.25em]"
-                    style={{ fontWeight: 700, color: '#0A0A0A' }}>
-                {cfg.title.toUpperCase()}
-              </span>
-            </div>
-            <h2 style={{ fontFamily: 'Georgia, serif', fontSize: '22px', color: cfg.accent, fontWeight: 500 }}>
-              {entries.length} {entries.length === 1 ? 'employee' : 'employees'}
-            </h2>
-            <div className="text-xs mt-1" style={{ color: '#0A0A0A' }}>
-              {csvDate ? formatDateLong(csvDate) : ''}
-            </div>
-          </div>
-          <button type="button" onClick={onClose}
-            className="p-1.5 rounded-full hover:bg-black/5 transition-colors flex-shrink-0"
-            aria-label="Close">
-            <X className="w-4 h-4" style={{ color: '#0A0A0A' }}/>
-          </button>
+  return (
+    <div className="rounded-xl border" style={{ borderColor: cfg.accent + '40', background: '#FFFFFF' }}>
+      {/* Compact header strip with title + count + close */}
+      <div className="px-4 py-3 flex items-center justify-between gap-3 flex-wrap rounded-t-xl"
+           style={{ background: cfg.tint, borderBottom: `1px solid ${cfg.accent}30` }}>
+        <div className="flex items-center gap-2 min-w-0">
+          <span style={{ fontSize: '16px' }}>{cfg.icon}</span>
+          <span className="text-[10px] tracking-[0.25em]" style={{ fontWeight: 700, color: '#0A0A0A' }}>
+            {cfg.title.toUpperCase()}
+          </span>
+          <span className="text-sm" style={{ fontWeight: 700, color: cfg.accent }}>
+            · {entries.length}
+          </span>
         </div>
-
-        {/* List */}
-        {entries.length === 0 ? (
-          <div className="p-8 text-center text-sm" style={{ color: '#0A0A0A', opacity: 0.7 }}>
-            {cfg.empty}
-          </div>
-        ) : (
-          <ul className="p-3 space-y-1.5 max-h-[60vh] overflow-y-auto">
-            {entries.map((e, i) => (
-              <li key={e.id || `entry-${i}`}
-                  className="rounded-lg border px-3 py-2.5"
-                  style={{ background: '#FFFFFF', borderColor: '#E5E0D5' }}>
-                <div className="flex items-baseline gap-2 flex-wrap">
-                  <span style={{ fontWeight: 700, color: '#0A0A0A', fontSize: '14px' }}>
-                    {nameOf(e)}
-                  </span>
-                  {psnOf(e) && (
-                    <span className="text-xs" style={{ color: '#0A0A0A', opacity: 0.6 }}>
-                      · {psnOf(e)}
-                    </span>
-                  )}
-                  {deptOf(e) && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded font-bold tracking-wider"
-                          style={{ background: cfg.tint, color: cfg.accent }}>
-                      {deptOf(e)}
-                    </span>
-                  )}
-                </div>
-                <div className="text-xs mt-0.5" style={{ color: '#0A0A0A', opacity: 0.85 }}>
-                  {detailFor(e)}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {/* Footer */}
-        <div className="px-5 py-3 border-t flex items-center justify-end"
-             style={{ borderColor: '#E5E0D5', background: '#FAF6EC' }}>
-          <button type="button" onClick={onClose}
-            className="text-xs px-4 py-2 rounded-full"
-            style={{ background: '#0A0A0A', color: '#FFFDF7', fontWeight: 500 }}>
-            Close
-          </button>
-        </div>
+        <button type="button" onClick={onClose}
+          className="text-[11px] px-2 py-1 rounded-full inline-flex items-center gap-1"
+          style={{ background: '#FFFFFF', color: '#0A0A0A', border: `1px solid ${cfg.accent}40` }}
+          title="Collapse this list">
+          <X className="w-3 h-3"/> Close
+        </button>
       </div>
-    </div>,
-    document.body
+
+      {/* List body */}
+      {entries.length === 0 ? (
+        <div className="p-6 text-center text-sm" style={{ color: '#0A0A0A', opacity: 0.65 }}>
+          {cfg.empty}
+        </div>
+      ) : (
+        <ul className="p-2 space-y-1.5 max-h-[40vh] overflow-y-auto">
+          {entries.map((e, i) => (
+            <li key={e.id || `entry-${i}`}
+                className="rounded-md px-3 py-2 border"
+                style={{ background: '#FFFFFF', borderColor: '#E5E0D5' }}>
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <span style={{ fontWeight: 700, color: '#0A0A0A', fontSize: '14px' }}>
+                  {nameOf(e)}
+                </span>
+                {psnOf(e) && (
+                  <span className="text-xs" style={{ color: '#0A0A0A', opacity: 0.6 }}>
+                    · {psnOf(e)}
+                  </span>
+                )}
+                {deptOf(e) && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-bold tracking-wider"
+                        style={{ background: cfg.tint, color: cfg.accent }}>
+                    {deptOf(e)}
+                  </span>
+                )}
+                {e.dateLabel && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded"
+                        style={{ background: '#F4F4EE', color: '#0A0A0A', fontWeight: 600 }}>
+                    {e.dateLabel}
+                  </span>
+                )}
+              </div>
+              <div className="text-xs mt-0.5" style={{ color: '#0A0A0A', opacity: 0.85 }}>
+                {detailFor(e)}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
+
 
 function FlaggedSection({ title, kicker, iconColor, barFrom, barTo, entries, empty, renderButton, onBulk }) {
   if (!entries.length) {
@@ -2676,7 +2731,7 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, onCancel, onConf
     });
     subject = c.subject;
     summary = `Early departure on ${dateLong} — punched out ${entry.punchOutStr}, ${entry.minutesEarly} min before scheduled ${entry.scheduledEnd}.`;
-  } else if (kind === 'missed') {
+  } else if (kind === 'missed' || kind === 'missedIn' || kind === 'missedOut') {
     const fn = mode === 'test' ? missedPunchEmailContentTemp : missedPunchEmailContent;
     const c = fn({
       employee: entry.employee, dateLong, missingType: entry.missingType,
@@ -2689,7 +2744,7 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, onCancel, onConf
   // wording is identical to live (the live version doesn't reference
   // the portal anyway), so we surface that fact rather than implying
   // a difference that isn't there.
-  const testBannerCopy = kind === 'missed'
+  const testBannerCopy = (kind === 'missed' || kind === 'missedIn' || kind === 'missedOut')
     ? 'TEST DRAFT — the missed-punch email has no portal references in either Live or Test wording, so this is identical to the Live version. The button is shown for UI consistency.'
     : 'TEST DRAFT — pre-launch wording with no references to esauhr.netlify.app or the HR Portal. The recipient is asked to reply with their explanation rather than submit a portal request.';
 
@@ -2835,7 +2890,7 @@ function BulkActionModal({ session, csvDate, getManagerEmail, onClose, onOpenDra
       return `Left ${entry.punchOutStr} · ${entry.minutesEarly} min before ${entry.scheduledEnd}`
         + (entry.permission ? ` · permitted from ${String(entry.permission.time_from || '').slice(0,5)}` : ' · no permission');
     }
-    if (kind === 'missed') {
+    if (kind === 'missed' || kind === 'missedIn' || kind === 'missedOut') {
       return entry.missingType === 'both' ? 'Both punch-in and punch-out missing'
            : entry.missingType === 'in'   ? 'No punch-in on record'
                                           : 'No punch-out on record';
@@ -2843,8 +2898,10 @@ function BulkActionModal({ session, csvDate, getManagerEmail, onClose, onOpenDra
     return '';
   };
 
-  const heading = kind === 'late' ? 'Late arrivals'
-                : kind === 'early' ? 'Early departures'
+  const heading = kind === 'late'      ? 'Late arrivals (today)'
+                : kind === 'early'     ? 'Early departures (yesterday)'
+                : kind === 'missedIn'  ? 'Missed punch-in (today)'
+                : kind === 'missedOut' ? 'Missed punch-out (yesterday)'
                 : 'Missed punches';
 
   // Per-kind visual cues — buttons + accent colours flip based on mode
