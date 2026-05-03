@@ -8,6 +8,7 @@ import { fmtDate, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLog
 import { PERMISSION_TYPES } from '../lib/permissionLogic.js';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
 import PendingReturnsCard from './PendingReturnsCard.jsx';
+import MyApplicationsCard from './MyApplicationsCard.jsx';
 
 // ────────────────────────────────────────────────────────────────────────────
 // ManagerDashboard
@@ -31,7 +32,22 @@ import PendingReturnsCard from './PendingReturnsCard.jsx';
 //   • Admin actions (PIN reset, employee management, system settings)
 // ────────────────────────────────────────────────────────────────────────────
 
-export default function ManagerDashboard({ me, employees, onGoToReviews, onGoToRequests, onGoToShifts }) {
+export default function ManagerDashboard({
+  me,
+  employees,
+  // allRequests, allPermissions, leaveTypes — passed in by AppShell so
+  // the new "Your applications" section on this dashboard can show the
+  // MANAGER'S OWN activity (their leave + permission requests). The
+  // internal load() of this component fetches reports-scoped data (the
+  // manager's queue) and continues to do so for the pendingMine +
+  // upcomingApproved sections.
+  // empMap is built inline below from `employees` — no separate prop
+  // needed (and a separate prop would shadow the local useMemo).
+  allRequests = [],
+  allPermissions = [],
+  leaveTypes = [],
+  onGoToReviews, onGoToRequests, onGoToShifts,
+}) {
   const [requests, setRequests] = useState([]);
   const [shifts, setShifts]     = useState([]);
   const [permissions, setPermissions] = useState([]);
@@ -384,6 +400,21 @@ export default function ManagerDashboard({ me, employees, onGoToReviews, onGoToR
           )}
         </Card>
       </div>
+
+      {/* Manager's OWN applications. Managers submit leave + permission
+          requests like everyone else; without this card a manager can't
+          see the status of their own pending submissions on their main
+          dashboard. Uses AppShell's authoritative requests/permissions
+          (passed in as allRequests/allPermissions) which include the
+          manager's own rows — ManagerDashboard's local fetch is scoped
+          to direct reports only. */}
+      <MyApplicationsCard
+        me={me}
+        requests={allRequests}
+        permissions={allPermissions}
+        empMap={empMap}
+        leaveTypes={leaveTypes}
+      />
 
       {/* Direct reports list */}
       <Card title="Your team" subtitle={`${directReports.length} ${directReports.length === 1 ? 'person reports' : 'people report'} to you`} empty={directReports.length === 0 ? 'No one is set as your direct report yet.' : null}>

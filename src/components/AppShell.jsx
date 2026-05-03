@@ -695,9 +695,18 @@ export default function AppShell({ session, me, onRefreshMe }) {
             // ManagerDashboard: any user who has direct reports (manager_id===me.id
             // for some employee) but is not admin/HR. Same component for every
             // manager; data is scoped to their own direct reports.
+            //
+            // We pass AppShell's authoritative requests + permissions so the
+            // manager's MyApplicationsCard sees ALL their own activity, not
+            // just their reports' rows. ManagerDashboard's internal load()
+            // continues to fetch reports-scoped data for the 'Pending approvals'
+            // section — that one remains correctly scoped to direct reports.
             <ManagerDashboard
               me={me}
               employees={employees}
+              allRequests={requests}
+              allPermissions={permissions}
+              leaveTypes={leaveTypes}
               onGoToReviews={() => setTabPersistent("reviews")}
               onGoToRequests={() => setTabPersistent("requests")}
               onGoToShifts={() => setTabPersistent("shifts")}
