@@ -33,6 +33,43 @@ export default function MyAttendanceCard({ me }) {
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(false);
+  // Logged evaluation score for the current calendar month, when one
+  // exists. Pulled from the evaluation_scores_final view so the
+  // final_score (base_score - attendance_deduction) comes straight
+  // from the DB rather than being computed in JS — keeps the UI in
+  // sync with whatever math the view is doing.
+  const [monthScore, setMonthScore] = useState(null);
+
+  // Pull the current-month evaluation score row, if HR has logged
+  // one. Most staff (0–5 incidents) won't have a row — that's the
+  // "within policy" case and we don't display anything for it. A
+  // row only exists once Bashaier has reviewed and logged a
+  // deduction (>5 incidents in the month).
+  useEffect(() => {
+    if (!me?.id) { setMonthScore(null); return; }
+    let cancelled = false;
+    const now = new Date();
+    const periodYear  = now.getFullYear();
+    const periodMonth = now.getMonth() + 1;
+    (async () => {
+      try {
+        const data = await directGet(
+          'evaluation_scores_final?select=violation_count,base_score,attendance_deduction,final_score,reviewed_at'
+          + '&employee_id=eq.' + encodeURIComponent(me.id)
+          + '&period_year=eq.' + periodYear
+          + '&period_month=eq.' + periodMonth
+          + '&limit=1'
+        );
+        if (!cancelled) setMonthScore((data && data[0]) || null);
+      } catch (e) {
+        // View may not exist on older DBs — degrade silently. The
+        // attendance pill above still works without it.
+        console.warn('[MyAttendance] evaluation_scores_final fetch failed:', e?.message || e);
+        if (!cancelled) setMonthScore(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [me?.id]);
 
   // Pull this employee's last 90 days of attendance violations. 90 days
   // gives enough history to spot patterns ('every Monday') without
@@ -143,6 +180,33 @@ export default function MyAttendanceCard({ me }) {
             : isApproachingThreshold ? 'close to threshold'
             :                          'within policy'}
           </div>
+          {/* Logged evaluation score — shown only when HR has actually
+              reviewed and recorded a deduction for this month. Reads
+              from evaluation_scores_final (which computes
+              base_score - attendance_deduction at the DB layer) so
+              the staff member sees the same number that's on file.
+              When no score row exists, the implied score is 100 and
+              this line is suppressed — the threshold pill above
+              already conveys the standing. */}
+          {monthScore && (
+            <div className="mt-1.5 pt-1.5 border-t" style={{ borderColor: 'rgba(0,0,0,0.08)' }}>
+              <div className="text-[9px] tracking-wider font-bold opacity-70" style={{ color: '#0A0A0A' }}>
+                LOGGED SCORE
+              </div>
+              <div className="flex items-baseline gap-1 mt-0.5 justify-end">
+                <span style={{ fontSize: '18px', fontWeight: 700, color: '#0A0A0A' }}>
+                  {monthScore.final_score != null
+                    ? monthScore.final_score
+                    : ((monthScore.base_score ?? 100) - (monthScore.attendance_deduction ?? 0))}
+                </span>
+                <span className="text-[10px] opacity-70" style={{ color: '#0A0A0A' }}>/ 100</span>
+                <span className="text-[10px] ml-1 px-1.5 py-0.5 rounded"
+                  style={{ background: '#FEE2E2', color: '#991B1B', fontWeight: 700 }}>
+                  &minus;{monthScore.attendance_deduction ?? 0}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

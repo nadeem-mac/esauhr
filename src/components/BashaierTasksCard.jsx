@@ -458,6 +458,13 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
           'attendance_violations',
           `select=employee_id,violation_type,violation_date` +
           `&violation_date=gte.${monthRange.start}&violation_date=lte.${monthRange.end}` +
+          // Exclude entries cleared by retroactive permissions —
+          // otherwise a 7-incident month with 2 cleared by approved
+          // permissions would still escalate as if it were 7, and the
+          // resulting evaluation_scores row would record the wrong
+          // deduction. Same `cleared_at IS NULL` filter every other
+          // attendance_violations consumer applies.
+          `&cleared_at=is.null` +
           `&order=violation_date`,
           { timeoutMs: 8000 }
         );
