@@ -61,6 +61,12 @@ export default function ReviewerPanel({ me }) {
   // dashboard doesn't need this. PendingSickCertsCard at the top of
   // the page renders these.
   const [pendingCerts, setPendingCerts] = useState([]);
+  // Reminder log for the visible pendingCerts. One row per reminder
+  // sent (manual or auto). Drives the "REMINDER DUE" pill and
+  // "Last reminder: X on Y" subtitle in PendingSickCertsCard. Refetched
+  // alongside pendingCerts on every load() so a freshly-sent reminder
+  // is reflected as soon as Bashaier closes the SendReminderModal.
+  const [sickReminders, setSickReminders] = useState([]);
   // After Bashaier issues the FINAL HR approval on a permission, this holds
   // the freshly-approved row so PermissionApprovedModal opens with the
   // download letter / open email draft actions.
@@ -247,8 +253,18 @@ export default function ReviewerPanel({ me }) {
         const certQs = `select=*&stage=eq.pending_certificate&employee_id=neq.${encodeURIComponent(me.id)}&order=sick_declared_at.desc`;
         const cr = await directGet('leave_requests', certQs, { timeoutMs: 10000 }).catch(() => []);
         setPendingCerts(cr || []);
+        // Pull every reminder ever sent for the visible declarations.
+        // Cheap query — sick_reminders has at most a handful of rows
+        // per declaration (3-5 tiers × small staff). PendingSickCertsCard
+        // filters to the ones matching its rows, so we don't need to
+        // narrow server-side. If the list ever grows past ~500 rows we
+        // can scope by request_id IN (...).
+        const reminderQs = 'select=*&order=sent_at.desc&limit=500';
+        const rr = await directGet('sick_reminders', reminderQs, { timeoutMs: 8000 }).catch(() => []);
+        setSickReminders(rr || []);
       } else {
         setPendingCerts([]);
+        setSickReminders([]);
       }
 
       // History pull — HR/admin reviewers see everything they've decided
@@ -692,6 +708,7 @@ export default function ReviewerPanel({ me }) {
       {(isHrReviewer || isAdmin) && (
         <PendingSickCertsCard
           rows={pendingCerts}
+          reminders={sickReminders}
           empMap={empMap}
           me={me}
           loading={loading}
