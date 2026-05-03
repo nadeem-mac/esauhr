@@ -193,6 +193,37 @@ export default function PermissionTimelineModal({ row, employee, onClose }) {
 }
 
 // ── Stage builder ──────────────────────────────────────────────────────────
+//
+// Maps a permission_request row's stage value to the four-tile timeline
+// display. The previous implementation used cascading `else` branches
+// that caught any unrecognised stage value into the "done" branch for
+// stages 2 and 3 simultaneously, producing a contradictory display
+// (steps 2+3 showed as "Approved by manager / Approved by HR" while
+// step 4 showed as still "pending"). This was reachable when stage was
+// 'cancelled' (a canonical DB value the constraint allows but the
+// renderer didn't handle) or any other unexpected value.
+//
+// The rewrite is:
+//   • Explicit handling for every canonical stage (pending_manager,
+//     pending_hr, approved, rejected_by_manager, rejected_by_hr,
+//     cancelled).
+//   • Unknown values fall to a defensive default that mirrors
+//     'pending_manager' so the display is at least internally
+//     consistent. A console.warn fires so data corruption surfaces
+//     in the dev console.
+//
+// All four stages are computed in lockstep within each branch, so any
+// future stage addition only needs to change ONE block — no risk of
+// the kind of mismatch that produced the original bug.
+
+const KNOWN_STAGES = new Set([
+  'pending_manager',
+  'pending_hr',
+  'approved',
+  'rejected_by_manager',
+  'rejected_by_hr',
+  'cancelled',
+]);
 
 function buildStages(row, stage) {
   // Stage 1 — Submitted (always done if the record exists)
@@ -204,93 +235,177 @@ function buildStages(row, stage) {
     state: 'done',
   };
 
-  // Stage 2 — Manager review
-  let manager;
-  if (stage === 'pending_manager') {
-    manager = {
-      id: 'manager',
-      label: 'Pending manager approval',
-      detail: 'Awaiting your direct manager',
-      state: 'current',
-    };
-  } else if (stage === 'rejected_by_manager') {
-    manager = {
-      id: 'manager',
-      label: 'Rejected by manager',
-      timestamp: row.manager_decided_at,
-      note: row.manager_note,
-      state: 'rejected',
-    };
-  } else {
-    // pending_hr / approved / rejected_by_hr — manager step is done
-    manager = {
-      id: 'manager',
-      label: 'Approved by manager',
-      timestamp: row.manager_decided_at,
-      note: row.manager_note,
-      state: 'done',
-    };
+  // Defensive fallback for unknown / corrupted stage values.
+  // Treat as pending_manager so the user sees a coherent timeline.
+  let safeStage = stage;
+  if (!KNOWN_STAGES.has(stage)) {
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[PermissionTimeline] Unknown stage value:', stage, '— rendering as pending_manager');
+    }
+    safeStage = 'pending_manager';
   }
 
-  // Stage 3 — HR review
-  let hr;
-  if (stage === 'pending_manager' || stage === 'rejected_by_manager') {
-    hr = {
-      id: 'hr',
-      label: 'Pending HR approval',
-      detail: 'Will move here once manager approves',
-      state: 'pending',
-    };
-  } else if (stage === 'pending_hr') {
-    hr = {
-      id: 'hr',
-      label: 'Pending HR approval',
-      detail: 'Awaiting Bashaier (HR)',
-      state: 'current',
-    };
-  } else if (stage === 'rejected_by_hr') {
-    hr = {
-      id: 'hr',
-      label: 'Rejected by HR',
-      timestamp: row.hr_decided_at,
-      note: row.hr_note,
-      state: 'rejected',
-    };
-  } else {
-    // approved
-    hr = {
-      id: 'hr',
-      label: 'Approved by HR',
-      timestamp: row.hr_decided_at,
-      note: row.hr_note,
-      state: 'done',
-    };
-  }
+  switch (safeStage) {
+    case 'pending_manager':
+      return [
+        submitted,
+        {
+          id: 'manager',
+          label: 'Pending manager approval',
+          detail: 'Awaiting your direct manager',
+          state: 'current',
+        },
+        {
+          id: 'hr',
+          label: 'Pending HR approval',
+          detail: 'Will move here once manager approves',
+          state: 'pending',
+        },
+        {
+          id: 'final',
+          label: 'Final approval',
+          detail: 'Confirmed once HR approves.',
+          state: 'pending',
+        },
+      ];
 
-  // Stage 4 — Final approval (terminal)
-  let final;
-  if (stage === 'approved') {
-    final = {
-      id: 'final',
-      label: 'Final approval issued',
-      detail: 'Your permission is confirmed.',
-      state: 'done',
-    };
-  } else if (stage === 'rejected_by_manager' || stage === 'rejected_by_hr') {
-    final = {
-      id: 'final',
-      label: 'Application closed',
-      detail: 'Rejected — see note above. Speak to your manager / HR if you need to discuss.',
-      state: 'rejected',
-    };
-  } else {
-    final = {
-      id: 'final',
-      label: 'Final approval',
-      detail: 'Confirmed once HR approves.',
-      state: 'pending',
-    };
-  }
+    case 'rejected_by_manager':
+      return [
+        submitted,
+        {
+          id: 'manager',
+          label: 'Rejected by manager',
+          timestamp: row.manager_decided_at,
+          note: row.manager_note,
+          state: 'rejected',
+        },
+        {
+          id: 'hr',
+          label: 'Not reviewed',
+          detail: 'Skipped because the manager rejected.',
+          state: 'pending',
+        },
+        {
+          id: 'final',
+          label: 'Application closed',
+          detail: 'Rejected — see note above. Speak to your manager / HR if you need to discuss.',
+          state: 'rejected',
+        },
+      ];
 
-  return [submitted, manager, hr, final];
+    case 'pending_hr':
+      return [
+        submitted,
+        {
+          id: 'manager',
+          label: 'Approved by manager',
+          timestamp: row.manager_decided_at,
+          note: row.manager_note,
+          state: 'done',
+        },
+        {
+          id: 'hr',
+          label: 'Pending HR approval',
+          detail: 'Awaiting Bashaier (HR)',
+          state: 'current',
+        },
+        {
+          id: 'final',
+          label: 'Final approval',
+          detail: 'Confirmed once HR approves.',
+          state: 'pending',
+        },
+      ];
+
+    case 'rejected_by_hr':
+      return [
+        submitted,
+        {
+          id: 'manager',
+          label: 'Approved by manager',
+          timestamp: row.manager_decided_at,
+          note: row.manager_note,
+          state: 'done',
+        },
+        {
+          id: 'hr',
+          label: 'Rejected by HR',
+          timestamp: row.hr_decided_at,
+          note: row.hr_note,
+          state: 'rejected',
+        },
+        {
+          id: 'final',
+          label: 'Application closed',
+          detail: 'Rejected — see note above. Speak to your manager / HR if you need to discuss.',
+          state: 'rejected',
+        },
+      ];
+
+    case 'approved':
+      return [
+        submitted,
+        {
+          id: 'manager',
+          label: 'Approved by manager',
+          timestamp: row.manager_decided_at,
+          note: row.manager_note,
+          state: 'done',
+        },
+        {
+          id: 'hr',
+          label: 'Approved by HR',
+          timestamp: row.hr_decided_at,
+          note: row.hr_note,
+          state: 'done',
+        },
+        {
+          id: 'final',
+          label: 'Final approval issued',
+          detail: 'Your permission is confirmed.',
+          state: 'done',
+        },
+      ];
+
+    case 'cancelled':
+      // Cancelled — terminal state. We don't know whether the
+      // cancellation happened before or after manager/HR review,
+      // so we display all three downstream stages as closed-with-
+      // no-decision. Timestamps (if present from prior partial
+      // review) still surface via row.manager_decided_at /
+      // hr_decided_at on a per-stage basis.
+      return [
+        submitted,
+        {
+          id: 'manager',
+          label: row.manager_decided_at ? 'Approved by manager (before cancellation)' : 'Manager review skipped',
+          timestamp: row.manager_decided_at || null,
+          state: row.manager_decided_at ? 'done' : 'pending',
+        },
+        {
+          id: 'hr',
+          label: row.hr_decided_at ? 'Approved by HR (before cancellation)' : 'HR review skipped',
+          timestamp: row.hr_decided_at || null,
+          state: row.hr_decided_at ? 'done' : 'pending',
+        },
+        {
+          id: 'final',
+          label: 'Application cancelled',
+          detail: 'This request was cancelled.',
+          state: 'rejected',
+        },
+      ];
+
+    default:
+      // Unreachable — safeStage was guaranteed to be in KNOWN_STAGES
+      // above. Kept as a typescript-style exhaustive-default for
+      // future-proofing if a new stage is added to KNOWN_STAGES
+      // without a matching switch arm.
+      return [
+        submitted,
+        { id: 'manager', label: 'Pending manager approval', state: 'pending' },
+        { id: 'hr',      label: 'Pending HR approval',      state: 'pending' },
+        { id: 'final',   label: 'Final approval',           state: 'pending' },
+      ];
+  }
 }
