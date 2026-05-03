@@ -83,9 +83,46 @@ export default function SickLeaveModal({ employee, onClose, onCreated, declaredV
 
   // Path A state — declare-now flow
   const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10));
+  // End date is only meaningful when the staff picks 'A few days' — for
+  // 'Today only' and 'Not sure' we record a single-day declaration and
+  // they can extend later. Defaults to startDate + 2 days; the user can
+  // bump it forward up to startDate + 7. The 7-day cap keeps multi-day
+  // declarations reasonable; longer absences should land via Path B
+  // (Sehhaty cert) which can specify any duration the cert covers.
+  const [endDate,   setEndDate]   = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() + 2);
+    return d.toISOString().slice(0, 10);
+  });
   const [duration,  setDuration]  = useState('today_only');
   const [reasonId,  setReasonId]  = useState('');
   const [otherNote, setOtherNote] = useState('');
+
+  // When the user picks 'A few days', the SICK FROM input is the start
+  // date and the EXPECTED RETURN is the end date. For 'today_only' and
+  // 'unsure', the row is a single day (end_date = start_date).
+  const declarationStart = startDate;
+  const declarationEnd   = duration === 'few_days' ? endDate : startDate;
+  const declarationDays  = (() => {
+    if (duration !== 'few_days') return 1;
+    const a = new Date(declarationStart);
+    const b = new Date(declarationEnd);
+    const diff = Math.round((b - a) / 86_400_000) + 1;
+    return Math.max(1, diff);
+  })();
+
+  // If the user toggles to 'few_days' AFTER picking a backdated start,
+  // the default endDate (today + 2) might be BEFORE startDate. Re-anchor
+  // endDate to startDate + 2 whenever startDate changes so the picker
+  // always offers a sensible default within the valid window.
+  useEffect(() => {
+    if (duration !== 'few_days') return;
+    const a = new Date(startDate);
+    const b = new Date(endDate);
+    if (b < a) {
+      const next = new Date(a); next.setDate(next.getDate() + 2);
+      setEndDate(next.toISOString().slice(0, 10));
+    }
+  }, [startDate, duration]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Shared state
   const [busy,  setBusy]  = useState(false);
@@ -148,7 +185,16 @@ export default function SickLeaveModal({ employee, onClose, onCreated, declaredV
   // Path A submit guard
   const reasonObj = REASON_OPTIONS.find(r => r.id === reasonId);
   const isOther   = reasonId === 'OTHER';
-  const canSubmitA = !!reasonId && !!startDate && (!isOther || !!otherNote.trim());
+  // When 'A few days' is selected, the end date must be present and
+  // strictly after the start date (the EXPECTED RETURN picker enforces
+  // this via min/max but a defensive check protects against a user
+  // typing into the input directly).
+  const fewDaysOk = duration !== 'few_days' || (
+    !!endDate &&
+    new Date(endDate) > new Date(declarationStart) &&
+    declarationDays >= 2 && declarationDays <= 8
+  );
+  const canSubmitA = !!reasonId && !!startDate && (!isOther || !!otherNote.trim()) && fewDaysOk;
 
   async function handleSubmitDeclaration() {
     if (busy || !canSubmitA) return;
@@ -172,9 +218,9 @@ export default function SickLeaveModal({ employee, onClose, onCreated, declaredV
       const row = {
         employee_id:        employee.id,
         leave_type_id:      'sick',
-        start_date:         startDate,
-        end_date:           startDate,
-        days:               1,
+        start_date:         declarationStart,
+        end_date:           declarationEnd,
+        days:               declarationDays,
         is_half_day:        false,
         stage:              'pending_certificate',
         reason:             reasonText,
@@ -571,6 +617,47 @@ export default function SickLeaveModal({ employee, onClose, onCreated, declaredV
               <div className="text-[10px] mt-1.5" style={{ color: '#0A0A0A', opacity: 0.6 }}>
                 No firm commitment — you can extend each morning you're still out.
               </div>
+
+              {/* Expected return date — only shown when 'A few days' is
+                  picked. The other two duration options are single-day
+                  records and they extend each morning if needed.
+                  We cap the window at start + 7 days so a Path A
+                  declaration can't claim a long absence without a cert
+                  (longer absences should land via Path B with a
+                  Sehhaty cert that covers the period). */}
+              {duration === 'few_days' && (() => {
+                const minD = (() => {
+                  const a = new Date(declarationStart);
+                  a.setDate(a.getDate() + 1);
+                  return a.toISOString().slice(0, 10);
+                })();
+                const maxD = (() => {
+                  const a = new Date(declarationStart);
+                  a.setDate(a.getDate() + 7);
+                  return a.toISOString().slice(0, 10);
+                })();
+                return (
+                  <div className="mt-3 px-3 py-3 rounded-lg border"
+                       style={{ background: '#FEF2F2', borderColor: '#FCA5A5' }}>
+                    <label className="text-[11px] tracking-wider font-bold mb-1.5 block" style={{ color: '#0A0A0A' }}>
+                      EXPECTED RETURN <span style={{ color: '#B91C1C' }}>*</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={endDate}
+                      min={minD}
+                      max={maxD}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border text-sm"
+                      style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', color: '#0A0A0A' }}
+                    />
+                    <div className="text-[10px] mt-1.5" style={{ color: '#0A0A0A', opacity: 0.75 }}>
+                      Total: <strong>{declarationDays} day{declarationDays === 1 ? '' : 's'}</strong>
+                      {' '}({declarationStart} → {declarationEnd}). You can extend later if you're still unwell.
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* 48h cert obligation */}

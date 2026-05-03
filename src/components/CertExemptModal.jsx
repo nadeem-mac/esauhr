@@ -80,9 +80,16 @@ export default function CertExemptModal({ request, employee, me, onClose, onComp
         // day is approved without a Sehhaty cert. This unblocks the
         // staff for any future submissions and removes the row from
         // PendingSickCertsCard.
+        //
+        // Stamp hr_decided_at / hr_decided_by — the canonical approval
+        // columns used elsewhere in the codebase (HrApprovalModal,
+        // ReviewerPanel, recent-decisions history). The legacy column
+        // names approved_at / approved_by do NOT exist on
+        // leave_requests; using them caused PGRST204 'Could not find
+        // the approved_at column' on every exempt action.
         stage:                    'approved',
-        approved_at:              new Date().toISOString(),
-        approved_by:              me.id,
+        hr_decided_at:            new Date().toISOString(),
+        hr_decided_by:            me?.auth_user_id || me?.id || null,
       }, { timeoutMs: 12000 });
 
       // Audit. Captures who, when, why, and on whose behalf.
