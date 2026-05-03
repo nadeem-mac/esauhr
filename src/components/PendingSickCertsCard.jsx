@@ -1,0 +1,304 @@
+// =============================================================================
+// PendingSickCertsCard
+//
+// HR-dashboard panel for Bashaier (HR reviewer) showing every staff member who
+// has DECLARED a sick day (Path A in SickLeaveModal) but hasn't yet submitted
+// the matching Sehhaty certificate.
+//
+// WHAT IT TRACKS
+//   leave_requests rows in stage='pending_certificate'. These come from
+//   declarations made via the front-door "I'm sick today" flow without a
+//   cert. They sit in this stage until the staff comes back with their
+//   Sehhaty PDF (Path B), at which point the row's stage transitions to
+//   'pending_manager' and it leaves this list.
+//
+// WHY IT EXISTS
+//   Without visibility into pending declarations, the HR team has no way to
+//   know who owes them a certificate. The system would silently let
+//   declarations languish forever, which defeats the whole purpose of the
+//   front-door declaration flow (we wanted compliance accountability, not
+//   just a different surface for staff to tell us they're sick on).
+//
+// LAYOUT
+//   • Card sits at the TOP of Bashaier's HR dashboard, above sign-in
+//     activity and leave requests — design decision per Nadeem's call.
+//   • Each row tinted by pressure stage:
+//       still_out / in_grace  → no tint, neutral
+//       soft_overdue          → amber row tint
+//       hard_overdue          → red row tint
+//   • Sorted with overdue at the top so urgent items are first thing
+//     Bashaier sees.
+//
+// ROW INTERACTION
+//   • Tap a row → opens the existing HrApprovalModal (reuses the detail
+//     view we already have, no duplicate UI). Even though the row is in
+//     pending_certificate stage and the modal is built for pending_hr,
+//     the modal renders read-only field summaries fine for any stage.
+//   • Each row has a small "Mark cert exempt" button that opens a
+//     categorized-reason modal — Bashaier-only action.
+//
+// PRESSURE CLASSIFICATION
+//   Uses classifyPressure from sickDeclaration.js, which returns:
+//     still_out      — staff hasn't come back yet (no end-of-leave signal)
+//     in_grace       — returned, within 48h grace period
+//     soft_overdue   — returned, 2-5 working days late
+//     hard_overdue   — 5+ working days late (commit 5 will auto-mark
+//                       this as unauthorized absence)
+//     exempt         — cert exempted by HR (won't normally appear here
+//                       because exempt rows transition out of pending_
+//                       certificate stage when marked, but we keep it
+//                       for safety in case of race)
+//
+//   We fetch the rows but we don't fetch the staff's attendance punches
+//   in this card — too expensive at the dashboard level. Without punches,
+//   classifyPressure can only know about hard-overdue cases via the
+//   end_date of the declaration vs. today. The full punch-driven
+//   classification will land in commit 5 when we do attendance
+//   integration.
+// =============================================================================
+
+import React, { useState, useMemo } from 'react';
+import { HeartPulse, ChevronRight, ShieldCheck, Loader2, Inbox } from 'lucide-react';
+import { classifyPressure, PRESSURE_LABELS, formatDeclarationRange } from '../lib/sickDeclaration.js';
+import CertExemptModal from './CertExemptModal.jsx';
+
+// Sort key: overdue first (hard > soft), then by declaration date desc.
+// Returns a numeric sort value; lower = appears earlier (we want
+// hard_overdue at top → lowest value).
+function pressureSortKey(pressure) {
+  switch (pressure) {
+    case 'hard_overdue': return 0;
+    case 'soft_overdue': return 1;
+    case 'in_grace':     return 2;
+    case 'still_out':    return 3;
+    case 'exempt':       return 4;
+    default:             return 5;
+  }
+}
+
+// Per-pressure row tint. Background colour applied to the whole row
+// container so overdue items pop visually without needing to read the
+// pill. Border colour matches.
+function rowTint(pressure) {
+  switch (pressure) {
+    case 'hard_overdue': return { background: '#FEF2F2', border: '#FCA5A5' };
+    case 'soft_overdue': return { background: '#FFFBEB', border: '#FDE68A' };
+    default:             return { background: '#FFFFFF', border: 'var(--border-soft)' };
+  }
+}
+
+export default function PendingSickCertsCard({
+  rows,            // leave_requests rows in 'pending_certificate' stage
+  empMap,          // { employee_id: employee_row }
+  me,              // current viewer; used as actor for the exempt action
+  onRowOpen,       // (req) => void  — invoked when a row is tapped, opens HrApprovalModal
+  onChanged,       // () => void     — invoked after exempt, so the parent re-fetches
+  loading,         // boolean — showing spinner while initial data arrives
+}) {
+  // Track which row (if any) the staff has clicked "Mark cert exempt" on.
+  // Opens CertExemptModal; null when no exempt action in progress.
+  const [exemptingReq, setExemptingReq] = useState(null);
+
+  // Decorate each row with classifyPressure result + a sort key. Done in
+  // useMemo so we don't re-compute on every render (could be 50+ rows).
+  // No punches passed — see comment at top of file. classifyPressure
+  // gracefully degrades to 'still_out' when punches are absent.
+  const decorated = useMemo(() => {
+    if (!rows) return [];
+    return rows
+      .map(r => ({
+        req: r,
+        emp: empMap?.[r.employee_id] || null,
+        pressure: classifyPressure(r, []).pressure,
+      }))
+      .sort((a, b) => {
+        const keyDiff = pressureSortKey(a.pressure) - pressureSortKey(b.pressure);
+        if (keyDiff !== 0) return keyDiff;
+        // Tie-break by declared_at desc (most recent first within same pressure).
+        const aT = a.req.sick_declared_at || a.req.requested_at || '';
+        const bT = b.req.sick_declared_at || b.req.requested_at || '';
+        return bT.localeCompare(aT);
+      });
+  }, [rows, empMap]);
+
+  // Counts shown in the section header so Bashaier can see at-a-glance
+  // how many overdue items there are without scrolling.
+  const counts = useMemo(() => {
+    const c = { total: decorated.length, hard: 0, soft: 0 };
+    for (const d of decorated) {
+      if (d.pressure === 'hard_overdue') c.hard++;
+      else if (d.pressure === 'soft_overdue') c.soft++;
+    }
+    return c;
+  }, [decorated]);
+
+  // Hide the card entirely when there are no pending certs and we're not
+  // loading. No reason to take up space when there's nothing to track.
+  // We DO show the card during loading so the dashboard layout doesn't
+  // jump as data trickles in.
+  if (!loading && counts.total === 0) {
+    return null;
+  }
+
+  return (
+    <section
+      className="rounded-xl border"
+      style={{
+        background: 'var(--paper-soft, #FEFAF3)',
+        borderColor: 'var(--border-soft)',
+      }}
+    >
+      {/* Header bar — title + counts + soft caption. The counts pills
+          give Bashaier the urgent summary in one glance. */}
+      <header
+        className="px-4 py-3 border-b flex items-center gap-3 flex-wrap"
+        style={{ borderColor: 'var(--border-soft)' }}
+      >
+        <HeartPulse className="w-4 h-4" style={{ color: '#B91C1C' }} />
+        <div className="flex-1 min-w-0">
+          <div className="text-[11px] tracking-[0.25em] font-bold" style={{ color: '#0A0A0A' }}>
+            PENDING SICK CERTIFICATES · {counts.total}
+          </div>
+          <div className="text-[10px] mt-0.5" style={{ color: '#0A0A0A', opacity: 0.65 }}>
+            Staff who declared sick but haven't submitted a Sehhaty certificate yet.
+          </div>
+        </div>
+        {/* Counts row — visible only when there are flagged items, so the
+            header stays clean when everything's on track. */}
+        {counts.hard > 0 && (
+          <span
+            className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wider"
+            style={{ background: '#FEE2E2', color: '#991B1B' }}
+            title="Overdue 5+ working days — will auto-mark as unauthorized in a future update"
+          >
+            {counts.hard} HARD-OVERDUE
+          </span>
+        )}
+        {counts.soft > 0 && (
+          <span
+            className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wider"
+            style={{ background: '#FEF3C7', color: '#92400E' }}
+            title="Returned, 2-5 working days late on cert"
+          >
+            {counts.soft} OVERDUE
+          </span>
+        )}
+      </header>
+
+      {/* Body — list of declaration rows or a loading/empty state. */}
+      {loading ? (
+        <div className="px-4 py-6 flex items-center gap-2 text-sm" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          Loading pending certificates…
+        </div>
+      ) : decorated.length === 0 ? (
+        // This branch is unreachable given the early-return above, but
+        // keep it defensive in case parent toggles `loading` without
+        // re-rendering rows.
+        <div className="px-4 py-6 flex items-center gap-2 text-sm" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+          <Inbox className="w-4 h-4" />
+          Nothing pending — all certificates received.
+        </div>
+      ) : (
+        <ul className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
+          {decorated.map(({ req, emp, pressure }) => {
+            const tint = rowTint(pressure);
+            const pressureMeta = PRESSURE_LABELS[pressure] || PRESSURE_LABELS.still_out;
+            const empName = emp?.name || req.employee_id;
+            const empPsn  = emp?.psn || '';
+            const empDept = emp?.department || '';
+
+            return (
+              <li
+                key={req.id}
+                className="flex items-stretch hover:opacity-95 transition-opacity"
+                style={{ background: tint.background }}
+              >
+                {/* Row body — clickable, opens HrApprovalModal */}
+                <button
+                  type="button"
+                  onClick={() => onRowOpen?.(req)}
+                  className="flex-1 px-4 py-3 text-left flex items-center gap-3 min-w-0"
+                >
+                  <div className="flex-1 min-w-0">
+                    {/* Top line — staff name and identifying info. */}
+                    <div className="flex items-baseline gap-2 mb-0.5 flex-wrap">
+                      <span className="text-sm" style={{ fontWeight: 600, color: '#0A0A0A' }}>
+                        {empName}
+                      </span>
+                      {empPsn && (
+                        <span className="text-[10px] font-mono" style={{ color: '#0A0A0A', opacity: 0.6 }}>
+                          {empPsn}
+                        </span>
+                      )}
+                      {empDept && (
+                        <span className="text-[10px]" style={{ color: '#0A0A0A', opacity: 0.6 }}>
+                          · {empDept}
+                        </span>
+                      )}
+                    </div>
+                    {/* Bottom line — declaration range + pressure pill +
+                        free-text reason if present. */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.85 }}>
+                        Declared: {formatDeclarationRange(req)}
+                      </span>
+                      <span
+                        className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider"
+                        style={{ background: pressureMeta.bg, color: pressureMeta.fg }}
+                      >
+                        {pressureMeta.label}
+                      </span>
+                      {req.reason && (
+                        <span
+                          className="text-[10px] truncate"
+                          style={{ color: '#0A0A0A', opacity: 0.65, maxWidth: 320 }}
+                          title={req.reason}
+                        >
+                          {req.reason}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: '#0A0A0A', opacity: 0.4 }} />
+                </button>
+
+                {/* Trailing action column — Bashaier-only "Mark cert exempt"
+                    button. Distinct from the main row click area so accidental
+                    taps don't trigger an exempt flow. Hidden for non-HR
+                    reviewers. */}
+                {!!me?.is_hr_reviewer && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setExemptingReq(req); }}
+                    className="px-3 border-l flex items-center gap-1 text-[10px] tracking-wider opacity-70 hover:opacity-100"
+                    style={{ borderColor: tint.border, color: '#0A0A0A' }}
+                    title="Mark this declaration as cert-exempt (skip the Sehhaty requirement)"
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    EXEMPT
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {/* Mount the exempt modal at the card level so dismissals don't
+          accidentally trigger row-tap handlers. */}
+      {exemptingReq && (
+        <CertExemptModal
+          request={exemptingReq}
+          employee={empMap?.[exemptingReq.employee_id] || null}
+          me={me}
+          onClose={() => setExemptingReq(null)}
+          onCompleted={() => {
+            setExemptingReq(null);
+            onChanged?.();
+          }}
+        />
+      )}
+    </section>
+  );
+}

@@ -7,6 +7,7 @@ import { buildLeaveRejectionEmailDraft } from '../lib/vacationForm.js';
 import PermissionApprovedModal from './PermissionApprovedModal.jsx';
 import RejoiningApprovedModal from './RejoiningApprovedModal.jsx';
 import LeaveApprovedModal     from './LeaveApprovedModal.jsx';
+import PendingSickCertsCard   from './PendingSickCertsCard.jsx';
 import { fmtDate, rejectionReasonsForLeaveType, findRejectionReason } from '../lib/leaveLogic.js';
 import { PERMISSION_TYPES, summariseMonth } from '../lib/permissionLogic.js';
 
@@ -54,6 +55,12 @@ export default function ReviewerPanel({ me }) {
   const [leave, setLeave]             = useState([]);
   const [perms, setPerms]             = useState([]);
   const [empMap, setEmpMap]           = useState({});
+  // Sick declarations sitting in 'pending_certificate' stage — staff
+  // who declared a sick day but haven't submitted a Sehhaty cert yet.
+  // Populated for HR reviewers (Bashaier / admin) only; the worker
+  // dashboard doesn't need this. PendingSickCertsCard at the top of
+  // the page renders these.
+  const [pendingCerts, setPendingCerts] = useState([]);
   // After Bashaier issues the FINAL HR approval on a permission, this holds
   // the freshly-approved row so PermissionApprovedModal opens with the
   // download letter / open email draft actions.
@@ -227,6 +234,22 @@ export default function ReviewerPanel({ me }) {
 
       setLeave(lr || []);
       setPerms(pr || []);
+
+      // Fetch pending_certificate rows for HR reviewers and admins. Each
+      // such row is a staff sick declaration that hasn't been backed by
+      // a Sehhaty cert yet. PendingSickCertsCard at the top of the
+      // dashboard turns these into the tracker view; row count drives
+      // the visibility of the card itself (hidden when zero pending).
+      // We exclude the reviewer's OWN rows from the list — Bashaier
+      // shouldn't see her own declarations on her HR dashboard for
+      // the same separation-of-duties reason as leave/perm queues.
+      if (isHrReviewer || isAdmin) {
+        const certQs = `select=*&stage=eq.pending_certificate&employee_id=neq.${encodeURIComponent(me.id)}&order=sick_declared_at.desc`;
+        const cr = await directGet('leave_requests', certQs, { timeoutMs: 10000 }).catch(() => []);
+        setPendingCerts(cr || []);
+      } else {
+        setPendingCerts([]);
+      }
 
       // History pull — HR/admin reviewers see everything they've decided
       // in the last 90 days, both leave AND permissions. Managers don't
@@ -655,6 +678,27 @@ export default function ReviewerPanel({ me }) {
           <RefreshCw className="w-3 h-3" /> Refresh
         </button>
       </div>
+
+      {/* Sick certificate tracker — HR reviewers and admins. Sits at
+          the very top of the dashboard above the pending-notification
+          banner because:
+            • Pending certs are open compliance items that won't auto-
+              resolve. Without HR action (chase, exempt, escalate)
+              they sit forever.
+            • When something is hard-overdue, it needs to be the FIRST
+              thing the reviewer sees, before the day's normal queue.
+          The card hides itself entirely when there are zero pending
+          certs, so this slot is empty 95% of the time. */}
+      {(isHrReviewer || isAdmin) && (
+        <PendingSickCertsCard
+          rows={pendingCerts}
+          empMap={empMap}
+          me={me}
+          loading={loading}
+          onRowOpen={(req) => setHrModalReq(req)}
+          onChanged={load}
+        />
+      )}
 
       {/* Pending notification — single line summary of what's waiting
           for HER right now. Sits at the top of the panel so the moment
