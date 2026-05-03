@@ -699,12 +699,29 @@ export default function AttendanceView({ me, employees }) {
   // outside today + yesterday is dropped, with the count surfaced via
   // parsed.offDateCount so a small inline warning can appear in the
   // file summary.
+  //
+  // SPECIAL CASE — weekend rows. When today is the first working day
+  // after a weekend (typically Sunday), yesterdayDate is the previous
+  // working day (Thursday for KSA). The natural date range Bashaier
+  // downloads is then Thu→Sun, which means Fri+Sat rows are inside
+  // the window but on weekend dates. We don't want them in
+  // parsed.rows (would trigger spurious late/early/missed checks)
+  // but we DO want to keep them for the separate weekend report
+  // that goes to Mr John. So they're collected into parsed.weekendRows
+  // — a parallel bucket with the same shape, dispatched into
+  // detection.weekend by the detection useMemo below.
   const parsed = useMemo(() => {
     const allRows = parsedData.rows || [];
-    const inWindow = (r) => r.date === csvDate || r.date === yesterdayDate;
-    const onWindow = (csvDate || yesterdayDate) ? allRows.filter(inWindow) : allRows;
-    const offDateCount = allRows.length - onWindow.length;
-    const rows = onWindow.map(r => ({
+    const inWorkingWindow = (r) =>
+      (r.date === csvDate || r.date === yesterdayDate) && !isKsaWeekend(r.date);
+    const inWeekendWindow = (r) =>
+      yesterdayDate && csvDate
+      && r.date >= yesterdayDate && r.date <= csvDate
+      && isKsaWeekend(r.date);
+    const onWindow      = (csvDate || yesterdayDate) ? allRows.filter(inWorkingWindow) : allRows;
+    const weekendInRange = (csvDate || yesterdayDate) ? allRows.filter(inWeekendWindow) : [];
+    const offDateCount = allRows.length - onWindow.length - weekendInRange.length;
+    const shape = (r) => ({
       'Employee ID': r.psn,
       'First Name':  r.name,
       'Date':        r.date,
@@ -713,14 +730,16 @@ export default function AttendanceView({ me, employees }) {
       // Carry the whole parsed entry so cross-reference can read
       // uniqueCount / midDayPunches / rawPunches without re-parsing.
       _tc: r,
-    }));
+    });
+    const rows         = onWindow.map(shape);
+    const weekendRows  = weekendInRange.map(shape);
     // Convenience flags so render can hide sections when the file
     // doesn't actually contain that day's data.
     const hasTodayData     = rows.some(r => r['Date'] === csvDate);
     const hasYesterdayData = !!yesterdayDate && rows.some(r => r['Date'] === yesterdayDate);
     return {
       headers: ['Employee ID','First Name','Date','First Punch','Last Punch'],
-      rows, offDateCount, hasTodayData, hasYesterdayData,
+      rows, weekendRows, offDateCount, hasTodayData, hasYesterdayData,
     };
   }, [parsedData, csvDate, yesterdayDate]);
 
@@ -985,8 +1004,9 @@ export default function AttendanceView({ me, employees }) {
       late: [], missedIn: [],
       early: [], missedOut: [],
       onTime: [], onLeave: [], unknownEmp: [],
+      weekend: [],
     };
-    if (!parsed.rows.length) return out;
+    if (!parsed.rows.length && !(parsed.weekendRows || []).length) return out;
 
     parsed.rows.forEach((row, idx) => {
       const rowDate = row['Date'];
@@ -1150,8 +1170,53 @@ export default function AttendanceView({ me, employees }) {
       }
     });
 
+    // ── Weekend attendance ──────────────────────────────────────────
+    // Per Nadeem: a separate report goes to Mr John each week showing
+    // which staff worked on the weekend (Fri/Sat in KSA), how many
+    // hours they put in, and which department + location they're in.
+    // We collect these from parsed.weekendRows (Fri/Sat rows that were
+    // inside the today→yesterday window — i.e. only the weekend
+    // immediately before today, never older). Rows without any punch
+    // are skipped: nobody we'd want to flag, since they didn't
+    // actually come in.
+    (parsed.weekendRows || []).forEach((row, idx) => {
+      const empIdRaw = row['Employee ID'] || '';
+      const empId = String(empIdRaw).trim();
+      const lookupKey = empId.toUpperCase().startsWith('H') ? empId.toUpperCase() : ('H' + empId).toUpperCase();
+      const emp = empById[empId.toUpperCase()]
+               || empById[lookupKey]
+               || empByDigits[psnDigits(empId)]
+               || null;
+      if (!emp) return; // skip — already surfaced via the working-day
+                        // unknownEmp bucket if they're missing entirely;
+                        // weekend mismatch alone shouldn't flag a new one
+      const punchInStr  = (row['First Punch'] || '').trim();
+      const punchOutStr = (row['Last Punch']  || '').trim();
+      const punchInMin  = timeToMinutes(punchInStr);
+      const punchOutMin = timeToMinutes(punchOutStr);
+      if (!punchInMin) return; // didn't actually come in
+      // Hours worked. If only one punch is on file (forgot to clock
+      // out at the end of a weekend shift), surface as null hours
+      // rather than guessing — Bashaier can flag it manually.
+      const hoursDecimal = punchOutMin && punchOutMin > punchInMin
+        ? (punchOutMin - punchInMin) / 60
+        : null;
+      out.weekend.push({
+        id: 'weekend-' + idx,
+        employee: emp,
+        dateLabel: row['Date'],
+        punchInStr,
+        punchOutStr: punchOutStr || null,
+        punchInMin,
+        punchOutMin: punchOutMin || null,
+        hoursDecimal,
+        department: emp.department || '—',
+        location:   emp.location   || '—',
+      });
+    });
+
     return out;
-  }, [parsed.rows, csvDate, yesterdayDate, empById, empByDigits, onLeaveOnDate, shiftOverrideById, permIndex]);
+  }, [parsed.rows, parsed.weekendRows, csvDate, yesterdayDate, empById, empByDigits, onLeaveOnDate, shiftOverrideById, permIndex]);
 
   // File handling
   const handleFile = useCallback(async (file) => {
@@ -1889,6 +1954,252 @@ export default function AttendanceView({ me, employees }) {
       )}
     />
   );
+  // ── Weekend attendance report ──────────────────────────────────────
+  // Sorts the bucket location → department → check-in time. Exposed as
+  // a memo so both the panel render and the PDF/email helpers below
+  // see the same canonical ordering.
+  const weekendSorted = useMemo(() => {
+    const arr = [...(detection.weekend || [])];
+    arr.sort((a, b) => {
+      // Primary: date (Friday before Saturday in the same weekend)
+      if (a.dateLabel !== b.dateLabel) return a.dateLabel < b.dateLabel ? -1 : 1;
+      // Then: location alphabetical
+      const loc = (a.location || '').localeCompare(b.location || '');
+      if (loc !== 0) return loc;
+      // Then: department alphabetical
+      const dept = (a.department || '').localeCompare(b.department || '');
+      if (dept !== 0) return dept;
+      // Then: punch-in time ascending
+      return (a.punchInMin || 0) - (b.punchInMin || 0);
+    });
+    return arr;
+  }, [detection.weekend]);
+
+  // PDF generator — same import pattern as InsightsView. Lazy-loaded
+  // so jspdf only ships in the bundle once it's actually clicked.
+  const exportWeekendPdf = useCallback(async () => {
+    if (!weekendSorted.length) return;
+    try {
+      const { jsPDF } = await import('jspdf');
+      await import('jspdf-autotable');
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+      const W = doc.internal.pageSize.getWidth();
+      // Header band — Evergreen brand green
+      doc.setFillColor(15, 76, 42); doc.rect(0, 0, W, 64, 'F');
+      doc.setTextColor(255); doc.setFontSize(16); doc.setFont('helvetica', 'bold');
+      doc.text('Weekend Attendance Report', 40, 32);
+      doc.setFontSize(10); doc.setFont('helvetica', 'normal');
+      const yDate = formatDateLong(yesterdayDate);
+      const tDate = formatDateLong(csvDate);
+      doc.text(`Window: ${yDate} → ${tDate}  ·  Generated ${new Date().toLocaleString('en-GB')}`, 40, 50);
+
+      // Group by date — one table per weekend day
+      const byDate = new Map();
+      weekendSorted.forEach(e => {
+        if (!byDate.has(e.dateLabel)) byDate.set(e.dateLabel, []);
+        byDate.get(e.dateLabel).push(e);
+      });
+
+      let cursorY = 88;
+      byDate.forEach((rows, date) => {
+        doc.setTextColor(15, 76, 42); doc.setFontSize(12); doc.setFont('helvetica', 'bold');
+        doc.text(`${formatDateLong(date)}  ·  ${rows.length} staff`, 40, cursorY);
+        cursorY += 6;
+        const body = rows.map(e => [
+          e.location || '—',
+          e.department || '—',
+          e.employee.id || '',
+          e.employee.name || '',
+          e.punchInStr || '—',
+          e.punchOutStr || '—',
+          e.hoursDecimal != null ? e.hoursDecimal.toFixed(2) : '—',
+        ]);
+        doc.autoTable({
+          startY: cursorY,
+          head: [['Location', 'Department', 'PSN', 'Name', 'Punch In', 'Punch Out', 'Hours']],
+          body,
+          theme: 'grid',
+          headStyles: { fillColor: [15, 76, 42], textColor: 255, fontStyle: 'bold', fontSize: 9 },
+          styles: { fontSize: 9, cellPadding: 5, textColor: [10, 10, 10] },
+          alternateRowStyles: { fillColor: [250, 246, 236] },
+          columnStyles: {
+            0: { cellWidth: 60 },
+            1: { cellWidth: 60 },
+            2: { cellWidth: 50 },
+            3: { cellWidth: 'auto' },
+            4: { cellWidth: 55, halign: 'center' },
+            5: { cellWidth: 55, halign: 'center' },
+            6: { cellWidth: 45, halign: 'right' },
+          },
+          margin: { left: 40, right: 40 },
+        });
+        cursorY = doc.lastAutoTable.finalY + 24;
+      });
+
+      // Footer
+      const pageH = doc.internal.pageSize.getHeight();
+      doc.setTextColor(120); doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+      doc.text('ESAU HR · Evergreen Shipping Agency Saudi Co. (LLC)', 40, pageH - 24);
+
+      const fname = `Weekend_Attendance_${yesterdayDate}_to_${csvDate}.pdf`;
+      doc.save(fname);
+    } catch (e) {
+      console.error('Weekend PDF export failed:', e);
+      alert('Could not generate the PDF. Please try again — if the problem persists, let Nadeem know.');
+    }
+  }, [weekendSorted, csvDate, yesterdayDate]);
+
+  // Email builder — TO Mr John, CC James + DMN SUP team. Body
+  // contains a brief greeting + a per-day plain-text table so the
+  // information is readable even before the PDF is opened. Bashaier
+  // attaches the PDF manually after exporting it.
+  const emailWeekendReport = useCallback(() => {
+    if (!weekendSorted.length) return;
+    const to = 'johnho@evergreen-shipping.com.sa';
+    const cc = [
+      'jamesliu@evergreen-shipping.com.sa',
+      'badria.alhassan@evergreen-shipping.com.sa',
+      'jaffar.aldarweash@evergreen-shipping.com.sa',
+      'fahad.alhussain@evergreen-shipping.com.sa',
+    ];
+    const yDate = formatDateLong(yesterdayDate);
+    const tDate = formatDateLong(csvDate);
+    const subject = `Weekend Attendance Report — ${yesterdayDate} to ${csvDate}`;
+
+    // Group by date for the body
+    const byDate = new Map();
+    weekendSorted.forEach(e => {
+      if (!byDate.has(e.dateLabel)) byDate.set(e.dateLabel, []);
+      byDate.get(e.dateLabel).push(e);
+    });
+
+    const lines = [];
+    lines.push('Dear Mr John,');
+    lines.push('');
+    lines.push(`Please find below the weekend attendance summary for the window ${yDate} \u2192 ${tDate}.`);
+    lines.push(`Total staff who attended on the weekend: ${weekendSorted.length}.`);
+    lines.push('');
+    lines.push('The detailed PDF report is attached separately to this email.');
+    lines.push('');
+    byDate.forEach((rows, date) => {
+      lines.push(`--- ${formatDateLong(date)} (${rows.length} staff) ---`);
+      rows.forEach(e => {
+        const hrs = e.hoursDecimal != null ? `${e.hoursDecimal.toFixed(2)}h` : 'no clock-out';
+        lines.push(`${e.location || '—'} · ${e.department || '—'} · ${e.employee.id} ${e.employee.name} · ${e.punchInStr}\u2013${e.punchOutStr || '—'} · ${hrs}`);
+      });
+      lines.push('');
+    });
+    lines.push('Kindly let me know if any clarification is needed.');
+    lines.push('');
+    lines.push(HR_SIGNATURE);
+
+    const body = lines.join('\n');
+    const url = buildMailto({ to, cc, subject, body });
+    window.location.href = url;
+  }, [weekendSorted, csvDate, yesterdayDate]);
+
+  // Weekend panel — custom layout (not a FlaggedSection). Grouped
+  // by weekend date with location/department/check-in sort already
+  // applied via weekendSorted. Two action buttons at the top:
+  // Export PDF + Email John (plus CC).
+  const buildWeekendPanel = () => {
+    const byDate = new Map();
+    weekendSorted.forEach(e => {
+      if (!byDate.has(e.dateLabel)) byDate.set(e.dateLabel, []);
+      byDate.get(e.dateLabel).push(e);
+    });
+    return (
+      <div className="rounded-2xl border bg-white p-3 sm:p-5" style={{ borderColor: '#D4C7AB' }}>
+        <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+          <div>
+            <div className="text-[10px] mb-1" style={{ color: '#0A0A0A', letterSpacing: '0.25em', fontWeight: 700 }}>
+              WEEKEND ATTENDANCE
+            </div>
+            <div style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#0A0A0A' }}>
+              Weekend report for Mr John
+            </div>
+            <div className="text-xs mt-1" style={{ color: '#0A0A0A', opacity: 0.75 }}>
+              {weekendSorted.length} staff attended &middot; sorted by location &rarr; department &rarr; check-in time
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={exportWeekendPdf}
+              disabled={!weekendSorted.length}
+              className="text-xs px-3 py-2 rounded-full inline-flex items-center gap-1.5 transition-shadow hover:shadow"
+              style={{
+                background: weekendSorted.length ? '#0F4C2A' : '#E5E0D5',
+                color: weekendSorted.length ? '#FFFFFF' : '#0A0A0A',
+                fontWeight: 600,
+                cursor: weekendSorted.length ? 'pointer' : 'not-allowed',
+              }}
+              title="Download a PDF of the weekend attendance, sorted by location/department/check-in.">
+              <FileText className="w-3.5 h-3.5"/> Export PDF
+            </button>
+            <button onClick={emailWeekendReport}
+              disabled={!weekendSorted.length}
+              className="text-xs px-3 py-2 rounded-full inline-flex items-center gap-1.5 transition-shadow hover:shadow"
+              style={{
+                background: weekendSorted.length ? '#FFFFFF' : '#FAF6EC',
+                color: weekendSorted.length ? '#0F4C2A' : '#0A0A0A',
+                border: '1px solid ' + (weekendSorted.length ? '#0F4C2A' : '#E5E0D5'),
+                fontWeight: 600,
+                cursor: weekendSorted.length ? 'pointer' : 'not-allowed',
+              }}
+              title="Open a draft email to Mr John (CC James + DMN SUP team) with the weekend summary in the body. Attach the PDF after exporting.">
+              <Mail className="w-3.5 h-3.5"/> Email Mr John
+            </button>
+          </div>
+        </div>
+
+        {weekendSorted.length === 0 ? (
+          <div className="rounded-xl p-6 text-center text-sm" style={{ background: '#FAF6EC', color: '#0A0A0A', opacity: 0.75 }}>
+            No staff attended on this weekend.
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {[...byDate.entries()].map(([date, rows]) => (
+              <div key={date}>
+                <div className="text-[10px] mb-2" style={{ color: '#0A0A0A', letterSpacing: '0.25em', fontWeight: 700 }}>
+                  {formatDateLong(date).toUpperCase()} &middot; {rows.length} STAFF
+                </div>
+                <div className="rounded-lg border overflow-hidden" style={{ borderColor: '#E5E0D5' }}>
+                  <table className="w-full text-xs" style={{ color: '#0A0A0A' }}>
+                    <thead style={{ background: '#FAF6EC' }}>
+                      <tr>
+                        <th className="text-left px-3 py-2 font-bold tracking-wider" style={{ fontSize: '10px' }}>LOCATION</th>
+                        <th className="text-left px-3 py-2 font-bold tracking-wider" style={{ fontSize: '10px' }}>DEPT</th>
+                        <th className="text-left px-3 py-2 font-bold tracking-wider" style={{ fontSize: '10px' }}>PSN</th>
+                        <th className="text-left px-3 py-2 font-bold tracking-wider" style={{ fontSize: '10px' }}>NAME</th>
+                        <th className="text-center px-3 py-2 font-bold tracking-wider" style={{ fontSize: '10px' }}>IN</th>
+                        <th className="text-center px-3 py-2 font-bold tracking-wider" style={{ fontSize: '10px' }}>OUT</th>
+                        <th className="text-right px-3 py-2 font-bold tracking-wider" style={{ fontSize: '10px' }}>HOURS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((e, i) => (
+                        <tr key={e.id} style={{ background: i % 2 ? '#FFFDF7' : '#FFFFFF', borderTop: '1px solid #F0EBDD' }}>
+                          <td className="px-3 py-2" style={{ fontWeight: 600 }}>{e.location}</td>
+                          <td className="px-3 py-2">{e.department}</td>
+                          <td className="px-3 py-2" style={{ opacity: 0.7 }}>{e.employee.id}</td>
+                          <td className="px-3 py-2" style={{ fontWeight: 600 }}>{e.employee.name}</td>
+                          <td className="px-3 py-2 text-center">{e.punchInStr}</td>
+                          <td className="px-3 py-2 text-center">{e.punchOutStr || <span style={{ color: '#A16207', fontStyle: 'italic' }}>missing</span>}</td>
+                          <td className="px-3 py-2 text-right" style={{ fontWeight: 700 }}>
+                            {e.hoursDecimal != null ? e.hoursDecimal.toFixed(2) + 'h' : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // The map FileSummary uses to render the right panel for the
   // currently-expanded tile. Only built for actionable kinds with
   // matching day-data — otherwise undefined falls through to the
@@ -1898,6 +2209,7 @@ export default function AttendanceView({ me, employees }) {
     ...(parsed.hasTodayData     ? { missedIn:  buildMissedInPanel() }  : {}),
     ...(parsed.hasYesterdayData ? { early:     buildEarlyPanel() }     : {}),
     ...(parsed.hasYesterdayData ? { missedOut: buildMissedOutPanel() } : {}),
+    ...(detection.weekend.length ? { weekend: buildWeekendPanel() }    : {}),
   } : {};
 
   return (
@@ -1917,6 +2229,7 @@ export default function AttendanceView({ me, employees }) {
           <li>Approved permissions are cross-referenced automatically &mdash; permitted cases are marked, not actioned.</li>
           <li>Anyone on approved leave for that date is <strong>excluded</strong> from the violation lists.</li>
           <li>Each notice is pre-filled with the right wording &mdash; review it and click <strong>Send</strong> in your mail client.</li>
+          <li>If the file covers a weekend (Fri/Sat), a <strong>weekend attendance</strong> tile appears with an option to <strong>export PDF</strong> and <strong>email Mr John</strong> (CC James + DMN SUP team).</li>
           <li>On <strong>Sunday</strong>, &ldquo;yesterday&rdquo; means <strong>Thursday</strong> (Fri + Sat are KSA weekend), so the file should span Thursday&rarr;Sunday.</li>
         </ul>
       </div>
@@ -2069,6 +2382,7 @@ export default function AttendanceView({ me, employees }) {
             onTime:    detection.onTime.length,
             onLeave:   detection.onLeave.length,
             unknown:   detection.unknownEmp.length,
+            weekend:   detection.weekend.length,
           }}
           dates={{ today: csvDate, yesterday: yesterdayDate }}
           windowAvail={{ today: parsed.hasTodayData, yesterday: parsed.hasYesterdayData }}
@@ -2481,6 +2795,27 @@ function FileSummary({
                 <CountPill kind="early"     icon="⏰" label="Early departure"  count={counts.early}     color="#A16207" tint="#FEFCE8" subtext="left before grace cutoff"  isOpen={drillKind === 'early'}     onClick={() => setDrillKind(drillKind === 'early'     ? null : 'early')}     progress={progressByKind?.early}/>
                 <CountPill kind="missedOut" icon="🚪" label="Missed punch-out" count={counts.missedOut} color="#7E22CE" tint="#FAF5FF" subtext="no last-punch on record"   isOpen={drillKind === 'missedOut'} onClick={() => setDrillKind(drillKind === 'missedOut' ? null : 'missedOut')} progress={progressByKind?.missedOut}/>
                 <CountPill kind="onLeave"   icon="🌴" label="On leave"         count={counts.onLeave}   color="#0E7490" tint="#ECFEFF" subtext="approved leave on file"    isOpen={drillKind === 'onLeave'}   onClick={() => setDrillKind(drillKind === 'onLeave'   ? null : 'onLeave')}/>
+              </div>
+            </div>
+          )}
+
+          {/* WEEKEND attendance — Mr John's report. Surfaces only
+              when the file's window includes a weekend day with
+              actual punches (typically Sunday's import covering
+              Thu→Sun, where Fri+Sat are weekend). Hidden the rest
+              of the week to keep the page clean. */}
+          {counts.weekend > 0 && (
+            <div>
+              <div className="flex items-baseline gap-2 mb-2">
+                <span className="text-[10px] tracking-[0.25em]" style={{ fontWeight: 700, color: '#0A0A0A' }}>
+                  WEEKEND
+                </span>
+                <span className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+                  Fri + Sat &middot; report for Mr John
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <CountPill kind="weekend" icon="🏖" label="Weekend attendance" count={counts.weekend} color="#0F4C2A" tint="#F0FDF4" subtext="exported as PDF + emailed" isOpen={drillKind === 'weekend'} onClick={() => setDrillKind(drillKind === 'weekend' ? null : 'weekend')}/>
               </div>
             </div>
           )}
