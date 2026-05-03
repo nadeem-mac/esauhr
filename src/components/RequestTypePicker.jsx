@@ -47,12 +47,35 @@ export default function RequestTypePicker({ onPick, onClose }) {
       borderColor: 'var(--evergreen-200)',
     },
     {
-      id: 'sick',
+      // The "front door" sick declaration. Staff taps this when they
+      // wake up unwell and decide not to come in — before they have any
+      // certificate. Creates a leave_requests row in pending_certificate
+      // stage and starts the 48h-after-return tracker.
+      //
+      // This sits ABOVE the "Submit sick leave" tile because it's the
+      // more common action — most staff declare in the morning, then
+      // upload the certificate later.
+      id: 'sick_declare',
       icon: HeartPulse,
-      title: 'Sick leave',
-      description: 'You have a Sehhaty medical certificate. Service code required.',
+      title: "I'm sick today",
+      description: "Declare a sick day now. You'll upload your Sehhaty certificate within 48 hours of returning.",
       iconBg: '#FEE2E2',
       iconColor: '#B91C1C',
+      borderColor: '#FCA5A5',
+    },
+    {
+      // The "with-cert-in-hand" sick submission. Used when the staff
+      // already has a Sehhaty leave ID — either they declared earlier
+      // and now have the cert (in which case the existing
+      // pending_certificate row is the better target, not a fresh
+      // submission — handled in commit 3), or they were already off
+      // and are submitting retroactively with the cert ready.
+      id: 'sick',
+      icon: HeartPulse,
+      title: 'Submit sick leave',
+      description: 'You already have your Sehhaty leave ID and want to submit it now.',
+      iconBg: '#FEF2F2',
+      iconColor: '#991B1B',
       borderColor: '#FECACA',
     },
     {

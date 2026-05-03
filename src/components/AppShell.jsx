@@ -15,6 +15,7 @@ import SettingsView from './SettingsView.jsx';
 import ConnectivityTest from './ConnectivityTest.jsx';
 import NewRequestModal from './NewRequestModal.jsx';
 import RequestTypePicker from './RequestTypePicker.jsx';
+import SickDeclarationModal from './SickDeclarationModal.jsx';
 import PermissionRequestModal from './PermissionRequestModal.jsx';
 import EmployeeDetailModal from './EmployeeDetailModal.jsx';
 import ShiftAcknowledgmentModal from './ShiftAcknowledgmentModal.jsx';
@@ -822,6 +823,25 @@ export default function AppShell({ session, me, onRefreshMe }) {
           onSubmit={async (payload) => {
             await createRequest(payload);
             setRequestFlow(null);
+          }}
+        />
+      )}
+      {/* sick_declare → front-door declaration with no certificate
+          yet. Creates a leave_requests row directly in
+          stage='pending_certificate' via SickDeclarationModal. The
+          certificate is uploaded later through the tracker card.
+          This route is the most common path — staff declare in the
+          morning, doctor visit happens during the day, certificate
+          arrives that evening or the next day. */}
+      {requestFlow === 'sick_declare' && (
+        <SickDeclarationModal
+          employee={me}
+          onClose={() => setRequestFlow(null)}
+          onCreated={() => {
+            setRequestFlow(null);
+            // Force a refresh so the new pending_certificate row
+            // shows up in MyApplicationsCard immediately.
+            if (typeof loadAll === 'function') loadAll({ silent: true });
           }}
         />
       )}
