@@ -329,23 +329,60 @@ function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd,
 
 function missedPunchEmailContent({ employee, dateLong, missingType }) {
   // missingType: 'in' | 'out' | 'both'
-  const what = missingType === 'in'   ? 'your punch-in entry'
-            : missingType === 'out'  ? 'your punch-out entry'
-            : 'both your punch-in and punch-out entries';
+  // Wording variants for the violation summary line and the action
+  // paragraph. Both have to agree on which punch(es) are missing —
+  // kept as a single switch so future edits don't drift.
+  const missingPhrase = missingType === 'in'
+    ? 'your punch-in'
+    : missingType === 'out'
+    ? 'your punch-out'
+    : 'both your punch-in and punch-out';
+  const actualTimesPhrase = missingType === 'in'
+    ? 'your actual arrival time'
+    : missingType === 'out'
+    ? 'your actual departure time'
+    : 'your actual arrival and departure times';
+
   const psn = String(employee.id || employee.psn || '').toUpperCase();
   const fullName = String(employee.name || '').toUpperCase();
-  const subject = 'Missing Punch Reminder — ' + psn + ' ' + fullName + ' — ' + dateLong;
+  const subject = 'Missing Punch Notice — ' + psn + ' ' + fullName + ' — ' + dateLong;
   const firstName = (employee.first_name || (employee.name || '').split(' ')[0] || '').trim();
   const greetName = firstName
     ? firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase()
     : 'colleague';
+
+  // Policy bullets — different shape from the late/early emails
+  // because missed punches aren't a "you exceeded your quota"
+  // situation. The framing is: a complete record is required, the
+  // gap has real downstream consequences (payroll, overtime,
+  // Saudi labor compliance), and the correction must come through
+  // the line manager within a 2-day window.
+  const policyBullets = [
+    '\u2022 A complete punch-in and punch-out is required on every working day.',
+    '\u2022 Missing punches affect payroll, overtime, and Saudi labor law compliance.',
+    '\u2022 Missed punches must be reported and confirmed by your manager within two working days.',
+  ];
+
+  // Same 71-char "=" divider as the late/early emails (visual fit
+  // confirmed in production mail-client rendering by Nadeem).
+  const divider = '='.repeat(71);
+
+  // Body — HR-Department voice. Action paragraph routes the
+  // correction through the line manager (who is already CC'd on
+  // this email by the AttendanceView build): staff discusses the
+  // actual times with their manager, manager replies to confirm,
+  // HR updates the log. Removed the previous "device fault /
+  // operations team" exception paragraph per Nadeem's instruction
+  // — manager-confirmation now covers all legitimate correction
+  // cases including faulty terminal readings.
   const body =
     'Dear ' + greetName + ',\n\n' +
-    'I hope this finds you well. I am reaching out on behalf of HR regarding your time card for ' + dateLong + '.\n\n' +
-    'Our records show that ' + what + ' was missing for that day. Occasional misses do happen, and I am not raising this to alarm you — but consistent and complete punch-in / punch-out is one of the few things we cannot be flexible on. It directly affects your payroll, overtime calculation, and our compliance with Saudi labor regulations.\n\n' +
-    'If your card or the terminal had an issue on that day, please reply with the actual times you started and finished, and I will correct the log manually. If it was an oversight, a quick check before leaving the office tends to help — even a phone reminder works wonders.\n\n' +
-    'I do have to mention, as part of our HR procedure, that repeated missed punches are tracked. After a certain number of incidents in a month, this becomes a formal evaluation warning. I would much prefer never to send that email, so please help me keep your record clean.\n\n' +
-    'Thank you, and please feel free to reach out if there is anything we can support you with on this.\n\n' +
+    'HR\u2019s daily attendance review for ' + dateLong + ' shows ' + missingPhrase + ' missing from the time card. This leaves the day\u2019s record incomplete and cannot be processed for payroll until corrected.\n\n' +
+    'As a reminder, according to the ESAU attendance policy:\n\n' +
+    divider + '\n' +
+    policyBullets.join('\n') + '\n' +
+    divider + '\n\n' +
+    'Please discuss ' + actualTimesPhrase + ' for ' + dateLong + ' with your direct manager (copied on this email). Your manager must then reply confirming the times within two working days, after which the attendance log will be updated. Without manager confirmation, the day stands as incomplete on your record.\n\n' +
     HR_SIGNATURE;
   return { subject, body };
 }
