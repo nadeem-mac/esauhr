@@ -601,6 +601,14 @@ export default function AttendanceView({ me, employees }) {
   // a per-row click never produce divergent wording for the same kind.
   const [bulkSession, setBulkSession] = useState(null);
 
+  // Tile drill-down state — which kind's panel is currently expanded
+  // inside the FileSummary card. Lifted from FileSummary so the
+  // action panels (built below) can be constructed alongside the
+  // email handlers and shared state, then passed down. Resets to
+  // null whenever a new file is loaded so the next session starts
+  // clean.
+  const [drillKind, setDrillKind] = useState(null);
+
   // View mode is no longer needed — the 2-day workflow runs both
   // morning (today's late + missed-in) and end-of-day (yesterday's
   // early + missed-out) checks simultaneously off a single upload.
@@ -1613,6 +1621,285 @@ export default function AttendanceView({ me, employees }) {
     setActionsEnabled(!existingUpload);
   }, [existingUpload, fileSha256]);
 
+  // Reset drill-down whenever a new file is loaded so the next
+  // session starts collapsed, instead of inheriting the previous
+  // file's expanded panel.
+  useEffect(() => {
+    setDrillKind(null);
+  }, [fileSha256]);
+
+  // ── Per-kind progress (collapsed-tile badge) ─────────────────────────
+  // For each actionable kind, count how many of the entries have already
+  // had their notice email sent today. "Sent" = either the in-session
+  // sentMarkers flag (she just clicked Send) or a logged violation in
+  // attendance_violations (DB persistence — survives re-uploads of the
+  // same day's file). Permitted-but-actioned cases (LATE_PERMITTED,
+  // EARLY_PERMITTED) don't count toward the total because they aren't
+  // actionable — they show in-list with an AUDIT ONLY badge instead.
+  const isActionable = (e) =>
+    e.permStatus !== 'LATE_PERMITTED' && e.permStatus !== 'EARLY_PERMITTED';
+  const isSent = (e, violationKey) =>
+    !!sentMarkers[e.id] || !!loggedMarkers[e.employee?.id + ':' + violationKey];
+  const progressByKind = {
+    late:      (() => {
+      const a = detection.late.filter(isActionable);
+      return { total: a.length, sent: a.filter(e => isSent(e, 'late')).length };
+    })(),
+    missedIn:  (() => {
+      const a = detection.missedIn;
+      return { total: a.length, sent: a.filter(e => isSent(e, 'missed_in')).length };
+    })(),
+    early:     (() => {
+      const a = detection.early.filter(isActionable);
+      return { total: a.length, sent: a.filter(e => isSent(e, 'early_leave')).length };
+    })(),
+    missedOut: (() => {
+      const a = detection.missedOut;
+      return { total: a.length, sent: a.filter(e => isSent(e, 'missed_out')).length };
+    })(),
+  };
+
+  // ── Per-kind action panels (tile-expansion content) ──────────────────
+  // Each FlaggedSection-equivalent for the four actionable kinds.
+  // Constructed here so the email handlers, bulk session, sent/logged
+  // markers, etc. are all in scope. FileSummary receives this object
+  // and renders the matching panel inside the tile expansion area —
+  // there are no longer any always-visible action sections below the
+  // FileSummary card; everything happens inside the tile.
+  const buildLatePanel = () => (
+    <FlaggedSection
+      title="Late arrivals"
+      kicker={'AFTER ' + LATE_CUTOFF + ' · TODAY'}
+      iconColor="#BE123C"
+      barFrom="#FB7185" barTo="#BE123C"
+      empty="Nobody arrived late today — well done team."
+      onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'late', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
+      entries={detection.late.map(e => {
+        const baseDetail = 'Punched in at ' + e.punchInStr + ' — '
+          + e.minutesLate + ' min after grace period'
+          + (e.isCustomShift ? ' · ' + e.scheduleLabel : '');
+        let detail = baseDetail;
+        let permBadge = null;
+        if (e.permStatus === 'LATE_PERMITTED') {
+          detail = baseDetail + ' · Covered by approved permission '
+            + (e.permission?.time_from || '').slice(0,5) + '–'
+            + (e.permission?.time_to   || '').slice(0,5);
+          permBadge = { tone: 'amber', text: 'PERMITTED' };
+        } else if (e.permStatus === 'LATE_BEYOND') {
+          // "Permitted but still late" — the staff had permission
+          // until X but came in even later. Bashaier asked for this
+          // case to read clearly: yes there was permission, but it
+          // didn't cover the full delay. Badge stays in red so it's
+          // visually grouped with the no-permission cases (still
+          // actionable), with the wording reflecting the nuance.
+          detail = baseDetail + ' · Permitted only until '
+            + (e.permission?.time_to || '').slice(0,5)
+            + ' — still ' + e.minutesBeyond + ' min late beyond permission';
+          permBadge = { tone: 'red', text: 'LATE BEYOND PERMISSION' };
+        } else {
+          permBadge = { tone: 'red', text: 'NO PERMISSION' };
+        }
+        return {
+          ...e,
+          detail,
+          permBadge,
+          actionable: e.permStatus !== 'LATE_PERMITTED',
+          metaIcon: <Clock className="w-4 h-4"/>,
+          logged: !!loggedMarkers[e.employee.id + ':late'],
+          emailSentAt: typeof loggedMarkers[e.employee.id + ':late'] === 'string'
+            ? loggedMarkers[e.employee.id + ':late']
+            : null,
+          monthlyCount: monthlyCounts[e.employee.id] || 0,
+        };
+      })}
+      renderButton={(entry) => !actionsEnabled ? (
+        <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
+          style={{ background: '#F4F4EE', color: '#0A0A0A', border: '1px solid #E5E0D5' }}
+          title="Read-only mode — toggle 'Actions on' in the file summary above to enable emailing.">
+          READ-ONLY
+        </span>
+      ) : entry.actionable ? (
+        <RowButton
+          onClick={() => setConfirmEntry({ entry, kind: 'late', mode: 'live' })}
+          onClickTest={() => setConfirmEntry({ entry, kind: 'late', mode: 'test' })}
+          onMarkSent={() => markSent(entry.id)}
+          sent={!!sentMarkers[entry.id]}
+          logged={entry.logged}
+          emailSentAt={entry.emailSentAt}
+          label="Email lateness notice"
+        />
+      ) : (
+        <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
+          style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' }}>
+          AUDIT ONLY · COVERED
+        </span>
+      )}
+    />
+  );
+  const buildMissedInPanel = () => (
+    <FlaggedSection
+      title="Missed punch-in"
+      kicker="NO CLOCK-IN ON RECORD · TODAY"
+      iconColor="#4338CA"
+      barFrom="#818CF8" barTo="#4338CA"
+      empty="Every staff member has a punch-in on record for today."
+      onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'missedIn', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
+      entries={detection.missedIn.map(e => {
+        const types = e.missingType === 'both' ? ['missed_in', 'missed_out'] : ['missed_in'];
+        const allLogged = types.every(t => loggedMarkers[e.employee.id + ':' + t]);
+        const sentTimestamp = types
+          .map(t => loggedMarkers[e.employee.id + ':' + t])
+          .find(v => typeof v === 'string') || null;
+        return ({
+          ...e,
+          detail: (e.missingType === 'both'
+            ? 'No punch-in or punch-out on record — likely absent today'
+            : 'No punch-in on record')
+            + (e.isCustomShift ? ' · ' + e.scheduleLabel : ''),
+          metaIcon: <AlertTriangle className="w-4 h-4"/>,
+          logged: allLogged,
+          actionable: true,
+          emailSentAt: sentTimestamp,
+          monthlyCount: monthlyCounts[e.employee.id] || 0,
+        });
+      })}
+      renderButton={(entry) => !actionsEnabled ? (
+        <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
+          style={{ background: '#F4F4EE', color: '#0A0A0A', border: '1px solid #E5E0D5' }}>
+          READ-ONLY
+        </span>
+      ) : (
+        <RowButton
+          onClick={() => setConfirmEntry({ entry, kind: 'missedIn', mode: 'live' })}
+          onClickTest={() => setConfirmEntry({ entry, kind: 'missedIn', mode: 'test' })}
+          onMarkSent={() => markSent(entry.id)}
+          sent={!!sentMarkers[entry.id]}
+          logged={entry.logged}
+          emailSentAt={entry.emailSentAt}
+          label="Email missed punch-in notice"
+        />
+      )}
+    />
+  );
+  const buildEarlyPanel = () => (
+    <FlaggedSection
+      title="Early departures"
+      kicker="LEFT BEFORE GRACE WINDOW · YESTERDAY"
+      iconColor="#A16207"
+      barFrom="#FACC15" barTo="#A16207"
+      empty="Nobody left early yesterday — full day attendance recorded."
+      onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'early', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
+      entries={detection.early.map(e => {
+        const baseDetail = 'Punched out at ' + e.punchOutStr + ' — '
+          + e.minutesEarly + ' min before scheduled ' + e.scheduledEnd
+          + (e.isCustomShift ? ' · ' + e.scheduleLabel : (e.isSup ? ' (SUP team)' : ''));
+        let detail = baseDetail;
+        let permBadge = null;
+        if (e.permStatus === 'EARLY_PERMITTED') {
+          detail = baseDetail + ' · Covered by approved permission '
+            + (e.permission?.time_from || '').slice(0,5) + '–'
+            + (e.permission?.time_to   || '').slice(0,5);
+          permBadge = { tone: 'amber', text: 'PERMITTED' };
+        } else if (e.permStatus === 'EARLY_BEYOND') {
+          detail = baseDetail + ' · Permitted only from '
+            + (e.permission?.time_from || '').slice(0,5)
+            + ' — still ' + e.minutesBeyond + ' min early beyond permission';
+          permBadge = { tone: 'red', text: 'EARLY BEYOND PERMISSION' };
+        } else {
+          permBadge = { tone: 'red', text: 'NO PERMISSION' };
+        }
+        return {
+          ...e,
+          detail,
+          permBadge,
+          actionable: e.permStatus !== 'EARLY_PERMITTED',
+          metaIcon: <Briefcase className="w-4 h-4"/>,
+          logged: !!loggedMarkers[e.employee.id + ':early_leave'],
+          emailSentAt: typeof loggedMarkers[e.employee.id + ':early_leave'] === 'string'
+            ? loggedMarkers[e.employee.id + ':early_leave']
+            : null,
+          monthlyCount: monthlyCounts[e.employee.id] || 0,
+        };
+      })}
+      renderButton={(entry) => !actionsEnabled ? (
+        <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
+          style={{ background: '#F4F4EE', color: '#0A0A0A', border: '1px solid #E5E0D5' }}>
+          READ-ONLY
+        </span>
+      ) : entry.actionable ? (
+        <RowButton
+          onClick={() => setConfirmEntry({ entry, kind: 'early', mode: 'live' })}
+          onClickTest={() => setConfirmEntry({ entry, kind: 'early', mode: 'test' })}
+          onMarkSent={() => markSent(entry.id)}
+          sent={!!sentMarkers[entry.id]}
+          logged={entry.logged}
+          emailSentAt={entry.emailSentAt}
+          label="Email early-departure notice"
+        />
+      ) : (
+        <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
+          style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' }}>
+          AUDIT ONLY · COVERED
+        </span>
+      )}
+    />
+  );
+  const buildMissedOutPanel = () => (
+    <FlaggedSection
+      title="Missed punch-out"
+      kicker="NO CLOCK-OUT ON RECORD · YESTERDAY"
+      iconColor="#7E22CE"
+      barFrom="#C084FC" barTo="#7E22CE"
+      empty="Every staff member has a punch-out on record for yesterday."
+      onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'missedOut', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
+      entries={detection.missedOut.map(e => {
+        const types = e.missingType === 'both' ? ['missed_in', 'missed_out'] : ['missed_out'];
+        const allLogged = types.every(t => loggedMarkers[e.employee.id + ':' + t]);
+        const sentTimestamp = types
+          .map(t => loggedMarkers[e.employee.id + ':' + t])
+          .find(v => typeof v === 'string') || null;
+        return ({
+          ...e,
+          detail: (e.missingType === 'both'
+            ? 'No punch-in or punch-out on record — likely absent yesterday'
+            : 'No punch-out on record (punch-in: ' + (e.punchInStr || '—') + ')')
+            + (e.isCustomShift ? ' · ' + e.scheduleLabel : ''),
+          metaIcon: <AlertTriangle className="w-4 h-4"/>,
+          logged: allLogged,
+          actionable: true,
+          emailSentAt: sentTimestamp,
+          monthlyCount: monthlyCounts[e.employee.id] || 0,
+        });
+      })}
+      renderButton={(entry) => !actionsEnabled ? (
+        <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
+          style={{ background: '#F4F4EE', color: '#0A0A0A', border: '1px solid #E5E0D5' }}>
+          READ-ONLY
+        </span>
+      ) : (
+        <RowButton
+          onClick={() => setConfirmEntry({ entry, kind: 'missedOut', mode: 'live' })}
+          onClickTest={() => setConfirmEntry({ entry, kind: 'missedOut', mode: 'test' })}
+          onMarkSent={() => markSent(entry.id)}
+          sent={!!sentMarkers[entry.id]}
+          logged={entry.logged}
+          emailSentAt={entry.emailSentAt}
+          label="Email missed punch-out notice"
+        />
+      )}
+    />
+  );
+  // The map FileSummary uses to render the right panel for the
+  // currently-expanded tile. Only built for actionable kinds with
+  // matching day-data — otherwise undefined falls through to the
+  // simple BreakdownPanel inside FileSummary.
+  const actionPanels = (!windowMismatch && !csvIsWeekend) ? {
+    ...(parsed.hasTodayData     ? { late:      buildLatePanel() }      : {}),
+    ...(parsed.hasTodayData     ? { missedIn:  buildMissedInPanel() }  : {}),
+    ...(parsed.hasYesterdayData ? { early:     buildEarlyPanel() }     : {}),
+    ...(parsed.hasYesterdayData ? { missedOut: buildMissedOutPanel() } : {}),
+  } : {};
+
   return (
     <div className="space-y-6" style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
       {/* Header */}
@@ -1786,6 +2073,10 @@ export default function AttendanceView({ me, employees }) {
           dates={{ today: csvDate, yesterday: yesterdayDate }}
           windowAvail={{ today: parsed.hasTodayData, yesterday: parsed.hasYesterdayData }}
           detection={detection}
+          drillKind={drillKind}
+          setDrillKind={setDrillKind}
+          actionPanels={actionPanels}
+          progressByKind={progressByKind}
           actionsEnabled={actionsEnabled}
           onToggleActions={() => setActionsEnabled(v => !v)}
           isDuplicate={!!existingUpload}
@@ -1890,276 +2181,6 @@ export default function AttendanceView({ me, employees }) {
         </div>
       )}
 
-      {hasFile && !csvIsWeekend && !windowMismatch && (
-        <>
-          {/* Late arrivals — TODAY's data only. Hidden when the file
-              doesn't include today's rows (e.g. she uploaded only
-              yesterday's export). */}
-          {parsed.hasTodayData && (
-          <FlaggedSection
-            title="Late arrivals"
-            kicker={'AFTER ' + LATE_CUTOFF + ' · TODAY'}
-            iconColor="#BE123C"
-            barFrom="#FB7185" barTo="#BE123C"
-            empty="Nobody arrived late today — well done team."
-            onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'late', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
-            entries={detection.late.map(e => {
-              // Detail line carries WITH/WITHOUT permission status. Bashaier
-              // wants the difference visible at a glance.
-              const baseDetail = 'Punched in at ' + e.punchInStr + ' — '
-                + e.minutesLate + ' min after grace period'
-                + (e.isCustomShift ? ' · ' + e.scheduleLabel : '');
-              let detail = baseDetail;
-              let permBadge = null;
-              if (e.permStatus === 'LATE_PERMITTED') {
-                detail = baseDetail + ' · Covered by approved permission '
-                  + (e.permission?.time_from || '').slice(0,5) + '–'
-                  + (e.permission?.time_to   || '').slice(0,5);
-                permBadge = { tone: 'amber', text: 'PERMITTED' };
-              } else if (e.permStatus === 'LATE_BEYOND') {
-                detail = baseDetail + ' · Permitted to '
-                  + (e.permission?.time_to || '').slice(0,5)
-                  + ' — ' + e.minutesBeyond + ' min beyond permission';
-                permBadge = { tone: 'red', text: 'BEYOND PERMISSION' };
-              } else {
-                permBadge = { tone: 'red', text: 'NO PERMISSION' };
-              }
-              return {
-                ...e,
-                detail,
-                permBadge,
-                actionable: e.permStatus !== 'LATE_PERMITTED',
-                metaIcon: <Clock className="w-4 h-4"/>,
-                logged: !!loggedMarkers[e.employee.id + ':late'],
-                emailSentAt: typeof loggedMarkers[e.employee.id + ':late'] === 'string'
-                  ? loggedMarkers[e.employee.id + ':late']
-                  : null,
-                monthlyCount: monthlyCounts[e.employee.id] || 0,
-              };
-            })}
-            renderButton={(entry) => !actionsEnabled ? (
-              <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
-                style={{ background: '#F4F4EE', color: '#0A0A0A', border: '1px solid #E5E0D5' }}
-                title="Read-only mode — toggle 'Actions on' in the file summary above to enable emailing.">
-                READ-ONLY
-              </span>
-            ) : entry.actionable ? (
-              <RowButton
-                onClick={() => setConfirmEntry({ entry, kind: 'late', mode: 'live' })}
-                onClickTest={() => setConfirmEntry({ entry, kind: 'late', mode: 'test' })}
-                onMarkSent={() => markSent(entry.id)}
-                sent={!!sentMarkers[entry.id]}
-                logged={entry.logged}
-                emailSentAt={entry.emailSentAt}
-                label="Email lateness notice"
-              />
-            ) : (
-              <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
-                style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' }}>
-                AUDIT ONLY · COVERED
-              </span>
-            )}
-          />
-          )}
-
-          {/* Missed punch-in — TODAY's data. Staff who don't have a
-              first-punch recorded by the time the file was pulled.
-              Same email path as before (missingType='in' or 'both'). */}
-          {parsed.hasTodayData && (
-          <FlaggedSection
-            title="Missed punch-in"
-            kicker="NO CLOCK-IN ON RECORD · TODAY"
-            iconColor="#4338CA"
-            barFrom="#818CF8" barTo="#4338CA"
-            empty="Every staff member has a punch-in on record for today."
-            onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'missedIn', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
-            entries={detection.missedIn.map(e => {
-              const types = e.missingType === 'both' ? ['missed_in', 'missed_out'] : ['missed_in'];
-              const allLogged = types.every(t => loggedMarkers[e.employee.id + ':' + t]);
-              const sentTimestamp = types
-                .map(t => loggedMarkers[e.employee.id + ':' + t])
-                .find(v => typeof v === 'string') || null;
-              return ({
-                ...e,
-                detail: (e.missingType === 'both'
-                  ? 'No punch-in or punch-out on record — likely absent today'
-                  : 'No punch-in on record')
-                  + (e.isCustomShift ? ' · ' + e.scheduleLabel : ''),
-                metaIcon: <AlertTriangle className="w-4 h-4"/>,
-                logged: allLogged,
-                actionable: true,
-                emailSentAt: sentTimestamp,
-                monthlyCount: monthlyCounts[e.employee.id] || 0,
-              });
-            })}
-            renderButton={(entry) => !actionsEnabled ? (
-              <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
-                style={{ background: '#F4F4EE', color: '#0A0A0A', border: '1px solid #E5E0D5' }}>
-                READ-ONLY
-              </span>
-            ) : (
-              <RowButton
-                onClick={() => setConfirmEntry({ entry, kind: 'missedIn', mode: 'live' })}
-                onClickTest={() => setConfirmEntry({ entry, kind: 'missedIn', mode: 'test' })}
-                onMarkSent={() => markSent(entry.id)}
-                sent={!!sentMarkers[entry.id]}
-                logged={entry.logged}
-                emailSentAt={entry.emailSentAt}
-                label="Email missed punch-in notice"
-              />
-            )}
-          />
-          )}
-
-          {/* Early departures — YESTERDAY's data. Hidden when the
-              file doesn't include yesterday's rows. */}
-          {parsed.hasYesterdayData && (
-          <FlaggedSection
-            title="Early departures"
-            kicker="LEFT BEFORE GRACE WINDOW · YESTERDAY"
-            iconColor="#A16207"
-            barFrom="#FACC15" barTo="#A16207"
-            empty="Nobody left early yesterday — full day attendance recorded."
-            onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'early', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
-            entries={detection.early.map(e => {
-              const baseDetail = 'Punched out at ' + e.punchOutStr + ' — '
-                + e.minutesEarly + ' min before scheduled ' + e.scheduledEnd
-                + (e.isCustomShift ? ' · ' + e.scheduleLabel : (e.isSup ? ' (SUP team)' : ''));
-              let detail = baseDetail;
-              let permBadge = null;
-              if (e.permStatus === 'EARLY_PERMITTED') {
-                detail = baseDetail + ' · Covered by approved permission '
-                  + (e.permission?.time_from || '').slice(0,5) + '–'
-                  + (e.permission?.time_to   || '').slice(0,5);
-                permBadge = { tone: 'amber', text: 'PERMITTED' };
-              } else if (e.permStatus === 'EARLY_BEYOND') {
-                detail = baseDetail + ' · Permitted from '
-                  + (e.permission?.time_from || '').slice(0,5)
-                  + ' — ' + e.minutesBeyond + ' min beyond permission';
-                permBadge = { tone: 'red', text: 'BEYOND PERMISSION' };
-              } else {
-                permBadge = { tone: 'red', text: 'NO PERMISSION' };
-              }
-              return {
-                ...e,
-                detail,
-                permBadge,
-                actionable: e.permStatus !== 'EARLY_PERMITTED',
-                metaIcon: <Briefcase className="w-4 h-4"/>,
-                logged: !!loggedMarkers[e.employee.id + ':early_leave'],
-                emailSentAt: typeof loggedMarkers[e.employee.id + ':early_leave'] === 'string'
-                  ? loggedMarkers[e.employee.id + ':early_leave']
-                  : null,
-                monthlyCount: monthlyCounts[e.employee.id] || 0,
-              };
-            })}
-            renderButton={(entry) => !actionsEnabled ? (
-              <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
-                style={{ background: '#F4F4EE', color: '#0A0A0A', border: '1px solid #E5E0D5' }}>
-                READ-ONLY
-              </span>
-            ) : entry.actionable ? (
-              <RowButton
-                onClick={() => setConfirmEntry({ entry, kind: 'early', mode: 'live' })}
-                onClickTest={() => setConfirmEntry({ entry, kind: 'early', mode: 'test' })}
-                onMarkSent={() => markSent(entry.id)}
-                sent={!!sentMarkers[entry.id]}
-                logged={entry.logged}
-                emailSentAt={entry.emailSentAt}
-                label="Email early-departure notice"
-              />
-            ) : (
-              <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
-                style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' }}>
-                AUDIT ONLY · COVERED
-              </span>
-            )}
-          />
-          )}
-
-          {/* Missed punch-out — YESTERDAY's data. Staff who punched in
-              but never punched out by end of day yesterday. Likely
-              forgot to clock out (most common cause). Same email path
-              with missingType='out' or 'both'. */}
-          {parsed.hasYesterdayData && (
-          <FlaggedSection
-            title="Missed punch-out"
-            kicker="NO CLOCK-OUT ON RECORD · YESTERDAY"
-            iconColor="#7E22CE"
-            barFrom="#C084FC" barTo="#7E22CE"
-            empty="Every staff member has a punch-out on record for yesterday."
-            onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'missedOut', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
-            entries={detection.missedOut.map(e => {
-              const types = e.missingType === 'both' ? ['missed_in', 'missed_out'] : ['missed_out'];
-              const allLogged = types.every(t => loggedMarkers[e.employee.id + ':' + t]);
-              const sentTimestamp = types
-                .map(t => loggedMarkers[e.employee.id + ':' + t])
-                .find(v => typeof v === 'string') || null;
-              return ({
-                ...e,
-                detail: (e.missingType === 'both'
-                  ? 'No punch-in or punch-out on record — likely absent yesterday'
-                  : 'No punch-out on record (punch-in: ' + (e.punchInStr || '—') + ')')
-                  + (e.isCustomShift ? ' · ' + e.scheduleLabel : ''),
-                metaIcon: <AlertTriangle className="w-4 h-4"/>,
-                logged: allLogged,
-                actionable: true,
-                emailSentAt: sentTimestamp,
-                monthlyCount: monthlyCounts[e.employee.id] || 0,
-              });
-            })}
-            renderButton={(entry) => !actionsEnabled ? (
-              <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
-                style={{ background: '#F4F4EE', color: '#0A0A0A', border: '1px solid #E5E0D5' }}>
-                READ-ONLY
-              </span>
-            ) : (
-              <RowButton
-                onClick={() => setConfirmEntry({ entry, kind: 'missedOut', mode: 'live' })}
-                onClickTest={() => setConfirmEntry({ entry, kind: 'missedOut', mode: 'test' })}
-                onMarkSent={() => markSent(entry.id)}
-                sent={!!sentMarkers[entry.id]}
-                logged={entry.logged}
-                emailSentAt={entry.emailSentAt}
-                label="Email missed punch-out notice"
-              />
-            )}
-          />
-          )}
-
-          {/* Approved leaves (excluded) */}
-          {detection.onLeave.length > 0 && (
-            <div className="rounded-2xl border p-3 sm:p-5" style={{ borderColor: '#D4C7AB', background: '#FAF6EC' }}>
-              <div className="text-[10px] mb-1" style={{ color: '#1F1B16', letterSpacing: '0.25em', fontWeight: 700 }}>
-                EXCLUDED — APPROVED LEAVE ({detection.onLeave.length})
-              </div>
-              <div className="text-sm" style={{ color: '#1F1B16' }}>
-                {detection.onLeave.map(e => e.employee.name).filter(Boolean).join(', ')}
-              </div>
-            </div>
-          )}
-
-          {/* Unknown employees */}
-          {detection.unknownEmp.length > 0 && (
-            <div className="rounded-2xl border p-3 sm:p-5" style={{ borderColor: '#FCA5A5', background: '#FEF2F2' }}>
-              <div className="text-[10px] mb-1" style={{ color: '#991B1B', letterSpacing: '0.25em', fontWeight: 700 }}>
-                ⚠ UNRECOGNISED EMPLOYEES IN FILE ({detection.unknownEmp.length})
-              </div>
-              <div className="text-sm" style={{ color: '#0A0A0A' }}>
-                These PSNs are in the file but not in the employee directory. The matcher already
-                tries digit-only fallbacks (so '4458' will find 'H04458'), so a no-match here means the
-                staff member truly isn't in the directory yet — open the Employees tab to add them, or
-                check that their PSN was entered correctly when they were onboarded.
-              </div>
-              <ul className="mt-2 text-sm space-y-1" style={{ color: '#0A0A0A' }}>
-                {detection.unknownEmp.map(u => (
-                  <li key={u.id}><span style={{ fontWeight: 600 }}>{u.empId}</span> — {u.csvName || 'unknown'}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </>
-      )}
 
       {/* Confirm-before-send modal — every email button routes through
           here for an extra check. The mailto: link only fires after
@@ -2329,16 +2350,16 @@ function WindowMismatchBanner({ mismatch, fileName, onReset }) {
 
 function FileSummary({
   fileName, csvDate, isWeekend, totalRows, offDateCount = 0,
-  counts, dates, windowAvail, detection,
+  counts, dates, windowAvail, detection, progressByKind,
+  drillKind, setDrillKind, actionPanels,
   actionsEnabled, onToggleActions, isDuplicate, onReset,
 }) {
-  // Drill-down state — which tile's list is currently expanded inline
-  // beneath the tile grid. null = collapsed. Clicking the same tile
-  // twice closes; clicking another tile switches. The expansion lives
-  // INSIDE this card (no portal, no popup) so all functions stay on
-  // one scrollable page — Bashaier never has to chase data into a
-  // modal overlay.
-  const [drillKind, setDrillKind] = useState(null);
+  // drillKind is now controlled by the parent (AttendanceView) so the
+  // action UI for each kind can be constructed alongside the email
+  // handlers and shared state. Per Nadeem's brief: when a tile is
+  // open, all email functions live inside the tile area — no separate
+  // sections below this card. When collapsed, each tile shows its
+  // own progress (X of Y emailed).
 
   const today     = dates?.today;
   const yesterday = dates?.yesterday;
@@ -2438,9 +2459,9 @@ function FileSummary({
                 </span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                <CountPill kind="onTime"   icon="✓"  label="On time"          count={counts.onTime}   color="#047857" tint="#ECFDF5" subtext="punched in by 8:15"          isOpen={drillKind === 'onTime'}   onClick={() => setDrillKind(drillKind === 'onTime'   ? null : 'onTime')}/>
-                <CountPill kind="late"     icon="⚠"  label="Late arrival"     count={counts.late}     color="#BE123C" tint="#FFF1F2" subtext="punched in after 8:15"      isOpen={drillKind === 'late'}     onClick={() => setDrillKind(drillKind === 'late'     ? null : 'late')}/>
-                <CountPill kind="missedIn" icon="🚫" label="Missed punch-in" count={counts.missedIn} color="#4338CA" tint="#EEF2FF" subtext="no first-punch on record"   isOpen={drillKind === 'missedIn'} onClick={() => setDrillKind(drillKind === 'missedIn' ? null : 'missedIn')}/>
+                <CountPill kind="onTime"   icon="✓"  label="On time"          count={counts.onTime}   color="#047857" tint="#ECFDF5" subtext="punched in by 8:15"        isOpen={drillKind === 'onTime'}   onClick={() => setDrillKind(drillKind === 'onTime'   ? null : 'onTime')}/>
+                <CountPill kind="late"     icon="⚠"  label="Late arrival"     count={counts.late}     color="#BE123C" tint="#FFF1F2" subtext="punched in after 8:15"    isOpen={drillKind === 'late'}     onClick={() => setDrillKind(drillKind === 'late'     ? null : 'late')}     progress={progressByKind?.late}/>
+                <CountPill kind="missedIn" icon="🚫" label="Missed punch-in"  count={counts.missedIn} color="#4338CA" tint="#EEF2FF" subtext="no first-punch on record"  isOpen={drillKind === 'missedIn'} onClick={() => setDrillKind(drillKind === 'missedIn' ? null : 'missedIn')} progress={progressByKind?.missedIn}/>
               </div>
             </div>
           )}
@@ -2457,20 +2478,23 @@ function FileSummary({
                 </span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                <CountPill kind="early"     icon="⏰" label="Early departure"  count={counts.early}     color="#A16207" tint="#FEFCE8" subtext="left before grace cutoff"   isOpen={drillKind === 'early'}     onClick={() => setDrillKind(drillKind === 'early'     ? null : 'early')}/>
-                <CountPill kind="missedOut" icon="🚪" label="Missed punch-out" count={counts.missedOut} color="#7E22CE" tint="#FAF5FF" subtext="no last-punch on record"    isOpen={drillKind === 'missedOut'} onClick={() => setDrillKind(drillKind === 'missedOut' ? null : 'missedOut')}/>
-                <CountPill kind="onLeave"   icon="🌴" label="On leave"         count={counts.onLeave}   color="#0E7490" tint="#ECFEFF" subtext="approved leave on file"     isOpen={drillKind === 'onLeave'}   onClick={() => setDrillKind(drillKind === 'onLeave'   ? null : 'onLeave')}/>
+                <CountPill kind="early"     icon="⏰" label="Early departure"  count={counts.early}     color="#A16207" tint="#FEFCE8" subtext="left before grace cutoff"  isOpen={drillKind === 'early'}     onClick={() => setDrillKind(drillKind === 'early'     ? null : 'early')}     progress={progressByKind?.early}/>
+                <CountPill kind="missedOut" icon="🚪" label="Missed punch-out" count={counts.missedOut} color="#7E22CE" tint="#FAF5FF" subtext="no last-punch on record"   isOpen={drillKind === 'missedOut'} onClick={() => setDrillKind(drillKind === 'missedOut' ? null : 'missedOut')} progress={progressByKind?.missedOut}/>
+                <CountPill kind="onLeave"   icon="🌴" label="On leave"         count={counts.onLeave}   color="#0E7490" tint="#ECFEFF" subtext="approved leave on file"    isOpen={drillKind === 'onLeave'}   onClick={() => setDrillKind(drillKind === 'onLeave'   ? null : 'onLeave')}/>
               </div>
             </div>
           )}
 
-          {/* Inline drill-down panel — appears beneath the tile grid
-              when a tile is clicked. Renders ON THIS PAGE, no popup.
-              Click the same tile again to close, click another to
-              switch. This replaces the previous BreakdownModal which
-              opened a portal overlay; per Nadeem's feedback, the
-              full review should stay on one scrollable page. */}
-          {drillKind && detection && (
+          {/* Inline drill-down — for ACTIONABLE kinds (late, missedIn,
+              early, missedOut), render the action panel passed in from
+              the parent (full FlaggedSection with email buttons). For
+              read-only kinds (onTime, onLeave, unknown), render the
+              simple BreakdownPanel list. Either way: in-page, no
+              popup, all functions live inside the file-summary card. */}
+          {drillKind && actionPanels?.[drillKind] && (
+            <div>{actionPanels[drillKind]}</div>
+          )}
+          {drillKind && !actionPanels?.[drillKind] && detection && (
             <BreakdownPanel
               kind={drillKind}
               detection={detection}
@@ -2499,9 +2523,18 @@ function FileSummary({
   );
 }
 
-function CountPill({ icon, label, count, color, tint, subtext, isOpen, onClick }) {
+function CountPill({ icon, label, count, color, tint, subtext, isOpen, onClick, progress }) {
   const isInteractive = typeof onClick === 'function' && count > 0;
   const Tag = isInteractive ? 'button' : 'div';
+  // Progress: { sent: number, total: number } when this kind is
+  // actionable and at least one email has been sent today. Surfaced
+  // on the collapsed tile so Bashaier can see the day's progress at
+  // a glance without expanding. e.g. "3 / 6 emailed". The whole
+  // progress UI hides for non-actionable tiles or when nothing's
+  // sent yet — keeps the tile clean until there's signal to show.
+  const showProgress = !!progress && progress.total > 0;
+  const allDone = showProgress && progress.sent >= progress.total;
+  const progressPct = showProgress ? Math.round((progress.sent / progress.total) * 100) : 0;
   return (
     <Tag
       type={isInteractive ? 'button' : undefined}
@@ -2533,6 +2566,28 @@ function CountPill({ icon, label, count, color, tint, subtext, isOpen, onClick }
       {subtext && (
         <div className="text-[10px] mt-0.5" style={{ color: '#0A0A0A', opacity: 0.7 }}>
           {subtext}
+        </div>
+      )}
+      {showProgress && (
+        <div className="mt-2">
+          <div className="flex items-center justify-between text-[10px] mb-1" style={{ color: '#0A0A0A' }}>
+            <span style={{ fontWeight: 700 }}>
+              {allDone
+                ? <><span style={{ color: '#047857' }}>✓</span> All {progress.total} emailed</>
+                : <><strong>{progress.sent}</strong> of <strong>{progress.total}</strong> emailed</>}
+            </span>
+            {!allDone && (
+              <span style={{ opacity: 0.7 }}>
+                {progress.total - progress.sent} left
+              </span>
+            )}
+          </div>
+          <div className="h-1.5 rounded-full overflow-hidden" style={{ background: '#E5E0D5' }}>
+            <div
+              className="h-full transition-all"
+              style={{ width: progressPct + '%', background: allDone ? '#047857' : color }}
+            />
+          </div>
         </div>
       )}
     </Tag>
@@ -2720,7 +2775,12 @@ function FlaggedSection({ title, kicker, iconColor, barFrom, barTo, entries, emp
                         style={
                           entry.permBadge.tone === 'amber'
                             ? { background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' }
-                            : { background: '#FEE2E2', color: '#991B1B', border: '1px solid #FECACA' }
+                            // Saturated red on red badge so "no permission"
+                            // and "beyond permission" cases jump off the
+                            // page — Bashaier wanted these visually
+                            // unambiguous so she can spot actionable
+                            // rows at a glance.
+                            : { background: '#BE123C', color: '#FFFFFF', border: '1px solid #BE123C', letterSpacing: '0.05em' }
                         }
                         title={
                           entry.permBadge.tone === 'amber'
