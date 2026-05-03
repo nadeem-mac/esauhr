@@ -134,6 +134,20 @@ function addMinutesToTime(timeStr, deltaMin) {
   return minutesToHHMM(total);
 }
 
+// Format a 24-hour HH:MM string as a 12-hour string with AM/PM. Used in
+// the early-departure email's policy bullets so the times match the
+// late-arrival email's style ("8:00 AM" rather than "08:00"). Returns
+// the original input unchanged if it doesn't parse — defensive against
+// callers passing already-formatted strings.
+function fmtTime12h(hhmm) {
+  if (typeof hhmm !== 'string' || !/^\d{1,2}:\d{2}/.test(hhmm)) return hhmm;
+  const [h, m] = hhmm.split(':').map(n => parseInt(n, 10));
+  if (Number.isNaN(h) || Number.isNaN(m)) return hhmm;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12  = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
 // Department check — SUP team has 8-4 hours.
 // Working-hours group is now stored on the employee record as
 // working_hours_group ('standard' default, or 'sup_team'). The
@@ -219,12 +233,15 @@ function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, schedul
 
   // Policy bullets — kept identical for every late-arrival email so
   // staff see consistent wording. Em-dashes were stripped (per Nadeem
-  // 2026-05): bullet 3 reads as a comma-separated list — "3 late-
-  // arrival permissions per month, 1 hour each, 3 times only".
+  // 2026-05). Bullet 3 was updated 2026-05 to combined wording: the
+  // 3-permissions-per-month entitlement is shared across late-arrival
+  // and early-departure (per the official ESAU Permission Request
+  // Form), not separate quotas. The early-departure email uses the
+  // same wording for the same reason.
   const policyBullets = [
     '\u2022 The official clock-in time is 8:00 AM on regular working days.',
     '\u2022 A 15-minute grace period is allowed; arrivals after 8:15 AM are recorded as late.',
-    '\u2022 Each staff is entitled to 3 late-arrival permissions per month, 1 hour each, 3 times only.',
+    '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
   ];
 
   // Divider — 71 equals signs, character + count both confirmed by
@@ -263,13 +280,49 @@ function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd,
   const greetName = firstName
     ? firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase()
     : 'colleague';
+
+  // Time-of-day formatting for the policy bullets and the violation
+  // summary. The system stores scheduledEnd in 24-hour HH:MM (either
+  // "16:00" for SUP team or "17:00" for everyone else, but the policy
+  // tolerates any value that comes in). We display 12-hour with AM/PM
+  // to mirror the late-arrival email style ("8:00 AM"). Cutoff is
+  // always scheduledEnd minus the 15-minute grace window.
+  const endStr12h    = fmtTime12h(scheduledEnd);
+  const cutoffStr    = addMinutesToTime(scheduledEnd, -15);
+  const cutoffStr12h = fmtTime12h(cutoffStr);
+
+  // Policy bullets — bullet 1 + 2 are personalized to the staff's
+  // own scheduled clock-out time and grace cutoff (varies by role).
+  // Bullet 3 mirrors the late-arrival email exactly: the 3 permissions
+  // per month is a SHARED entitlement spanning both late arrival and
+  // early departure (per the official ESAU Permission Request Form).
+  const policyBullets = [
+    '\u2022 Your scheduled clock-out time is ' + endStr12h + ' on regular working days.',
+    '\u2022 A 15-minute grace period is allowed; departures before ' + cutoffStr12h + ' are recorded as early leave.',
+    '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
+  ];
+
+  // Divider — 71 equals signs, character + count both confirmed by
+  // Nadeem against the late-arrival email's rendering in his actual
+  // mail client. Re-test in production if the bullets are rewritten
+  // and the visual fit looks off.
+  const divider = '='.repeat(71);
+
+  // Body — HR-Department voice, mirrors the late-arrival template.
+  // Em-dashes deliberately avoided in prose (commas / periods used
+  // instead). The violation summary phrases the timing as "X minutes
+  // before your scheduled [time] clock-out time" — this is the diff
+  // between punch-out and scheduledEnd (NOT from the cutoff), which
+  // matches how minutesEarly is computed upstream.
   const body =
     'Dear ' + greetName + ',\n\n' +
-    'I hope you are well. I am reaching out on behalf of HR regarding your check-out on ' + dateLong + '.\n\n' +
-    'Our time card log shows your punch-out at ' + punchOutStr + ', which is around ' + minutesEarly + ' minutes earlier than your scheduled end of ' + scheduledEnd + ' (we allow a 15-minute grace window before that time).\n\n' +
-    'Before I update your record, I wanted to check in with you. If you had a manager-approved reason — a permission request, family matter, or medical appointment — please let me know and I will log it accordingly. If it was unplanned, kindly loop in your direct manager and HR ahead of time next time so we can keep your file clean.\n\n' +
-    'We track these to keep payroll and overtime accurate, and to support fair evaluations. Repeated unapproved early departures are something HR has to flag, and I would much rather catch it now than have it become a pattern.\n\n' +
-    'Thank you for your continued effort, and please reply when you have a moment so I can close out the record properly.\n\n' +
+    'HR\u2019s daily attendance review for ' + dateLong + ' shows your punch-out at ' + punchOutStr + ', ' + minutesEarly + ' minutes before your scheduled ' + endStr12h + ' clock-out time and with no approved permission on file. This is recorded as an early-departure violation.\n\n' +
+    'As a reminder, according to the ESAU attendance policy:\n\n' +
+    divider + '\n' +
+    policyBullets.join('\n') + '\n' +
+    divider + '\n\n' +
+    'You are still required to submit an early-departure permission request via the ESAU HR Portal (esauhr.netlify.app \u2192 New Request \u2192 Permission) for today\u2019s punch-out. Submitting it after the fact lets HR record the reason and consider it against your monthly entitlement. Without an approved permission, the day stands as an unexcused violation on your evaluation record.\n\n' +
+    'For exceptional cases (medical, official, or other documented emergencies that go beyond the monthly entitlement), please reply to this email within two working days with the supporting details.\n\n' +
     HR_SIGNATURE;
   return { subject, body };
 }
