@@ -19,7 +19,7 @@
 //   The Sehhaty result page is digital text rendered as an image
 //   (not a photo or scan), so OCR is highly reliable for the
 //   numeric and Latin-character fields we care about most:
-//     • GSL leave ID (Latin + digits)
+//     • Leave ID (Latin prefix + digits, e.g. GSL26042340605, PSL260430135678)
 //     • National ID / Iqama (10 digits)
 //     • Dates (YYYY-MM-DD)
 //     • Day count (single digit usually)
@@ -212,9 +212,23 @@ async function preprocessImage(blob) {
 // about whitespace and trailing punctuation since OCR can introduce
 // stray characters around words.
 
-/** GSL26042340605, GSL-26042340605, etc. — the Sehhaty leave ID. */
+/** Sehhaty leave ID. Sehhaty issues different prefixes depending on
+ *  the leave type and the issuing clinic class:
+ *    • GSL — General Sick Leave
+ *    • PSL — confirmed in real-world certs (private clinic / dentistry)
+ *    • Possibly MSL, CSL, etc. for maternity / companion leave
+ *  We accept any 3-letter Latin prefix immediately followed (no space)
+ *  by 10-16 alphanumerics. The optional hyphen between prefix and body
+ *  is allowed for staff who type with a separator. We deliberately
+ *  DON'T allow a space between prefix and body — that would let any
+ *  3-letter English word followed by a long number falsely match
+ *  (e.g. 'THE 12345678901234' on a PDF that happens to have those
+ *  words near each other).
+ *
+ *  Example matches:  GSL26042340605, PSL260430135678,
+ *                    GSL-26042340605 (with hyphen), psl260430135678 (lowercase). */
 function matchLeaveId(text) {
-  const m = text.match(/\b(GSL[-\s]?[A-Z0-9]{10,16})\b/i);
+  const m = text.match(/\b([A-Z]{3}-?[A-Z0-9]{10,16})\b/i);
   if (!m) return null;
   return m[1].replace(/[\s-]/g, '').toUpperCase();
 }
@@ -305,7 +319,10 @@ function matchDays(text) {
     .replace(/\d{4}-\d{2}-\d{2}/g, '')
     .replace(/\d{4}\/\d{2}\/\d{2}/g, '')
     .replace(/\b\d{10}\b/g, '')
-    .replace(/GSL[A-Z0-9]+/gi, '');
+    // Strip Sehhaty leave codes so the digits inside them (which can
+    // look like a day count) don't get mis-matched. Pattern: any 3
+    // Latin letters immediately followed by 10+ alphanumerics.
+    .replace(/[A-Z]{3}[-\s]?[A-Z0-9]{10,16}/gi, '');
   const candidates = [...cleaned.matchAll(/\b(\d{1,3})\b/g)]
     .map(m => parseInt(m[1], 10))
     .filter(n => n >= 1 && n <= 365);

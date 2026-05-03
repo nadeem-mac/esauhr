@@ -417,7 +417,7 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
                 <Label>Sehhaty leave ID <span style={{ color: '#B91C1C' }}>*</span></Label>
                 <input type="text" value={sehhatyCode}
                   onChange={e => setSehhatyCode(e.target.value)}
-                  placeholder="e.g. GSL-1234567"
+                  placeholder="e.g. GSL26042340605 or PSL260430135678"
                   className="w-full px-3 py-2.5 rounded-lg border text-sm font-mono uppercase"
                   style={{
                     borderColor: sehhatyCode && !sehhatyCodeValid ? '#B91C1C' : 'var(--border-soft)',

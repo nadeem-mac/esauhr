@@ -29,7 +29,9 @@
 //
 //   The extractor does not just return whatever it found. It validates that
 //   the document looks like a Sehhaty certificate by requiring AT LEAST a
-//   leave ID matching GSL pattern. If that's missing, we treat the upload
+//   leave ID matching the standard Sehhaty pattern (3-letter prefix +
+//   10+ alphanumerics — covers GSL, PSL, and any future prefixes Seha
+//   adds without code changes). If that's missing, we treat the upload
 //   as "not a Sehhaty PDF" and surface a clear error to the staff.
 //
 // LAZY-LOADED
@@ -72,7 +74,9 @@ import { extractFieldsFromText } from './sehhatyOcr.js';
  * @throws {Error} with .code:
  *   'NOT_PDF'           — file's mime type or magic bytes don't match
  *   'PDF_PARSE_FAILED'  — pdfjs couldn't read the document
- *   'NOT_SEHHATY'       — text extracted but no GSL leave ID found
+ *   'NOT_SEHHATY'       — text extracted but no leave ID found
+ *                          (no match for Sehhaty's standard prefix +
+ *                          digits pattern; covers GSL, PSL, etc.)
  */
 export async function extractFromPdf(file) {
   // Sanity check. Browsers report `application/pdf` for valid PDFs;
