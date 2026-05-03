@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import {
   RefreshCw, Clock, CheckCircle2, XCircle, AlertTriangle,
-  Palmtree, Sunrise, Sunset, Users2, Check, X, ArrowLeftCircle,
+  Palmtree, Sunrise, Sunset, Users2, Check, X, ArrowLeftCircle, HeartPulse,
 } from 'lucide-react';
 import { fmtDateShort, findRejectionReason } from '../lib/leaveLogic.js';
 import { PERMISSION_TYPES } from '../lib/permissionLogic.js';
@@ -47,37 +47,66 @@ function pillFor(item) {
     if (rs === 'pending_hr')            return { label: 'Awaiting HR',         color: '#7C2D12', bg: '#FED7AA' };
     return { label: 'Pending', color: '#92400E', bg: '#FEF3C7' };
   }
-  const stage  = item.stage  || (item.status === 'approved' ? 'approved' : 'pending_manager');
-  const status = item.status || (stage === 'approved' ? 'approved' : 'pending');
-  if (status === 'approved' || stage === 'approved') {
-    return { label: 'Approved',           color: '#0F4C2A', bg: '#ECFDF5' };
-  }
-  if (status === 'rejected' || /^rejected/.test(stage)) {
-    const where = stage === 'rejected_by_substitute' ? 'Substitute declined'
-               : stage === 'rejected_by_manager'    ? 'Rejected by manager'
-               : stage === 'rejected_by_hr'         ? 'Rejected by HR'
-               :                                       'Rejected';
-    return { label: where, color: '#B91C1C', bg: '#FEE2E2' };
-  }
-  if (stage === 'pending_substitutes')  return { label: 'Awaiting substitutes', color: '#92400E', bg: '#FEF3C7' };
-  if (stage === 'pending_manager')      return { label: 'Awaiting manager',     color: '#9A3412', bg: '#FFEDD5' };
-  if (stage === 'pending_hr')           return { label: 'Awaiting HR',          color: '#7C2D12', bg: '#FED7AA' };
+
+  // STAGE IS THE SOURCE OF TRUTH.
+  // The previous implementation checked status === 'rejected' BEFORE
+  // checking individual stage values. That meant a row whose `status`
+  // field was somehow 'rejected' (legacy data, mismatched trigger
+  // output, manual DB edit, etc.) would show "Rejected" even when
+  // stage clearly indicated the row was still in progress (e.g.
+  // stage='pending_manager'). User reported this exact mis-match:
+  // a freshly submitted sick leave appeared as "Rejected" without
+  // ever reaching Bashaier.
+  //
+  // The new order:
+  //   1. Match against known stage values directly. Each stage maps
+  //      to a single, unambiguous pill.
+  //   2. Only fall back to `status` when stage is null / unrecognised
+  //      / undefined — the safety net for malformed rows.
+  //
+  // This means the worst case is a row showing "Pending" instead of
+  // its true terminal state, which is much less harmful than showing
+  // "Rejected" on an in-progress row.
+  const stage = item.stage;
+
+  if (stage === 'approved')               return { label: 'Approved',                color: '#0F4C2A', bg: '#ECFDF5' };
+  if (stage === 'pending_substitutes')    return { label: 'Awaiting substitutes',    color: '#92400E', bg: '#FEF3C7' };
+  if (stage === 'pending_manager')        return { label: 'Awaiting manager',        color: '#9A3412', bg: '#FFEDD5' };
+  if (stage === 'pending_hr')             return { label: 'Awaiting HR',             color: '#7C2D12', bg: '#FED7AA' };
   // Sick declaration sitting in 'pending_certificate' stage —
   // staff has registered the sick day but hasn't uploaded a Sehhaty
   // cert yet. Distinct from pending_manager so the staff knows what
   // they need to do (submit the cert) vs. wait for someone else.
-  if (stage === 'pending_certificate') return { label: 'Awaiting certificate', color: '#991B1B', bg: '#FEE2E2' };
+  if (stage === 'pending_certificate')    return { label: 'Awaiting certificate',    color: '#991B1B', bg: '#FEE2E2' };
+  if (stage === 'rejected_by_substitute') return { label: 'Substitute declined',     color: '#B91C1C', bg: '#FEE2E2' };
+  if (stage === 'rejected_by_manager')    return { label: 'Rejected by manager',     color: '#B91C1C', bg: '#FEE2E2' };
+  if (stage === 'rejected_by_hr')         return { label: 'Rejected by HR',          color: '#B91C1C', bg: '#FEE2E2' };
+  if (stage === 'cancelled')              return { label: 'Cancelled',               color: '#6B7280', bg: '#F3F4F6' };
+  if (stage === 'expired')                return { label: 'Expired',                 color: '#6B7280', bg: '#F3F4F6' };
+
+  // Legacy / unknown stage — fall back to status field.
+  if (item.status === 'approved')         return { label: 'Approved',                color: '#0F4C2A', bg: '#ECFDF5' };
+  if (item.status === 'rejected')         return { label: 'Rejected',                color: '#B91C1C', bg: '#FEE2E2' };
   return { label: 'Pending', color: '#92400E', bg: '#FEF3C7' };
 }
 
 // Type-icon mapping — each item gets a small coloured circle that signals
 // what kind of application it is. Mirrors the colour scheme used on the
 // admin dashboard tiles for consistency.
+//
+// Sick leaves get their own icon (HeartPulse, red-toned) so they're
+// distinguishable from regular vacation/annual leave at a glance.
+// Otherwise sick days look identical to a vacation in the list and
+// the staff can't visually parse "this red-pill row is my sick
+// declaration" from "this green-pill row is my approved annual leave".
 function iconFor(item) {
   if (item._kind === 'rejoin') {
     return { Icon: ArrowLeftCircle, color: '#0F4C2A', bg: '#D1FAE5' };
   }
   if (item._kind === 'leave') {
+    if (item.leave_type_id === 'sick') {
+      return { Icon: HeartPulse, color: '#B91C1C', bg: '#FEE2E2' };
+    }
     return { Icon: Palmtree, color: '#0F4C2A', bg: '#ECFDF5' };
   }
   if (item.type === 'late_arrival') {
@@ -193,9 +222,16 @@ export default function MyApplicationsCard({
         else                                                c.pending++;
         continue;
       }
-      const status = it.status || (it.stage === 'approved' ? 'approved' : 'pending');
-      if (status === 'approved' || it.stage === 'approved') c.approved++;
-      else if (status === 'rejected' || /^rejected/.test(it.stage || '')) c.rejected++;
+      // Stage-first bucketing — same rationale as pillFor. The previous
+      // logic checked status first, which mis-classified rows where
+      // status was somehow 'rejected' but stage was still pending_*.
+      const stage = it.stage;
+      if (stage === 'approved') c.approved++;
+      else if (/^rejected/.test(stage || '')) c.rejected++;
+      else if (stage && /^(pending_|cancelled|expired)/.test(stage)) c.pending++;
+      // Fall back to status only when stage is missing/unknown.
+      else if (it.status === 'approved') c.approved++;
+      else if (it.status === 'rejected') c.rejected++;
       else c.pending++;
     }
     return c;
@@ -209,10 +245,24 @@ export default function MyApplicationsCard({
         if (filter === 'rejected')  return /^rejected/.test(it.return_stage || '');
         return /^pending/.test(it.return_stage || '');
       }
-      const status = it.status || (it.stage === 'approved' ? 'approved' : 'pending');
-      if (filter === 'approved')  return status === 'approved' || it.stage === 'approved';
-      if (filter === 'rejected')  return status === 'rejected' || /^rejected/.test(it.stage || '');
-      return status === 'pending' || (it.stage && /^pending/.test(it.stage));
+      // Stage-first matching. Same rationale as pillFor / counts: the
+      // status field can be stale or wrong (legacy rows, trigger
+      // mismatches); stage is the truth.
+      const stage = it.stage;
+      if (filter === 'approved') {
+        if (stage === 'approved') return true;
+        if (stage) return false;            // any other recognised stage = not approved
+        return it.status === 'approved';     // fall back only when stage is null
+      }
+      if (filter === 'rejected') {
+        if (/^rejected/.test(stage || '')) return true;
+        if (stage) return false;
+        return it.status === 'rejected';
+      }
+      // Pending bucket — anything in a pending_* stage, or cancelled / expired,
+      // or unknown stage with status='pending'.
+      if (stage && /^(pending_|cancelled|expired)/.test(stage)) return true;
+      return !stage && (it.status === 'pending' || !it.status);
     });
   }, [items, filter]);
 
