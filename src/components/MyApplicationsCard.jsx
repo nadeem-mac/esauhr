@@ -422,6 +422,18 @@ function Row({ item, empMap, leaveTypes, onClick }) {
   : item._kind === 'rejoin' ? 'REJOINING'
   :                           'PERMISSION';
 
+  // Backdated indicator — when a permission's date is earlier than the
+  // request's requested_at date, the staff filed it retroactively
+  // (covered by the "submit a permission for today's punch-in" path
+  // in the attendance violation emails). Only meaningful for permissions;
+  // leaves can also be backdated but use a different concept (rejoining
+  // for partial early returns).
+  const isBackdatedPermission =
+    item._kind === 'permission' &&
+    item.permission_date &&
+    item.requested_at &&
+    item.permission_date < String(item.requested_at).slice(0, 10);
+
   // Inline substitute progress strip for leaves at pending_substitutes
   // — replaces the standalone wait card. Hidden for any other kind/stage.
   const showSubProgress =
@@ -459,6 +471,15 @@ function Row({ item, empMap, leaveTypes, onClick }) {
             <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: bg, color, fontWeight: 600, letterSpacing: '0.05em' }}>
               {kindLabel}
             </span>
+            {isBackdatedPermission && (
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded-full"
+                style={{ background: '#FEF3C7', color: '#92400E', fontWeight: 600, letterSpacing: '0.05em', border: '1px solid #F59E0B' }}
+                title="Filed retroactively for a date that had already passed"
+              >
+                BACKDATED
+              </span>
+            )}
           </div>
           <div className="text-xs mt-0.5" style={{ color: '#1F1B16', opacity: 0.7 }}>
             {dateStr}

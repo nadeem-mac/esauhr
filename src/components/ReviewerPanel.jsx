@@ -13,6 +13,12 @@ import {
   buildUnauthorizedRowsForDeclaration,
   findAutoUnmarkableViolations,
 } from '../lib/sickHardPressure.js';
+import {
+  isRetroactive,
+  findCoveredViolations,
+  buildClearPatch,
+  violationTypeForPermission,
+} from '../lib/retroactivePermissions.js';
 import { fmtDate, rejectionReasonsForLeaveType, findRejectionReason } from '../lib/leaveLogic.js';
 import { PERMISSION_TYPES, summariseMonth } from '../lib/permissionLogic.js';
 
@@ -755,6 +761,69 @@ export default function ReviewerPanel({ me }) {
       // hr_decided_at without waiting for the next load() pass.
       if (nextStage === 'approved') {
         setApprovedPermission({ ...req, ...patch });
+
+        // Retroactive-permission auto-clear:
+        // If the just-approved permission has a permission_date in the
+        // past, find any matching attendance_violations rows for that
+        // employee/date/type and stamp them as cleared. The violation
+        // rows stay in the table (audit) but are filtered out of
+        // active queues (cleared_at IS NULL is the active filter
+        // used by AttendanceView and MyAttendanceCard).
+        //
+        // Coverage criteria are intentionally simple per Nadeem's
+        // v1 scoping (see findCoveredViolations docstring): same
+        // employee, same date, matching violation_type. Time-window
+        // matching is not enforced — partial coverage cases (staff
+        // 60 min late but permission only covers 30 min) clear the
+        // violation entirely. Bashaier can manually re-add via the
+        // attendance_violations table if she disagrees.
+        if (isRetroactive(req)) {
+          try {
+            const vType = violationTypeForPermission(req.type);
+            if (vType) {
+              // Narrow the fetch to the smallest possible set: same
+              // employee, same date, same type, not already cleared.
+              const vQs =
+                'select=*&employee_id=eq.' + encodeURIComponent(req.employee_id) +
+                '&violation_date=eq.' + encodeURIComponent(req.permission_date) +
+                '&violation_type=eq.' + encodeURIComponent(vType) +
+                '&cleared_at=is.null';
+              const matches = await directGet('attendance_violations', vQs, { timeoutMs: 8000 }).catch(() => []);
+              // Pass through findCoveredViolations as a defensive
+              // re-check — if the server-side filter ever drifts (e.g.
+              // a future schema migration changes column names) the
+              // helper applies the same predicate as the canonical
+              // truth source.
+              const covered = findCoveredViolations(req, matches || []);
+              const clearPatch = buildClearPatch(req, me?.id);
+              for (const v of covered) {
+                try {
+                  await directPatch('attendance_violations', 'id', v.id, clearPatch, { timeoutMs: 8000 });
+                } catch (clearErr) {
+                  console.warn('[retroactive-permission] clear patch failed for violation', v.id, clearErr);
+                }
+              }
+              if (covered.length) {
+                try {
+                  await logAction(me, 'attendance_violation_cleared', {
+                    targetType:  'permission_request',
+                    targetId:    req.id,
+                    targetLabel: `${empMap[req.employee_id]?.name || req.employee_id} · ${vType} · ${covered.length} violation${covered.length === 1 ? '' : 's'} cleared by retroactive permission`,
+                    meta: {
+                      permission_id:   req.id,
+                      permission_date: req.permission_date,
+                      violation_ids:   covered.map(v => v.id),
+                    },
+                  });
+                } catch { /* audit failure is non-fatal */ }
+              }
+            }
+          } catch (autoClearErr) {
+            // Auto-clear failures are best-effort — they don't block
+            // the approval itself, which already succeeded above.
+            console.warn('[retroactive-permission] auto-clear sweep failed:', autoClearErr);
+          }
+        }
       }
       await load();
     } catch (err) { alert(err.message); }
@@ -1071,6 +1140,20 @@ export default function ReviewerPanel({ me }) {
                                 {req.exceeds_quota && (
                                   <span className="ml-2 inline-flex items-center gap-1" style={{ color: 'var(--clay)' }}>
                                     <AlertTriangle className="w-3 h-3" /> Over quota — flagged
+                                  </span>
+                                )}
+                                {/* BACKDATED — surfaces when the staff filed
+                                    retroactively. Gives the reviewer immediate
+                                    context: this is the "I was late yesterday,
+                                    here's my permission for it" flow, not a
+                                    pre-planned absence. On HR approval, any
+                                    matching attendance violation auto-clears
+                                    via the hook in decidePerm(). */}
+                                {isRetroactive(req) && (
+                                  <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider"
+                                        style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #F59E0B' }}
+                                        title="Backdated — date is in the past. HR approval will auto-clear any matching attendance violation.">
+                                    BACKDATED
                                   </span>
                                 )}
                               </div>

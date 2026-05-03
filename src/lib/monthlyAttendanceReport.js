@@ -117,6 +117,7 @@ export async function downloadMonthlyAttendanceReport({ employee, empMap = {}, m
       + '&employee_id=eq.' + encodeURIComponent(employee.id)
       + '&violation_date=gte.' + monthStart
       + '&violation_date=lte.' + monthEnd
+      + '&cleared_at=is.null'
       + '&order=violation_date.asc'
     );
   } catch (e) {

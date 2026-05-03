@@ -50,6 +50,7 @@ export default function MyAttendanceCard({ me }) {
           'attendance_violations?select=id,violation_date,violation_type,minutes_off,punch_in_time,punch_out_time,scheduled_start,scheduled_end,recorded_at'
           + '&employee_id=eq.' + encodeURIComponent(me.id)
           + '&violation_date=gte.' + cutoffIso
+          + '&cleared_at=is.null'
           + '&order=violation_date.desc'
         );
         if (!cancelled) setRows(data || []);

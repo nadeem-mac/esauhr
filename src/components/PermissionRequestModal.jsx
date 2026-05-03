@@ -1,12 +1,21 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { supabase, directGet } from '../supabaseClient.js';
-import { X, AlertTriangle, Sunrise, Sunset, Loader2, History } from 'lucide-react';
+import { X, AlertTriangle, Sunrise, Sunset, Loader2, History, Clock } from 'lucide-react';
 import { logAction } from '../lib/audit.js';
 import { checkExceeds, summariseMonth, PERMISSION_QUOTA, PERMISSION_TYPES, reasonsFor } from '../lib/permissionLogic.js';
+import { getMinPermissionDate, isRetroactive, MAX_RETROACTIVE_DAYS } from '../lib/retroactivePermissions.js';
 
 export default function PermissionRequestModal({ me, type = 'late_arrival', monthRows = [], onClose, onSubmitted }) {
   const today = new Date().toISOString().slice(0, 10);
+  // Earliest date the staff can pick — today minus MAX_RETROACTIVE_DAYS.
+  // The HTML date input enforces this client-side via `min`. The DB
+  // accepts any date (the column is `date not null` with no check),
+  // so this is the only enforcement point. If staff bypass via dev
+  // tools, the request still goes through — caught later by Bashaier
+  // at HR review.
+  const minDate = useMemo(() => getMinPermissionDate(new Date()), []);
   const [date,    setDate]    = useState(type === 'late_arrival' ? today : today);
+  const isBackdated = isRetroactive(date, today);
   // Time window — required as of the bilingual form rollout. Defaults are
   // typical office hours so the staff member can adjust by a few clicks
   // rather than starting from blank fields.
@@ -220,13 +229,32 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
             </div>
           </div>
 
-          {/* Date */}
+          {/* Date — accepts dates up to MAX_RETROACTIVE_DAYS back so
+              staff can file a backdated permission for a late arrival
+              or early departure that already happened. The HR Department's
+              attendance violation emails (sent the next morning) tell
+              staff to file retroactively for yesterday's punch — this
+              date input is the entry point for that flow. */}
           <div>
             <label className="block text-[10px] tracking-[0.25em] opacity-60 mb-2">DATE</label>
             <input type="date" value={date} onChange={e => setDate(e.target.value)}
-              required min={today}
+              required min={minDate} max={today}
               className="w-full px-4 py-3 rounded-xl border bg-transparent text-sm"
               style={{ borderColor: 'var(--border)' }}/>
+            {/* Backdated notice — appears only when the staff picks a
+                past date. Confirms the system is treating this as a
+                retroactive submission so they're not surprised when
+                their manager / HR see a "BACKDATED" pill on the row. */}
+            {isBackdated && (
+              <div className="mt-2 rounded-lg px-3 py-2 text-[11px] flex items-start gap-2"
+                   style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #F59E0B' }}>
+                <Clock className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                <div>
+                  <span style={{ fontWeight: 600 }}>Backdated request.</span>{' '}
+                  This permission is for a date that has already passed. It still counts against your monthly quota and goes through the same manager + HR approval flow. You can file up to {MAX_RETROACTIVE_DAYS} days back.
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Time window — From / To clock times. The duration in mins

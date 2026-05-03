@@ -548,6 +548,7 @@ export default function AttendanceView({ me, employees }) {
       try {
         const rows = await directGet(
           'attendance_violations?select=employee_id,violation_type,email_sent_at&violation_date=eq.' + csvDate
+          + '&cleared_at=is.null'
         );
         if (cancelled) return;
         const next = {};
@@ -585,6 +586,7 @@ export default function AttendanceView({ me, employees }) {
           'attendance_violations?select=employee_id,violation_type,violation_date'
           + '&violation_date=gte.' + monthStart
           + '&violation_date=lte.' + monthEnd
+          + '&cleared_at=is.null'
         );
         if (cancelled) return;
         // Count distinct (employee, date) so a single day with both
