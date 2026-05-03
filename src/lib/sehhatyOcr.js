@@ -486,53 +486,69 @@ function matchDays(text) {
  *  match either.
  *
  *  Strategy:
- *  1. Look for the Arabic label and capture either Arabic OR Latin
- *     text after it (PDF often has the English transliteration
- *     adjacent to the Arabic). Prefer the Arabic if both are present.
- *  2. Fall back to the English 'Name' label if the Arabic anchor fails. */
+ *  1. Find Arabic value via Arabic label
+ *  2. Find Latin value via English 'Name' label
+ *  3. Return BOTH joined with em-dash when both present, else
+ *     whichever is found.
+ *  Showing both gives the staff member the option of recognising
+ *  whichever script they prefer, and gives Bashaier the same
+ *  transliteration that's on the cert for her cross-check. */
 function matchPatientName(text) {
-  // The Arabic word for 'name' (with definite article) is الاسم —
-  // alif-lam-alif-sin-mim. PDF text extraction can reorder or
-  // duplicate alifs depending on how the original cert encoded
-  // the ligature, producing variants like:
-  //   الاسم   (canonical: ا ل ا س م)
-  //   االسم   (text-stitched variant: ا ا ل س م — TWO alifs at
-  //            start, NO alif between ل and س)
-  //   ﻻﺳم    (presentation forms range)
-  // Match any string of 1-3 alifs followed by ل, optional alif,
-  // then سم. This catches all observed variants without false-
-  // matching unrelated Arabic words.
-  const arabicRe = /[\u0627\u0623\u0625\u0622]{1,3}\u0644\u0627?\u0633\u0645[:：\s]*\n?[\s]*([\u0600-\u06FF\uFB50-\uFEFC\s]{3,120})/;
-  const arabicLabel = text.match(arabicRe);
-  if (arabicLabel) {
-    const cleaned = cleanArabicValue(arabicLabel[1]);
-    if (cleaned) return cleaned;
-  }
+  // Find Arabic and Latin variants separately, then combine them
+  // with an em-dash if both exist. The bilingual PDF certificates
+  // include both forms; the staff member should see whichever they
+  // recognise more easily, so we display BOTH.
+  const arabic = matchArabicAfterNameLabel(text);
+  const latin  = matchLatinPatientName(text);
+  return joinBilingualName(arabic, latin);
+}
 
-  // Fallback: English 'Name' label. The PDF format places the
-  // English transliteration BEFORE the 'Name' label (right-to-left
-  // table reading order). Capture the uppercase Latin word run
-  // immediately preceding 'Name' as a standalone token. Accepts
-  // single-letter middle initials (e.g. 'HASSAN SALEH I ALTASSAN').
-  const englishBefore = text.match(/((?:[A-Z]{1,}(?:\s+[A-Z]{1,})+))\s+Name\b/);
-  if (englishBefore) {
-    const candidate = englishBefore[1].trim().replace(/\s+/g, ' ');
-    // Reject obvious non-name matches (e.g. 'Practitioner Name'
-    // captured 'Practitioner' as the value). Saudi names typically
-    // have 3+ words — fewer is suspicious.
-    if (candidate.split(' ').length >= 2) return candidate;
-  }
+/** Arabic-only match for the patient-name label.
+ *  The Arabic word for 'name' (with definite article) is الاسم —
+ *  alif-lam-alif-sin-mim. PDF text extraction can reorder or
+ *  duplicate alifs depending on how the original cert encoded
+ *  the ligature, producing variants like:
+ *    الاسم   (canonical: ا ل ا س م)
+ *    االسم   (text-stitched variant: ا ا ل س م — TWO alifs at
+ *             start, NO alif between ل and س)
+ *    ﻻﺳم    (presentation forms range)
+ *  Match any string of 1-3 alifs followed by ل, optional alif,
+ *  then سم. Catches all observed variants without false-matching
+ *  unrelated Arabic words. */
+function matchArabicAfterNameLabel(text) {
+  const re = /[\u0627\u0623\u0625\u0622]{1,3}\u0644\u0627?\u0633\u0645[:：\s]*\n?[\s]*([\u0600-\u06FF\uFB50-\uFEFC\s]{3,120})/;
+  const m = text.match(re);
+  if (!m) return null;
+  return cleanArabicValue(m[1]);
+}
 
-  return null;
+/** Latin-only match for the patient name. The bilingual PDF places
+ *  the Latin transliteration BEFORE the English 'Name' label (the
+ *  right-most cell in the RTL bilingual table reads
+ *  Arabic-value Latin-value 'Name'). */
+function matchLatinPatientName(text) {
+  const m = text.match(/((?:[A-Z]{1,}(?:\s+[A-Z]{1,})+))\s+Name\b/);
+  if (!m) return null;
+  const candidate = m[1].trim().replace(/\s+/g, ' ');
+  // Reject obvious non-name matches (e.g. capturing
+  // 'Practitioner' from 'Practitioner Name'). Saudi names
+  // typically have 3+ words — fewer is suspicious.
+  if (candidate.split(' ').length < 2) return null;
+  return candidate;
 }
 
 /** Doctor name. Sehhaty calls this either 'الطبيب' (doctor) or
  *  'الممارس' (practitioner) depending on the cert layout. The PDF
  *  uses 'اسم الممارس' / 'Practitioner Name'; the screenshot UI
- *  uses 'اسم الطبيب'. Both English transliteration and pure Arabic
- *  values are handled. */
+ *  uses 'اسم الطبيب'. Returns Arabic + Latin combined when both
+ *  are present. */
 function matchDoctorName(text) {
-  // Try Arabic labels — both 'اسم الطبيب' and 'اسم الممارس'.
+  const arabic = matchArabicDoctor(text);
+  const latin  = matchLatinDoctor(text);
+  return joinBilingualName(arabic, latin);
+}
+
+function matchArabicDoctor(text) {
   for (const label of [/اسم\s*الطبيب/, /اسم\s*الممارس/]) {
     const m = text.match(new RegExp(label.source + '[:：\\s]*\\n?[\\s]*([\\u0600-\\u06FF\\uFB50-\\uFEFC\\s]{3,120})'));
     if (m) {
@@ -540,46 +556,60 @@ function matchDoctorName(text) {
       if (cleaned) return cleaned;
     }
   }
+  return null;
+}
 
-  // Fallback: English label 'Practitioner Name' or 'Doctor Name'.
-  // PDF layout has the English transliteration BEFORE the label.
-  const englishBefore = text.match(/([A-Z][A-Z\s]{4,80}[A-Z])\s+(?:Practitioner\s*Name|Doctor\s*Name|Doctor)\b/);
-  if (englishBefore) {
-    return englishBefore[1].trim().replace(/\s+/g, ' ');
+function matchLatinDoctor(text) {
+  // PDF layout: 'PRACTITIONER NAME ABDULLAH MOHAMMED HASSAN ALFARRAN'
+  //   value comes AFTER the label (English-first column)
+  // OR — value-then-label order:
+  //      'DANAH MOHAMED A ALGHAMDI Practitioner Name'
+  const after = text.match(/(?:Practitioner\s*Name|Doctor\s*Name)[:：\s]+((?:[A-Z]+(?:\s+[A-Z]+)+))(?:\s|$)/);
+  if (after && after[1].split(' ').length >= 2) {
+    return after[1].trim().replace(/\s+/g, ' ');
   }
-  // Some PDFs put the English value AFTER the English label.
-  const englishAfter = text.match(/(?:Practitioner\s*Name|Doctor\s*Name)[:：\s]*([A-Z][A-Z\s]{4,80}[A-Z])\b/);
-  if (englishAfter) {
-    return englishAfter[1].trim().replace(/\s+/g, ' ');
+  const before = text.match(/((?:[A-Z]+(?:\s+[A-Z]+)+))\s+(?:Practitioner\s*Name|Doctor\s*Name|Doctor)\b/);
+  if (before && before[1].split(' ').length >= 2) {
+    return before[1].trim().replace(/\s+/g, ' ');
   }
-
   return null;
 }
 
 /** Specialty / Position. Multiple labels across cert variants:
  *  Layout A (screenshot UI):  المسمى الوظيفي
- *  Layout B (PDF):           المسمى الوظيفى (note final ى vs ي)
- *                             / 'Position' (English right column) */
+ *  Layout B (PDF):            المسمى الوظيفى / 'Position' / 'Specialty'
+ *  Returns Arabic + Latin combined when both are present. */
 function matchSpecialty(text) {
-  // Try Arabic — match either ي or ى at the end of الوظيفي.
+  const arabic = matchArabicSpecialty(text);
+  const latin  = matchLatinSpecialty(text);
+  return joinBilingualName(arabic, latin);
+}
+
+function matchArabicSpecialty(text) {
   const m = text.match(/المسمى\s*الوظيف[يى][:：\s]*\n?[\s]*([\u0600-\u06FF\uFB50-\uFEFC\s]{2,60})/);
-  if (m) {
-    const cleaned = cleanArabicValue(m[1]);
-    if (cleaned) return cleaned;
-  }
+  if (!m) return null;
+  return cleanArabicValue(m[1]);
+}
 
-  // Fallback: English label 'Position' or 'Speciality'/'Specialty'.
-  // PDF format: '<value> Position' (value before label, RTL stitching).
-  const englishBefore = text.match(/((?:[A-Z][a-z]+\s*){1,4})\s+(?:Position|Specialty|Speciality)\b/);
-  if (englishBefore) {
-    return englishBefore[1].trim();
-  }
-  const englishAfter = text.match(/(?:Position|Specialty|Speciality)[:：\s]*((?:[A-Z][a-z]+\s*){1,4})\b/);
-  if (englishAfter) {
-    return englishAfter[1].trim();
-  }
-
+function matchLatinSpecialty(text) {
+  // 'Position' / 'Specialty' / 'Speciality'. Specialty values are
+  // mixed-case English (Senior Registrar, General Dentist, etc.) —
+  // not the all-caps you see for proper-noun names.
+  const before = text.match(/((?:[A-Z][a-z]+\s*){1,4})\s+(?:Position|Specialty|Speciality)\b/);
+  if (before) return before[1].trim();
+  const after = text.match(/(?:Position|Specialty|Speciality)[:：\s]+((?:[A-Z][a-z]+\s*){1,4})/);
+  if (after) return after[1].trim();
   return null;
+}
+
+/** Combine an Arabic and a Latin variant of the same value into a
+ *  single display string. Format: 'Arabic — Latin' when both exist,
+ *  otherwise whichever is non-null. The em-dash separator reads
+ *  cleanly in both LTR and RTL contexts and visually distinguishes
+ *  the two scripts. Returns null if neither is present. */
+function joinBilingualName(arabic, latin) {
+  if (arabic && latin) return `${arabic} — ${latin}`;
+  return arabic || latin || null;
 }
 
 /** Shared cleanup for any captured Arabic value:
