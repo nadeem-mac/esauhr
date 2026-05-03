@@ -292,68 +292,149 @@ function matchLeaveId(text) {
 }
 
 /** Saudi national ID / Iqama — 10 digits. The Sehhaty page shows it
- *  in its own row right under the GSL number. We pick the first
+ *  in its own row right under the leave ID. We pick the first
  *  10-digit run that isn't part of a date. */
 function matchIdNumber(text) {
-  // Strip dates (YYYY-MM-DD) so they don't get mis-matched as IDs.
-  const cleaned = text.replace(/\d{4}-\d{2}-\d{2}/g, '');
+  // Strip dates (YYYY-MM-DD AND DD-MM-YYYY AND Hijri YYYY-MM-DD with leading 14)
+  // so they don't get mis-matched as IDs. Hijri years are 14xx;
+  // Gregorian dates here are 20xx.
+  const cleaned = text
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, '')
+    .replace(/\b\d{2}-\d{2}-\d{4}\b/g, '')
+    .replace(/\b\d{2}-\d{2}-14\d{2}\b/g, '')   // Hijri DD-MM-YYYY
+    .replace(/\b14\d{2}-\d{2}-\d{2}\b/g, '');  // Hijri YYYY-MM-DD
   const m = cleaned.match(/\b(\d{10})\b/);
   return m ? m[1] : null;
 }
 
-/** First YYYY-MM-DD in the document — Sehhaty puts the start date
- *  ('تبدأ من') first in the usual layout. */
+/** Sehhaty issues two distinct cert layouts that we need to handle:
+ *
+ *  LAYOUT A — the inquiry-result page on Seha.sa (what Bashaier sees
+ *    when she pastes a screenshot).
+ *    Arabic labels:
+ *      تبدأ من               → start
+ *      وحتى                  → end
+ *      تاريخ إصدار تقرير الإجازة  → issue
+ *
+ *  LAYOUT B — the actual sick-leave certificate PDF (what staff
+ *    upload via Path B).
+ *    Arabic labels:
+ *      تاريخ الدخول           → admission/start
+ *      تاريخ الخروج           → discharge/end
+ *      تاريخ إصدار التقرير    → issue
+ *    English labels (right column of bilingual table):
+ *      Admission Date        → start
+ *      Discharge Date        → end
+ *      Issue Date            → issue
+ *
+ *  Each matcher tries the labels FIRST (most reliable — anchors the
+ *  date to its semantic role) and falls back to date-position
+ *  heuristics only if no label is found. The English-label fallback
+ *  helps when Tesseract's Arabic OCR confidence is low or the PDF's
+ *  text-layer extraction stitched things in an order that makes the
+ *  Arabic regex miss. */
+
+/** Find a YYYY-MM-DD date that follows one of the given Arabic or
+ *  English labels, scanning a 200-char window after the label. */
+function findDateAfterLabel(text, labels) {
+  for (const label of labels) {
+    const idx = text.search(label);
+    if (idx < 0) continue;
+    const window = text.slice(idx, idx + 200);
+    // Prefer Gregorian (20xx) — Hijri dates (14xx) are present in
+    // the same window on the bilingual PDF and we don't want them.
+    const greg = window.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
+    if (greg) return greg[1];
+    // Fall back to DD-MM-YYYY format if that's how the cert phrases it.
+    const ddmmyyyy = window.match(/\b(\d{2}-\d{2}-20\d{2})\b/);
+    if (ddmmyyyy) {
+      // Convert to ISO YYYY-MM-DD for consistency with the rest of
+      // the system.
+      const [d, m, y] = ddmmyyyy[1].split('-');
+      return `${y}-${m}-${d}`;
+    }
+  }
+  return null;
+}
+
+/** Start date — first try labels, then fall back to date-position. */
 function matchStartDate(text) {
-  const dates = (text.match(/\b\d{4}-\d{2}-\d{2}\b/g) || []);
-  // Layout order observed: report-issue, start, end (RTL flow).
-  // After OCR linearises the page, the first date in the cleaned
-  // text is usually report-issue, then start, then end. We try
-  // the second-occurring date as start; falls back to the first
-  // if only one or two were detected.
+  // Layout A (screenshot): تبدأ من
+  // Layout B (PDF):        تاريخ الدخول / Admission Date
+  const fromLabel = findDateAfterLabel(text, [
+    /تبدأ\s*من/,
+    /تاريخ\s*الدخول/,
+    /Admission\s*Date/i,
+    /Date\s*Admission/i,  // bilingual stitch order
+  ]);
+  if (fromLabel) return fromLabel;
+
+  // Fallback — use position heuristics for plain date lists.
+  const dates = (text.match(/\b20\d{2}-\d{2}-\d{2}\b/g) || []);
   if (dates.length >= 3) return dates[1];
   if (dates.length >= 1) return dates[0];
   return null;
 }
 
-/** End date — third date in OCR order in the typical layout. */
+/** End date — first try labels, then fall back to date-position. */
 function matchEndDate(text) {
-  const dates = (text.match(/\b\d{4}-\d{2}-\d{2}\b/g) || []);
+  // Layout A: وحتى    Layout B: تاريخ الخروج / Discharge Date
+  const fromLabel = findDateAfterLabel(text, [
+    /وحتى/,
+    /تاريخ\s*الخروج/,
+    /Discharge\s*Date/i,
+    /Date\s*Discharge/i,
+  ]);
+  if (fromLabel) return fromLabel;
+
+  const dates = (text.match(/\b20\d{2}-\d{2}-\d{2}\b/g) || []);
   if (dates.length >= 3) return dates[2];
   if (dates.length === 2) return dates[1];
   if (dates.length === 1) return dates[0];
   return null;
 }
 
-/** Issue date — first date in the page's flow. */
+/** Issue date — first try labels, then fall back to date-position. */
 function matchIssueDate(text) {
-  const dates = (text.match(/\b\d{4}-\d{2}-\d{2}\b/g) || []);
+  // Layout A: تاريخ إصدار تقرير الإجازة
+  // Layout B: تاريخ إصدار التقرير / Issue Date / Date Issue
+  const fromLabel = findDateAfterLabel(text, [
+    /تاريخ\s*إصدار\s*تقرير\s*الإجازة/,
+    /تاريخ\s*إصدار\s*التقرير/,
+    /Issue\s*Date/i,
+    /Date\s*Issue/i,
+  ]);
+  if (fromLabel) return fromLabel;
+
+  const dates = (text.match(/\b20\d{2}-\d{2}-\d{2}\b/g) || []);
   return dates[0] || null;
 }
 
 /** Days count. Most reliable: anchor to the 'المدة بالأيام' label
- *  and grab the very next 1-3 digit number. Tesseract sometimes
- *  picks up a stray digit elsewhere on the page (e.g. mistakes a
- *  letter shape for '4'), so the standalone-integer fallback is
- *  vulnerable to false positives. The label-anchored search is
- *  much more accurate because the only digit that can legitimately
- *  appear right after 'بالأيام:' is the day count itself. */
+ *  (Layout A) or the 'Leave Duration' label / '1 day (...)' format
+ *  (Layout B) and grab the very next 1-3 digit number. */
 function matchDays(text) {
-  // Pattern 1 — direct label match: 'المدة بالأيام: 1'
-  let m = text.match(/المدة\s*بالأيام\s*[:：]?\s*(\d{1,3})/);
+  // Layout B PDF format: '1 day ( 30-04-2026 to 30-04-2026 )' or
+  //                      '1 يوم (...)'. We catch both.
+  let m = text.match(/(\d{1,3})\s*(?:day|days|يوم|أيام)\b/i);
   if (m) {
     const n = parseInt(m[1], 10);
     if (n >= 1 && n <= 365) return n;
   }
 
-  // Pattern 2 — label and digit may be separated by a line break
-  // or other Arabic/Latin text in OCR output. Find the label, then
-  // search a 200-char window after it for the first small integer
-  // that isn't part of a date or a 10-digit ID.
+  // Layout A direct label match: 'المدة بالأيام: 1'
+  m = text.match(/المدة\s*بالأيام\s*[:：]?\s*(\d{1,3})/);
+  if (m) {
+    const n = parseInt(m[1], 10);
+    if (n >= 1 && n <= 365) return n;
+  }
+
+  // Layout A label-window scan
   const labelIdx = text.search(/المدة\s*بالأيام/);
   if (labelIdx >= 0) {
     const after = text.slice(labelIdx, labelIdx + 200)
-      .replace(/\d{4}-\d{2}-\d{2}/g, '')
-      .replace(/\d{4}\/\d{2}\/\d{2}/g, '')
+      .replace(/\b\d{4}-\d{2}-\d{2}\b/g, '')
+      .replace(/\b\d{2}-\d{2}-\d{4}\b/g, '')
       .replace(/\b\d{10}\b/g, '');
     const dm = after.match(/\b(\d{1,3})\b/);
     if (dm) {
@@ -362,25 +443,20 @@ function matchDays(text) {
     }
   }
 
-  // Pattern 3 — also accept English label variants ('Days', 'Duration')
-  // in case the OCR confidence on Arabic text was low.
-  m = text.match(/(?:Days|Duration|Period)\s*[:：]?\s*(\d{1,3})/i);
+  // Layout B English label variants
+  m = text.match(/(?:Days?|Duration|Period|Leave\s*Duration)\s*[:：]?\s*(\d{1,3})/i);
   if (m) {
     const n = parseInt(m[1], 10);
     if (n >= 1 && n <= 365) return n;
   }
 
-  // Fallback — first standalone small integer in the document that
-  // isn't part of a date/ID/leave code. Less reliable than the
-  // label-anchored matches above but better than returning null.
+  // Last-resort fallback — first standalone small integer that isn't
+  // part of any date or 10-digit ID or leave code.
   const cleaned = text
-    .replace(/\d{4}-\d{2}-\d{2}/g, '')
-    .replace(/\d{4}\/\d{2}\/\d{2}/g, '')
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, '')
+    .replace(/\b\d{2}-\d{2}-\d{4}\b/g, '')
     .replace(/\b\d{10}\b/g, '')
-    // Strip Sehhaty leave codes so the digits inside them (which can
-    // look like a day count) don't get mis-matched. Pattern: any 3
-    // Latin letters immediately followed by 10+ alphanumerics.
-    .replace(/[A-Z]{3}[-\s]?[A-Z0-9]{10,16}/gi, '');
+    .replace(/[A-Z]{3}-?[A-Z0-9]{10,16}/gi, '');
   const candidates = [...cleaned.matchAll(/\b(\d{1,3})\b/g)]
     .map(m => parseInt(m[1], 10))
     .filter(n => n >= 1 && n <= 365);
@@ -398,36 +474,96 @@ function matchDays(text) {
  *    • Accept Arabic letters AND the special hamza/ligature codepoints
  *      that fall outside U+0600-U+06FF (e.g. ﺍ, ﺑ — presentation forms).
  *    • Strip trailing label-like text that may have been over-captured. */
+/** Patient name. Two layouts to handle:
+ *
+ *  Layout A (screenshot): 'الاسم: <Arabic name>'
+ *
+ *  Layout B (PDF bilingual table):
+ *    'الاسم   <Arabic name>   <English name>   Name'
+ *  i.e. the value is sandwiched between Arabic and English labels.
+ *  The Arabic label sometimes OCRs/extracts as 'الاسم' (correct)
+ *  or 'االسم' (with an extra alif from text-layer stitching) so we
+ *  match either.
+ *
+ *  Strategy:
+ *  1. Look for the Arabic label and capture either Arabic OR Latin
+ *     text after it (PDF often has the English transliteration
+ *     adjacent to the Arabic). Prefer the Arabic if both are present.
+ *  2. Fall back to the English 'Name' label if the Arabic anchor fails. */
 function matchPatientName(text) {
-  // The label can OCR as 'الاسم' or with ﻻ ligatures or with stray
-  // characters. We anchor on the consonant skeleton 'الاسم'.
-  const m = text.match(/الاسم[:：\s]*\n?[\s]*([\u0600-\u06FF\uFB50-\uFEFC\s]{3,120})/);
-  if (!m) return null;
-  return cleanArabicValue(m[1]);
+  // Try Arabic label first. Match either spelling variant.
+  const arabicLabel = text.match(/ا?الاسم[:：\s]*\n?[\s]*([\u0600-\u06FF\uFB50-\uFEFC\s]{3,120})/);
+  if (arabicLabel) {
+    const cleaned = cleanArabicValue(arabicLabel[1]);
+    if (cleaned) return cleaned;
+  }
+
+  // Fallback: English 'Name' label. The PDF format places the
+  // English transliteration BEFORE the 'Name' label (right-to-left
+  // table reading order). Capture the 3-5 uppercase Latin words
+  // immediately preceding 'Name' as a standalone token.
+  const englishBefore = text.match(/([A-Z][A-Z\s]{4,80}[A-Z])\s+Name\b/);
+  if (englishBefore) {
+    return englishBefore[1].trim().replace(/\s+/g, ' ');
+  }
+
+  return null;
 }
 
-/** Doctor name — 'اسم الطبيب' label.
- *  Fixes for the user-reported 'doctor name was missing' miss:
- *    • Tolerate the label spelling variants Tesseract produces
- *      ('اسم الطبيب', 'اسم الطبيب:', 'اسم الطبيب :', 'اسم الطبيب\n')
- *    • Allow newlines between label and value
- *    • Accept Arabic presentation forms (U+FB50-U+FEFC range) — Tesseract
- *      sometimes outputs these instead of the basic Arabic block.
- *    • Length cap raised from 80 to 120 — Saudi doctor names are often
- *      4-5 words ('دانه محمد بن عبدالله الغامدي') and the previous cap
- *      was clipping them. */
+/** Doctor name. Sehhaty calls this either 'الطبيب' (doctor) or
+ *  'الممارس' (practitioner) depending on the cert layout. The PDF
+ *  uses 'اسم الممارس' / 'Practitioner Name'; the screenshot UI
+ *  uses 'اسم الطبيب'. Both English transliteration and pure Arabic
+ *  values are handled. */
 function matchDoctorName(text) {
-  const m = text.match(/اسم\s*الطبيب[:：\s]*\n?[\s]*([\u0600-\u06FF\uFB50-\uFEFC\s]{3,120})/);
-  if (!m) return null;
-  return cleanArabicValue(m[1]);
+  // Try Arabic labels — both 'اسم الطبيب' and 'اسم الممارس'.
+  for (const label of [/اسم\s*الطبيب/, /اسم\s*الممارس/]) {
+    const m = text.match(new RegExp(label.source + '[:：\\s]*\\n?[\\s]*([\\u0600-\\u06FF\\uFB50-\\uFEFC\\s]{3,120})'));
+    if (m) {
+      const cleaned = cleanArabicValue(m[1]);
+      if (cleaned) return cleaned;
+    }
+  }
+
+  // Fallback: English label 'Practitioner Name' or 'Doctor Name'.
+  // PDF layout has the English transliteration BEFORE the label.
+  const englishBefore = text.match(/([A-Z][A-Z\s]{4,80}[A-Z])\s+(?:Practitioner\s*Name|Doctor\s*Name|Doctor)\b/);
+  if (englishBefore) {
+    return englishBefore[1].trim().replace(/\s+/g, ' ');
+  }
+  // Some PDFs put the English value AFTER the English label.
+  const englishAfter = text.match(/(?:Practitioner\s*Name|Doctor\s*Name)[:：\s]*([A-Z][A-Z\s]{4,80}[A-Z])\b/);
+  if (englishAfter) {
+    return englishAfter[1].trim().replace(/\s+/g, ' ');
+  }
+
+  return null;
 }
 
-/** Specialty — 'المسمى الوظيفي' label. Often 'طب بشري' (Human
- *  Medicine), 'طب الأسنان', 'طب الأطفال', etc. */
+/** Specialty / Position. Multiple labels across cert variants:
+ *  Layout A (screenshot UI):  المسمى الوظيفي
+ *  Layout B (PDF):           المسمى الوظيفى (note final ى vs ي)
+ *                             / 'Position' (English right column) */
 function matchSpecialty(text) {
-  const m = text.match(/المسمى\s*الوظيفي[:：\s]*\n?[\s]*([\u0600-\u06FF\uFB50-\uFEFC\s]{2,60})/);
-  if (!m) return null;
-  return cleanArabicValue(m[1]);
+  // Try Arabic — match either ي or ى at the end of الوظيفي.
+  const m = text.match(/المسمى\s*الوظيف[يى][:：\s]*\n?[\s]*([\u0600-\u06FF\uFB50-\uFEFC\s]{2,60})/);
+  if (m) {
+    const cleaned = cleanArabicValue(m[1]);
+    if (cleaned) return cleaned;
+  }
+
+  // Fallback: English label 'Position' or 'Speciality'/'Specialty'.
+  // PDF format: '<value> Position' (value before label, RTL stitching).
+  const englishBefore = text.match(/((?:[A-Z][a-z]+\s*){1,4})\s+(?:Position|Specialty|Speciality)\b/);
+  if (englishBefore) {
+    return englishBefore[1].trim();
+  }
+  const englishAfter = text.match(/(?:Position|Specialty|Speciality)[:：\s]*((?:[A-Z][a-z]+\s*){1,4})\b/);
+  if (englishAfter) {
+    return englishAfter[1].trim();
+  }
+
+  return null;
 }
 
 /** Shared cleanup for any captured Arabic value:
@@ -440,8 +576,18 @@ function cleanArabicValue(raw) {
   if (!raw) return null;
   let v = raw.trim().replace(/\s+/g, ' ');
   // If the next field's label leaked in (e.g. captured 'دانه ... المسمى الوظيفي'),
-  // truncate before the label.
-  const stopLabels = ['تاريخ', 'تبدأ', 'وحتى', 'المدة', 'اسم الطبيب', 'المسمى', 'الوظيفي'];
+  // truncate before the label. Covers labels from BOTH Layout A
+  // (screenshot UI) and Layout B (certificate PDF).
+  const stopLabels = [
+    // Layout A
+    'تاريخ', 'تبدأ', 'وحتى', 'المدة', 'اسم الطبيب', 'المسمى', 'الوظيفي', 'الوظيفى',
+    // Layout B PDF additions
+    'تاريخ الدخول', 'تاريخ الخروج', 'تاريخ إصدار',
+    'اسم الممارس', 'رقم الهوية', 'الإقامة', 'الجنسية', 'جهة العمل',
+    // English labels often appear adjacent in the bilingual PDF
+    'Name', 'Position', 'Practitioner', 'Date', 'Iqama', 'Nationality',
+    'Employer',
+  ];
   for (const lbl of stopLabels) {
     const idx = v.indexOf(lbl);
     if (idx > 0) {
