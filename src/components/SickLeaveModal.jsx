@@ -234,6 +234,42 @@ export default function SickLeaveModal({ employee, onClose, onCreated, declaredV
   // be null — that's OK because Bashaier validates against Sehhaty itself.
   const canSubmitB = !!extracted?.leaveId && !extracting;
 
+  // Compare the extracted patient name against the logged-in
+  // employee's name. Returns:
+  //   'match'    — names overlap meaningfully (>= 2 shared name parts)
+  //   'mismatch' — extraction succeeded but no overlap with employee
+  //   'na'       — no extracted name yet, or no employee name on file
+  //
+  // Why fuzzy and not strict:
+  //   • Saudi names have 4-5 parts. Cert and HR systems sometimes
+  //     transliterate them differently (Mohammed vs Mohamed, Al-Saud
+  //     vs AlSaud vs Al Saud).
+  //   • Order of name parts can differ between cert and HR record.
+  //   • Either side may have Arabic-only or Latin-only.
+  //   We require AT LEAST two shared name parts (case + diacritics
+  //   normalised). One shared part is too weak (common given names).
+  //   Three+ shared parts is a strong match. Two is the cutoff.
+  //
+  // The result drives a soft UI warning, never a block — Bashaier
+  // verifies on Seha.sa anyway and legitimate edge cases exist.
+  const nameMatchStatus = useMemo(() => {
+    if (!extracted?.name || !employee?.name) return 'na';
+    const norm = (s) => String(s || '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')   // strip Latin diacritics
+      .replace(/[\u064B-\u0652]/g, '')   // strip Arabic diacritics
+      .toUpperCase()
+      .replace(/[^\p{L}\s]/gu, ' ')      // non-letters → space
+      .replace(/\s+/g, ' ')
+      .trim();
+    const certParts = norm(extracted.name).split(' ').filter(p => p.length >= 2);
+    const empParts  = norm(employee.name).split(' ').filter(p => p.length >= 2);
+    if (!certParts.length || !empParts.length) return 'na';
+    const empSet = new Set(empParts);
+    const overlap = certParts.filter(p => empSet.has(p)).length;
+    return overlap >= 2 ? 'match' : 'mismatch';
+  }, [extracted?.name, employee?.name]);
+
   /** Submit Path B. Two branches:
    *
    *  1) Prior pending_certificate row exists AND staff said "yes, attach":
@@ -646,6 +682,24 @@ export default function SickLeaveModal({ employee, onClose, onCreated, declaredV
                   </button>
                 </div>
                 <div className="p-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
+                  {/* Patient name appears first so the staff can
+                      immediately verify the cert belongs to them.
+                      Spans both columns since Saudi names are typically
+                      4-5 words long.
+                      The 'matchEmployee' prop turns on a small badge:
+                        ✓ green = name on cert matches the logged-in
+                                  employee (case/diacritic-insensitive)
+                        ⚠ amber = no match found — soft warning, NOT
+                                  a block; legitimate edge cases exist
+                                  (recently changed name, OCR misread,
+                                  staff submitting on behalf of family
+                                  member in some private setups). */}
+                  <PreviewField
+                    label="Name"
+                    value={extracted.name || '—'}
+                    wide
+                    matchStatus={nameMatchStatus}
+                  />
                   <PreviewField label="Leave ID"   value={extracted.leaveId} mono required />
                   <PreviewField label="Iqama / ID" value={extracted.idNumber || '—'} mono />
                   <PreviewField label="Start"      value={extracted.startDate || '—'} />
@@ -655,6 +709,15 @@ export default function SickLeaveModal({ employee, onClose, onCreated, declaredV
                   <PreviewField label="Doctor"     value={extracted.doctor || '—'} wide />
                   <PreviewField label="Specialty"  value={extracted.specialty || '—'} wide />
                 </div>
+                {nameMatchStatus === 'mismatch' && (
+                  <div className="mx-3 mb-3 px-3 py-2 rounded-lg text-[11px] flex items-start gap-2"
+                       style={{ background: '#FEF3C7', color: '#92400E' }}>
+                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                    <div>
+                      The name on the certificate doesn't appear to match your profile name (<strong>{employee?.name}</strong>). HR will verify this when they review your submission. If you uploaded the wrong PDF, click "Upload another" above.
+                    </div>
+                  </div>
+                )}
                 <div className="px-3 pb-3 text-[10px]" style={{ color: '#0A0A0A', opacity: 0.6 }}>
                   These values are read from the PDF and cannot be edited. If anything looks wrong, click "Upload another" above.
                 </div>
@@ -748,12 +811,27 @@ function PathButton({ selected, accent, onClick, title, titleArabic, hint, icon 
 
 // PreviewField — single read-only field row in the Path B extracted-
 // preview card. Label above value, value rendered as plain text (not
-// an input) to make it visually clear this is locked. The 'wide' prop
-// makes the cell span both columns for fields that can be long
-// (Doctor name, Specialty in Arabic). The 'mono' prop gives monospace
-// font for IDs/codes. The 'required' prop adds a small red badge if
-// the field is the leave ID and present.
-function PreviewField({ label, value, mono, wide, required }) {
+// an input) to make it visually clear this is locked.
+//   wide        — cell spans both columns (long names)
+//   mono        — monospace font for IDs/codes
+//   required    — green check badge if value is present (used on
+//                 the leave ID; signals "this is the critical field")
+//   matchStatus — driven by the parent for the Name field:
+//                   'match'    → green ✓ next to label
+//                   'mismatch' → amber ⚠ next to label
+//                   'na'/null  → no badge
+function PreviewField({ label, value, mono, wide, required, matchStatus }) {
+  // Pick a status badge for the label row, in priority order:
+  //   1. matchStatus from parent (Name field)
+  //   2. required+present (Leave ID — always green when value exists)
+  let badge = null;
+  if (matchStatus === 'match') {
+    badge = { ico: '✓', bg: '#D1FAE5', col: '#065F46' };
+  } else if (matchStatus === 'mismatch') {
+    badge = { ico: '⚠', bg: '#FEF3C7', col: '#92400E' };
+  } else if (required && value && value !== '—') {
+    badge = { ico: '✓', bg: '#D1FAE5', col: '#065F46' };
+  }
   return (
     <div style={wide ? { gridColumn: 'span 2' } : undefined}>
       <div className="flex items-center gap-1.5 mb-0.5">
@@ -761,10 +839,10 @@ function PreviewField({ label, value, mono, wide, required }) {
               style={{ color: '#0A0A0A', opacity: 0.55 }}>
           {label}
         </span>
-        {required && value && value !== '—' && (
+        {badge && (
           <span className="inline-flex items-center justify-center w-3 h-3 rounded-full text-[8px] font-bold"
-                style={{ background: '#D1FAE5', color: '#065F46' }}>
-            ✓
+                style={{ background: badge.bg, color: badge.col }}>
+            {badge.ico}
           </span>
         )}
       </div>
