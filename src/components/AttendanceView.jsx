@@ -1476,45 +1476,6 @@ export default function AttendanceView({ me, employees }) {
           and clear automatically the moment she imports the missing
           date's complete file (the upsert flips eod_at, the fetch
           re-runs via reviewLogTick, the row drops out of the list). */}
-      {pendingEodDates.length > 0 && (
-        <div className="rounded-2xl border-2 p-4 mb-6 flex items-start gap-3"
-             style={{ borderColor: '#92400E', background: '#FEF3C7' }}>
-          <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
-               style={{ background: '#FBBF24' }}>
-            <AlertTriangle className="w-5 h-5" style={{ color: '#7C2D12' }}/>
-          </div>
-          <div className="flex-1 text-sm" style={{ color: '#0A0A0A' }}>
-            <div className="font-bold mb-1" style={{ color: '#7C2D12' }}>
-              End-of-day review pending — {pendingEodDates.length} date{pendingEodDates.length === 1 ? '' : 's'}
-            </div>
-            <div style={{ lineHeight: 1.55 }}>
-              You ran the morning (late-arrival) review for the following date{pendingEodDates.length === 1 ? '' : 's'}
-              {' '}but haven't completed the end-of-day pass. Re-import each day's complete file
-              to check for early departures and missed punches:
-            </div>
-            <ul className="mt-2 space-y-1">
-              {pendingEodDates.map(d => {
-                const ms = Date.now() - new Date(d.morning_at).getTime();
-                const hours = Math.round(ms / 3_600_000);
-                const days  = Math.floor(hours / 24);
-                const ago = days >= 1 ? `${days} day${days === 1 ? '' : 's'} ago`
-                          : hours >= 1 ? `${hours}h ago`
-                          : 'just now';
-                return (
-                  <li key={d.review_date} className="text-sm">
-                    &bull; <strong>{formatDateLong(d.review_date)}</strong>
-                    <span style={{ opacity: 0.7 }}> &middot; morning reviewed {ago}</span>
-                  </li>
-                );
-              })}
-            </ul>
-            <div className="text-[11px] mt-2" style={{ color: '#0A0A0A', opacity: 0.85 }}>
-              This banner clears automatically once the EOD pass is imported.
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ── Pending end-of-day reviews banner ─────────────────────────
           Surfaces working days where Bashaier did the morning late
           check but never re-imported the file the next day to catch
@@ -1529,11 +1490,11 @@ export default function AttendanceView({ me, employees }) {
           entirely so it's not a permanent fixture; its presence
           carries meaning. */}
       {pendingEodDates.length > 0 && (
-        <div className="rounded-2xl border p-4 sm:p-5 flex gap-3 sm:gap-4"
-             style={{ background: '#FFFBEB', borderColor: '#FCD34D' }}>
-          <div className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center"
-               style={{ background: '#FEF3C7' }}>
-            <AlertTriangle className="w-4 h-4" style={{ color: '#92400E' }}/>
+        <div className="rounded-2xl border-2 p-4 sm:p-5 flex gap-3 sm:gap-4"
+             style={{ background: '#FFFBEB', borderColor: '#92400E' }}>
+          <div className="flex-shrink-0 w-11 h-11 rounded-full flex items-center justify-center"
+               style={{ background: '#FBBF24' }}>
+            <AlertTriangle className="w-5 h-5" style={{ color: '#7C2D12' }}/>
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-baseline gap-2 flex-wrap">
