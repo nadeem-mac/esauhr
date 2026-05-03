@@ -1975,145 +1975,363 @@ export default function AttendanceView({ me, employees }) {
     return arr;
   }, [detection.weekend]);
 
-  // PDF generator — same import pattern as InsightsView. Lazy-loaded
-  // so jspdf only ships in the bundle once it's actually clicked.
+  // Report exporter — produces a polished, print-friendly HTML file.
+  // Why HTML over PDF: jspdf's default helvetica is Latin-1 only,
+  // tables look mechanical, and styling is tedious. HTML gives us a
+  // proper design system (real fonts, real CSS, hover states for
+  // on-screen viewing), and Bashaier can still print to PDF from
+  // her browser if a PDF is needed downstream — Cmd/Ctrl+P → Save
+  // as PDF retains the print stylesheet baked into the file.
   //
-  // LANDSCAPE A4 because: (1) portrait was overflowing the header line
-  // and cutting "Generated YYYY-MM-DD" off the right edge; (2) the
-  // 7-column body table wraps in portrait once a name is more than ~16
-  // chars. Per Nadeem: cleaner reads better than narrower, even at the
-  // cost of a wider page.
-  //
-  // ASCII-only text in jspdf's default helvetica — Unicode arrows like
-  // U+2192 render as garbage glyphs ("!\\'" in earlier output). Use
-  // " to " for the date-range separator everywhere in the PDF.
-  const exportWeekendPdf = useCallback(async () => {
+  // The file is fully self-contained: all CSS inline, no external
+  // assets, no fonts to load. She can email the .html as an
+  // attachment, open it in any browser, or print it.
+  const exportWeekendHtml = useCallback(() => {
     if (!weekendSorted.length) return;
-    try {
-      const { jsPDF } = await import('jspdf');
-      await import('jspdf-autotable');
-      const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
-      const W = doc.internal.pageSize.getWidth();
-      // Header band — Evergreen brand green. Slightly taller than the
-      // portrait version so the title + subtitle line both have
-      // breathing room and the descenders don't sit on the band edge.
-      doc.setFillColor(15, 76, 42); doc.rect(0, 0, W, 78, 'F');
-      doc.setTextColor(255); doc.setFontSize(18); doc.setFont('helvetica', 'bold');
-      doc.text('Weekend Attendance Report', 40, 36);
-      doc.setFontSize(10); doc.setFont('helvetica', 'normal');
-      const genStamp = new Date().toLocaleString('en-GB', {
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit',
+
+    // Preparer name comes from the logged-in user record. Falls back
+    // to "Bashaier Ali" since she's the standing HR reviewer; that
+    // matches HR_SIGNATURE elsewhere in the file.
+    const preparedBy = me?.name || me?.first_name || 'Bashaier Ali';
+    const yDate = formatDateLong(yesterdayDate);
+    const tDate = formatDateLong(csvDate);
+
+    // Tiny helper: escape user-provided strings before splicing into
+    // the HTML template. We trust the directory data here, but better
+    // safe than sorry.
+    const esc = (s) => String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+    // Group + tally per date — same shape as the panel render and
+    // the email body so the three views agree on the numbers.
+    const byDate = new Map();
+    weekendSorted.forEach(e => {
+      if (!byDate.has(e.dateLabel)) byDate.set(e.dateLabel, []);
+      byDate.get(e.dateLabel).push(e);
+    });
+
+    let tablesHtml = '';
+    byDate.forEach((rows, date) => {
+      const totalHrs = rows.reduce((s, e) => s + (e.hoursDecimal || 0), 0);
+      let bodyRows = '';
+      let prevLoc = null;
+      let locStaff = 0;
+      let locHours = 0;
+      const flushSubtotal = () => {
+        if (prevLoc !== null) {
+          bodyRows += `<tr class="subtotal">
+            <td colspan="4" class="r">${esc(prevLoc)} subtotal</td>
+            <td></td>
+            <td class="r">${locStaff} staff</td>
+            <td class="r">${locHours.toFixed(2)}</td>
+          </tr>`;
+        }
+      };
+      rows.forEach(e => {
+        if (e.location !== prevLoc) {
+          flushSubtotal();
+          prevLoc = e.location;
+          locStaff = 0;
+          locHours = 0;
+        }
+        bodyRows += `<tr>
+          <td class="loc">${esc(e.location || '-')}</td>
+          <td>${esc(e.department || '-')}</td>
+          <td class="psn">${esc(e.employee.id || '')}</td>
+          <td class="name">${esc(e.employee.name || '')}</td>
+          <td class="t">${esc(e.punchInStr || '-')}</td>
+          <td class="t">${esc(e.punchOutStr || '-')}</td>
+          <td class="r">${e.hoursDecimal != null ? e.hoursDecimal.toFixed(2) : '<span class="muted">-</span>'}</td>
+        </tr>`;
+        locStaff += 1;
+        locHours += (e.hoursDecimal || 0);
       });
-      doc.text(`Window: ${yesterdayDate} to ${csvDate}   |   Generated: ${genStamp}`, 40, 58);
+      flushSubtotal();
+      bodyRows += `<tr class="day-total">
+        <td colspan="4" class="r">Day total</td>
+        <td></td>
+        <td class="r">${rows.length} staff</td>
+        <td class="r">${totalHrs.toFixed(2)}</td>
+      </tr>`;
+      tablesHtml += `<section class="day-section">
+        <div class="day-header">
+          <h2>${esc(formatDateLong(date))}</h2>
+          <div class="day-summary"><strong>${rows.length}</strong> staff &middot; <strong>${totalHrs.toFixed(2)}</strong> hours</div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Location</th>
+              <th>Department</th>
+              <th>PSN</th>
+              <th>Name</th>
+              <th class="t">Punch In</th>
+              <th class="t">Punch Out</th>
+              <th class="r">Hours</th>
+            </tr>
+          </thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
+      </section>`;
+    });
 
-      // Group by date — one block per weekend day. Within each block,
-      // entries are already sorted (location → department → check-in).
-      // Subtotal rows added after each location's run; a day-total
-      // row caps each block.
-      const byDate = new Map();
-      weekendSorted.forEach(e => {
-        if (!byDate.has(e.dateLabel)) byDate.set(e.dateLabel, []);
-        byDate.get(e.dateLabel).push(e);
-      });
+    const grandTotalStaff = weekendSorted.length;
+    const grandTotalHours = weekendSorted.reduce((s, e) => s + (e.hoursDecimal || 0), 0);
 
-      const subtotalFill   = [232, 245, 233];   // light green for location subtotals
-      const dayTotalFill   = [187, 222, 192];   // darker green for day totals
-      const altRowFill     = [250, 246, 236];   // brand cream for zebra stripes
-      const headerFill     = [15, 76, 42];
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weekend Attendance Report &mdash; ${esc(yesterdayDate)} to ${esc(csvDate)}</title>
+<style>
+  :root {
+    --green:       #0F4C2A;
+    --green-soft:  #E8F5E9;
+    --green-mid:   #BBDEC0;
+    --cream:       #FAF6EC;
+    --beige:       #E5E0D5;
+    --ink:         #0A0A0A;
+    --ink-mute:    #555555;
+    --rule:        #F0EBDD;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #FFFFFF;
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 40px 36px 56px;
+  }
+  header.report-header {
+    border-bottom: 3px solid var(--green);
+    padding-bottom: 18px;
+    margin-bottom: 28px;
+  }
+  .kicker {
+    font-size: 11px;
+    letter-spacing: 0.28em;
+    color: var(--green);
+    font-weight: 700;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  h1.report-title {
+    margin: 0;
+    font-size: 30px;
+    font-weight: 700;
+    color: var(--ink);
+    letter-spacing: -0.6px;
+    line-height: 1.15;
+  }
+  .meta-row {
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px 24px;
+    margin-top: 14px;
+    font-size: 12px;
+    color: var(--ink-mute);
+  }
+  .meta-row .item strong {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .meta-row .item .label {
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    color: var(--ink-mute);
+    display: block;
+    margin-bottom: 2px;
+  }
 
-      let cursorY = 100;
-      byDate.forEach((rows, date) => {
-        const totalHrs = rows.reduce((s, e) => s + (e.hoursDecimal || 0), 0);
-        doc.setTextColor(15, 76, 42); doc.setFontSize(12); doc.setFont('helvetica', 'bold');
-        doc.text(`${formatDateLong(date)}   |   ${rows.length} staff   |   ${totalHrs.toFixed(2)} total hours`, 40, cursorY);
-        cursorY += 8;
+  .summary-band {
+    background: var(--cream);
+    border: 1px solid var(--beige);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-bottom: 28px;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px 32px;
+  }
+  .summary-band .stat .num {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--green);
+    letter-spacing: -0.4px;
+  }
+  .summary-band .stat .label {
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    color: var(--ink-mute);
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
 
-        // Build body rows with location subtotals interleaved.
-        const body = [];
-        let prevLoc  = null;
-        let locStaff = 0;
-        let locHours = 0;
-        const flushLocSubtotal = () => {
-          if (prevLoc !== null) {
-            body.push([
-              { content: `${prevLoc} subtotal`, colSpan: 4, styles: { fontStyle: 'bold', fillColor: subtotalFill, halign: 'right' } },
-              { content: '',                                styles: { fillColor: subtotalFill } },
-              { content: `${locStaff} staff`,               styles: { fontStyle: 'bold', fillColor: subtotalFill, halign: 'right' } },
-              { content: locHours.toFixed(2),               styles: { fontStyle: 'bold', fillColor: subtotalFill, halign: 'right' } },
-            ]);
-          }
-        };
-        rows.forEach(e => {
-          if (e.location !== prevLoc) {
-            flushLocSubtotal();
-            prevLoc  = e.location;
-            locStaff = 0;
-            locHours = 0;
-          }
-          body.push([
-            e.location || '-',
-            e.department || '-',
-            e.employee.id || '',
-            e.employee.name || '',
-            e.punchInStr || '-',
-            e.punchOutStr || '-',
-            e.hoursDecimal != null ? e.hoursDecimal.toFixed(2) : '-',
-          ]);
-          locStaff += 1;
-          locHours += (e.hoursDecimal || 0);
-        });
-        flushLocSubtotal();
-        // Day total row — capped at the bottom of the day's table.
-        body.push([
-          { content: 'Day total',     colSpan: 4, styles: { fontStyle: 'bold', fillColor: dayTotalFill, halign: 'right', textColor: [15, 76, 42] } },
-          { content: '',                          styles: { fillColor: dayTotalFill } },
-          { content: `${rows.length} staff`,      styles: { fontStyle: 'bold', fillColor: dayTotalFill, halign: 'right', textColor: [15, 76, 42] } },
-          { content: totalHrs.toFixed(2),         styles: { fontStyle: 'bold', fillColor: dayTotalFill, halign: 'right', textColor: [15, 76, 42] } },
-        ]);
+  .day-section {
+    margin-bottom: 32px;
+    page-break-inside: avoid;
+  }
+  .day-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 0 12px;
+    border-bottom: 1px solid var(--beige);
+    margin-bottom: 0;
+  }
+  .day-header h2 {
+    margin: 0;
+    font-size: 16px;
+    color: var(--green);
+    font-weight: 700;
+    letter-spacing: -0.2px;
+  }
+  .day-summary {
+    font-size: 12px;
+    color: var(--ink-mute);
+  }
+  .day-summary strong {
+    color: var(--ink);
+    font-weight: 600;
+  }
 
-        doc.autoTable({
-          startY: cursorY,
-          head: [['Location', 'Department', 'PSN', 'Name', 'Punch In', 'Punch Out', 'Hours']],
-          body,
-          theme: 'grid',
-          // overflow: 'visible' lets a long name push slightly past the
-          // cell boundary instead of wrapping to a second line — but
-          // we've sized the columns generously so this should never
-          // actually trigger. cellPadding stays uniform across every
-          // cell since we don't override it per-cell anywhere.
-          styles: {
-            fontSize: 9, cellPadding: 6, textColor: [10, 10, 10],
-            overflow: 'visible', valign: 'middle',
-          },
-          headStyles: { fillColor: headerFill, textColor: 255, fontStyle: 'bold', fontSize: 10, cellPadding: 7 },
-          alternateRowStyles: { fillColor: altRowFill },
-          columnStyles: {
-            0: { cellWidth:  90 },                  // Location
-            1: { cellWidth:  85 },                  // Department
-            2: { cellWidth:  60 },                  // PSN
-            3: { cellWidth: 'auto' },               // Name (takes leftover)
-            4: { cellWidth:  70, halign: 'center' }, // Punch In
-            5: { cellWidth:  70, halign: 'center' }, // Punch Out
-            6: { cellWidth:  65, halign: 'right'  }, // Hours
-          },
-          margin: { left: 40, right: 40 },
-        });
-        cursorY = doc.lastAutoTable.finalY + 28;
-      });
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0;
+    font-size: 12px;
+    table-layout: auto;
+  }
+  thead th {
+    background: var(--green);
+    color: #FFFFFF;
+    text-align: left;
+    padding: 10px 12px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 9px 12px;
+    border-top: 1px solid var(--rule);
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+  tbody tr:nth-child(even) td { background: var(--cream); }
+  td.loc, td.name { font-weight: 600; }
+  td.psn { color: var(--ink-mute); font-variant-numeric: tabular-nums; }
+  td.t   { text-align: center; font-variant-numeric: tabular-nums; }
+  td.r, th.r { text-align: right; font-variant-numeric: tabular-nums; }
+  .muted { color: var(--ink-mute); font-style: italic; }
 
-      // Footer
-      const pageH = doc.internal.pageSize.getHeight();
-      doc.setTextColor(120); doc.setFontSize(8); doc.setFont('helvetica', 'normal');
-      doc.text('ESAU HR  |  Evergreen Shipping Agency Saudi Co. (LLC)', 40, pageH - 20);
+  tr.subtotal td {
+    background: var(--green-soft) !important;
+    font-weight: 600;
+    color: var(--green);
+    border-top: 1px solid var(--green-mid);
+  }
+  tr.day-total td {
+    background: var(--green-mid) !important;
+    font-weight: 700;
+    color: var(--green);
+    border-top: 2px solid var(--green);
+    border-bottom: 2px solid var(--green);
+  }
 
-      const fname = `Weekend_Attendance_${yesterdayDate}_to_${csvDate}.pdf`;
-      doc.save(fname);
-    } catch (e) {
-      console.error('Weekend PDF export failed:', e);
-      alert('Could not generate the PDF. Please try again — if the problem persists, let Nadeem know.');
-    }
-  }, [weekendSorted, csvDate, yesterdayDate]);
+  footer.report-footer {
+    margin-top: 48px;
+    padding-top: 16px;
+    border-top: 1px solid var(--beige);
+    text-align: center;
+    color: var(--ink-mute);
+    font-size: 11px;
+  }
+  footer.report-footer strong { color: var(--ink); font-weight: 600; }
+
+  @media print {
+    @page { size: A4 landscape; margin: 12mm; }
+    body { background: #FFFFFF; }
+    .page { padding: 0; max-width: none; }
+    .day-section { page-break-inside: avoid; }
+    thead { display: table-header-group; }  /* repeat header on each page */
+  }
+</style>
+</head>
+<body>
+  <div class="page">
+    <header class="report-header">
+      <div class="kicker">Evergreen Shipping Agency Saudi Co. (LLC)</div>
+      <h1 class="report-title">Weekend Attendance Report</h1>
+      <div class="meta-row">
+        <div class="item">
+          <span class="label">Window</span>
+          <strong>${esc(yDate)}</strong> to <strong>${esc(tDate)}</strong>
+        </div>
+        <div class="item">
+          <span class="label">Prepared by</span>
+          <strong>${esc(preparedBy)}</strong>
+        </div>
+      </div>
+    </header>
+
+    <div class="summary-band">
+      <div class="stat">
+        <div class="num">${grandTotalStaff}</div>
+        <div class="label">Staff who attended</div>
+      </div>
+      <div class="stat">
+        <div class="num">${grandTotalHours.toFixed(2)}</div>
+        <div class="label">Total hours worked</div>
+      </div>
+      <div class="stat">
+        <div class="num">${byDate.size}</div>
+        <div class="label">Weekend day${byDate.size === 1 ? '' : 's'}</div>
+      </div>
+    </div>
+
+    ${tablesHtml}
+
+    <footer class="report-footer">
+      <strong>ESAU HR</strong> &middot; Evergreen Shipping Agency Saudi Co. (LLC)
+    </footer>
+  </div>
+</body>
+</html>`;
+
+    // Trigger download as a file. Self-contained — Bashaier can open
+    // it in any browser, view as-is, or use the browser's print
+    // dialog (Ctrl/Cmd+P → Save as PDF) if a PDF is needed for
+    // attaching to the email.
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Weekend_Attendance_${yesterdayDate}_to_${csvDate}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, [weekendSorted, csvDate, yesterdayDate, me]);
 
   // Email builder — TO Mr John, CC James + DMN SUP team. Body is a
   // brief summary only; the detailed staff list lives in the PDF
@@ -2153,7 +2371,7 @@ export default function AttendanceView({ me, employees }) {
     });
     lines.push(`  - Total: ${weekendSorted.length} staff, ${totalHours.toFixed(2)} hours`);
     lines.push('');
-    lines.push('The full breakdown by location and department is in the attached PDF.');
+    lines.push('The full breakdown by location and department is in the attached report.');
     lines.push('');
     lines.push('Kindly let me know if any clarification is needed.');
     lines.push('');
@@ -2189,7 +2407,7 @@ export default function AttendanceView({ me, employees }) {
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <button onClick={exportWeekendPdf}
+            <button onClick={exportWeekendHtml}
               disabled={!weekendSorted.length}
               className="text-xs px-3 py-2 rounded-full inline-flex items-center gap-1.5 transition-shadow hover:shadow"
               style={{
@@ -2198,8 +2416,8 @@ export default function AttendanceView({ me, employees }) {
                 fontWeight: 600,
                 cursor: weekendSorted.length ? 'pointer' : 'not-allowed',
               }}
-              title="Download a PDF of the weekend attendance, sorted by location/department/check-in.">
-              <FileText className="w-3.5 h-3.5"/> Export PDF
+              title="Download a polished HTML report (sorted by location/department/check-in). Open it in a browser to view, print, or save as PDF.">
+              <FileText className="w-3.5 h-3.5"/> Export Report
             </button>
             <button onClick={emailWeekendReport}
               disabled={!weekendSorted.length}
@@ -2211,7 +2429,7 @@ export default function AttendanceView({ me, employees }) {
                 fontWeight: 600,
                 cursor: weekendSorted.length ? 'pointer' : 'not-allowed',
               }}
-              title="Open a draft email to Mr John (CC James + DMN SUP team) with the weekend summary in the body. Attach the PDF after exporting.">
+              title="Open a draft email to Mr John (CC James + DMN SUP team) with the weekend summary in the body. Attach the report (HTML or printed PDF) before sending.">
               <Mail className="w-3.5 h-3.5"/> Email Mr John
             </button>
           </div>
@@ -2295,7 +2513,7 @@ export default function AttendanceView({ me, employees }) {
           <li>Approved permissions are cross-referenced automatically &mdash; permitted cases are marked, not actioned.</li>
           <li>Anyone on approved leave for that date is <strong>excluded</strong> from the violation lists.</li>
           <li>Each notice is pre-filled with the right wording &mdash; review it and click <strong>Send</strong> in your mail client.</li>
-          <li>If the file covers a weekend (Fri/Sat), a <strong>weekend attendance</strong> tile appears with an option to <strong>export PDF</strong> and <strong>email Mr John</strong> (CC James + DMN SUP team).</li>
+          <li>If the file covers a weekend (Fri/Sat), a <strong>weekend attendance</strong> tile appears with an option to <strong>export the report</strong> and <strong>email Mr John</strong> (CC James + DMN SUP team).</li>
           <li>On <strong>Sunday</strong>, &ldquo;yesterday&rdquo; means <strong>Thursday</strong> (Fri + Sat are KSA weekend), so the file should span Thursday&rarr;Sunday.</li>
         </ul>
       </div>
@@ -2881,7 +3099,7 @@ function FileSummary({
                 </span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <CountPill kind="weekend" icon="🏖" label="Weekend attendance" count={counts.weekend} color="#0F4C2A" tint="#F0FDF4" subtext="exported as PDF + emailed" isOpen={drillKind === 'weekend'} onClick={() => setDrillKind(drillKind === 'weekend' ? null : 'weekend')}/>
+                <CountPill kind="weekend" icon="🏖" label="Weekend attendance" count={counts.weekend} color="#0F4C2A" tint="#F0FDF4" subtext="exported as report + emailed" isOpen={drillKind === 'weekend'} onClick={() => setDrillKind(drillKind === 'weekend' ? null : 'weekend')}/>
               </div>
             </div>
           )}
