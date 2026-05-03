@@ -161,6 +161,14 @@ export default function SickLeaveModal({ employee, onClose, onCreated, declaredV
         `Declared via portal · ${hintLabel}`,
       ].filter(Boolean).join(' · ');
 
+      // requested_at is REQUIRED for the row to surface in the staff's
+      // own MyApplicationsCard — that view filters by a 90-day window
+      // anchored on requested_at (via sortKey). The DB column may have
+      // a default of now() but we set it explicitly so:
+      //   1. The row is consistent regardless of DB defaults
+      //   2. We control the timezone (always UTC ISO)
+      //   3. New tables created without a default also work
+      const nowIso = new Date().toISOString();
       const row = {
         employee_id:        employee.id,
         leave_type_id:      'sick',
@@ -170,7 +178,8 @@ export default function SickLeaveModal({ employee, onClose, onCreated, declaredV
         is_half_day:        false,
         stage:              'pending_certificate',
         reason:             reasonText,
-        sick_declared_at:   new Date().toISOString(),
+        requested_at:       nowIso,
+        sick_declared_at:   nowIso,
         sick_declared_via:  declaredVia,
       };
 
@@ -365,6 +374,10 @@ export default function SickLeaveModal({ employee, onClose, onCreated, declaredV
           days:                   days,
           is_half_day:            false,
           stage:                  'pending_manager',
+          // Set requested_at explicitly — same reason as Path A. Without
+          // it, MyApplicationsCard's 90-day window filter excludes the
+          // row from the staff's own visible list.
+          requested_at:           new Date().toISOString(),
           reason:                 reasonText,
           sehhaty_code:           ex.leaveId,
           sehhaty_seen_name:      ex.name      || null,
