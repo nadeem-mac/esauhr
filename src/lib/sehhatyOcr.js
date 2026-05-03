@@ -539,8 +539,12 @@ const ARABIC_LABEL_TOKENS = new Set([
   'المسمى', 'الوظيفي', 'الوظيفى',
   // nationality / employer (between fields on PDFs)
   'الجنسية', 'السعودية', 'جهة', 'العمل',
+  // visit type (Statement of Visit format)
+  'نوع', 'الزيارة', 'عيادات',
+  // waiting period (Statement of Visit format)
+  'فترة', 'االنتظار', 'ساعة', 'دقيقة', 'و', 'صباحا', 'صباحاً',
   // misc artifacts
-  'رمز', 'مدة', 'اىل', 'الى',
+  'رمز', 'مدة', 'اىل', 'الى', 'مشهد', 'مراجعة',
 ]);
 
 /** Set of English label tokens to filter out of Latin word-runs. */
@@ -550,6 +554,8 @@ const ENGLISH_LABEL_TOKENS = new Set([
   'POSITION', 'SPECIALTY', 'SPECIALITY', 'DATE', 'ADMISSION',
   'DISCHARGE', 'ISSUE', 'LEAVE', 'DURATION', 'PERIOD',
   'KINGDOM', 'OF',
+  // Statement of Visit format additions
+  'WAITING', 'VISIT', 'TYPE', 'STATEMENT',
 ]);
 
 /** Find the FIRST line in the text that matches the predicate.
@@ -699,31 +705,32 @@ function isFooterContent(line) {
  *  of value words, or null if no values found. */
 /** Extract Arabic and Latin value runs from a single field line.
  *
- *  STRATEGY
- *  ────────
- *  Arabic side: collect runs of Arabic letters, drop label tokens.
+ *  Sehhaty PDF lines have this layout (left-to-right text-byte order
+ *  after pdfjs's x-coordinate stitching):
  *
- *  Latin side: this is where it gets subtle. When pdfjs's line-
- *  bucketing merges adjacent rows of the bilingual table (which
- *  happens occasionally because Arabic and Latin font metrics
- *  produce slightly different y-coordinates), the merged "line"
- *  contains Latin words from MULTIPLE fields. Naïve token-collect
- *  pulls them all in — e.g. for Specialty: "ALFARRAN ... Dentist
- *  General Position" picks up the doctor's surname.
+ *    [English-label] [Latin-value] [Arabic-value-words] [Arabic-label]
+ *      Name           HASSAN ...    الطاسان ابراهيم ...   االسم
  *
- *  The fix: only collect Latin tokens from the SEGMENT of the line
- *  that's adjacent to the English field label. We split the line
- *  by Arabic stretches and keep just the segment containing the
- *  label. ALFARRAN and "Dentist General Position" will be in
- *  different segments because there's an Arabic stretch
- *  ("المسمى الوظيفى طبيب أسنان عام") between them.
+ *  Both labels are filtered out by token-set membership tests
+ *  (ENGLISH_LABEL_TOKENS, ARABIC_LABEL_TOKENS), so we don't need
+ *  positional logic. Just collect every Latin word and every Arabic
+ *  word run, drop the labels, return what's left. The y-tolerance
+ *  fix in stitchTextItems (1.5 units) ensures each table row stays
+ *  on its own stitched line, so cross-row contamination shouldn't
+ *  happen. If it does, findFieldLines's defensive logic
+ *  (shouldExtendInto, isFooterContent) catches it before the line
+ *  reaches this function.
  *
- *  Returns { arabic, latin }. Each is a space-joined string of
- *  value words, or null if no values found. */
+ *  Returns { arabic, latin } with each as a space-joined string of
+ *  value words, or null if too few tokens for that script. */
 function extractValuesFromLine(line) {
   if (!line) return { arabic: null, latin: null };
 
   // ─── Arabic ───────────────────────────────────────────────────
+  // Collect runs of Arabic letters, drop any that match a known
+  // label token. Arabic words appear in the stitched text in
+  // x-ascending order, which when rendered with dir=rtl displays
+  // visually right-to-left in proper Arabic reading order.
   const arabicRuns = [];
   const arabicRe = /[\u0600-\u06FF\uFB50-\uFEFC]+/g;
   let m;
@@ -735,40 +742,14 @@ function extractValuesFromLine(line) {
   const arabic = arabicRuns.length >= 2 ? arabicRuns.join(' ') : null;
 
   // ─── Latin ────────────────────────────────────────────────────
-  // Determine the search space — the segment of the line we'll
-  // collect Latin tokens from. Default: the whole line.
-  let searchSpace = line;
-
-  // If the line contains a known English field label, restrict the
-  // search space to the Latin segment adjacent to that label.
-  // Bilingual table rows have the format:
-  //   [Arabic-label][Arabic-value][Latin-value][English-label]
-  // So when we find the English label, the Latin value is in the
-  // segment between the LAST Arabic stretch (which is the start
-  // of the Arabic value, i.e. ALSO end of any prior-row leakage)
-  // and the label itself.
-  const labelMatch = line.match(
-    /\b(?:Name|Patient|Practitioner|Doctor|Position|Specialty|Speciality|Iqama|Employer|Nationality|Admission|Discharge|Issue)\b/i
-  );
-  if (labelMatch) {
-    const beforeLabel = line.slice(0, labelMatch.index);
-    // Find the rightmost Arabic stretch in beforeLabel — anything
-    // BEFORE it is from a different field/cell, anything AFTER it
-    // up to the label is the actual Latin value for this row.
-    let lastArabicEnd = 0;
-    const arBefore = /[\u0600-\u06FF\uFB50-\uFEFC]+/g;
-    let am;
-    while ((am = arBefore.exec(beforeLabel)) !== null) {
-      lastArabicEnd = am.index + am[0].length;
-    }
-    searchSpace = beforeLabel.slice(lastArabicEnd);
-  }
-
-  // Now collect Latin tokens from the constrained search space,
-  // filtering out label words.
+  // Collect uppercase-initial word runs, drop any that match a
+  // known label token. The pattern accepts:
+  //   • ALL CAPS (HASSAN, ALTASSAN)
+  //   • Single uppercase letter (initials like 'A' in 'NAWAF A ALSHARIF')
+  //   • Title Case (Senior, Registrar, OutPatient)
   const latinTokens = [];
   const latinRe = /\b([A-Z][A-Za-z]*)\b/g;
-  while ((m = latinRe.exec(searchSpace)) !== null) {
+  while ((m = latinRe.exec(line)) !== null) {
     const tok = m[1];
     if (!ENGLISH_LABEL_TOKENS.has(tok.toUpperCase())) {
       latinTokens.push(tok);
