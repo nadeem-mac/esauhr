@@ -40,9 +40,28 @@ export default function LeaveTimelineModal({ request, empMap = {}, leaveTypes = 
 
   if (!request) return null;
 
-  const stage = request.stage || (request.status === 'approved' ? 'approved'
-                              : request.status === 'rejected' ? 'rejected_by_manager'
-                              : 'pending_manager');
+  // The DB constraint allows ten distinct stage values (see
+  // migration_leave_stage_pending_certificate.sql). The renderer
+  // explicitly handles all of them in the per-step builders below.
+  // The legacy `status` fallback covers older rows that pre-date
+  // the two-step migration and don't have a `stage` column populated.
+  const rawStage = request.stage || (request.status === 'approved' ? 'approved'
+                                  : request.status === 'rejected' ? 'rejected_by_manager'
+                                  : 'pending_manager');
+  // Defensive: if a stage value sneaks in that isn't on the canonical
+  // list (data corruption, schema drift, manual DB edit, etc.),
+  // treat it as pending_manager so the timeline display stays
+  // internally consistent. Console-warn so the issue surfaces in the
+  // dev console rather than silently producing a contradictory tile
+  // arrangement.
+  let stage = rawStage;
+  if (!KNOWN_LEAVE_STAGES.has(rawStage)) {
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[LeaveTimeline] Unknown stage value:', rawStage, '— rendering as pending_manager');
+    }
+    stage = 'pending_manager';
+  }
+
   const ids = request.substitute_ids || [];
   const subDecisions = request.substitute_decisions || {};
   const allAccepted = ids.length > 0 && ids.every(sid => {
@@ -62,63 +81,17 @@ export default function LeaveTimelineModal({ request, empMap = {}, leaveTypes = 
   //   'rejected'  → red cross (this step rejected the request)
   //   'next'      → neutral dot (hasn't reached this step yet)
   //   'na'        → grey (skipped — e.g. no substitutes needed)
+  //
+  // Steps are built via per-step helpers (buildSubmitStep, buildSubsStep,
+  // buildManagerStep, buildHrStep) defined below this component. Each
+  // helper exhaustively handles every canonical stage value, eliminating
+  // the cascading-ternary fallbacks that previously caused mismatched
+  // tiles on unknown / cancelled stages.
   const steps = [
-    {
-      key: 'submit',
-      icon: Briefcase,
-      titleEn: 'Submitted',
-      detail: `${empMap[request.employee_id]?.name || request.employee_id} · ${fmtDateTime(request.requested_at)}`,
-      status: 'done',
-    },
-    ...(ids.length > 0 ? [{
-      key: 'subs',
-      icon: Users2,
-      titleEn: `Substitutes (${ids.length})`,
-      detail: anyDeclined ? 'A substitute declined — request cancelled'
-            : allAccepted  ? 'All substitutes confirmed coverage'
-            : 'Waiting for substitutes to confirm coverage',
-      status: stage === 'pending_substitutes' ? 'now'
-            : anyDeclined                      ? 'rejected'
-            : allAccepted                       ? 'done'
-            : 'next',
-      subs: ids.map(sid => {
-        const raw = subDecisions[sid];
-        const dec = !raw ? 'pending' : typeof raw === 'string' ? raw : raw.decision;
-        return { id: sid, name: empMap[sid]?.name || sid, decision: dec };
-      }),
-    }] : [{
-      key: 'subs',
-      icon: Users2,
-      titleEn: 'Substitutes',
-      detail: 'No substitute coverage required',
-      status: 'na',
-    }]),
-    {
-      key: 'manager',
-      icon: UserCheck,
-      titleEn: 'Manager review',
-      detail: stage === 'pending_manager'        ? 'Your manager will review this next'
-            : stage === 'rejected_by_manager'    ? `Rejected by manager · ${fmtDateTime(request.manager_decided_at)}`
-            : request.manager_decided_at         ? `Approved by ${empMap[request.manager_decided_by]?.name || 'manager'} · ${fmtDateTime(request.manager_decided_at)}`
-            : 'Manager will review once substitutes confirm',
-      status: stage === 'pending_manager'        ? 'now'
-            : stage === 'rejected_by_manager'    ? 'rejected'
-            : request.manager_decided_at         ? 'done'
-            : 'next',
-    },
-    {
-      key: 'hr',
-      icon: Crown,
-      titleEn: 'HR (SUP) final approval',
-      detail: stage === 'approved'           ? `Approved by ${empMap[request.hr_decided_by]?.name || 'HR'} · ${fmtDateTime(request.hr_decided_at)}`
-            : stage === 'rejected_by_hr'     ? `Rejected by HR · ${fmtDateTime(request.hr_decided_at)}`
-            : stage === 'pending_hr'         ? 'HR will review this next'
-            : 'HR reviews after manager approval',
-      status: stage === 'approved'           ? 'done'
-            : stage === 'rejected_by_hr'     ? 'rejected'
-            : stage === 'pending_hr'         ? 'now'
-            : 'next',
-    },
+    buildSubmitStep(request, empMap),
+    buildSubsStep(stage, ids, anyDeclined, allAccepted, subDecisions, empMap),
+    buildManagerStep(stage, request, empMap),
+    buildHrStep(stage, request, empMap),
   ];
 
   const leaveType = leaveTypes.find(t => t.id === request.leave_type_id);
@@ -249,4 +222,263 @@ export default function LeaveTimelineModal({ request, empMap = {}, leaveTypes = 
     </div>,
     document.body
   );
+}
+
+// ── Stage validation + step builders ────────────────────────────────────────
+//
+// The leave_requests stage column has TEN canonical values per
+// migration_leave_stage_pending_certificate.sql:
+//
+//   pending_manager          — submitted, awaiting line manager
+//   pending_substitutes      — manager hasn't seen it yet because subs
+//                              are still confirming coverage
+//   pending_hr               — manager approved, awaiting HR (Bashaier)
+//   pending_certificate      — sick declaration without a Sehhaty cert
+//                              uploaded yet (commits 1-5 of the sick
+//                              roadmap added this stage)
+//   approved                 — final, HR approved
+//   rejected_by_manager      — manager rejected
+//   rejected_by_substitute   — a substitute declined → request closed
+//   rejected_by_hr           — HR rejected
+//   cancelled                — staff cancelled (or was cancelled by HR)
+//   expired                  — auto-closed without a final decision
+//
+// Earlier the modal handled only 6 of these explicitly (pending_manager,
+// pending_substitutes, pending_hr, approved, rejected_by_manager,
+// rejected_by_hr). Unknown values (the other 4 + any data corruption)
+// fell through ternary chains in unpredictable ways — see the
+// PermissionTimelineModal commit 740f488 for the same class of bug
+// that was observed in production for permissions.
+//
+// The refactor below makes every canonical value explicit. Each step
+// builder is responsible for producing the FULL { detail, status, ... }
+// for its tile, switching exhaustively over stage and falling through
+// to a safe default for any value that slips past the upstream
+// validation in the component.
+
+const KNOWN_LEAVE_STAGES = new Set([
+  'pending_manager',
+  'pending_substitutes',
+  'pending_hr',
+  'pending_certificate',
+  'approved',
+  'rejected_by_manager',
+  'rejected_by_substitute',
+  'rejected_by_hr',
+  'cancelled',
+  'expired',
+]);
+
+// ── Step 1 — Submitted (always done) ────────────────────────────────────────
+function buildSubmitStep(request, empMap) {
+  return {
+    key: 'submit',
+    icon: Briefcase,
+    titleEn: 'Submitted',
+    detail: `${empMap[request.employee_id]?.name || request.employee_id} · ${fmtDateTime(request.requested_at)}`,
+    status: 'done',
+  };
+}
+
+// ── Step 2 — Substitutes (conditional on whether subs were assigned) ────────
+function buildSubsStep(stage, ids, anyDeclined, allAccepted, subDecisions, empMap) {
+  // No substitutes assigned — the step is irrelevant. Render as 'na'
+  // (greyed out) so the user sees the chain is structurally complete
+  // but no waiting on subs is expected.
+  if (ids.length === 0) {
+    return {
+      key: 'subs',
+      icon: Users2,
+      titleEn: 'Substitutes',
+      detail: 'No substitute coverage required',
+      status: 'na',
+    };
+  }
+
+  // Per-sub decision pills are always rendered when subs exist.
+  const subs = ids.map(sid => {
+    const raw = subDecisions[sid];
+    const dec = !raw ? 'pending' : typeof raw === 'string' ? raw : raw.decision;
+    return { id: sid, name: empMap[sid]?.name || sid, decision: dec };
+  });
+
+  // Determine the parent step's status. The order of checks matters —
+  // a 'rejected_by_substitute' stage can coexist with all-accepted
+  // decisions if a substitute later changed their mind, but the
+  // stage value is the source of truth.
+  let status, detail;
+  if (stage === 'rejected_by_substitute') {
+    status = 'rejected';
+    detail = 'A substitute declined — request closed';
+  } else if (anyDeclined) {
+    // Decision arrived on the row but stage hasn't transitioned yet;
+    // still surface the rejection visually.
+    status = 'rejected';
+    detail = 'A substitute declined — request cancelled';
+  } else if (stage === 'pending_substitutes') {
+    status = 'now';
+    detail = 'Waiting for substitutes to confirm coverage';
+  } else if (allAccepted) {
+    status = 'done';
+    detail = 'All substitutes confirmed coverage';
+  } else if (stage === 'cancelled' || stage === 'expired') {
+    // Terminal closure before all subs got back. Show as rejected
+    // (red X) since the chain is closed without acceptance.
+    status = 'rejected';
+    detail = stage === 'cancelled'
+      ? 'Cancelled before substitutes confirmed'
+      : 'Expired before substitutes confirmed';
+  } else {
+    // Future-looking — covers stages that arrive AFTER subs without
+    // having transited through pending_substitutes (e.g. all sub
+    // decisions arrived before stage advanced). Treat as done if
+    // we have at least one accepted, else as a soft 'next'.
+    status = 'next';
+    detail = 'Waiting for substitute decisions';
+  }
+
+  return {
+    key: 'subs',
+    icon: Users2,
+    titleEn: `Substitutes (${ids.length})`,
+    detail,
+    status,
+    subs,
+  };
+}
+
+// ── Step 3 — Manager review ─────────────────────────────────────────────────
+function buildManagerStep(stage, request, empMap) {
+  const approverName = empMap[request.manager_decided_by]?.name || 'manager';
+  let status, detail;
+
+  switch (stage) {
+    case 'pending_manager':
+      status = 'now';
+      detail = 'Your manager will review this next';
+      break;
+
+    case 'rejected_by_manager':
+      status = 'rejected';
+      detail = `Rejected by manager · ${fmtDateTime(request.manager_decided_at)}`;
+      break;
+
+    case 'pending_hr':
+    case 'approved':
+    case 'rejected_by_hr':
+      // Manager has approved (downstream stages presume manager_decided_at
+      // is populated). If the timestamp is missing for any reason, fall
+      // back to a generic "approved" detail without dates.
+      status = 'done';
+      detail = request.manager_decided_at
+        ? `Approved by ${approverName} · ${fmtDateTime(request.manager_decided_at)}`
+        : `Approved by ${approverName}`;
+      break;
+
+    case 'pending_substitutes':
+      status = 'next';
+      detail = 'Manager will review once substitutes confirm';
+      break;
+
+    case 'pending_certificate':
+      status = 'next';
+      detail = 'Manager will review once the Sehhaty certificate is uploaded';
+      break;
+
+    case 'rejected_by_substitute':
+      status = 'next';
+      detail = 'Not reviewed — closed at substitute step';
+      break;
+
+    case 'cancelled':
+    case 'expired':
+      // Terminal — surface any pre-closure decision if one was made,
+      // else show as skipped.
+      if (request.manager_decided_at) {
+        status = 'done';
+        detail = `Approved by ${approverName} (before ${stage === 'cancelled' ? 'cancellation' : 'expiry'}) · ${fmtDateTime(request.manager_decided_at)}`;
+      } else {
+        status = 'rejected';
+        detail = stage === 'cancelled'
+          ? 'Cancelled before manager review'
+          : 'Expired before manager review';
+      }
+      break;
+
+    default:
+      // Unreachable — unknown stages are remapped to pending_manager
+      // upstream. Keep an exhaustive default for future-proofing.
+      status = 'next';
+      detail = 'Manager review pending';
+  }
+
+  return {
+    key: 'manager',
+    icon: UserCheck,
+    titleEn: 'Manager review',
+    detail,
+    status,
+  };
+}
+
+// ── Step 4 — HR final approval ──────────────────────────────────────────────
+function buildHrStep(stage, request, empMap) {
+  const hrName = empMap[request.hr_decided_by]?.name || 'HR';
+  let status, detail;
+
+  switch (stage) {
+    case 'approved':
+      status = 'done';
+      detail = request.hr_decided_at
+        ? `Approved by ${hrName} · ${fmtDateTime(request.hr_decided_at)}`
+        : `Approved by ${hrName}`;
+      break;
+
+    case 'rejected_by_hr':
+      status = 'rejected';
+      detail = `Rejected by HR · ${fmtDateTime(request.hr_decided_at)}`;
+      break;
+
+    case 'pending_hr':
+      status = 'now';
+      detail = 'HR will review this next';
+      break;
+
+    case 'pending_manager':
+    case 'pending_substitutes':
+    case 'pending_certificate':
+    case 'rejected_by_manager':
+    case 'rejected_by_substitute':
+      // Hasn't reached HR yet (or was closed before reaching it).
+      status = 'next';
+      detail = 'HR reviews after manager approval';
+      break;
+
+    case 'cancelled':
+    case 'expired':
+      // Terminal — surface any pre-closure decision if one was made.
+      if (request.hr_decided_at) {
+        status = 'done';
+        detail = `Approved by ${hrName} (before ${stage === 'cancelled' ? 'cancellation' : 'expiry'}) · ${fmtDateTime(request.hr_decided_at)}`;
+      } else {
+        status = 'rejected';
+        detail = stage === 'cancelled'
+          ? 'Cancelled before HR review'
+          : 'Expired before HR review';
+      }
+      break;
+
+    default:
+      // Unreachable per upstream validation.
+      status = 'next';
+      detail = 'HR review pending';
+  }
+
+  return {
+    key: 'hr',
+    icon: Crown,
+    titleEn: 'HR (SUP) final approval',
+    detail,
+    status,
+  };
 }
