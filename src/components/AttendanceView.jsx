@@ -216,31 +216,36 @@ function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, schedul
   const greetName = firstName
     ? firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase()
     : 'colleague';
-  // Body rewritten to speak as the HR Department (institutional voice,
-  // not personal), per Nadeem's standing communications preference.
-  // Structure:
-  //   1. One-line factual record of the violation.
-  //   2. Policy block in a fenced visual zone, each rule on its own
-  //      line. Uses "grace period" terminology to teach the term.
-  //   3. Action block — staff must still file a portal permission
-  //      retroactively so the system can track usage against the
-  //      monthly entitlement and feed the evaluation scorecard.
-  //   4. Exception path — reply within 2 working days for documented
-  //      cases that exceed the monthly cap.
-  // Trade-off vs the previous version: shorter, less personal,
-  // explicitly cites policy, ends with a clear action path. Drops
-  // empathic language ("things come up — traffic, family") that
-  // suited a peer-to-peer note but not an HR violation notice.
+
+  // Policy bullets — kept identical for every late-arrival email so
+  // staff see consistent wording. Em-dashes were stripped (per Nadeem
+  // 2026-05): bullet 3 reads as a comma-separated list — "3 late-
+  // arrival permissions per month, 1 hour each, 3 times only".
+  const policyBullets = [
+    '\u2022 The official clock-in time is 8:00 AM on regular working days.',
+    '\u2022 A 15-minute grace period is allowed; arrivals after 8:15 AM are recorded as late.',
+    '\u2022 Each staff is entitled to 3 late-arrival permissions per month, 1 hour each, 3 times only.',
+  ];
+
+  // Horizontal divider sized to match the longest bullet's length, so
+  // the policy block reads as a visually-bounded box. Auto-resizes if
+  // the bullets are edited later. \u2500 = BOX DRAWINGS LIGHT
+  // HORIZONTAL — renders correctly in Outlook / Gmail / Apple Mail.
+  const dividerLen = Math.max(...policyBullets.map(b => b.length));
+  const divider = '\u2500'.repeat(dividerLen);
+
+  // Body — written in HR-Department voice (institutional, not
+  // personal). Em-dashes replaced with commas (first prose em-dash)
+  // or periods (second prose em-dash, where a comma would have
+  // created a splice between two independent clauses).
   const body =
     'Dear ' + greetName + ',\n\n' +
-    'HR\u2019s daily attendance review for ' + dateLong + ' shows your punch-in at ' + punchInStr + ' \u2014 ' + minutesLate + ' minutes past the 15-minute grace period and with no approved permission on file. This is recorded as a late-arrival violation.\n\n' +
+    'HR\u2019s daily attendance review for ' + dateLong + ' shows your punch-in at ' + punchInStr + ', ' + minutesLate + ' minutes past the 15-minute grace period and with no approved permission on file. This is recorded as a late-arrival violation.\n\n' +
     'As a reminder, according to the ESAU attendance policy:\n\n' +
-    '\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n' +
-    '\u2022 The official clock-in time is 8:00 AM on regular working days.\n' +
-    '\u2022 A 15-minute grace period is allowed; arrivals after 8:15 AM are recorded as late.\n' +
-    '\u2022 Each staff is entitled to 3 late-arrival permissions per month \u2014 1 hour each, 3 times only.\n' +
-    '\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n' +
-    'You are still required to submit a late-arrival permission request via the ESAU HR Portal (esauhr.netlify.app \u2192 New Request \u2192 Permission) for today\u2019s punch-in. Submitting it after the fact lets HR record the reason and consider it against your monthly entitlement \u2014 without an approved permission, the day stands as an unexcused violation on your evaluation record.\n\n' +
+    divider + '\n' +
+    policyBullets.join('\n') + '\n' +
+    divider + '\n\n' +
+    'You are still required to submit a late-arrival permission request via the ESAU HR Portal (esauhr.netlify.app \u2192 New Request \u2192 Permission) for today\u2019s punch-in. Submitting it after the fact lets HR record the reason and consider it against your monthly entitlement. Without an approved permission, the day stands as an unexcused violation on your evaluation record.\n\n' +
     'For exceptional cases (medical, official, or other documented emergencies that go beyond the monthly entitlement), please reply to this email within two working days with the supporting details.\n\n' +
     HR_SIGNATURE;
   return { subject, body };
