@@ -739,6 +739,51 @@ export default function SickLeaveModal({ employee, onClose, onCreated, declaredV
                 <div className="px-3 pb-3 text-[10px]" style={{ color: '#0A0A0A', opacity: 0.6 }}>
                   These values are read from the PDF and cannot be edited. If anything looks wrong, click "Upload another" above.
                 </div>
+
+                {/* TEMPORARY DIAGNOSTIC PANEL.
+                    Shows the raw text the matchers worked with, so
+                    if a field is wrong we can copy this and use it
+                    to fix the matcher with concrete data instead of
+                    guessing. Hidden by default; click the link to
+                    expand. The Copy button copies just the rawText
+                    for easy pasting. Will be removed in a follow-up
+                    once extraction is reliable. */}
+                {extracted.rawText && (
+                  <details className="mx-3 mb-3 text-[10px]"
+                           style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 6 }}>
+                    <summary className="px-2 py-1.5 cursor-pointer select-none"
+                             style={{ color: '#0A0A0A', fontWeight: 600 }}>
+                      🛠 Show raw extracted text (for debugging)
+                    </summary>
+                    <div className="p-2 border-t" style={{ borderColor: '#E5E7EB' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard?.writeText(extracted.rawText);
+                        }}
+                        className="mb-2 px-2 py-1 rounded text-[10px]"
+                        style={{ background: '#0A0A0A', color: '#FFFFFF', fontWeight: 600 }}
+                      >
+                        Copy raw text
+                      </button>
+                      <pre
+                        style={{
+                          fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                          fontSize: 10,
+                          color: '#0A0A0A',
+                          background: '#FFFFFF',
+                          border: '1px solid #E5E7EB',
+                          borderRadius: 4,
+                          padding: 8,
+                          maxHeight: 240,
+                          overflow: 'auto',
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word',
+                        }}
+                      >{extracted.rawText}</pre>
+                    </div>
+                  </details>
+                )}
               </div>
             )}
 
