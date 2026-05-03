@@ -228,6 +228,19 @@ function previousWorkingDay(yyyymmdd) {
   return d.toISOString().slice(0, 10);
 }
 
+// Today's date in local time (browser clock) as YYYY-MM-DD. Avoids
+// the UTC-shift bug from `new Date().toISOString().slice(0,10)` —
+// at 02:00 KSA local, that returns the previous day's UTC date,
+// which would silently break the today/yesterday enforcement check.
+function todayInLocal() {
+  const d = new Date();
+  return [
+    d.getFullYear(),
+    String(d.getMonth() + 1).padStart(2, '0'),
+    String(d.getDate()).padStart(2, '0'),
+  ].join('-');
+}
+
 function formatDateLong(yyyymmdd) {
   if (!yyyymmdd) return '—';
   const d = new Date(yyyymmdd + 'T00:00:00');
@@ -610,13 +623,51 @@ export default function AttendanceView({ me, employees }) {
   //   Today's data      → late arrivals + missed punch-in
   //   Yesterday's data  → early departures + missed punch-out
   //
-  // Each row in the parsed result carries its own date. `csvDate` is the
-  // file's primary (latest) date; `yesterdayDate` is the most recent
-  // working day before it. Both are used to filter rows + fetch leaves
-  // and permissions covering the full window.
-  const csvDate = useMemo(() => parsedData.dataDate || null, [parsedData.dataDate]);
-  const yesterdayDate = useMemo(() => previousWorkingDay(csvDate), [csvDate]);
-  const csvIsWeekend = isKsaWeekend(csvDate);
+  // ENFORCEMENT (per Nadeem): the file MUST contain rows for BOTH
+  // today and yesterday's working day. A file with only today, only
+  // yesterday, or with the wrong dates entirely is rejected with a
+  // clear blocking banner. The expected dates come from the real-
+  // world clock (todayInLocal) — NOT from the file — so a file
+  // dated last week can't sneak through by claiming to be today.
+  //
+  // Weekend exception: when today is a KSA weekend (Fri/Sat), no
+  // review is expected at all. The first working day after a weekend
+  // (Sunday) computes yesterday=Thursday automatically via
+  // previousWorkingDay, so Sunday's standard import naturally spans
+  // Thu→Sun.
+  const expectedToday = useMemo(() => todayInLocal(), []);
+  const expectedYesterday = useMemo(() => previousWorkingDay(expectedToday), [expectedToday]);
+  const todayIsWeekend = useMemo(() => isKsaWeekend(expectedToday), [expectedToday]);
+
+  // csvDate / yesterdayDate are driven by the real clock so the
+  // detection runs against the correct dates regardless of how the
+  // file's rows are ordered. (The xlsx parser previously took the
+  // first row's date as `dataDate`; that's brittle when the export
+  // happens to put yesterday's rows before today's.)
+  const csvDate       = expectedToday;
+  const yesterdayDate = expectedYesterday;
+  const csvIsWeekend  = todayIsWeekend;
+
+  // Window-mismatch validation. Returns null when the file matches
+  // the strict today+yesterday requirement; otherwise returns an
+  // object describing what's missing so the UI can render a clear
+  // blocking banner. Skips on weekend (no review expected) and on
+  // empty file (already handled by parseError).
+  const windowMismatch = useMemo(() => {
+    if (!parsedData.rows || parsedData.rows.length === 0) return null;
+    if (todayIsWeekend) return null;
+    const datesInFile = new Set((parsedData.rows || []).map(r => r.date).filter(Boolean));
+    const hasExpectedToday     = datesInFile.has(expectedToday);
+    const hasExpectedYesterday = datesInFile.has(expectedYesterday);
+    if (hasExpectedToday && hasExpectedYesterday) return null;
+    return {
+      expectedToday,
+      expectedYesterday,
+      datesInFile: [...datesInFile].sort(),
+      hasExpectedToday,
+      hasExpectedYesterday,
+    };
+  }, [parsedData.rows, expectedToday, expectedYesterday, todayIsWeekend]);
 
   // Shape parsed rows for the detection logic, AND filter to today + yesterday.
   // The xlsx export sometimes contains rows for dates outside the
@@ -1116,12 +1167,18 @@ export default function AttendanceView({ me, employees }) {
         return;
       }
       // Look up any prior upload of this exact file for this exact
-      // data date — if present, surface a banner so Bashaier knows
-      // she's looking at processed history, not new work.
+      // review date — if present, surface a banner so Bashaier knows
+      // she's looking at processed history, not new work. The review
+      // date is the real-world today, which is the value we record
+      // in attendance_uploads.data_date for new inserts. Querying on
+      // the file's internal first-row date here would create a
+      // mismatch with the insert (e.g. a multi-day file with a
+      // yesterday-first ordering would dedup against the wrong key).
+      const realToday = todayInLocal();
       try {
         const prior = await directGet(
           'attendance_uploads?select=id,uploaded_by,uploaded_at,row_count&'
-          + 'data_date=eq.' + result.dataDate
+          + 'data_date=eq.' + realToday
           + '&file_sha256=eq.' + hashHex
         );
         if (prior && prior.length > 0) {
@@ -1686,6 +1743,12 @@ export default function AttendanceView({ me, employees }) {
             <div className="mt-4 text-sm px-3 py-2 rounded-md inline-block text-left" style={{ color: '#BE123C', background: '#FEF2F2', maxWidth: '480px' }}>{parseError}</div>
           )}
         </div>
+      ) : windowMismatch ? (
+        <WindowMismatchBanner
+          mismatch={windowMismatch}
+          fileName={xlsxFileName}
+          onReset={reset}
+        />
       ) : (
         <FileSummary
           fileName={xlsxFileName}
@@ -1809,7 +1872,7 @@ export default function AttendanceView({ me, employees }) {
         </div>
       )}
 
-      {hasFile && !csvIsWeekend && (
+      {hasFile && !csvIsWeekend && !windowMismatch && (
         <>
           {/* Late arrivals — TODAY's data only. Hidden when the file
               doesn't include today's rows (e.g. she uploaded only
@@ -2134,6 +2197,117 @@ export default function AttendanceView({ me, employees }) {
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────────
+
+// ─── Window-mismatch blocking banner ────────────────────────────────────
+// Renders when the uploaded file fails the strict today+yesterday
+// requirement. Replaces the FileSummary card and hides all action
+// sections (Late / MissedIn / Early / MissedOut) downstream — Bashaier
+// must upload the correct file before any review can run.
+//
+// Why blocking instead of a soft warning: per Nadeem, the daily flow
+// is "download a 2-day report, upload, review". If only one day is
+// in the file, the review is incomplete by definition — yesterday's
+// early-departure or today's late-arrival check would silently be
+// missing. Better to refuse than to half-process.
+function WindowMismatchBanner({ mismatch, fileName, onReset }) {
+  const { expectedToday, expectedYesterday, datesInFile, hasExpectedToday, hasExpectedYesterday } = mismatch;
+  // Diagnose which of the two cases applies for the headline.
+  // If the file has neither expected date, treat as "wrong file
+  // entirely". If it has one of the two, name the missing one.
+  const missingBoth = !hasExpectedToday && !hasExpectedYesterday;
+  const headline = missingBoth
+    ? 'This file does not cover today or the previous working day'
+    : !hasExpectedToday
+      ? 'This file is missing today\u2019s data'
+      : 'This file is missing the previous working day\u2019s data';
+
+  return (
+    <div className="rounded-2xl border-2 p-5 sm:p-6"
+         style={{ borderColor: '#BE123C', background: '#FEF2F2' }}>
+      {/* Header */}
+      <div className="flex items-start gap-3">
+        <div className="w-11 h-11 rounded-full flex items-center justify-center flex-shrink-0"
+             style={{ background: '#FECACA' }}>
+          <AlertTriangle className="w-6 h-6" style={{ color: '#BE123C' }}/>
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-[10px] mb-1" style={{ color: '#0A0A0A', letterSpacing: '0.25em', fontWeight: 700 }}>
+            FILE REJECTED &middot; DATE WINDOW MISMATCH
+          </div>
+          <div style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#0A0A0A', lineHeight: 1.3 }}>
+            {headline}.
+          </div>
+          <div className="text-sm mt-1" style={{ color: '#0A0A0A' }}>
+            {fileName ? <><strong>{fileName}</strong> &middot; </> : null}
+            cannot be processed.
+          </div>
+        </div>
+        <button onClick={onReset}
+          className="text-xs px-3 py-1.5 rounded-full border flex items-center gap-1.5 flex-shrink-0"
+          style={{ borderColor: '#BE123C', background: '#FFFFFF', color: '#BE123C', fontWeight: 600 }}>
+          <X className="w-3.5 h-3.5"/> Upload different file
+        </button>
+      </div>
+
+      {/* Required vs. actual */}
+      <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="rounded-xl p-3 border" style={{ background: '#FFFFFF', borderColor: '#FCA5A5' }}>
+          <div className="text-[10px] mb-2" style={{ color: '#0A0A0A', letterSpacing: '0.18em', fontWeight: 700 }}>
+            REQUIRED IN FILE
+          </div>
+          <ul className="space-y-1.5">
+            <li className="flex items-baseline gap-2 text-sm" style={{ color: '#0A0A0A' }}>
+              <span style={{ color: hasExpectedToday ? '#047857' : '#BE123C', fontWeight: 700, minWidth: '14px' }}>
+                {hasExpectedToday ? '\u2713' : '\u2717'}
+              </span>
+              <div>
+                <div><strong>Today &mdash; {formatDateLong(expectedToday)}</strong></div>
+                <div className="text-xs" style={{ opacity: 0.7 }}>For late arrivals + missed punch-in</div>
+              </div>
+            </li>
+            <li className="flex items-baseline gap-2 text-sm" style={{ color: '#0A0A0A' }}>
+              <span style={{ color: hasExpectedYesterday ? '#047857' : '#BE123C', fontWeight: 700, minWidth: '14px' }}>
+                {hasExpectedYesterday ? '\u2713' : '\u2717'}
+              </span>
+              <div>
+                <div><strong>Yesterday &mdash; {formatDateLong(expectedYesterday)}</strong></div>
+                <div className="text-xs" style={{ opacity: 0.7 }}>For early departures + missed punch-out</div>
+              </div>
+            </li>
+          </ul>
+        </div>
+        <div className="rounded-xl p-3 border" style={{ background: '#FFFFFF', borderColor: '#E5E0D5' }}>
+          <div className="text-[10px] mb-2" style={{ color: '#0A0A0A', letterSpacing: '0.18em', fontWeight: 700 }}>
+            FOUND IN FILE
+          </div>
+          {datesInFile.length === 0 ? (
+            <div className="text-sm" style={{ color: '#0A0A0A', opacity: 0.7 }}>No dated rows.</div>
+          ) : (
+            <ul className="space-y-1.5">
+              {datesInFile.map(d => {
+                const isMatch = d === expectedToday || d === expectedYesterday;
+                return (
+                  <li key={d} className="flex items-baseline gap-2 text-sm" style={{ color: '#0A0A0A' }}>
+                    <span style={{ color: isMatch ? '#047857' : '#A16207', fontWeight: 700, minWidth: '14px' }}>&bull;</span>
+                    <span>{formatDateLong(d)}{isMatch ? '' : ' (outside window)'}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      {/* Guidance */}
+      <div className="mt-4 rounded-lg p-3 text-sm" style={{ background: '#FEF3C7', border: '1px solid #FDE68A', color: '#0A0A0A' }}>
+        <strong>What to do:</strong> open the fingerprint device portal and re-export the Time Card with
+        the date range set to <strong>{formatDateLong(expectedYesterday)}</strong> &rarr; <strong>{formatDateLong(expectedToday)}</strong>.
+        Both days must be in the same file. If today is the first working day after a weekend, the &ldquo;previous working day&rdquo;
+        will be the last working day before the weekend (e.g. on Sunday, the previous working day is Thursday).
+      </div>
+    </div>
+  );
+}
 
 function FileSummary({
   fileName, csvDate, isWeekend, totalRows, offDateCount = 0,
