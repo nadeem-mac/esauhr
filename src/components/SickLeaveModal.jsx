@@ -864,11 +864,11 @@ function PreviewField({ label, value, mono, wide, required, matchStatus }) {
           </span>
         )}
       </div>
-      {/* Value rendering. When the value contains a newline (used by
-          the bilingual matchers — Latin on first line, Arabic on
-          second), render each line as a separate row with appropriate
-          script direction so RTL Arabic doesn't visually disrupt the
-          left-aligned LTR Latin line above it. */}
+      {/* Bilingual values come through as 'Latin\nArabic' — render
+          each line as its own row with appropriate script direction.
+          Both lines get the same size for visual balance; the Arabic
+          line uses a slightly lighter weight so the English reads
+          as the primary identifier without dominating. */}
       {typeof value === 'string' && value.includes('\n') ? (
         <div style={{ wordBreak: 'break-word' }}>
           {value.split('\n').map((line, i) => {
@@ -878,13 +878,12 @@ function PreviewField({ label, value, mono, wide, required, matchStatus }) {
                 key={i}
                 dir={isArabic ? 'rtl' : 'ltr'}
                 style={{
-                  fontSize: i === 0 ? '13px' : '12px',
+                  fontSize: '13px',
                   fontFamily: mono ? 'ui-monospace, SFMono-Regular, monospace' : 'inherit',
                   fontWeight: i === 0 ? 600 : 500,
                   color: '#0A0A0A',
-                  opacity: i === 0 ? 1 : 0.85,
                   textAlign: isArabic ? 'right' : 'left',
-                  marginTop: i === 0 ? 0 : 2,
+                  lineHeight: 1.5,
                 }}
               >
                 {line}

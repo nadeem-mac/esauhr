@@ -493,182 +493,176 @@ function matchDays(text) {
  *  Showing both gives the staff member the option of recognising
  *  whichever script they prefer, and gives Bashaier the same
  *  transliteration that's on the cert for her cross-check. */
+// ─────────────────────────────────────────────────────────────────────
+// Bilingual field matchers — patient name, doctor, specialty
+//
+// Sehhaty PDFs are bilingual tables. Each row is one field, with the
+// Arabic label on the right, Arabic value, Latin value, and English
+// label on the left:
+//
+//   [Arabic label]  [Arabic value]  [Latin value]  [English label]
+//   ─────────────────────────────────────────────────────────────────
+//   الاسم            حسان صالح ...   HASSAN SALEH …  Name
+//   رقم الهوية       —               1108624873      Iqama / ID
+//   اسم الممارس     عبدالله محمد …   ABDULLAH ...     Practitioner Name
+//
+// pdfjs's text-extraction (in stitchTextItems) groups items by their
+// y-coordinate so each row of the table comes out as ONE line in
+// the joined text. So the right strategy is:
+//   1. Find the LINE containing the field's English (or Arabic)
+//      label.
+//   2. Within that line, extract Arabic word runs and Latin word
+//      runs separately, filtering out known LABEL words from each.
+//   3. Return the values as { arabic, latin }.
+//
+// The previous regex-on-whole-blob approach was fragile because it
+// would over-capture across line boundaries — a 'next field's
+// label leaked into prior field's value' problem we kept patching
+// with stop-words. Line-based extraction sidesteps the whole issue.
+// ─────────────────────────────────────────────────────────────────────
+
+/** Set of Arabic label tokens that should NEVER be returned as a
+ *  field value. Used by extractValuesFromLine to filter Arabic
+ *  word-runs found on a line. Includes both Sehhaty layouts. */
+const ARABIC_LABEL_TOKENS = new Set([
+  // patient name
+  'الاسم', 'الإسم', 'االسم',
+  // iqama
+  'رقم', 'الهوية', 'الإقامة', 'اإلقامة',
+  // dates
+  'تاريخ', 'الدخول', 'الخروج', 'إصدار', 'التقرير', 'تبدأ', 'من', 'وحتى', 'إصدار', 'تقرير', 'الإجازة', 'اإلجازة',
+  // duration
+  'المدة', 'بالأيام', 'يوم', 'أيام',
+  // doctor
+  'اسم', 'الطبيب', 'الممارس',
+  // specialty / position
+  'المسمى', 'الوظيفي', 'الوظيفى',
+  // nationality / employer (between fields on PDFs)
+  'الجنسية', 'السعودية', 'جهة', 'العمل',
+  // misc artifacts
+  'رمز', 'مدة', 'اىل', 'الى',
+]);
+
+/** Set of English label tokens to filter out of Latin word-runs. */
+const ENGLISH_LABEL_TOKENS = new Set([
+  'NAME', 'PATIENT', 'IQAMA', 'ID', 'NATIONAL', 'NATIONALITY',
+  'SAUDI', 'ARABIA', 'EMPLOYER', 'PRACTITIONER', 'DOCTOR',
+  'POSITION', 'SPECIALTY', 'SPECIALITY', 'DATE', 'ADMISSION',
+  'DISCHARGE', 'ISSUE', 'LEAVE', 'DURATION', 'PERIOD',
+  'KINGDOM', 'OF',
+]);
+
+/** Find the FIRST line in the text that matches the predicate.
+ *  Returns the line string, or null. */
+function findLine(text, predicate) {
+  const lines = text.split('\n');
+  for (const line of lines) {
+    if (predicate(line)) return line;
+  }
+  return null;
+}
+
+/** Extract Arabic and Latin value runs from a single field line.
+ *  Filters out known label tokens from each script.
+ *  Returns { arabic, latin } with each being a space-joined string
+ *  of value words, or null if no values found. */
+function extractValuesFromLine(line) {
+  if (!line) return { arabic: null, latin: null };
+
+  // Arabic: collect runs of Arabic letters, drop any that are
+  // pure label tokens.
+  const arabicRuns = [];
+  const arabicRe = /[\u0600-\u06FF\uFB50-\uFEFC]+/g;
+  let m;
+  while ((m = arabicRe.exec(line)) !== null) {
+    if (!ARABIC_LABEL_TOKENS.has(m[0])) {
+      arabicRuns.push(m[0]);
+    }
+  }
+  const arabic = arabicRuns.length >= 2 ? arabicRuns.join(' ') : null;
+
+  // Latin: collect uppercase or capitalised word runs, filter
+  // labels, require at least 2 word tokens.
+  // Pattern accepts ALL CAPS (HASSAN), all-caps with single-letter
+  // initials (SALEH I ALTASSAN), and Title Case (Senior Registrar).
+  const latinTokens = [];
+  const latinRe = /\b([A-Z][A-Za-z]*)\b/g;
+  while ((m = latinRe.exec(line)) !== null) {
+    const tok = m[1];
+    if (!ENGLISH_LABEL_TOKENS.has(tok.toUpperCase())) {
+      latinTokens.push(tok);
+    }
+  }
+  const latin = latinTokens.length >= 2 ? latinTokens.join(' ') : null;
+
+  return { arabic, latin };
+}
+
+/** Patient name. */
 function matchPatientName(text) {
-  // Three matching strategies, each tried independently. Each
-  // strategy returns either an Arabic name, a Latin name, or both
-  // — we collect what we get and join at the end.
-  let arabic = matchArabicAfterNameLabel(text);
-  let latin  = matchLatinPatientName(text);
+  // Find the line that contains the 'Name' English label OR the
+  // 'الاسم' Arabic label (any alif-variant). The two are usually
+  // on the same line in the bilingual table — finding one finds
+  // the row.
+  const line = findLine(text, l =>
+    /\bName\b/.test(l) ||
+    /[\u0627\u0623\u0625\u0622]{1,3}\u0644\u0627?\u0633\u0645/.test(l)
+  );
+  if (!line) return null;
 
-  // FALLBACK — position-based extraction.
-  // If neither label-based strategy found anything, use the
-  // structural property that the patient name in Sehhaty PDFs
-  // always sits BETWEEN the Iqama (10 digits) and the
-  // Practitioner/Doctor labels. This works even when the bilingual
-  // table stitches in unexpected order.
-  if (!arabic || !latin) {
-    const between = extractBetweenIqamaAndPractitioner(text);
-    if (between) {
-      if (!arabic && between.arabic) arabic = between.arabic;
-      if (!latin  && between.latin)  latin  = between.latin;
-    }
+  // Skip if this line is actually 'Practitioner Name' / 'Doctor Name'
+  // — those should match matchDoctorName, not matchPatientName.
+  if (/Practitioner|Doctor|اسم\s*الممارس|اسم\s*الطبيب/.test(line)) {
+    return null;
   }
 
+  const { arabic, latin } = extractValuesFromLine(line);
   return joinBilingualName(arabic, latin);
 }
 
-/** Position-based fallback. The patient name in a Sehhaty PDF
- *  always lives in the section AFTER the 10-digit Iqama and BEFORE
- *  the practitioner/doctor section. Even if the bilingual table
- *  stitches weirdly and breaks our label-based regexes, the
- *  ordering of these structural elements is fixed by the document
- *  template. We use Iqama as a reliable left anchor and
- *  Practitioner/Doctor as a reliable right anchor.
- *
- *  Returns { arabic, latin } with whatever we could find in the
- *  window between the two anchors, or null if either anchor is
- *  missing. */
-function extractBetweenIqamaAndPractitioner(text) {
-  // Find the Iqama. We need its position in the text, so we use
-  // .exec rather than just the captured group from matchIdNumber.
-  const cleaned = text
-    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, '...........')   // length-preserving stub
-    .replace(/\b\d{2}-\d{2}-\d{4}\b/g, '..........');
-  const idMatch = cleaned.match(/\b\d{10}\b/);
-  if (!idMatch) return null;
-  const startPos = idMatch.index + idMatch[0].length;
-
-  // Find the right anchor — any of these labels could be next.
-  // We pick whichever comes earliest in the text after startPos.
-  const rightAnchorPattern = /(?:Practitioner|Doctor|Position|Specialty|Speciality|اسم\s*الممارس|اسم\s*الطبيب|المسمى)/;
-  const after = text.slice(startPos);
-  const rightMatch = after.match(rightAnchorPattern);
-  if (!rightMatch) return null;
-  const window = after.slice(0, rightMatch.index);
-
-  // Inside the window, find Latin uppercase name run (3+ words)
-  // and Arabic name run separately.
-  const latinMatch = window.match(/((?:[A-Z]{2,}\s+){1,}(?:[A-Z]{1,}\s*){1,}[A-Z]{2,})/);
-  const arabicMatch = window.match(/([\u0600-\u06FF\uFB50-\uFEFC]{2,}(?:\s+[\u0600-\u06FF\uFB50-\uFEFC]+){1,})/);
-
-  let latin = latinMatch ? latinMatch[1].trim().replace(/\s+/g, ' ') : null;
-  let arabic = arabicMatch ? cleanArabicValue(arabicMatch[1]) : null;
-
-  // Filter out obvious labels-as-values (e.g. if 'Name' got
-  // captured because the window ended right after it).
-  if (latin && /^(?:Name|Patient|Saudi|Arabia|Iqama|National|ID|Nationality)\b/i.test(latin)) {
-    latin = null;
-  }
-
-  return (arabic || latin) ? { arabic, latin } : null;
-}
-
-/** Arabic-only match for the patient-name label.
- *  The Arabic word for 'name' (with definite article) is الاسم —
- *  alif-lam-alif-sin-mim. PDF text extraction can reorder or
- *  duplicate alifs depending on how the original cert encoded
- *  the ligature, producing variants like:
- *    الاسم   (canonical: ا ل ا س م)
- *    االسم   (text-stitched variant: ا ا ل س م — TWO alifs at
- *             start, NO alif between ل and س)
- *    ﻻﺳم    (presentation forms range)
- *  Match any string of 1-3 alifs followed by ل, optional alif,
- *  then سم. Catches all observed variants without false-matching
- *  unrelated Arabic words. */
-function matchArabicAfterNameLabel(text) {
-  const re = /[\u0627\u0623\u0625\u0622]{1,3}\u0644\u0627?\u0633\u0645[:：\s]*\n?[\s]*([\u0600-\u06FF\uFB50-\uFEFC\s]{3,120})/;
-  const m = text.match(re);
-  if (!m) return null;
-  return cleanArabicValue(m[1]);
-}
-
-/** Latin-only match for the patient name. Tries 'Patient Name' label
- *  first (more specific, less false-positive risk), then plain 'Name'. */
-function matchLatinPatientName(text) {
-  // 'Patient Name' is more specific — try it first.
-  const patient = text.match(/((?:[A-Z]{1,}(?:\s+[A-Z]{1,})+))\s+Patient\s*Name\b/i)
-              || text.match(/Patient\s*Name[:：\s]+((?:[A-Z]{1,}(?:\s+[A-Z]{1,})+))/i);
-  if (patient) {
-    const c = patient[1].trim().replace(/\s+/g, ' ');
-    if (c.split(' ').length >= 2) return c;
-  }
-
-  // Plain 'Name' label.
-  const m = text.match(/((?:[A-Z]{1,}(?:\s+[A-Z]{1,})+))\s+Name\b/);
-  if (!m) return null;
-  const candidate = m[1].trim().replace(/\s+/g, ' ');
-  // Reject obvious non-name matches (e.g. capturing
-  // 'Practitioner' from 'Practitioner Name'). Saudi names
-  // typically have 3+ words — fewer is suspicious.
-  if (candidate.split(' ').length < 2) return null;
-  // Reject if the captured words include known label tokens.
-  if (/\b(?:Practitioner|Doctor|Patient|Position|Specialty)\b/i.test(candidate)) return null;
-  return candidate;
-}
-
-/** Doctor name. Sehhaty calls this either 'الطبيب' (doctor) or
- *  'الممارس' (practitioner) depending on the cert layout. The PDF
- *  uses 'اسم الممارس' / 'Practitioner Name'; the screenshot UI
- *  uses 'اسم الطبيب'. Returns Arabic + Latin combined when both
- *  are present. */
+/** Doctor / practitioner name. */
 function matchDoctorName(text) {
-  const arabic = matchArabicDoctor(text);
-  const latin  = matchLatinDoctor(text);
-  return joinBilingualName(arabic, latin);
-}
-
-function matchArabicDoctor(text) {
-  for (const label of [/اسم\s*الطبيب/, /اسم\s*الممارس/]) {
-    const m = text.match(new RegExp(label.source + '[:：\\s]*\\n?[\\s]*([\\u0600-\\u06FF\\uFB50-\\uFEFC\\s]{3,120})'));
-    if (m) {
-      const cleaned = cleanArabicValue(m[1]);
-      if (cleaned) return cleaned;
+  // The doctor row uses 'Practitioner Name' (English) or
+  // 'اسم الطبيب' / 'اسم الممارس' (Arabic) labels. The doctor name
+  // sometimes wraps onto a 2nd line in tight PDF layouts (a long
+  // Saudi name plus 'Practitioner Name' label can exceed the
+  // text-box width), so we also collect words from the line
+  // immediately following the labelled line.
+  const lines = text.split('\n');
+  let labelIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/Practitioner\s*Name|Doctor\s*Name|اسم\s*الممارس|اسم\s*الطبيب/.test(lines[i])) {
+      labelIdx = i;
+      break;
     }
   }
-  return null;
-}
+  if (labelIdx < 0) return null;
 
-function matchLatinDoctor(text) {
-  // PDF layout: 'PRACTITIONER NAME ABDULLAH MOHAMMED HASSAN ALFARRAN'
-  //   value comes AFTER the label (English-first column)
-  // OR — value-then-label order:
-  //      'DANAH MOHAMED A ALGHAMDI Practitioner Name'
-  const after = text.match(/(?:Practitioner\s*Name|Doctor\s*Name)[:：\s]+((?:[A-Z]+(?:\s+[A-Z]+)+))(?:\s|$)/);
-  if (after && after[1].split(' ').length >= 2) {
-    return after[1].trim().replace(/\s+/g, ' ');
+  // Combine the label line + next line (the wrap, if any). The
+  // next line's content stops contributing if it looks like a new
+  // labelled row (contains 'Position', 'Specialty', 'المسمى', etc.).
+  let combined = lines[labelIdx];
+  if (labelIdx + 1 < lines.length) {
+    const next = lines[labelIdx + 1];
+    if (!/Position|Specialty|Speciality|المسمى/.test(next)) {
+      combined += ' ' + next;
+    }
   }
-  const before = text.match(/((?:[A-Z]+(?:\s+[A-Z]+)+))\s+(?:Practitioner\s*Name|Doctor\s*Name|Doctor)\b/);
-  if (before && before[1].split(' ').length >= 2) {
-    return before[1].trim().replace(/\s+/g, ' ');
-  }
-  return null;
-}
 
-/** Specialty / Position. Multiple labels across cert variants:
- *  Layout A (screenshot UI):  المسمى الوظيفي
- *  Layout B (PDF):            المسمى الوظيفى / 'Position' / 'Specialty'
- *  Returns Arabic + Latin combined when both are present. */
-function matchSpecialty(text) {
-  const arabic = matchArabicSpecialty(text);
-  const latin  = matchLatinSpecialty(text);
+  const { arabic, latin } = extractValuesFromLine(combined);
   return joinBilingualName(arabic, latin);
 }
 
-function matchArabicSpecialty(text) {
-  const m = text.match(/المسمى\s*الوظيف[يى][:：\s]*\n?[\s]*([\u0600-\u06FF\uFB50-\uFEFC\s]{2,60})/);
-  if (!m) return null;
-  return cleanArabicValue(m[1]);
-}
+/** Specialty / position. */
+function matchSpecialty(text) {
+  const line = findLine(text, l =>
+    /\b(?:Position|Specialty|Speciality)\b/i.test(l) ||
+    /المسمى\s*الوظيف[يى]/.test(l)
+  );
+  if (!line) return null;
 
-function matchLatinSpecialty(text) {
-  // 'Position' / 'Specialty' / 'Speciality'. Specialty values are
-  // mixed-case English (Senior Registrar, General Dentist, etc.) —
-  // not the all-caps you see for proper-noun names.
-  const before = text.match(/((?:[A-Z][a-z]+\s*){1,4})\s+(?:Position|Specialty|Speciality)\b/);
-  if (before) return before[1].trim();
-  const after = text.match(/(?:Position|Specialty|Speciality)[:：\s]+((?:[A-Z][a-z]+\s*){1,4})/);
-  if (after) return after[1].trim();
-  return null;
+  const { arabic, latin } = extractValuesFromLine(line);
+  return joinBilingualName(arabic, latin);
 }
 
 /** Combine an Arabic and a Latin variant of the same value into a
