@@ -408,8 +408,15 @@ export default function AppShell({ session, me, onRefreshMe }) {
     // The payload now carries: substitute_ids, substitute_decisions, stage='pending_substitutes'.
     // The DB trigger sync_leave_status_with_stage auto-derives status from stage,
     // so we don't pass status here.
+    //
+    // requested_at — stamped explicitly so the row sorts and filters
+    // correctly in MyApplicationsCard (which uses it for the 90-day
+    // visibility window). The DB column may or may not have a DEFAULT
+    // now(); making it explicit guarantees the timestamp regardless of
+    // schema defaults and gives us UTC consistency.
     const { data, error } = await supabase.from('leave_requests').insert({
       ...payload,
+      requested_at: new Date().toISOString(),
       requested_by: session.user.email,
     }).select().single();
     if (error) throw error;

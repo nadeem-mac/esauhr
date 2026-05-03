@@ -153,6 +153,11 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
         time_to:         timeTo,
         reason:          finalReason,
         exceeds_quota:   exceeds.willExceed,
+        // Stamp requested_at explicitly — same reason as leave_requests.
+        // MyApplicationsCard's 90-day window filter sorts and filters
+        // by this column; without it, the row sorts to epoch 0 and
+        // gets excluded from the staff's visible list.
+        requested_at:    new Date().toISOString(),
         requested_by:    me.id,
         stage:           'pending_manager',
       }).select().single();

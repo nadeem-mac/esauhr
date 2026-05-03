@@ -87,16 +87,31 @@ function iconFor(item) {
 }
 
 // Sort key — most recent activity first. We use the most-meaningful
-// timestamp on the row: hr_decided_at > manager_decided_at > requested_at
-// > sick_declared_at > created_at. For rejoining synthetic items, prefer
-// the return_* timestamps so they sort by their own activity, not the
-// original leave's.
+// Pick the most informative timestamp on the row for sorting + the
+// 90-day visibility window in MyApplicationsCard.
 //
-// sick_declared_at is included in the fallback chain so that older
-// pending_certificate rows (created before the SickLeaveModal started
-// stamping requested_at explicitly) still sort correctly and pass the
-// 90-day visibility window. New rows now always have requested_at, so
-// this fallback is mainly for legacy data.
+// FALLBACK CHAIN
+//   leave / sick:
+//     hr_decided_at → manager_decided_at → requested_at →
+//     sick_declared_at → created_at → start_date → 0
+//
+//   permission:
+//     hr_decided_at → manager_decided_at → requested_at →
+//     created_at → permission_date → 0
+//
+//   rejoining (synthetic on top of an approved leave):
+//     return_hr_decided_at → return_manager_decided_at →
+//     return_submitted_at  → actual_return_date → 0
+//
+// Why the date-column fallback (start_date / permission_date)?
+// Older rows may have null requested_at and no created_at default.
+// Without a fallback the function returns 0 (1970-01-01) and the
+// 90-day window filter excludes the row from the staff's visible
+// list. Every leave row has a start_date and every permission has
+// a permission_date — these are required schema fields — so falling
+// back to them guarantees the row sorts somewhere sensible. The
+// date-only YYYY-MM-DD strings parse as midnight UTC, which is fine
+// for ordinal comparison even when paired with full ISO timestamps.
 function sortKey(item) {
   if (item._kind === 'rejoin') {
     return new Date(
@@ -104,10 +119,18 @@ function sortKey(item) {
       item.return_submitted_at  || item.actual_return_date || 0
     ).getTime();
   }
+  if (item._kind === 'permission') {
+    return new Date(
+      item.hr_decided_at || item.manager_decided_at ||
+      item.requested_at || item.created_at ||
+      item.permission_date || 0
+    ).getTime();
+  }
+  // leave (regular or sick)
   return new Date(
     item.hr_decided_at || item.manager_decided_at ||
     item.requested_at || item.sick_declared_at ||
-    item.created_at   || 0
+    item.created_at   || item.start_date || 0
   ).getTime();
 }
 
