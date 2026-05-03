@@ -38,15 +38,12 @@ import { X, Plane, Sunrise, Sunset, ChevronRight, HeartPulse } from 'lucide-reac
 export default function RequestTypePicker({ onPick, onClose }) {
   const options = [
     {
-      id: 'leave',
-      icon: Plane,
-      title: 'Vacation or leave',
-      description: 'Full or half-day requests — annual, emergency, hajj, maternity, etc.',
-      iconBg: 'var(--evergreen-100)',
-      iconColor: 'var(--evergreen-600)',
-      borderColor: 'var(--evergreen-200)',
-    },
-    {
+      // Sick leave — promoted to the top of the picker. Sick days
+      // are time-sensitive (staff often submit while still feeling
+      // unwell, want the fewest taps to complete) and they're the
+      // most frequent leave type by submission volume. Putting them
+      // first reduces friction for the most common urgent case.
+      //
       // Single unified entry for ALL sick-leave scenarios. Internal
       // toggle (inside SickLeaveModal) decides whether the staff is
       // declaring without a certificate yet ("Not yet") or submitting
@@ -65,6 +62,15 @@ export default function RequestTypePicker({ onPick, onClose }) {
       iconBg: '#FEE2E2',
       iconColor: '#B91C1C',
       borderColor: '#FCA5A5',
+    },
+    {
+      id: 'leave',
+      icon: Plane,
+      title: 'Vacation or leave',
+      description: 'Full or half-day requests — annual, emergency, hajj, maternity, etc.',
+      iconBg: 'var(--evergreen-100)',
+      iconColor: 'var(--evergreen-600)',
+      borderColor: 'var(--evergreen-200)',
     },
     {
       id: 'late_arrival',
