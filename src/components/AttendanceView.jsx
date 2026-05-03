@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Upload, FileText, Clock, AlertTriangle, Mail, CheckCircle2,
-  X, Calendar, Briefcase, Users, Send, Sparkles
+  X, Calendar, Briefcase, Users, Send, Sparkles, Layers, Sunrise
 } from 'lucide-react';
 import { directGet, directPost } from '../supabaseClient.js';
 import { parseTimeCardXlsx, TimeCardParseError } from '../lib/timeCard.js';
@@ -580,6 +580,14 @@ export default function AttendanceView({ me, employees }) {
   const [acceptedShifts, setAcceptedShifts]       = useState([]);
   const [sentMarkers, setSentMarkers]             = useState({}); // key: row.id → true
   const [loggedMarkers, setLoggedMarkers]         = useState({}); // key: 'empId:type' → true
+  // Pending-EOD-review tracker. Populated from attendance_review_log on
+  // mount and after each file-load mode-log. Each entry: { review_date,
+  // morning_at, eod_at }. eod_at is null by definition for everything
+  // surfaced here (it's the "you started but didn't finish" list).
+  const [pendingEodDates, setPendingEodDates] = useState([]);
+  // Bumps after every successful review-log upsert so the pending-fetch
+  // effect re-runs and clears any date Bashaier just completed.
+  const [reviewLogTick, setReviewLogTick]     = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -1304,6 +1312,68 @@ export default function AttendanceView({ me, employees }) {
     setViewModeOverride(null);
   }, [csvDate]);
 
+  // ─── Review-log upsert ───────────────────────────────────────────────
+  // Each time a file is loaded (or mode toggles), record the pass into
+  // attendance_review_log. The table has one row per review_date; the
+  // morning_at / eod_at columns are populated independently. This is
+  // what powers the "EOD review pending" banner — we need an explicit
+  // marker that morning was done so the absence of an EOD pass is
+  // detectable. Best-effort: failures are silent because the violation
+  // emails work without this; it's pure tracking. Skips weekends since
+  // there's no expectation of a daily attendance review for them.
+  useEffect(() => {
+    if (!csvDate || !me?.id) return;
+    if (isKsaWeekend(csvDate)) return;
+    const nowIso = new Date().toISOString();
+    const row = viewMode === 'morning'
+      ? { review_date: csvDate, morning_at: nowIso, morning_by: me.id }
+      : { review_date: csvDate, eod_at: nowIso, eod_by: me.id };
+    directPost('attendance_review_log', row, {
+      timeoutMs: 5000,
+      upsert: true,
+      onConflict: 'review_date',
+    })
+      .then(() => setReviewLogTick(t => t + 1))
+      .catch(() => { /* non-blocking; tracker is best-effort */ });
+  }, [csvDate, viewMode, me?.id]);
+
+  // ─── Pending-EOD fetch ───────────────────────────────────────────────
+  // Pull the last 14 calendar days of review log and surface any date
+  // where the morning pass was logged but EOD wasn't. 14 days covers
+  // ~2 working weeks accounting for weekends — older than that is
+  // probably a write-off (the file may not even be available anymore).
+  // Refetches whenever reviewLogTick bumps so the banner clears
+  // immediately after Bashaier completes a pending date's EOD pass.
+  useEffect(() => {
+    if (!me?.id) return;
+    let cancelled = false;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 14);
+    const cutoffIso = cutoff.toISOString().slice(0, 10);
+    directGet(
+      'attendance_review_log?select=review_date,morning_at,eod_at'
+        + '&review_date=gte.' + cutoffIso
+        + '&order=review_date.desc',
+      { timeoutMs: 6000 }
+    )
+      .then(rows => {
+        if (cancelled) return;
+        const today = new Date().toISOString().slice(0, 10);
+        // Pending = morning was logged, EOD wasn't, AND the review_date
+        // is at least one calendar day in the past. We deliberately
+        // don't flag today's morning pass — it's normal for her to be
+        // mid-cycle (morning done, EOD will happen tomorrow).
+        const pending = (rows || []).filter(r =>
+          r.morning_at != null && r.eod_at == null && r.review_date < today
+        );
+        setPendingEodDates(pending);
+      })
+      .catch(() => {
+        if (!cancelled) setPendingEodDates([]);
+      });
+    return () => { cancelled = true; };
+  }, [me?.id, reviewLogTick]);
+
   // Anomaly detection — if a high fraction of rows are INCOMPLETE
   // (only one punch on file), the file was probably exported mid-day
   // before staff punched out. We compute this from the raw parsed
@@ -1397,7 +1467,137 @@ export default function AttendanceView({ me, employees }) {
         </p>
       </div>
 
-      {/* Upload zone or file summary */}
+      {/* ─── Pending end-of-day review banner ───────────────────────────
+          Surfaces dates where the morning pass was completed but the
+          end-of-day pass is overdue. Sticky at the top of the page so
+          it's the first thing Bashaier sees on load — including before
+          she imports today's file. The list comes from
+          attendance_review_log; rows here are derived, not editable,
+          and clear automatically the moment she imports the missing
+          date's complete file (the upsert flips eod_at, the fetch
+          re-runs via reviewLogTick, the row drops out of the list). */}
+      {pendingEodDates.length > 0 && (
+        <div className="rounded-2xl border-2 p-4 mb-6 flex items-start gap-3"
+             style={{ borderColor: '#92400E', background: '#FEF3C7' }}>
+          <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+               style={{ background: '#FBBF24' }}>
+            <AlertTriangle className="w-5 h-5" style={{ color: '#7C2D12' }}/>
+          </div>
+          <div className="flex-1 text-sm" style={{ color: '#0A0A0A' }}>
+            <div className="font-bold mb-1" style={{ color: '#7C2D12' }}>
+              End-of-day review pending — {pendingEodDates.length} date{pendingEodDates.length === 1 ? '' : 's'}
+            </div>
+            <div style={{ lineHeight: 1.55 }}>
+              You ran the morning (late-arrival) review for the following date{pendingEodDates.length === 1 ? '' : 's'}
+              {' '}but haven't completed the end-of-day pass. Re-import each day's complete file
+              to check for early departures and missed punches:
+            </div>
+            <ul className="mt-2 space-y-1">
+              {pendingEodDates.map(d => {
+                const ms = Date.now() - new Date(d.morning_at).getTime();
+                const hours = Math.round(ms / 3_600_000);
+                const days  = Math.floor(hours / 24);
+                const ago = days >= 1 ? `${days} day${days === 1 ? '' : 's'} ago`
+                          : hours >= 1 ? `${hours}h ago`
+                          : 'just now';
+                return (
+                  <li key={d.review_date} className="text-sm">
+                    &bull; <strong>{formatDateLong(d.review_date)}</strong>
+                    <span style={{ opacity: 0.7 }}> &middot; morning reviewed {ago}</span>
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="text-[11px] mt-2" style={{ color: '#0A0A0A', opacity: 0.85 }}>
+              This banner clears automatically once the EOD pass is imported.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Pending end-of-day reviews banner ─────────────────────────
+          Surfaces working days where Bashaier did the morning late
+          check but never re-imported the file the next day to catch
+          early-leavers and missed punches. Self-clears as soon as
+          the EOD pass is logged for each date (the upsert effect
+          bumps reviewLogTick, the fetch effect re-runs, the banner
+          refilters). 14-day window — older dates age out
+          automatically.
+
+          Renders ONLY if pendingEodDates is non-empty. When the list
+          is empty (caught up or fresh user), the banner vanishes
+          entirely so it's not a permanent fixture; its presence
+          carries meaning. */}
+      {pendingEodDates.length > 0 && (
+        <div className="rounded-2xl border p-4 sm:p-5 flex gap-3 sm:gap-4"
+             style={{ background: '#FFFBEB', borderColor: '#FCD34D' }}>
+          <div className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center"
+               style={{ background: '#FEF3C7' }}>
+            <AlertTriangle className="w-4 h-4" style={{ color: '#92400E' }}/>
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-baseline gap-2 flex-wrap">
+              <div className="text-[10px] tracking-[0.25em]" style={{ fontWeight: 700, color: '#0A0A0A' }}>
+                END-OF-DAY REVIEW PENDING
+              </div>
+              <span className="text-[10px] px-2 py-0.5 rounded-full"
+                style={{ background: '#92400E', color: '#FFFFFF', fontWeight: 700 }}>
+                {pendingEodDates.length} day{pendingEodDates.length === 1 ? '' : 's'}
+              </span>
+            </div>
+            <p className="text-sm mt-1.5" style={{ color: '#0A0A0A' }}>
+              These working days were reviewed for late arrivals only. Re-import each file
+              to complete the <strong>early departure</strong> and <strong>missed punch</strong> checks.
+              The list clears itself as soon as you import the file again — nothing else to do.
+            </p>
+            <ul className="mt-3 space-y-1.5">
+              {pendingEodDates.map(p => {
+                // Display as "Tue 28 Apr · late check at 10:14"
+                const d = new Date(p.review_date + 'T00:00:00');
+                const dateLabel = d.toLocaleDateString('en-GB', {
+                  weekday: 'short', day: '2-digit', month: 'short',
+                });
+                const morningTime = p.morning_at
+                  ? new Date(p.morning_at).toLocaleTimeString('en-GB', {
+                      hour: '2-digit', minute: '2-digit',
+                    })
+                  : '';
+                // Days-old indicator — gentle nudge if it's getting stale.
+                const ageDays = Math.max(0, Math.round(
+                  (new Date().getTime() - new Date(p.review_date + 'T00:00:00').getTime()) / 86_400_000
+                ));
+                const ageLabel = ageDays === 0 ? 'today'
+                              : ageDays === 1 ? 'yesterday'
+                                              : ageDays + ' days ago';
+                const stale = ageDays >= 5;
+                return (
+                  <li key={p.review_date}
+                      className="flex items-center justify-between gap-3 text-sm rounded-lg px-3 py-2"
+                      style={{ background: '#FFFFFF', border: '1px solid #FDE68A' }}>
+                    <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                      <Calendar className="w-3.5 h-3.5 flex-shrink-0" style={{ color: '#92400E' }}/>
+                      <span style={{ color: '#0A0A0A', fontWeight: 600 }}>{dateLabel}</span>
+                      <span className="text-xs" style={{ color: '#0A0A0A', opacity: 0.7 }}>·</span>
+                      <span className="text-xs" style={{ color: '#0A0A0A', opacity: 0.85 }}>
+                        late check at {morningTime || '—'}
+                      </span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded"
+                        style={{
+                          background: stale ? '#FEE2E2' : '#F4F4EE',
+                          color: stale ? '#7F1D1D' : '#0A0A0A',
+                          fontWeight: 600, letterSpacing: '0.05em',
+                        }}>
+                        {ageLabel}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        </div>
+      )}
+
       {!hasFile ? (
         <div
           onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
@@ -1589,15 +1789,33 @@ export default function AttendanceView({ me, employees }) {
                   <strong> missed punches</strong> &mdash; are running on complete data.</>
                 )}
               </div>
-              {/* Override toggle — small affordance, low visual weight,
-                  for the edge case where Bashaier wants the other view. */}
+              {/* Override toggle — high-contrast filled button so the
+                  affordance reads at a glance, not as a subtle inline
+                  link. The fill colour matches the banner accent so it
+                  remains visually anchored to this panel rather than
+                  competing with top-level CTAs. Icon swaps on mode to
+                  reinforce the action: Layers (show all) vs Sunrise
+                  (back to morning view). */}
               <button type="button"
                 onClick={() => setViewModeOverride(viewMode === 'morning' ? 'eod' : 'morning')}
-                className="mt-2 text-[11px] underline inline-flex items-center gap-1"
-                style={{ color: '#0A0A0A' }}>
-                {viewMode === 'morning'
-                  ? 'Show all sections anyway (early + missed too)'
-                  : 'Switch to morning view (late only)'}
+                className="mt-3 inline-flex items-center gap-2 px-4 py-2.5 rounded-full text-sm shadow-sm hover:shadow transition-shadow"
+                style={{
+                  color: '#FFFFFF',
+                  background: viewMode === 'morning' ? '#1D4ED8' : '#0F4C2A',
+                  fontWeight: 600,
+                  letterSpacing: '0.01em',
+                }}>
+                {viewMode === 'morning' ? (
+                  <>
+                    <Layers className="w-4 h-4" />
+                    Show all sections (early + missed too)
+                  </>
+                ) : (
+                  <>
+                    <Sunrise className="w-4 h-4" />
+                    Switch to morning view (late only)
+                  </>
+                )}
               </button>
             </div>
           </div>
