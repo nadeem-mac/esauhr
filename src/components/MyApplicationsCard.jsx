@@ -225,6 +225,7 @@ export default function MyApplicationsCard({
 
   return (
     <section
+      id="your-applications"
       className="rounded-xl border p-5 esau-card"
       style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}
     >

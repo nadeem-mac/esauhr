@@ -17,6 +17,7 @@ import NewRequestModal from './NewRequestModal.jsx';
 import RequestTypePicker from './RequestTypePicker.jsx';
 import SickLeaveModal from './SickLeaveModal.jsx';
 import PermissionRequestModal from './PermissionRequestModal.jsx';
+import SuccessToast, { bodyForStage } from './SuccessToast.jsx';
 import EmployeeDetailModal from './EmployeeDetailModal.jsx';
 import ShiftAcknowledgmentModal from './ShiftAcknowledgmentModal.jsx';
 import InsightsView from './InsightsView.jsx';
@@ -137,6 +138,12 @@ export default function AppShell({ session, me, onRefreshMe }) {
   // States: null = closed, 'pick' = picker visible, 'leave' = vacation form,
   //         'late_arrival' / 'early_leave' = permission form
   const [requestFlow, setRequestFlow] = useState(null);
+  // Submission success toast — shown after any leave / permission /
+  // sick declaration is submitted. Replaces the silent modal-close
+  // UX where the user couldn't tell whether their submission worked.
+  // Shape: { title, body, actionLabel, onAction } | null
+  // Auto-dismisses after 6s; SuccessToast handles the timer.
+  const [submissionToast, setSubmissionToast] = useState(null);
   // Backwards-compatible alias so existing call sites (`onNewRequest`,
   // `onOpenNewRequest`) still open the picker. Internal callers can call
   // setRequestFlow(...) directly to skip the picker (e.g. dashboard
@@ -427,6 +434,25 @@ export default function AppShell({ session, me, onRefreshMe }) {
       targetId: data?.id,
       targetLabel: `${empName} · ${typeName} · ${payload.start_date} ÃÂ¢ÃÂÃÂ ${payload.end_date}`,
       details: { employee_id: payload.employee_id, leave_type_id: payload.leave_type_id, days: payload.days },
+    });
+    // Show success confirmation. Self-submitted requests get a "track
+    // your status" pointer; admin/HR submissions on someone else's behalf
+    // get a generic acknowledgement (the staff being submitted FOR isn't
+    // the one looking at this dashboard, so the action button would
+    // navigate to the wrong place).
+    const submittedForSelf = payload.employee_id === me?.id;
+    setSubmissionToast({
+      title: submittedForSelf ? 'Request submitted' : `Request submitted for ${empName}`,
+      body: submittedForSelf
+        ? bodyForStage(data?.stage || payload.stage)
+        : `${typeName} · ${payload.start_date} → ${payload.end_date}`,
+      actionLabel: submittedForSelf ? 'View in your applications' : null,
+      onAction: submittedForSelf
+        ? () => {
+            const el = document.getElementById('your-applications');
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        : null,
     });
     await loadAll();
   };
@@ -848,9 +874,26 @@ export default function AppShell({ session, me, onRefreshMe }) {
         <SickLeaveModal
           employee={me}
           onClose={() => setRequestFlow(null)}
-          onCreated={() => {
+          onCreated={(created) => {
             setRequestFlow(null);
             if (typeof loadAll === 'function') loadAll({ silent: true });
+            // Stage-aware confirmation. Path A submissions land in
+            // 'pending_certificate' — the toast nudges the staff to
+            // submit the Sehhaty cert when they have it. Path B
+            // (cert provided up-front) goes to pending_manager
+            // and the body reflects that.
+            const stage = created?.stage || 'pending_certificate';
+            setSubmissionToast({
+              title: stage === 'pending_certificate'
+                ? 'Sick leave declared'
+                : 'Sick leave submitted',
+              body: bodyForStage(stage),
+              actionLabel: 'View in your applications',
+              onAction: () => {
+                const el = document.getElementById('your-applications');
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              },
+            });
           }}
         />
       )}
@@ -871,7 +914,22 @@ export default function AppShell({ session, me, onRefreshMe }) {
             );
           })()}
           onClose={() => setRequestFlow(null)}
-          onSubmitted={() => setRequestFlow(null)}
+          onSubmitted={() => {
+            setRequestFlow(null);
+            if (typeof loadAll === 'function') loadAll({ silent: true });
+            // Permissions go straight to pending_manager. Use the
+            // generic body for that stage so wording stays consistent
+            // with the other submission types.
+            setSubmissionToast({
+              title: 'Permission requested',
+              body: bodyForStage('pending_manager'),
+              actionLabel: 'View in your applications',
+              onAction: () => {
+                const el = document.getElementById('your-applications');
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              },
+            });
+          }}
         />
       )}
 
@@ -904,6 +962,21 @@ export default function AppShell({ session, me, onRefreshMe }) {
           employees={employees}
           onClose={() => setShiftAckOpen(false)}
           onResolved={() => setShiftAckOpen(false)}
+        />
+      )}
+
+      {/* App-wide submission success toast. Set by createRequest /
+          SickLeaveModal.onCreated / PermissionRequestModal.onSubmitted.
+          Auto-dismisses after 6s; SuccessToast handles its own timer.
+          Single instance — a fresh submission while one is showing
+          replaces the prior toast (the timer resets via deps). */}
+      {submissionToast && (
+        <SuccessToast
+          title={submissionToast.title}
+          body={submissionToast.body}
+          actionLabel={submissionToast.actionLabel}
+          onAction={submissionToast.onAction}
+          onDismiss={() => setSubmissionToast(null)}
         />
       )}
     </div>
