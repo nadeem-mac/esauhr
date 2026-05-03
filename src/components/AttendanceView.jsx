@@ -227,12 +227,16 @@ function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, schedul
     '\u2022 Each staff is entitled to 3 late-arrival permissions per month, 1 hour each, 3 times only.',
   ];
 
-  // Horizontal divider sized to match the longest bullet's length, so
-  // the policy block reads as a visually-bounded box. Auto-resizes if
-  // the bullets are edited later. \u2500 = BOX DRAWINGS LIGHT
-  // HORIZONTAL — renders correctly in Outlook / Gmail / Apple Mail.
-  const dividerLen = Math.max(...policyBullets.map(b => b.length));
-  const divider = '\u2500'.repeat(dividerLen);
+  // Divider — 71 equals signs, character + count both confirmed by
+  // Nadeem against his actual mail client's rendering. NOT computed
+  // from bullet length: equals are narrower than the unicode
+  // box-drawing chars used previously, so a length-matched count
+  // would overshoot. If the bullets are ever rewritten and the box
+  // looks misaligned in production, re-test in the real mail client
+  // and update this constant rather than introducing dynamic sizing
+  // (which proved sensitive to character-width differences in
+  // proportional-font mail clients).
+  const divider = '='.repeat(71);
 
   // Body — written in HR-Department voice (institutional, not
   // personal). Em-dashes replaced with commas (first prose em-dash)
