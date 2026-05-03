@@ -10,17 +10,32 @@ import { parseTimeCardXlsx, TimeCardParseError } from '../lib/timeCard.js';
 /* ────────────────────────────────────────────────────────────────────────
    Daily attendance check — driven by Time Card xlsx upload.
 
-   Bashaier uploads yesterday's Time Card export (.xlsx). The system finds:
-     1. LATE   — punched in after 08:15 (8:00 official start + 15 min grace)
+   Bashaier uploads a 2-day Time Card export (.xlsx) every morning,
+   covering yesterday's working day + today. A single upload drives
+   both passes:
+
+     TODAY's rows      → late arrivals + missed punch-in
+     YESTERDAY's rows  → early departures + missed punch-out
+
+   The file is rejected if it doesn't contain rows for both dates
+   (computed from the real-world clock, not the file's contents). On
+   Sunday, "yesterday's working day" is Thursday since Fri+Sat are
+   KSA weekend.
+
+   Detection per row:
+     1. LATE  (today's data only) — punched in after 08:15
+        (8:00 official start + 15 min grace).
         Cross-referenced against approved late_arrival permissions:
           • LATE_PERMITTED   — permission on file, within window
           • LATE_BEYOND      — permission on file, but came in even later
           • LATE_NO_PERMISSION — actual violation, action required
-     2. EARLY  — punched out before scheduled end - 15 min grace
-                  • SUP team: scheduled end 16:00 (4 PM) → cutoff 15:45
-                  • All other depts: scheduled end 17:00 (5 PM) → cutoff 16:45
+     2. EARLY (yesterday's data only) — punched out before scheduled
+        end - 15 min grace.
+          • SUP team: scheduled end 16:00 (4 PM) → cutoff 15:45
+          • All other depts: scheduled end 17:00 (5 PM) → cutoff 16:45
         Same WITH/WITHOUT permission split as late.
-     3. INCOMPLETE — only 1 punch on file (no punch-out recorded)
+     3. MISSED PUNCH-IN  (today's data only) — no first-punch on record
+     4. MISSED PUNCH-OUT (yesterday's data only) — no last-punch on record
 
    For each WITHOUT-PERMISSION row: an "Email" button opens her mail client
    with a pre-filled email (TO: employee, CC: direct manager + execs).
@@ -1609,10 +1624,12 @@ export default function AttendanceView({ me, employees }) {
           Daily attendance check.
         </h1>
         <p className="text-sm mt-3 max-w-3xl" style={{ color: '#0A0A0A' }}>
-          Upload yesterday's <strong>Time Card export (.xlsx)</strong>. The system flags late arrivals,
-          early departures, and incomplete punches per ESAU policy, cross-referenced against approved
-          permissions. You review each notice and click Send in your mail client. Anyone with an approved
-          leave on that date is excluded automatically.
+          Every morning, export the <strong>Time Card (.xlsx)</strong> covering <strong>yesterday and today</strong>
+          {' '}and upload it here. Today&rsquo;s data is checked for late arrivals and missed punch-in;
+          yesterday&rsquo;s for early departures and missed punch-out. Each notice is cross-referenced
+          against approved permissions, and anyone on approved leave is excluded automatically. Review
+          each row and click Send in your mail client. On Sunday, &ldquo;yesterday&rdquo; means Thursday
+          (the last working day before the weekend), so the file should span Thursday&rarr;Sunday.
         </p>
       </div>
 
