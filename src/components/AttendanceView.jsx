@@ -1623,14 +1623,15 @@ export default function AttendanceView({ me, employees }) {
         <h1 className="leading-none" style={{ fontFamily: 'Georgia, serif', fontSize: 'clamp(2.2rem, 4.5vw, 3rem)', fontWeight: 400, color: '#1F1B16', letterSpacing: '-0.02em' }}>
           Daily attendance check.
         </h1>
-        <p className="text-sm mt-3 max-w-3xl" style={{ color: '#0A0A0A' }}>
-          Every morning, export the <strong>Time Card (.xlsx)</strong> covering <strong>yesterday and today</strong>
-          {' '}and upload it here. Today&rsquo;s data is checked for late arrivals and missed punch-in;
-          yesterday&rsquo;s for early departures and missed punch-out. Each notice is cross-referenced
-          against approved permissions, and anyone on approved leave is excluded automatically. Review
-          each row and click Send in your mail client. On Sunday, &ldquo;yesterday&rdquo; means Thursday
-          (the last working day before the weekend), so the file should span Thursday&rarr;Sunday.
-        </p>
+        <ul className="text-sm mt-3 max-w-3xl space-y-1.5 list-disc pl-5" style={{ color: '#0A0A0A' }}>
+          <li>Every morning, export the <strong>Time Card (.xlsx)</strong> covering <strong>yesterday and today</strong>, then upload it here.</li>
+          <li><strong>Today&rsquo;s data</strong> is checked for <strong>late arrivals</strong> and <strong>missed punch-in</strong>.</li>
+          <li><strong>Yesterday&rsquo;s data</strong> is checked for <strong>early departures</strong> and <strong>missed punch-out</strong>.</li>
+          <li>Approved permissions are cross-referenced automatically &mdash; permitted cases are marked, not actioned.</li>
+          <li>Anyone on approved leave for that date is <strong>excluded</strong> from the violation lists.</li>
+          <li>Each notice is pre-filled with the right wording &mdash; review it and click <strong>Send</strong> in your mail client.</li>
+          <li>On <strong>Sunday</strong>, &ldquo;yesterday&rdquo; means <strong>Thursday</strong> (Fri + Sat are KSA weekend), so the file should span Thursday&rarr;Sunday.</li>
+        </ul>
       </div>
 
       {/* ─── Pending end-of-day review banner ───────────────────────────
