@@ -494,13 +494,73 @@ function matchDays(text) {
  *  whichever script they prefer, and gives Bashaier the same
  *  transliteration that's on the cert for her cross-check. */
 function matchPatientName(text) {
-  // Find Arabic and Latin variants separately, then combine them
-  // with an em-dash if both exist. The bilingual PDF certificates
-  // include both forms; the staff member should see whichever they
-  // recognise more easily, so we display BOTH.
-  const arabic = matchArabicAfterNameLabel(text);
-  const latin  = matchLatinPatientName(text);
+  // Three matching strategies, each tried independently. Each
+  // strategy returns either an Arabic name, a Latin name, or both
+  // — we collect what we get and join at the end.
+  let arabic = matchArabicAfterNameLabel(text);
+  let latin  = matchLatinPatientName(text);
+
+  // FALLBACK — position-based extraction.
+  // If neither label-based strategy found anything, use the
+  // structural property that the patient name in Sehhaty PDFs
+  // always sits BETWEEN the Iqama (10 digits) and the
+  // Practitioner/Doctor labels. This works even when the bilingual
+  // table stitches in unexpected order.
+  if (!arabic || !latin) {
+    const between = extractBetweenIqamaAndPractitioner(text);
+    if (between) {
+      if (!arabic && between.arabic) arabic = between.arabic;
+      if (!latin  && between.latin)  latin  = between.latin;
+    }
+  }
+
   return joinBilingualName(arabic, latin);
+}
+
+/** Position-based fallback. The patient name in a Sehhaty PDF
+ *  always lives in the section AFTER the 10-digit Iqama and BEFORE
+ *  the practitioner/doctor section. Even if the bilingual table
+ *  stitches weirdly and breaks our label-based regexes, the
+ *  ordering of these structural elements is fixed by the document
+ *  template. We use Iqama as a reliable left anchor and
+ *  Practitioner/Doctor as a reliable right anchor.
+ *
+ *  Returns { arabic, latin } with whatever we could find in the
+ *  window between the two anchors, or null if either anchor is
+ *  missing. */
+function extractBetweenIqamaAndPractitioner(text) {
+  // Find the Iqama. We need its position in the text, so we use
+  // .exec rather than just the captured group from matchIdNumber.
+  const cleaned = text
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, '...........')   // length-preserving stub
+    .replace(/\b\d{2}-\d{2}-\d{4}\b/g, '..........');
+  const idMatch = cleaned.match(/\b\d{10}\b/);
+  if (!idMatch) return null;
+  const startPos = idMatch.index + idMatch[0].length;
+
+  // Find the right anchor — any of these labels could be next.
+  // We pick whichever comes earliest in the text after startPos.
+  const rightAnchorPattern = /(?:Practitioner|Doctor|Position|Specialty|Speciality|اسم\s*الممارس|اسم\s*الطبيب|المسمى)/;
+  const after = text.slice(startPos);
+  const rightMatch = after.match(rightAnchorPattern);
+  if (!rightMatch) return null;
+  const window = after.slice(0, rightMatch.index);
+
+  // Inside the window, find Latin uppercase name run (3+ words)
+  // and Arabic name run separately.
+  const latinMatch = window.match(/((?:[A-Z]{2,}\s+){1,}(?:[A-Z]{1,}\s*){1,}[A-Z]{2,})/);
+  const arabicMatch = window.match(/([\u0600-\u06FF\uFB50-\uFEFC]{2,}(?:\s+[\u0600-\u06FF\uFB50-\uFEFC]+){1,})/);
+
+  let latin = latinMatch ? latinMatch[1].trim().replace(/\s+/g, ' ') : null;
+  let arabic = arabicMatch ? cleanArabicValue(arabicMatch[1]) : null;
+
+  // Filter out obvious labels-as-values (e.g. if 'Name' got
+  // captured because the window ended right after it).
+  if (latin && /^(?:Name|Patient|Saudi|Arabia|Iqama|National|ID|Nationality)\b/i.test(latin)) {
+    latin = null;
+  }
+
+  return (arabic || latin) ? { arabic, latin } : null;
 }
 
 /** Arabic-only match for the patient-name label.
@@ -522,11 +582,18 @@ function matchArabicAfterNameLabel(text) {
   return cleanArabicValue(m[1]);
 }
 
-/** Latin-only match for the patient name. The bilingual PDF places
- *  the Latin transliteration BEFORE the English 'Name' label (the
- *  right-most cell in the RTL bilingual table reads
- *  Arabic-value Latin-value 'Name'). */
+/** Latin-only match for the patient name. Tries 'Patient Name' label
+ *  first (more specific, less false-positive risk), then plain 'Name'. */
 function matchLatinPatientName(text) {
+  // 'Patient Name' is more specific — try it first.
+  const patient = text.match(/((?:[A-Z]{1,}(?:\s+[A-Z]{1,})+))\s+Patient\s*Name\b/i)
+              || text.match(/Patient\s*Name[:：\s]+((?:[A-Z]{1,}(?:\s+[A-Z]{1,})+))/i);
+  if (patient) {
+    const c = patient[1].trim().replace(/\s+/g, ' ');
+    if (c.split(' ').length >= 2) return c;
+  }
+
+  // Plain 'Name' label.
   const m = text.match(/((?:[A-Z]{1,}(?:\s+[A-Z]{1,})+))\s+Name\b/);
   if (!m) return null;
   const candidate = m[1].trim().replace(/\s+/g, ' ');
@@ -534,6 +601,8 @@ function matchLatinPatientName(text) {
   // 'Practitioner' from 'Practitioner Name'). Saudi names
   // typically have 3+ words — fewer is suspicious.
   if (candidate.split(' ').length < 2) return null;
+  // Reject if the captured words include known label tokens.
+  if (/\b(?:Practitioner|Doctor|Patient|Position|Specialty)\b/i.test(candidate)) return null;
   return candidate;
 }
 
@@ -603,12 +672,13 @@ function matchLatinSpecialty(text) {
 }
 
 /** Combine an Arabic and a Latin variant of the same value into a
- *  single display string. Format: 'Arabic — Latin' when both exist,
- *  otherwise whichever is non-null. The em-dash separator reads
- *  cleanly in both LTR and RTL contexts and visually distinguishes
- *  the two scripts. Returns null if neither is present. */
+ *  single display string. Format: 'Latin\nArabic' (English on top,
+ *  Arabic below) when both exist, otherwise whichever is non-null.
+ *  The newline lets the UI render the two scripts as stacked lines
+ *  with `white-space: pre-line` rather than running them inline.
+ *  Returns null if neither is present. */
 function joinBilingualName(arabic, latin) {
-  if (arabic && latin) return `${arabic} — ${latin}`;
+  if (arabic && latin) return `${latin}\n${arabic}`;
   return arabic || latin || null;
 }
 
