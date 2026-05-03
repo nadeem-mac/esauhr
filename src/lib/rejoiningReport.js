@@ -60,7 +60,6 @@ const HR_SIGNATURE = {
   name:    'BASHAIER ALI',
   company: 'Evergreen Shipping Agency Saudi Co.,(L.L.C)',
   unit:    'ESAU - SADMN SUP/ HR DEPT',
-  address: 'P.O.Box : 1008,  DAMMAM – 31431, K.S.A',
   whatsapp:'966-54 320 9694',
   tel:     '966-013 813 8563 – Ext 8543',
   email:   'bashaier.alsubaie@evergreen-shipping.com.sa',
@@ -957,10 +956,9 @@ export function buildRejoiningEmailDraft({ employee, request, manager, hrApprove
     HR_SIGNATURE.name,
     HR_SIGNATURE.company,
     HR_SIGNATURE.unit,
-    HR_SIGNATURE.address,
-    `WhatsApp: ${HR_SIGNATURE.whatsapp}`,
+    `Whatsapp: ${HR_SIGNATURE.whatsapp}`,
     `Tel: ${HR_SIGNATURE.tel}`,
-    `Email: ${HR_SIGNATURE.email}`,
+    `Email:${HR_SIGNATURE.email}`,
   ].filter(line => line !== null).join('\n');
 
   const params = new URLSearchParams();

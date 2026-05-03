@@ -89,7 +89,6 @@ const HR_SIGNATURE_DEFAULTS = {
   name:    'BASHAIER ALI',
   company: 'Evergreen Shipping Agency Saudi Co.,(L.L.C)',
   unit:    'ESAU - SADMN SUP/ HR DEPT',
-  address: 'P.O.Box : 1008,  DAMMAM – 31431, K.S.A',
   whatsapp:'966-54 320 9694',
   tel:     '966-013 813 8563 – Ext 8543',
   email:   'bashaier.alsubaie@evergreen-shipping.com.sa',
@@ -886,10 +885,9 @@ export function buildPermissionEmailDraft({ employee, manager, hrApprover, reque
     HR_SIGNATURE.name,
     HR_SIGNATURE.company,
     HR_SIGNATURE.unit,
-    HR_SIGNATURE.address,
-    `WhatsApp: ${HR_SIGNATURE.whatsapp}`,
+    `Whatsapp: ${HR_SIGNATURE.whatsapp}`,
     `Tel: ${HR_SIGNATURE.tel}`,
-    `Email: ${HR_SIGNATURE.email}`,
+    `Email:${HR_SIGNATURE.email}`,
   ].join('\n');
 
   return {

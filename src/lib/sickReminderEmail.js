@@ -39,12 +39,22 @@ import { REMINDER_KINDS } from './sickDeclaration.js';
 // buildEmailDraft. If those constants ever move into a shared module
 // they can be imported from there; for now duplicating keeps this
 // module self-contained.
+// HR signature — kept in sync with the canonical block used in
+// vacationForm.js / permissionLetter.js / rejoiningReport.js /
+// AttendanceView.jsx. All five surfaces produce the same 6-line
+// sign-off so the staff sees a consistent voice across every email
+// they receive from HR (sick reminders, attendance violations,
+// leave approvals, permission letters, rejoining reports).
+//
+// Per Nadeem's instruction, the P.O. Box address line was dropped
+// from the canonical block in early 2026.
 const HR_SIGNATURE = {
-  name: 'Bashaier Ali',
-  unit: 'HR — Evergreen Shipping Agency Saudi Co.',
-  whatsapp: '+966 50 000 0000',
-  tel: '+966 13 000 0000',
-  email: 'bashaier@evergreen-shipping.com.sa',
+  name:    'BASHAIER ALI',
+  company: 'Evergreen Shipping Agency Saudi Co.,(L.L.C)',
+  unit:    'ESAU - SADMN SUP/ HR DEPT',
+  whatsapp:'966-54 320 9694',
+  tel:     '966-013 813 8563 – Ext 8543',
+  email:   'bashaier.alsubaie@evergreen-shipping.com.sa',
 };
 
 const POLICY_LINE = 'Per Evergreen HR policy, the Sehhaty certificate must be submitted within 48 hours of returning to work after a declared sick day.';
@@ -153,14 +163,21 @@ function templateFor(kind, { declaration, employee, hrApprover, extraNote }) {
   }
 }
 
+// Build the canonical 6-line signature block that goes at the bottom
+// of every reminder / digest email. We do NOT substitute hrApprover's
+// name or email here — these emails are sent under the HR Department's
+// authority, not the individual reviewer's. Even when Nadeem (admin)
+// triggers a reminder, the signature stays as Bashaier so the voice
+// is consistent for the recipient. The hrApprover argument is kept
+// for forward-compatibility but is currently unused.
 function signatureBlock(hrApprover) {
-  const name = hrApprover?.name || HR_SIGNATURE.name;
   return [
-    name,
+    HR_SIGNATURE.name,
+    HR_SIGNATURE.company,
     HR_SIGNATURE.unit,
-    `WhatsApp: ${HR_SIGNATURE.whatsapp}`,
+    `Whatsapp: ${HR_SIGNATURE.whatsapp}`,
     `Tel: ${HR_SIGNATURE.tel}`,
-    `Email: ${hrApprover?.email || HR_SIGNATURE.email}`,
+    `Email:${HR_SIGNATURE.email}`,
   ];
 }
 

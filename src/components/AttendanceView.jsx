@@ -216,15 +216,32 @@ function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, schedul
   const greetName = firstName
     ? firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase()
     : 'colleague';
-  const startStr  = scheduledStart || '08:00';
-  const cutoffStr = lateCutoff     || '08:15';
+  // Body rewritten to speak as the HR Department (institutional voice,
+  // not personal), per Nadeem's standing communications preference.
+  // Structure:
+  //   1. One-line factual record of the violation.
+  //   2. Policy block in a fenced visual zone, each rule on its own
+  //      line. Uses "grace period" terminology to teach the term.
+  //   3. Action block — staff must still file a portal permission
+  //      retroactively so the system can track usage against the
+  //      monthly entitlement and feed the evaluation scorecard.
+  //   4. Exception path — reply within 2 working days for documented
+  //      cases that exceed the monthly cap.
+  // Trade-off vs the previous version: shorter, less personal,
+  // explicitly cites policy, ends with a clear action path. Drops
+  // empathic language ("things come up — traffic, family") that
+  // suited a peer-to-peer note but not an HR violation notice.
   const body =
     'Dear ' + greetName + ',\n\n' +
-    'I hope this finds you well. I am writing on behalf of HR regarding your attendance on ' + dateLong + '.\n\n' +
-    'According to our time card records for that day, your punch-in was logged at ' + punchInStr + ', which puts you about ' + minutesLate + ' minutes after the ' + cutoffStr + ' grace window (with your scheduled start time of ' + startStr + ').\n\n' +
-    'I understand that things come up — traffic, family matters, anything unexpected. If that was the case here, please reply with a short note so I can reflect it accurately in our records. If a planned reason is going to come up again, kindly inform your direct manager and HR in advance so we can plan around it together.\n\n' +
-    'Otherwise, I would appreciate your attention to morning timing going forward. Repeated late arrivals without prior approval do feed into the performance evaluation cycle, and I would much rather we avoid that conversation altogether.\n\n' +
-    'Thank you for understanding, and please do not hesitate to reach out if there is anything we can support you with.\n\n' +
+    'HR\u2019s daily attendance review for ' + dateLong + ' shows your punch-in at ' + punchInStr + ' \u2014 ' + minutesLate + ' minutes past the 15-minute grace period and with no approved permission on file. This is recorded as a late-arrival violation.\n\n' +
+    'As a reminder, according to the ESAU attendance policy:\n\n' +
+    '\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n' +
+    '\u2022 The official clock-in time is 8:00 AM on regular working days.\n' +
+    '\u2022 A 15-minute grace period is allowed; arrivals after 8:15 AM are recorded as late.\n' +
+    '\u2022 Each staff is entitled to 3 late-arrival permissions per month \u2014 1 hour each, 3 times only.\n' +
+    '\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n' +
+    'You are still required to submit a late-arrival permission request via the ESAU HR Portal (esauhr.netlify.app \u2192 New Request \u2192 Permission) for today\u2019s punch-in. Submitting it after the fact lets HR record the reason and consider it against your monthly entitlement \u2014 without an approved permission, the day stands as an unexcused violation on your evaluation record.\n\n' +
+    'For exceptional cases (medical, official, or other documented emergencies that go beyond the monthly entitlement), please reply to this email within two working days with the supporting details.\n\n' +
     HR_SIGNATURE;
   return { subject, body };
 }
