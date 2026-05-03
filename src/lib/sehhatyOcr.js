@@ -594,31 +594,28 @@ function findFieldLines(text, predicate, otherPredicates = []) {
   if (firstIdx < 0) return null;
 
   // Walk neighbours conservatively. Extension rules:
-  //   • At most 1 line in each direction (was 2 — too aggressive,
-  //     ate footer text on the last field of the document).
-  //   • Stop at any line that matches another known field.
-  //   • Stop at any line that looks like footer/boilerplate
-  //     (URLs, bare timestamps, 'To check the report' boilerplate,
-  //     'Family Dental Clinic' clinic-letterhead text, etc.) —
-  //     see isFooterContent below.
-  //   • CRUCIAL: only extend if the neighbour adds the MISSING
-  //     script half. If the matched line already has both Arabic
-  //     and Latin content, no extension is needed; consuming an
-  //     extra line in that case can only HURT (it's footer or
-  //     unrelated wrap).
+  //   • At most 1 line in each direction.
+  //   • Stop at any line that matches a DIFFERENT field's predicate.
+  //     (Lines that match the SAME predicate are allowed — they're
+  //     usually the bilingual partner half of the same row, e.g.
+  //     'Practitioner Name ABDULLAH...' on one line and 'اسم الممارس
+  //     عبدالله...' on the next, both of which match PRED_DOCTOR.)
+  //   • Stop at any line that looks like footer/boilerplate.
+  //   • Only extend if the neighbour provides the missing VALUE
+  //     content (not just script chars — labels are Latin/Arabic
+  //     chars too and would falsely suggest 'has Latin' even when
+  //     no actual Latin VALUE is present).
   const isOtherField = (line) => otherPredicates.some(p => p(line));
 
   const matchedLine = lines[firstIdx];
-  const matchedHasArabic = /[\u0600-\u06FF\uFB50-\uFEFC]/.test(matchedLine);
-  const matchedHasLatin  = /[A-Za-z]/.test(matchedLine);
   const collected = [matchedLine];
 
-  // Try one line above (covers the case where Arabic half rendered
-  // slightly higher than Latin in the same row).
+  // Try one line above (covers the case where one bilingual half
+  // rendered slightly higher than the other in the same row).
   if (firstIdx - 1 >= 0) {
     const prev = lines[firstIdx - 1];
-    if (!isOtherField(prev) && !predicate(prev) && !isFooterContent(prev) &&
-        shouldExtendInto(prev, { matchedHasArabic, matchedHasLatin })) {
+    if (!isOtherField(prev) && !isFooterContent(prev) &&
+        shouldExtendInto(prev, matchedLine)) {
       collected.unshift(prev);
     }
   }
@@ -626,8 +623,8 @@ function findFieldLines(text, predicate, otherPredicates = []) {
   // Try one line below.
   if (firstIdx + 1 < lines.length) {
     const next = lines[firstIdx + 1];
-    if (!isOtherField(next) && !predicate(next) && !isFooterContent(next) &&
-        shouldExtendInto(next, { matchedHasArabic, matchedHasLatin })) {
+    if (!isOtherField(next) && !isFooterContent(next) &&
+        shouldExtendInto(next, matchedLine)) {
       collected.push(next);
     }
   }
@@ -635,33 +632,63 @@ function findFieldLines(text, predicate, otherPredicates = []) {
   return collected.join(' ');
 }
 
+/** Check whether a line contains at least one Latin VALUE token —
+ *  an uppercase-initial word that isn't a known label. Different
+ *  from "has Latin chars" because labels like 'Practitioner', 'Name',
+ *  'Position' all have Latin chars but contribute zero value content. */
+function lineHasLatinValue(line) {
+  const re = /\b([A-Z][A-Za-z]*)\b/g;
+  let m;
+  while ((m = re.exec(line)) !== null) {
+    if (!ENGLISH_LABEL_TOKENS.has(m[1].toUpperCase())) return true;
+  }
+  return false;
+}
+
+/** Check whether a line contains at least one Arabic VALUE token —
+ *  a contiguous Arabic word that isn't a known label token. */
+function lineHasArabicValue(line) {
+  const re = /[\u0600-\u06FF\uFB50-\uFEFC]+/g;
+  let m;
+  while ((m = re.exec(line)) !== null) {
+    if (!ARABIC_LABEL_TOKENS.has(m[0])) return true;
+  }
+  return false;
+}
+
 /** Decide whether a neighbour line looks like the "missing half" of
- *  a bilingual row vs. unrelated content. Only extend if the
- *  matched line is missing one script AND the neighbour provides
- *  exactly that missing script (and not the one we already have
- *  too much of, which would suggest it's a different field).
+ *  a bilingual row vs. unrelated content.
  *
- *  Conservative: when in doubt, don't extend. */
-function shouldExtendInto(neighbourLine, { matchedHasArabic, matchedHasLatin }) {
-  const neighbourHasArabic = /[\u0600-\u06FF\uFB50-\uFEFC]/.test(neighbourLine);
-  const neighbourHasLatin  = /[A-Za-z]/.test(neighbourLine);
+ *  Logic:
+ *    • If matched line already has VALUE content in both scripts,
+ *      neighbour can't add anything useful — don't extend.
+ *    • Otherwise, extend if the neighbour provides VALUE content in
+ *      a script the matched line lacks. The neighbour is allowed to
+ *      have content in BOTH scripts — we just need it to fill the
+ *      gap. This handles:
+ *        - PSL dental layout where the Latin name is on its own line
+ *          (no English label) and the Arabic + label line is below
+ *        - Reverse layout where English label + Latin is on top,
+ *          Arabic on its own line below
+ *
+ *  Uses VALUE detection (not just script-char presence) because
+ *  labels share the script. A line with just 'Practitioner Name'
+ *  has Latin chars but zero Latin VALUE — we still need to extend
+ *  to find the doctor's actual Latin name. */
+function shouldExtendInto(neighbourLine, matchedLine) {
+  const matchedHasLatinV  = lineHasLatinValue(matchedLine);
+  const matchedHasArabicV = lineHasArabicValue(matchedLine);
 
-  // If matched line already has both scripts, neighbour can't add
-  // anything useful.
-  if (matchedHasArabic && matchedHasLatin) return false;
+  // Already complete — neighbour can't add anything.
+  if (matchedHasLatinV && matchedHasArabicV) return false;
 
-  // If matched line has only Latin and neighbour has only Arabic,
-  // it's the missing half.
-  if (matchedHasLatin && !matchedHasArabic && neighbourHasArabic && !neighbourHasLatin) {
-    return true;
-  }
-  // If matched line has only Arabic and neighbour has only Latin,
-  // also the missing half.
-  if (matchedHasArabic && !matchedHasLatin && neighbourHasLatin && !neighbourHasArabic) {
-    return true;
-  }
-  // Anything else (neighbour has both, neighbour has same script
-  // as matched, etc.) — don't extend, too risky.
+  const neighbourHasLatinV  = lineHasLatinValue(neighbourLine);
+  const neighbourHasArabicV = lineHasArabicValue(neighbourLine);
+
+  // Extend if neighbour provides at least one missing piece.
+  if (!matchedHasLatinV  && neighbourHasLatinV)  return true;
+  if (!matchedHasArabicV && neighbourHasArabicV) return true;
+
   return false;
 }
 
