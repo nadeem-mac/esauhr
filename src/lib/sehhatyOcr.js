@@ -212,25 +212,83 @@ async function preprocessImage(blob) {
 // about whitespace and trailing punctuation since OCR can introduce
 // stray characters around words.
 
-/** Sehhaty leave ID. Sehhaty issues different prefixes depending on
- *  the leave type and the issuing clinic class:
- *    • GSL — General Sick Leave
- *    • PSL — confirmed in real-world certs (private clinic / dentistry)
- *    • Possibly MSL, CSL, etc. for maternity / companion leave
- *  We accept any 3-letter Latin prefix immediately followed (no space)
- *  by 10-16 alphanumerics. The optional hyphen between prefix and body
- *  is allowed for staff who type with a separator. We deliberately
- *  DON'T allow a space between prefix and body — that would let any
- *  3-letter English word followed by a long number falsely match
- *  (e.g. 'THE 12345678901234' on a PDF that happens to have those
- *  words near each other).
+/**
+ * Sehhaty leave-ID prefix taxonomy.
  *
- *  Example matches:  GSL26042340605, PSL260430135678,
- *                    GSL-26042340605 (with hyphen), psl260430135678 (lowercase). */
+ * Sehhaty assigns DIFFERENT 3-letter Latin prefixes depending on
+ * the leave type and the issuing clinic class. Sehhaty's prefix
+ * list is not publicly documented — we maintain this list based
+ * on real-world certs we've validated end-to-end against the Seha
+ * platform. Add a prefix here only after seeing a valid cert with
+ * that prefix.
+ *
+ * Adding new prefixes:
+ *   1. A staff member uploads a PDF whose leave ID has an unknown
+ *      prefix (something other than the entries below).
+ *   2. The matcher still extracts it (we accept any 3-letter Latin
+ *      prefix to be forgiving — see `matchLeaveId` below) but
+ *      console-warns 'Sehhaty leave-ID prefix not in known list'.
+ *   3. Bashaier verifies the cert is real on Seha.sa.
+ *   4. If real, add the prefix to this list with a comment about
+ *      what kind of cert it came from.
+ *
+ * Known prefixes (verified against real certs):
+ *   GSL — General Sick Leave (typical case from public hospitals)
+ *   PSL — Private Sick Leave (private clinics, e.g. dental)
+ *
+ * Suspected but not yet verified (do NOT add until a real cert is seen):
+ *   MSL — likely maternity leave
+ *   CSL — likely companion / accompanying patient leave
+ *   ESL — likely emergency or extended sick leave
+ *   These suspicions come from Sehhaty's leave-type listings; they
+ *   haven't crossed our desk yet so we don't claim knowledge of them.
+ *   The matcher will still accept these (and any other 3-letter
+ *   prefix) and log a warning — adding them here only happens after
+ *   we've validated end-to-end.
+ */
+export const SEHHATY_KNOWN_PREFIXES = ['GSL', 'PSL'];
+
+/** Sehhaty leave ID matcher.
+ *
+ *  Pattern: 3 Latin letters + optional hyphen + 10-16 alphanumerics.
+ *  Why no space: real Sehhaty IDs are always one contiguous token,
+ *  so allowing 'A space B' would let any English 3-letter word next
+ *  to a long number falsely match (e.g. 'THE 12345678901234' on a
+ *  PDF that happens to have those words near each other).
+ *
+ *  Forgiveness vs. strictness:
+ *  We accept ANY 3-letter prefix here — we don't restrict to the
+ *  known list above — because Sehhaty silently introduces new
+ *  prefixes for new leave types and we don't want to break on
+ *  something like a future MSL cert. Instead, when an extracted
+ *  ID's prefix isn't in SEHHATY_KNOWN_PREFIXES, we log a warning
+ *  to the console so we can spot the new prefix and add it after
+ *  Bashaier validates a sample. Bashaier's manual cross-check on
+ *  Seha.sa is the actual source of truth — the regex's job is
+ *  just to pull the candidate out of the text stream.
+ *
+ *  Example matches:
+ *    GSL26042340605       → {GSL: known}
+ *    PSL260430135678      → {PSL: known}
+ *    GSL-26042340605      → {GSL: known}, hyphen tolerated
+ *    psl260430135678      → {PSL: known}, lowercased input
+ *    XYZ26042340605       → extracted, console-warns "unknown prefix" */
 function matchLeaveId(text) {
   const m = text.match(/\b([A-Z]{3}-?[A-Z0-9]{10,16})\b/i);
   if (!m) return null;
-  return m[1].replace(/[\s-]/g, '').toUpperCase();
+  const normalised = m[1].replace(/[\s-]/g, '').toUpperCase();
+  // Tag the candidate prefix as known/unknown so callers (and us
+  // looking at the console while we expand the system) can spot
+  // any new Sehhaty prefix before it surprises us in production.
+  const prefix = normalised.slice(0, 3);
+  if (!SEHHATY_KNOWN_PREFIXES.includes(prefix)) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[sehhaty] Extracted a leave ID with unknown prefix "${prefix}" (full: ${normalised}). ` +
+      `If this turns out to be a valid cert, add the prefix to SEHHATY_KNOWN_PREFIXES in sehhatyOcr.js.`
+    );
+  }
+  return normalised;
 }
 
 /** Saudi national ID / Iqama — 10 digits. The Sehhaty page shows it

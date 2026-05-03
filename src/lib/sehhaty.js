@@ -6,8 +6,11 @@
 // Background: since 2022, all sick leaves in Saudi Arabia are issued
 // digitally through the Sehhaty platform. Paper certificates are no
 // longer accepted by HR. Each certificate carries a unique service
-// code (also called GSL / verification code) that HR uses to confirm
-// the certificate is real.
+// code (also called the leave ID or verification code) that HR uses
+// to confirm the certificate is real. The code starts with a 3-letter
+// prefix that varies by leave type (GSL = General Sick Leave,
+// PSL = Private Sick Leave, etc.) followed by 10-16 alphanumerics.
+// See SEHHATY_KNOWN_PREFIXES in sehhatyOcr.js for the maintained list.
 //
 // There is no public REST API for verification — HR enters the
 // service code on Sehhaty's website manually. This module's job is
@@ -75,7 +78,8 @@ export function classifySickLeaveBracket(yearToDate, requestDays) {
 /**
  * Light-touch validation on the service code as the user types.
  * Sehhaty codes are typically 8–14 digits depending on the issuing
- * source, sometimes preceded by 'GSL' or similar. We don't reject
+ * source, sometimes preceded by a Sehhaty prefix like 'GSL', 'PSL',
+ * etc. We don't reject
  * anything — just normalise (strip spaces, uppercase) so the stored
  * value is consistent.
  */

@@ -860,7 +860,8 @@ export default function HrApprovalModal({ request, employee, manager, substitute
               />
 
               {/* Sehhaty mirror — visually matches the inquiry result
-                  page on seha.sa: top two boxes for GSL leave ID +
+                  page on seha.sa: top two boxes for the leave ID
+                  (any Sehhaty prefix — GSL, PSL, etc.) and the
                   Iqama/National ID, then a gray rounded card with
                   the Arabic-labeled fields in a two-column RTL grid.
                   Each field is auto-filled by the OCR paste above
@@ -1223,9 +1224,10 @@ function SehhatyMirror({
 
   return (
     <div className="space-y-3">
-      {/* Top: GSL box (leave ID from request, validated against
-          OCR-extracted code in the OCR step itself) and Iqama box
-          (typed/auto-filled, recorded for audit only). */}
+      {/* Top: leave ID box (any Sehhaty prefix — value comes from
+          the request and is validated against the OCR-extracted code
+          in the OCR step itself) and Iqama box (typed/auto-filled,
+          recorded for audit only). */}
       <div className="space-y-2">
         <SehhatyTopBox
           value={request?.sehhaty_code || ''}
