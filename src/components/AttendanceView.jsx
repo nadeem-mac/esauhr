@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Upload, FileText, Clock, AlertTriangle, Mail, CheckCircle2,
   X, Calendar, Briefcase, Users, Send, Sparkles, Layers, Sunrise
@@ -599,8 +600,27 @@ export default function AttendanceView({ me, employees }) {
   // shape here once at ingestion time so detection stays untouched —
   // less risk of regressing the shift-override and weekend handling
   // that already work.
+  // Shape parsed rows for the detection logic, AND filter to just the
+  // file's data date. The xlsx export sometimes contains rows for
+  // adjacent dates (we've seen 3-day windows in real exports — likely
+  // a device firmware quirk where the daily file pulls a small look-
+  // back). Without filtering, those off-date rows feed into detection
+  // and produce ghost violations against staff for days that aren't
+  // even being reviewed (e.g. a Saturday partial punch flagged as a
+  // weekday late arrival). Confirmed via real-file repro May 3 2026:
+  // employee H94091 appeared as both LATE 10:33 and EARLY 13:07 because
+  // his actual May 3 row (07:43–17:13, on time) was being shadowed by
+  // a Saturday May 2 row (a KSA weekend, no review expected at all).
+  //
+  // Filter rule: keep rows where r.date === parsedData.dataDate. The
+  // off-date row count is surfaced via parsed.offDateCount so we can
+  // optionally warn the user that the file is multi-day.
   const parsed = useMemo(() => {
-    const rows = (parsedData.rows || []).map(r => ({
+    const allRows = parsedData.rows || [];
+    const targetDate = parsedData.dataDate;
+    const onDate = targetDate ? allRows.filter(r => r.date === targetDate) : allRows;
+    const offDateCount = allRows.length - onDate.length;
+    const rows = onDate.map(r => ({
       'Employee ID': r.psn,
       'First Name':  r.name,
       'Date':        r.date,
@@ -610,7 +630,7 @@ export default function AttendanceView({ me, employees }) {
       // uniqueCount / midDayPunches / rawPunches without re-parsing.
       _tc: r,
     }));
-    return { headers: ['Employee ID','First Name','Date','First Punch','Last Punch'], rows };
+    return { headers: ['Employee ID','First Name','Date','First Punch','Last Punch'], rows, offDateCount };
   }, [parsedData]);
 
   const csvDate = useMemo(() => parsedData.dataDate || null, [parsedData.dataDate]);
@@ -991,6 +1011,40 @@ export default function AttendanceView({ me, employees }) {
         out.onTime.push({ id: 'row-' + idx, employee: emp, punchInStr, punchOutStr });
       }
     });
+
+    // Partial-day collapse: an employee who was BOTH late AND early on
+    // the same day was previously listed in both sections — producing
+    // two separate notices for what is really a single partial-day
+    // event (e.g. came in 10:33, left 13:07). That created duplicate
+    // emails and inflated the summary counts. Collapse: keep them in
+    // LATE only, and decorate that entry with alsoEarly so the row
+    // can show "ALSO LEFT EARLY at HH:MM" without needing a second
+    // section. Single entry, single email, single button — minimal
+    // dispute surface area.
+    //
+    // Why LATE not EARLY: chronologically the late arrival is the
+    // first violation of the day, and the late email is the more
+    // common recipient flow Bashaier already exercises. Keeping it
+    // in the early bucket would break the "came in / left early"
+    // mental model.
+    const earlyByEmpId = new Map(out.early.map(e => [e.employee.id, e]));
+    out.late = out.late.map(l => {
+      const matchingEarly = earlyByEmpId.get(l.employee.id);
+      if (!matchingEarly) return l;
+      return {
+        ...l,
+        alsoEarly: {
+          punchOutStr:  matchingEarly.punchOutStr,
+          minutesEarly: matchingEarly.minutesEarly,
+          scheduledEnd: matchingEarly.scheduledEnd,
+          permission:   matchingEarly.permission,
+          permStatus:   matchingEarly.permStatus,
+        },
+      };
+    });
+    const lateEmpIds = new Set(out.late.map(l => l.employee.id));
+    out.early = out.early.filter(e => !lateEmpIds.has(e.employee.id));
+
     return out;
   }, [parsed.rows, empById, empByDigits, onLeaveOnDate, csvIsWeekend, shiftOverrideById, permIndex]);
 
@@ -1600,6 +1654,7 @@ export default function AttendanceView({ me, employees }) {
           csvDate={csvDate}
           isWeekend={csvIsWeekend}
           totalRows={parsed.rows.length}
+          offDateCount={parsed.offDateCount}
           counts={{
             late: detection.late.length,
             early: detection.early.length,
@@ -1608,6 +1663,7 @@ export default function AttendanceView({ me, employees }) {
             onLeave: detection.onLeave.length,
             unknown: detection.unknownEmp.length,
           }}
+          detection={detection}
           actionsEnabled={actionsEnabled}
           onToggleActions={() => setActionsEnabled(v => !v)}
           isDuplicate={!!existingUpload}
@@ -1808,6 +1864,15 @@ export default function AttendanceView({ me, employees }) {
                 permBadge = { tone: 'red', text: 'BEYOND PERMISSION' };
               } else {
                 permBadge = { tone: 'red', text: 'NO PERMISSION' };
+              }
+              // Partial-day suffix: this employee was also flagged for
+              // early departure on the same day. We've collapsed both
+              // into this single late entry to avoid duplicate emails;
+              // surface the early-leave info so Bashaier sees the full
+              // picture before deciding what to do.
+              if (e.alsoEarly) {
+                detail = detail + ' · Also left early at ' + e.alsoEarly.punchOutStr
+                  + ' (' + e.alsoEarly.minutesEarly + ' min before ' + e.alsoEarly.scheduledEnd + ')';
               }
               return {
                 ...e,
@@ -2055,7 +2120,12 @@ export default function AttendanceView({ me, employees }) {
 
 // ─── Sub-components ──────────────────────────────────────────────────────
 
-function FileSummary({ fileName, csvDate, isWeekend, totalRows, counts, actionsEnabled, onToggleActions, isDuplicate, onReset }) {
+function FileSummary({ fileName, csvDate, isWeekend, totalRows, offDateCount = 0, counts, detection, actionsEnabled, onToggleActions, isDuplicate, onReset }) {
+  // Drill-down state — which category's list is currently open in
+  // the breakdown modal. null = closed. Clicking any tile sets this;
+  // the modal portals over the page until dismissed.
+  const [drillKind, setDrillKind] = useState(null);
+
   return (
     <div className="rounded-2xl border bg-white p-3 sm:p-5" style={{ borderColor: '#D4C7AB' }}>
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -2071,14 +2141,25 @@ function FileSummary({ fileName, csvDate, isWeekend, totalRows, counts, actionsE
             {isWeekend && <span style={{ color: '#A16207', marginLeft: '8px' }}>(KSA weekend — skipped)</span>}
             {' · '}<strong>{totalRows}</strong> rows parsed
           </div>
+          {/* Off-date warning — surfaces when the export contains
+              rows for dates other than the file's primary date.
+              Mohiadeen's May 3 2026 case: the file held 8 rows for
+              May 1, 19 rows for May 2, and 52 rows for May 3. The
+              detection only acts on the May 3 rows now, but Bashaier
+              should know the file is multi-day so she can spot a
+              wrong export early. */}
+          {offDateCount > 0 && (
+            <div className="text-xs mt-1.5 inline-flex items-center gap-1.5 px-2 py-1 rounded-md"
+                 style={{ background: '#FFFBEB', border: '1px solid #FDE68A', color: '#0A0A0A' }}>
+              <AlertTriangle className="w-3.5 h-3.5" style={{ color: '#92400E' }}/>
+              <span>
+                <strong>{offDateCount}</strong> row{offDateCount === 1 ? '' : 's'} for other dates ignored.
+                Detection runs on the {totalRows}-row {csvDate ? formatDateLong(csvDate) : ''} subset only.
+              </span>
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Actions toggle. When OFF, every email/bulk button on the
-              page renders as a disabled placeholder so Bashaier can
-              study the data without risk of accidentally triggering
-              an email. Auto-OFF on duplicate uploads (handled in the
-              parent component) — toggle here lets her override either
-              default. */}
           {typeof onToggleActions === 'function' && (
             <button onClick={onToggleActions}
               className="text-xs px-3 py-1.5 rounded-full border flex items-center gap-1.5"
@@ -2113,27 +2194,225 @@ function FileSummary({ fileName, csvDate, isWeekend, totalRows, counts, actionsE
 
       {!isWeekend && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-4">
-          <CountPill icon="✓"  label="On time"   count={counts.onTime} color="#047857" tint="#ECFDF5"/>
-          <CountPill icon="⚠"  label="Late"      count={counts.late}    color="#BE123C" tint="#FFF1F2"/>
-          <CountPill icon="⏰" label="Left early" count={counts.early}   color="#A16207" tint="#FEFCE8"/>
-          <CountPill icon="🔇" label="Missed punch" count={counts.missed} color="#1D4ED8" tint="#EFF6FF"/>
-          <CountPill icon="🌴" label="On leave"  count={counts.onLeave} color="#0E7490" tint="#ECFEFF"/>
-          <CountPill icon="?"  label="Unknown"   count={counts.unknown} color="#991B1B" tint="#FEF2F2"/>
+          <CountPill kind="onTime"  icon="✓"  label="On time"     count={counts.onTime}  color="#047857" tint="#ECFDF5" onClick={() => setDrillKind('onTime')}/>
+          <CountPill kind="late"    icon="⚠"  label="Late"        count={counts.late}    color="#BE123C" tint="#FFF1F2" onClick={() => setDrillKind('late')}/>
+          <CountPill kind="early"   icon="⏰" label="Left early"   count={counts.early}   color="#A16207" tint="#FEFCE8" onClick={() => setDrillKind('early')}/>
+          <CountPill kind="missed"  icon="🔇" label="Missed punch" count={counts.missed}  color="#1D4ED8" tint="#EFF6FF" onClick={() => setDrillKind('missed')}/>
+          <CountPill kind="onLeave" icon="🌴" label="On leave"     count={counts.onLeave} color="#0E7490" tint="#ECFEFF" onClick={() => setDrillKind('onLeave')}/>
+          <CountPill kind="unknown" icon="?"  label="Unknown"      count={counts.unknown} color="#991B1B" tint="#FEF2F2" onClick={() => setDrillKind('unknown')}/>
         </div>
+      )}
+
+      {/* Breakdown modal — opens when any tile is clicked. Lists every
+          employee in the chosen category with their relevant detail
+          line. Read-only — actions still happen in the per-section
+          rows below. This is purely a "who's in this bucket?"
+          drill-down so Bashaier can scan a category at a glance. */}
+      {drillKind && detection && (
+        <BreakdownModal
+          kind={drillKind}
+          detection={detection}
+          csvDate={csvDate}
+          onClose={() => setDrillKind(null)}
+        />
       )}
     </div>
   );
 }
 
-function CountPill({ icon, label, count, color, tint }) {
+function CountPill({ icon, label, count, color, tint, onClick }) {
+  const isInteractive = typeof onClick === 'function' && count > 0;
+  const Tag = isInteractive ? 'button' : 'div';
+  // When interactive (count > 0), render as a button with a subtle
+  // hover lift and a focus ring matching the tile's accent colour.
+  // When count is zero, drop the affordance — there's nothing to
+  // drill into, so the tile reads as static at a glance.
   return (
-    <div className="rounded-xl p-3" style={{ background: tint }}>
+    <Tag
+      type={isInteractive ? 'button' : undefined}
+      onClick={isInteractive ? onClick : undefined}
+      className={
+        'rounded-xl p-3 text-left transition-all '
+        + (isInteractive
+            ? 'cursor-pointer hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 focus:outline-none focus:ring-2 focus:ring-offset-1'
+            : 'cursor-default')
+      }
+      style={{ background: tint, ...(isInteractive ? { outlineColor: color } : {}) }}
+      title={isInteractive ? `View all ${count} ${label.toLowerCase()} entries` : undefined}>
       <div className="flex items-center gap-2" style={{ color }}>
         <span style={{ fontSize: '16px' }}>{icon}</span>
         <span className="text-[10px]" style={{ letterSpacing: '0.18em', fontWeight: 700, color: '#1F1B16' }}>{label.toUpperCase()}</span>
       </div>
-      <div className="mt-1" style={{ fontSize: '24px', fontWeight: 700, color, lineHeight: 1 }}>{count}</div>
-    </div>
+      <div className="mt-1 flex items-baseline gap-2">
+        <span style={{ fontSize: '24px', fontWeight: 700, color, lineHeight: 1 }}>{count}</span>
+        {isInteractive && (
+          <span className="text-[10px]" style={{ color, opacity: 0.7, fontWeight: 600 }}>
+            view →
+          </span>
+        )}
+      </div>
+    </Tag>
+  );
+}
+
+// ─── Breakdown modal ─────────────────────────────────────────────────────
+// Opens when a CountPill is clicked. Renders the full list of employees
+// in the chosen category. Pure read-only — no email/action buttons here
+// (those still live in the per-section Late / Early / Missed cards
+// below). The point is to let Bashaier scan the bucket at a glance:
+// "Who are the 22 late people?" without scrolling through the full
+// section. Especially useful for ON-TIME and ON-LEAVE which don't have
+// dedicated sections lower down on the page.
+function BreakdownModal({ kind, detection, csvDate, onClose }) {
+  // Body scroll lock + Esc-to-close, same pattern as PermissionTimelineModal.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  const config = {
+    onTime:  { title: 'On time',     accent: '#047857', tint: '#ECFDF5', icon: '✓',  empty: 'No one on time on this date.' },
+    late:    { title: 'Late',        accent: '#BE123C', tint: '#FFF1F2', icon: '⚠',  empty: 'Nobody arrived late — well done team.' },
+    early:   { title: 'Left early',  accent: '#A16207', tint: '#FEFCE8', icon: '⏰', empty: 'Nobody left early.' },
+    missed:  { title: 'Missed punch',accent: '#1D4ED8', tint: '#EFF6FF', icon: '🔇', empty: 'No missed punches recorded.' },
+    onLeave: { title: 'On leave',    accent: '#0E7490', tint: '#ECFEFF', icon: '🌴', empty: 'Nobody on approved leave today.' },
+    unknown: { title: 'Unknown',     accent: '#991B1B', tint: '#FEF2F2', icon: '?',  empty: 'No unrecognised employees in the file.' },
+  };
+  const cfg = config[kind] || config.late;
+  const entries = detection[kind === 'unknown' ? 'unknownEmp' : kind] || [];
+
+  // Per-kind detail line. Each branch handles the entry shape that
+  // detection.* produces — they're not all identical.
+  const detailFor = (e) => {
+    if (kind === 'late') {
+      let d = `Punched in at ${e.punchInStr} · ${e.minutesLate} min after grace`;
+      if (e.permission) d += ` · permitted to ${String(e.permission.time_to || '').slice(0,5)}`;
+      else d += ' · no permission';
+      if (e.alsoEarly) d += ` · also left early at ${e.alsoEarly.punchOutStr}`;
+      return d;
+    }
+    if (kind === 'early') {
+      let d = `Punched out at ${e.punchOutStr} · ${e.minutesEarly} min before ${e.scheduledEnd}`;
+      if (e.permission) d += ` · permitted from ${String(e.permission.time_from || '').slice(0,5)}`;
+      else d += ' · no permission';
+      return d;
+    }
+    if (kind === 'missed') {
+      return e.missingType === 'both' ? 'Both punch-in and punch-out missing'
+           : e.missingType === 'in'   ? 'No punch-in on record'
+                                      : 'No punch-out on record';
+    }
+    if (kind === 'onTime') {
+      return `In ${e.punchInStr || '—'} · Out ${e.punchOutStr || '—'}`;
+    }
+    if (kind === 'onLeave') {
+      return 'Approved leave on file — excluded from violation checks';
+    }
+    if (kind === 'unknown') {
+      return `File listed: "${e.csvName || '(no name)'}" · ID ${e.empId || '?'} — not in employee directory`;
+    }
+    return '';
+  };
+
+  // Resolve display name + employee id for each entry shape.
+  const nameOf = (e) => e.employee?.name || e.csvName || '(unknown)';
+  const psnOf  = (e) => e.employee?.id   || e.empId   || '';
+  const deptOf = (e) => e.employee?.department || '';
+
+  return createPortal(
+    <div
+      onClick={(ev) => { if (ev.target === ev.currentTarget) onClose(); }}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        background: 'rgba(15, 23, 42, 0.55)',
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        padding: '40px 16px', overflowY: 'auto',
+      }}>
+      <div
+        className="w-full max-w-2xl rounded-2xl border"
+        style={{
+          borderColor: '#D4C7AB',
+          background: '#FFFDF7',
+          boxShadow: '0 12px 40px rgba(31,27,22,0.18)',
+        }}>
+        {/* Header */}
+        <div className="flex items-start justify-between px-6 py-5 border-b"
+             style={{ borderColor: '#E5E0D5', background: cfg.tint }}>
+          <div>
+            <div className="inline-flex items-center gap-2 mb-1">
+              <span style={{ fontSize: '18px' }}>{cfg.icon}</span>
+              <span className="text-[10px] tracking-[0.25em]"
+                    style={{ fontWeight: 700, color: '#0A0A0A' }}>
+                {cfg.title.toUpperCase()}
+              </span>
+            </div>
+            <h2 style={{ fontFamily: 'Georgia, serif', fontSize: '22px', color: cfg.accent, fontWeight: 500 }}>
+              {entries.length} {entries.length === 1 ? 'employee' : 'employees'}
+            </h2>
+            <div className="text-xs mt-1" style={{ color: '#0A0A0A' }}>
+              {csvDate ? formatDateLong(csvDate) : ''}
+            </div>
+          </div>
+          <button type="button" onClick={onClose}
+            className="p-1.5 rounded-full hover:bg-black/5 transition-colors flex-shrink-0"
+            aria-label="Close">
+            <X className="w-4 h-4" style={{ color: '#0A0A0A' }}/>
+          </button>
+        </div>
+
+        {/* List */}
+        {entries.length === 0 ? (
+          <div className="p-8 text-center text-sm" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+            {cfg.empty}
+          </div>
+        ) : (
+          <ul className="p-3 space-y-1.5 max-h-[60vh] overflow-y-auto">
+            {entries.map((e, i) => (
+              <li key={e.id || `entry-${i}`}
+                  className="rounded-lg border px-3 py-2.5"
+                  style={{ background: '#FFFFFF', borderColor: '#E5E0D5' }}>
+                <div className="flex items-baseline gap-2 flex-wrap">
+                  <span style={{ fontWeight: 700, color: '#0A0A0A', fontSize: '14px' }}>
+                    {nameOf(e)}
+                  </span>
+                  {psnOf(e) && (
+                    <span className="text-xs" style={{ color: '#0A0A0A', opacity: 0.6 }}>
+                      · {psnOf(e)}
+                    </span>
+                  )}
+                  {deptOf(e) && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded font-bold tracking-wider"
+                          style={{ background: cfg.tint, color: cfg.accent }}>
+                      {deptOf(e)}
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs mt-0.5" style={{ color: '#0A0A0A', opacity: 0.85 }}>
+                  {detailFor(e)}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {/* Footer */}
+        <div className="px-5 py-3 border-t flex items-center justify-end"
+             style={{ borderColor: '#E5E0D5', background: '#FAF6EC' }}>
+          <button type="button" onClick={onClose}
+            className="text-xs px-4 py-2 rounded-full"
+            style={{ background: '#0A0A0A', color: '#FFFDF7', fontWeight: 500 }}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 
