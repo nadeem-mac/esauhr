@@ -29,6 +29,13 @@ const DEFAULT_START = '09:00';
 const DEFAULT_END   = '17:00';
 const WEEKS_AHEAD = 3; // current + next 3 → 4 total
 const SAR_LOCALE = 'en-GB';
+// Full hour options 00:00 – 23:00 used by the custom-hour selects in
+// the time-editor panel. Hour granularity only — managers don't pick
+// minutes, so the existing "HH:MM" string format stays consistent
+// (always "HH:00") for storage and matchers.
+const HOUR_OPTIONS = Array.from({ length: 24 }, (_, h) =>
+  `${String(h).padStart(2, '0')}:00`
+);
 
 // ── Date helpers ────────────────────────────────────────────────────────────
 function startOfSundayWeek(d) {
@@ -59,9 +66,14 @@ function fmtRange(start, end) {
 }
 
 function trimTime(t) {
-  // Postgres time → 'HH:MM:SS' or 'HH:MM' — normalise to 'HH:MM'
+  // Postgres time → 'HH:MM:SS' or 'HH:MM' — normalise to 'HH:00'.
+  // The shift card only stores hour-granularity times now, so any
+  // half-hour or minute-level rows from older data are floored to
+  // the start of the hour. Keeps the select dropdowns rendering
+  // cleanly (no empty value when an old row carries 09:30 etc).
   if (!t) return DEFAULT_START;
-  return String(t).slice(0, 5);
+  const hh = String(t).slice(0, 2);
+  return /^\d{2}$/.test(hh) ? `${hh}:00` : DEFAULT_START;
 }
 
 // ── Component ───────────────────────────────────────────────────────────────
@@ -264,14 +276,17 @@ export default function ManagerShiftCard({ me, employees }) {
     setError('');
     setToast('');
 
-    // Validate: end > start for every "on" day not in the past
+    // Validate: end != start for every "on" day not in the past.
+    // Overnight shifts (start > end, e.g. 23:00 -> 07:00 Mawani
+    // night shift) are valid — end-time is interpreted as next day.
+    // Only zero-length (start === end) is rejected.
     const invalid = days.find(d => {
       if (d < today) return false;
       const s = shifts[ymd(d)];
-      return s?.on && s.start >= s.end;
+      return s?.on && s.start === s.end;
     });
     if (invalid) {
-      setError(`End time must be after start time on ${invalid.toLocaleDateString(SAR_LOCALE, { weekday: 'short', day: 'numeric', month: 'short' })}.`);
+      setError(`Start and end time must be different on ${invalid.toLocaleDateString(SAR_LOCALE, { weekday: 'short', day: 'numeric', month: 'short' })}.`);
       setSaving(false);
       return;
     }
@@ -380,9 +395,17 @@ export default function ManagerShiftCard({ me, employees }) {
 
   // Time-preset matchers — used to highlight the chip whose hours
   // match what's currently on the selected day. "Custom" lights up
-  // when neither preset matches.
-  const PRESET_9_5 = { start: '09:00', end: '17:00', label: '9 \u2013 5' };
-  const PRESET_8_4 = { start: '08:00', end: '16:00', label: '8 \u2013 4' };
+  // when none of the presets match.
+  //
+  // The Night preset is set to 23:00 – 07:00 to align with the
+  // Saudi Labor Law definition of night work (11 PM – 6 AM, the
+  // window that triggers night-work protections + transport-allowance
+  // obligations under MHRSD guidance). Mawani as port-operations
+  // regulator works under that same labor-law framework, so this
+  // is the regulation-aligned 8-hour night shift.
+  const PRESET_9_5   = { start: '09:00', end: '17:00', label: '9 \u2013 5' };
+  const PRESET_8_4   = { start: '08:00', end: '16:00', label: '8 \u2013 4' };
+  const PRESET_NIGHT = { start: '23:00', end: '07:00', label: 'Night 23 \u2013 07' };
   const focusedShift  = selectedDay ? shifts[selectedDay] : null;
   const matchPreset = (p) =>
     focusedShift?.start === p.start && focusedShift?.end === p.end;
@@ -434,42 +457,49 @@ export default function ManagerShiftCard({ me, employees }) {
                   onClick={() => setStaffId(staff.id)}
                   className="flex-none flex items-center gap-2.5 px-3 py-2.5 rounded-lg transition-all"
                   style={{
-                    minWidth: 170,
+                    minWidth: 190,
                     border: isSel
-                      ? '2px solid var(--evergreen-600)'
+                      ? '2px solid var(--evergreen-700, #0F4C2A)'
                       : '0.5px solid var(--border)',
-                    background: isSel ? 'var(--evergreen-50, #ECFDF5)' : 'var(--paper-2)',
+                    background: isSel ? 'var(--evergreen-600)' : 'var(--paper-2)',
                     cursor: 'pointer',
+                    boxShadow: isSel ? '0 2px 8px rgba(15, 76, 42, 0.25)' : 'none',
+                    transform: isSel ? 'translateY(-1px)' : 'none',
                   }}
                   aria-pressed={isSel}
-                  title={`${staff.name || staff.id} — ${staff.department || staff.location || ''}`}
+                  title={`${staff.name || staff.id} \u2014 ${staff.id}${staff.department ? ' \u2014 ' + staff.department : ''}`}
                 >
                   <div
                     className="rounded-full flex-none flex items-center justify-center"
                     style={{
-                      width: 32, height: 32,
-                      background: isSel ? 'var(--evergreen-600)' : 'var(--paper-3, #E8E0CC)',
-                      color: isSel ? '#FFFFFF' : '#0A0A0A',
-                      fontWeight: 700, fontSize: '11px', letterSpacing: '0.04em',
+                      width: 36, height: 36,
+                      background: isSel ? '#FFFFFF' : 'var(--paper-3, #E8E0CC)',
+                      color: isSel ? 'var(--evergreen-700, #0F4C2A)' : '#0A0A0A',
+                      fontWeight: 700, fontSize: '12px', letterSpacing: '0.04em',
                     }}
                   >
                     {getInitials(staff.name)}
                   </div>
-                  <div className="text-left min-w-0">
+                  <div className="text-left min-w-0 flex-1">
                     <div className="text-sm leading-tight" style={{
-                      color: isSel ? 'var(--evergreen-700, #0F4C2A)' : '#0A0A0A',
-                      fontWeight: isSel ? 600 : 500,
+                      color: isSel ? '#FFFFFF' : '#0A0A0A',
+                      fontWeight: isSel ? 700 : 500,
                       whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                     }}>
                       {staff.name || staff.id}
                     </div>
                     <div className="text-[11px] mt-0.5" style={{
-                      color: '#0A0A0A',
+                      color: isSel ? '#FFFFFF' : '#0A0A0A',
                       opacity: isSel ? 0.85 : 0.65,
+                      fontVariantNumeric: 'tabular-nums',
+                      whiteSpace: 'nowrap',
                     }}>
-                      {staff.department || staff.location || '\u2014'}
+                      {staff.id}{staff.department ? ' \u00B7 ' + staff.department : ''}
                     </div>
                   </div>
+                  {isSel && (
+                    <CheckCircle2 className="w-4 h-4 flex-none" style={{ color: '#FFFFFF' }} />
+                  )}
                 </button>
               );
             })}
@@ -579,7 +609,17 @@ export default function ManagerShiftCard({ me, employees }) {
                 } else if (kind === 'declined') {
                   bg = 'var(--clay-50, #FCF1ED)'; fg = '#0A0A0A'; br = '0.5px solid var(--clay-200, #E5C5BD)'; label = 'Declined';
                 } else if (kind === 'on') {
-                  bg = 'var(--evergreen-50, #ECFDF5)'; fg = 'var(--evergreen-700, #0F4C2A)'; br = '0.5px solid var(--evergreen-200, #BBDEC0)'; label = `${s.start}\u2013${s.end}`;
+                  bg = 'var(--evergreen-50, #ECFDF5)';
+                  fg = 'var(--evergreen-700, #0F4C2A)';
+                  br = '0.5px solid var(--evergreen-200, #BBDEC0)';
+                  // Overnight shift indicator: end < start means the
+                  // shift crosses midnight (e.g. 23:00 -> 07:00). The
+                  // arrow on the label hints at the next-day end without
+                  // making the cell taller than its peers.
+                  const overnight = s.start && s.end && s.start > s.end;
+                  label = overnight
+                    ? `${s.start}\u2192${s.end}`
+                    : `${s.start}\u2013${s.end}`;
                 } else {
                   bg = 'var(--paper-2)'; fg = '#0A0A0A'; br = '0.5px solid var(--border)'; label = 'Off';
                 }
@@ -653,7 +693,7 @@ export default function ManagerShiftCard({ me, employees }) {
                     QUICK PRESETS
                   </div>
                   <div className="flex gap-1.5 flex-wrap mb-3">
-                    {[PRESET_9_5, PRESET_8_4].map((p) => {
+                    {[PRESET_9_5, PRESET_8_4, PRESET_NIGHT].map((p) => {
                       const active = matchPreset(p);
                       return (
                         <button
@@ -680,7 +720,7 @@ export default function ManagerShiftCard({ me, employees }) {
                     <span
                       className="px-3 py-1.5 rounded-full text-xs"
                       style={{
-                        border: !matchPreset(PRESET_9_5) && !matchPreset(PRESET_8_4)
+                        border: !matchPreset(PRESET_9_5) && !matchPreset(PRESET_8_4) && !matchPreset(PRESET_NIGHT)
                           ? '2px solid var(--evergreen-600)'
                           : '0.5px solid var(--border-soft)',
                         background: 'transparent',
@@ -693,23 +733,32 @@ export default function ManagerShiftCard({ me, employees }) {
                     </span>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap mb-2">
-                    <input
-                      type="time"
+                    <select
                       value={shifts[selectedDay].start}
                       onChange={(e) => setField(selectedDay, 'start', e.target.value)}
                       className="px-2 py-1.5 rounded border text-sm bg-white"
-                      style={{ borderColor: 'var(--border)', color: '#0A0A0A' }}
-                      aria-label="Start time"
-                    />
+                      style={{ borderColor: 'var(--border)', color: '#0A0A0A', fontVariantNumeric: 'tabular-nums', minWidth: 90 }}
+                      aria-label="Start hour"
+                    >
+                      {HOUR_OPTIONS.map((h) => (
+                        <option key={h} value={h}>{h} hrs</option>
+                      ))}
+                    </select>
                     <span className="text-sm" style={{ color: '#0A0A0A', opacity: 0.7 }}>&rarr;</span>
-                    <input
-                      type="time"
+                    <select
                       value={shifts[selectedDay].end}
                       onChange={(e) => setField(selectedDay, 'end', e.target.value)}
                       className="px-2 py-1.5 rounded border text-sm bg-white"
-                      style={{ borderColor: 'var(--border)', color: '#0A0A0A' }}
-                      aria-label="End time"
-                    />
+                      style={{ borderColor: 'var(--border)', color: '#0A0A0A', fontVariantNumeric: 'tabular-nums', minWidth: 90 }}
+                      aria-label="End hour"
+                    >
+                      {HOUR_OPTIONS.map((h) => (
+                        <option key={h} value={h}>{h} hrs</option>
+                      ))}
+                    </select>
+                    <span className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.6 }}>
+                      hour granularity only
+                    </span>
                   </div>
                   <button
                     type="button"
