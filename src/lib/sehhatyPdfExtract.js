@@ -217,10 +217,18 @@ async function loadPdfjs() {
  *
  * Solution: tolerance-based bucketing. Two items are considered to be
  * on the same line if their y-coordinates differ by less than
- * Y_TOLERANCE (3 units — comfortably less than a line of text height,
- * but enough to absorb sub-pixel drift between fonts).
+ * Y_TOLERANCE.
+ *
+ * Tolerance value (1.5) is calibrated to:
+ *   • Absorb sub-pixel font-metric drift between Arabic and Latin
+ *     glyphs in the SAME row (typically < 1 unit difference)
+ *   • NOT merge adjacent rows of the table — Sehhaty's row spacing
+ *     is ~16-20 points, so tolerance well below that is safe
+ *
+ * Earlier value of 3 was too aggressive — it merged the doctor row's
+ * wrap line with the specialty row when the wrap text was close.
  */
-const Y_TOLERANCE = 3;
+const Y_TOLERANCE = 1.5;
 
 function stitchTextItems(items) {
   if (!items || !items.length) return '';

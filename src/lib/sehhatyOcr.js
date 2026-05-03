@@ -568,8 +568,10 @@ function findLine(text, predicate) {
  *  bilingual table row onto SEPARATE lines (because the two scripts
  *  rendered with slightly different y-coordinates), we need to
  *  combine them. This helper finds the line matching the predicate
- *  AND extends the match to include immediately-adjacent neighbour
- *  lines that don't themselves match a different field's predicate.
+ *  AND optionally extends the match to include the immediately-
+ *  adjacent neighbour line ONLY when that neighbour is the missing
+ *  half of the same field (carries the script the matched line
+ *  doesn't have).
  *
  *  @param text         full extracted text
  *  @param predicate    line-match function for the target field
@@ -585,40 +587,143 @@ function findFieldLines(text, predicate, otherPredicates = []) {
   }
   if (firstIdx < 0) return null;
 
-  // Walk both directions from the matched line. Include neighbours
-  // that DON'T match any of the other-field predicates — they're
-  // assumed to belong to the same field row that pdfjs split into
-  // multiple "lines".
+  // Walk neighbours conservatively. Extension rules:
+  //   • At most 1 line in each direction (was 2 — too aggressive,
+  //     ate footer text on the last field of the document).
+  //   • Stop at any line that matches another known field.
+  //   • Stop at any line that looks like footer/boilerplate
+  //     (URLs, bare timestamps, 'To check the report' boilerplate,
+  //     'Family Dental Clinic' clinic-letterhead text, etc.) —
+  //     see isFooterContent below.
+  //   • CRUCIAL: only extend if the neighbour adds the MISSING
+  //     script half. If the matched line already has both Arabic
+  //     and Latin content, no extension is needed; consuming an
+  //     extra line in that case can only HURT (it's footer or
+  //     unrelated wrap).
   const isOtherField = (line) => otherPredicates.some(p => p(line));
 
-  const collected = [lines[firstIdx]];
+  const matchedLine = lines[firstIdx];
+  const matchedHasArabic = /[\u0600-\u06FF\uFB50-\uFEFC]/.test(matchedLine);
+  const matchedHasLatin  = /[A-Za-z]/.test(matchedLine);
+  const collected = [matchedLine];
 
-  // Walk backwards (towards earlier lines)
-  for (let i = firstIdx - 1; i >= 0 && i >= firstIdx - 2; i--) {
-    if (isOtherField(lines[i])) break;
-    if (predicate(lines[i])) break; // already matched in own group
-    collected.unshift(lines[i]);
+  // Try one line above (covers the case where Arabic half rendered
+  // slightly higher than Latin in the same row).
+  if (firstIdx - 1 >= 0) {
+    const prev = lines[firstIdx - 1];
+    if (!isOtherField(prev) && !predicate(prev) && !isFooterContent(prev) &&
+        shouldExtendInto(prev, { matchedHasArabic, matchedHasLatin })) {
+      collected.unshift(prev);
+    }
   }
 
-  // Walk forwards (towards later lines)
-  for (let i = firstIdx + 1; i < lines.length && i <= firstIdx + 2; i++) {
-    if (isOtherField(lines[i])) break;
-    if (predicate(lines[i])) break;
-    collected.push(lines[i]);
+  // Try one line below.
+  if (firstIdx + 1 < lines.length) {
+    const next = lines[firstIdx + 1];
+    if (!isOtherField(next) && !predicate(next) && !isFooterContent(next) &&
+        shouldExtendInto(next, { matchedHasArabic, matchedHasLatin })) {
+      collected.push(next);
+    }
   }
 
   return collected.join(' ');
+}
+
+/** Decide whether a neighbour line looks like the "missing half" of
+ *  a bilingual row vs. unrelated content. Only extend if the
+ *  matched line is missing one script AND the neighbour provides
+ *  exactly that missing script (and not the one we already have
+ *  too much of, which would suggest it's a different field).
+ *
+ *  Conservative: when in doubt, don't extend. */
+function shouldExtendInto(neighbourLine, { matchedHasArabic, matchedHasLatin }) {
+  const neighbourHasArabic = /[\u0600-\u06FF\uFB50-\uFEFC]/.test(neighbourLine);
+  const neighbourHasLatin  = /[A-Za-z]/.test(neighbourLine);
+
+  // If matched line already has both scripts, neighbour can't add
+  // anything useful.
+  if (matchedHasArabic && matchedHasLatin) return false;
+
+  // If matched line has only Latin and neighbour has only Arabic,
+  // it's the missing half.
+  if (matchedHasLatin && !matchedHasArabic && neighbourHasArabic && !neighbourHasLatin) {
+    return true;
+  }
+  // If matched line has only Arabic and neighbour has only Latin,
+  // also the missing half.
+  if (matchedHasArabic && !matchedHasLatin && neighbourHasLatin && !neighbourHasArabic) {
+    return true;
+  }
+  // Anything else (neighbour has both, neighbour has same script
+  // as matched, etc.) — don't extend, too risky.
+  return false;
+}
+
+/** Recognise lines that are footer / page-boilerplate and should
+ *  never be part of any field's value. Sehhaty PDFs end with:
+ *    • A 'visit Seha's website' instruction in both languages
+ *    • A timestamp (e.g. '9:01 AM' / 'Sunday, 3 May 2026')
+ *    • The clinic letterhead ('Family Dental Clinic', license #)
+ *    • Possibly URLs ('www.seha.sa/#/inquiries/slenquiry')
+ *  All of these contain Arabic that would otherwise leak into
+ *  field values when the bilingual table ends and the footer
+ *  begins. */
+function isFooterContent(line) {
+  if (!line) return false;
+  // URLs / domains
+  if (/www\.|\.sa\b|\.com\b|\.gov\b|https?:/i.test(line)) return true;
+  // Time-of-day stamps (e.g. '9:01 AM', '14:30')
+  if (/\b\d{1,2}:\d{2}\s*(?:AM|PM)?\b/i.test(line)) return true;
+  // Day-of-week + date stamps
+  if (/\b(?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday)\b/.test(line)) return true;
+  // The seha.sa verification boilerplate (Arabic phrases that always
+  // appear in the footer, never as field values).
+  if (/يرجى\s*التأكد|للتحقق|زيارة\s*موقع|منصة\s*صحة|الموقع\s*الرسمي/.test(line)) return true;
+  // The footer Arabic 'check the report'/'official website' phrase
+  if (/تأكد|للتحقق|زيارة|الرسمي/.test(line)) return true;
+  // 'License No' / 'رقم الترخيص'
+  if (/Licen[sc]e\s*(?:No|Number)|رقم\s*الترخيص/i.test(line)) return true;
+  // National Health Information Center boilerplate
+  if (/National\s*Health|المركز\s*الوطني|للمعلومات\s*الصحية/i.test(line)) return true;
+  // Clinic name lines tend to be exactly 2-3 short Latin words at
+  // the bottom of the page, often containing 'Clinic' or 'Hospital'.
+  if (/\b(?:Clinic|Hospital|Center|Centre|Medical|Dental|Pharmacy)\b/i.test(line)) return true;
+  // Standalone PDF metadata-ish lines (no real content)
+  if (line.length < 5) return true;
+  return false;
 }
 
 /** Extract Arabic and Latin value runs from a single field line.
  *  Filters out known label tokens from each script.
  *  Returns { arabic, latin } with each being a space-joined string
  *  of value words, or null if no values found. */
+/** Extract Arabic and Latin value runs from a single field line.
+ *
+ *  STRATEGY
+ *  ────────
+ *  Arabic side: collect runs of Arabic letters, drop label tokens.
+ *
+ *  Latin side: this is where it gets subtle. When pdfjs's line-
+ *  bucketing merges adjacent rows of the bilingual table (which
+ *  happens occasionally because Arabic and Latin font metrics
+ *  produce slightly different y-coordinates), the merged "line"
+ *  contains Latin words from MULTIPLE fields. Naïve token-collect
+ *  pulls them all in — e.g. for Specialty: "ALFARRAN ... Dentist
+ *  General Position" picks up the doctor's surname.
+ *
+ *  The fix: only collect Latin tokens from the SEGMENT of the line
+ *  that's adjacent to the English field label. We split the line
+ *  by Arabic stretches and keep just the segment containing the
+ *  label. ALFARRAN and "Dentist General Position" will be in
+ *  different segments because there's an Arabic stretch
+ *  ("المسمى الوظيفى طبيب أسنان عام") between them.
+ *
+ *  Returns { arabic, latin }. Each is a space-joined string of
+ *  value words, or null if no values found. */
 function extractValuesFromLine(line) {
   if (!line) return { arabic: null, latin: null };
 
-  // Arabic: collect runs of Arabic letters, drop any that are
-  // pure label tokens.
+  // ─── Arabic ───────────────────────────────────────────────────
   const arabicRuns = [];
   const arabicRe = /[\u0600-\u06FF\uFB50-\uFEFC]+/g;
   let m;
@@ -629,13 +734,41 @@ function extractValuesFromLine(line) {
   }
   const arabic = arabicRuns.length >= 2 ? arabicRuns.join(' ') : null;
 
-  // Latin: collect uppercase or capitalised word runs, filter
-  // labels, require at least 2 word tokens.
-  // Pattern accepts ALL CAPS (HASSAN), all-caps with single-letter
-  // initials (SALEH I ALTASSAN), and Title Case (Senior Registrar).
+  // ─── Latin ────────────────────────────────────────────────────
+  // Determine the search space — the segment of the line we'll
+  // collect Latin tokens from. Default: the whole line.
+  let searchSpace = line;
+
+  // If the line contains a known English field label, restrict the
+  // search space to the Latin segment adjacent to that label.
+  // Bilingual table rows have the format:
+  //   [Arabic-label][Arabic-value][Latin-value][English-label]
+  // So when we find the English label, the Latin value is in the
+  // segment between the LAST Arabic stretch (which is the start
+  // of the Arabic value, i.e. ALSO end of any prior-row leakage)
+  // and the label itself.
+  const labelMatch = line.match(
+    /\b(?:Name|Patient|Practitioner|Doctor|Position|Specialty|Speciality|Iqama|Employer|Nationality|Admission|Discharge|Issue)\b/i
+  );
+  if (labelMatch) {
+    const beforeLabel = line.slice(0, labelMatch.index);
+    // Find the rightmost Arabic stretch in beforeLabel — anything
+    // BEFORE it is from a different field/cell, anything AFTER it
+    // up to the label is the actual Latin value for this row.
+    let lastArabicEnd = 0;
+    const arBefore = /[\u0600-\u06FF\uFB50-\uFEFC]+/g;
+    let am;
+    while ((am = arBefore.exec(beforeLabel)) !== null) {
+      lastArabicEnd = am.index + am[0].length;
+    }
+    searchSpace = beforeLabel.slice(lastArabicEnd);
+  }
+
+  // Now collect Latin tokens from the constrained search space,
+  // filtering out label words.
   const latinTokens = [];
   const latinRe = /\b([A-Z][A-Za-z]*)\b/g;
-  while ((m = latinRe.exec(line)) !== null) {
+  while ((m = latinRe.exec(searchSpace)) !== null) {
     const tok = m[1];
     if (!ENGLISH_LABEL_TOKENS.has(tok.toUpperCase())) {
       latinTokens.push(tok);
