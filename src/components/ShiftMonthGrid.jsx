@@ -579,18 +579,34 @@ export default function ShiftMonthGrid({
         const tipPosStyle = flipBelow
           ? { top: hoverTip.yBottom + 6, transform: 'translateX(-50%)' }
           : { top: hoverTip.yTop - 6,    transform: 'translate(-50%, -100%)' };
+        // Header colour — same priority order as before. Night shifts
+        // override with a deep twilight indigo so the time row reads
+        // as "this is overnight" before the user even finishes
+        // glancing at the rest of the card.
         const headerColor =
-          hoverTip.status === 'declined' ? '#A32D2D'
-          : hoverTip.isAccepted          ? '#0F4C2A'
-          :                                '#854F0B';
-        // Tooltip card background + border + divider tinted by status
-        // so the colour itself signals what's going on at a glance —
-        // light green for accepted (locked), light amber for pending
-        // (waiting), light red for declined (manager will follow up).
-        // Same colour family as the legend chips, just lightened to
-        // remain readable as a card surface.
+          hoverTip.isOvernight           ? '#3B4279'
+          : hoverTip.status === 'declined' ? '#A32D2D'
+          : hoverTip.isAccepted            ? '#0F4C2A'
+          :                                  '#854F0B';
+        // Card background, border, divider — three palettes:
+        //
+        //   Night shift (any status) → twilight indigo. Distinct from
+        //     all three day-shift palettes because overnight is a
+        //     materially different mode of work and deserves its own
+        //     visual signal. Status is still conveyed by the badge
+        //     inside the card; the card colour says "this is night",
+        //     the badge says "and it's accepted/pending/declined".
+        //
+        //   Day shift accepted → pale evergreen
+        //   Day shift pending  → pale amber
+        //   Day shift declined → pale rose
+        //
+        // All four palettes match the legend / status-badge family
+        // they're tied to, lightened to remain a readable card surface.
         const cardStyle =
-          hoverTip.status === 'declined'
+          hoverTip.isOvernight
+            ? { background: '#EEF0FA', border: '1px solid #B8BFD9', divider: '1px solid #D2D5E8' }
+          : hoverTip.status === 'declined'
             ? { background: '#FCEFEF', border: '1px solid #E8B5B0', divider: '1px solid #F2D6D2' }
           : hoverTip.isAccepted
             ? { background: '#ECFDF3', border: '1px solid #A7D8B7', divider: '1px solid #C9E8D2' }
@@ -653,8 +669,8 @@ export default function ShiftMonthGrid({
             <div style={{
               fontSize: 11,
               fontWeight: 600,
-              color: hoverTip.isOvernight ? '#854F0B' : '#0A0A0A',
-              opacity: 0.85,
+              color: hoverTip.isOvernight ? '#3B4279' : '#0A0A0A',
+              opacity: hoverTip.isOvernight ? 1 : 0.85,
               marginTop: 2,
               letterSpacing: '0.04em',
               textTransform: 'uppercase',
