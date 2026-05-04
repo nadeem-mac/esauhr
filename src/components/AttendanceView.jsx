@@ -742,12 +742,19 @@ export default function AttendanceView({ me, employees }) {
     const allRows = parsedData.rows || [];
     const inWorkingWindow = (r) =>
       (r.date === csvDate || r.date === yesterdayDate) && !isKsaWeekend(r.date);
-    const inWeekendWindow = (r) =>
-      yesterdayDate && csvDate
-      && r.date >= yesterdayDate && r.date <= csvDate
-      && isKsaWeekend(r.date);
+    // Weekend rows are now decoupled from the daily window — any
+    // Fri/Sat in the uploaded file qualifies. This supports the
+    // catch-up case (Bashaier absent Sunday joins Monday and exports
+    // a wider Thu→Mon range to recover the missed weekend report)
+    // and the retroactive case (sending a weekend report for a
+    // historical weekend a week or two later). The daily flow's
+    // today+yesterday requirement is unaffected — it still enforces
+    // working-day coverage. The weekend tile picks up whatever
+    // Fri/Sat rows are present, regardless of where they sit
+    // relative to today/yesterday.
+    const isWeekendRow = (r) => isKsaWeekend(r.date);
     const onWindow      = (csvDate || yesterdayDate) ? allRows.filter(inWorkingWindow) : allRows;
-    const weekendInRange = (csvDate || yesterdayDate) ? allRows.filter(inWeekendWindow) : [];
+    const weekendInRange = allRows.filter(isWeekendRow);
     const offDateCount = allRows.length - onWindow.length - weekendInRange.length;
     const shape = (r) => ({
       'Employee ID': r.psn,
@@ -1202,11 +1209,17 @@ export default function AttendanceView({ me, employees }) {
     // Per Nadeem: a separate report goes to Mr John each week showing
     // which staff worked on the weekend (Fri/Sat in KSA), how many
     // hours they put in, and which department + location they're in.
-    // We collect these from parsed.weekendRows (Fri/Sat rows that were
-    // inside the today→yesterday window — i.e. only the weekend
-    // immediately before today, never older). Rows without any punch
-    // are skipped: nobody we'd want to flag, since they didn't
-    // actually come in.
+    // We collect these from parsed.weekendRows (any Fri/Sat rows in
+    // the uploaded file — not bound to the daily today/yesterday
+    // window, so wider exports can recover missed or older weekends).
+    // Rows without any punch are skipped: nobody we'd want to flag,
+    // since they didn't actually come in.
+    //
+    // Each entry carries a `weekendKey` = the Friday's date for that
+    // weekend. Saturday entries derive the key by walking back one
+    // day. Used downstream to group entries by weekend so the panel
+    // can show a date selector when the file contains multiple
+    // weekends.
     (parsed.weekendRows || []).forEach((row, idx) => {
       const empIdRaw = row['Employee ID'] || '';
       const empId = String(empIdRaw).trim();
@@ -1229,10 +1242,18 @@ export default function AttendanceView({ me, employees }) {
       const hoursDecimal = punchOutMin && punchOutMin > punchInMin
         ? (punchOutMin - punchInMin) / 60
         : null;
+      // Weekend key: the Friday date for this Fri/Sat. Walk back one
+      // day from a Saturday; pass through a Friday unchanged. Used
+      // to bucket entries by weekend in the panel selector.
+      const [yy, mm, dd] = row['Date'].split('-').map(Number);
+      const dt = new Date(yy, mm - 1, dd);
+      if (dt.getDay() === 6) dt.setDate(dt.getDate() - 1); // Sat → back to Fri
+      const wkKey = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
       out.weekend.push({
         id: 'weekend-' + idx,
         employee: emp,
         dateLabel: row['Date'],
+        weekendKey: wkKey,
         punchInStr,
         punchOutStr: punchOutStr || null,
         punchInMin,
@@ -2007,11 +2028,67 @@ export default function AttendanceView({ me, employees }) {
     />
   );
   // ── Weekend attendance report ──────────────────────────────────────
-  // Sorts the bucket location → department → check-in time. Exposed as
-  // a memo so both the panel render and the PDF/email helpers below
-  // see the same canonical ordering.
+  // Each entry in detection.weekend carries a weekendKey = the Friday
+  // date for that Fri/Sat. We expose two memos to drive the panel:
+  //
+  //   availableWeekends — unique weekend keys present in the file,
+  //                       newest first, with friendly labels and
+  //                       per-weekend staff counts. Used by the
+  //                       date selector when 2+ weekends exist.
+  //
+  //   weekendSorted     — entries for the currently-selected weekend
+  //                       only, sorted location → department →
+  //                       check-in time. Drives the panel render
+  //                       and feeds the export and email helpers.
+  //
+  // selectedWeekendKey defaults to the most recent weekend (the
+  // first entry in availableWeekends). Resets to null when the
+  // file changes (fileSha256 in deps); a follow-up effect snaps it
+  // to the most recent weekend once availableWeekends is ready.
+  const availableWeekends = useMemo(() => {
+    const map = new Map();
+    (detection.weekend || []).forEach(e => {
+      if (!e.weekendKey) return;
+      if (!map.has(e.weekendKey)) {
+        map.set(e.weekendKey, { key: e.weekendKey, dates: new Set(), staff: 0 });
+      }
+      const w = map.get(e.weekendKey);
+      w.dates.add(e.dateLabel);
+      w.staff += 1;
+    });
+    // Build saturday date from each Friday key for the friendly label
+    return [...map.values()]
+      .map(w => {
+        const [y, m, d] = w.key.split('-').map(Number);
+        const sat = new Date(y, m - 1, d + 1);
+        const satKey = `${sat.getFullYear()}-${String(sat.getMonth() + 1).padStart(2, '0')}-${String(sat.getDate()).padStart(2, '0')}`;
+        return { ...w, fridayKey: w.key, saturdayKey: satKey };
+      })
+      .sort((a, b) => (a.key < b.key ? 1 : -1)); // newest first
+  }, [detection.weekend]);
+
+  const [selectedWeekendKey, setSelectedWeekendKey] = useState(null);
+
+  // Snap selection to the newest weekend whenever the available
+  // set changes (new file uploaded, or file recomputed). If the
+  // currently-selected key is still present in the new set we keep
+  // it, otherwise we fall through to the most recent weekend.
+  useEffect(() => {
+    if (!availableWeekends.length) {
+      if (selectedWeekendKey !== null) setSelectedWeekendKey(null);
+      return;
+    }
+    const stillPresent = availableWeekends.some(w => w.key === selectedWeekendKey);
+    if (!stillPresent) {
+      setSelectedWeekendKey(availableWeekends[0].key);
+    }
+  }, [availableWeekends, selectedWeekendKey]);
+
   const weekendSorted = useMemo(() => {
-    const arr = [...(detection.weekend || [])];
+    let arr = [...(detection.weekend || [])];
+    if (selectedWeekendKey) {
+      arr = arr.filter(e => e.weekendKey === selectedWeekendKey);
+    }
     arr.sort((a, b) => {
       // Primary: date (Friday before Saturday in the same weekend)
       if (a.dateLabel !== b.dateLabel) return a.dateLabel < b.dateLabel ? -1 : 1;
@@ -2025,7 +2102,7 @@ export default function AttendanceView({ me, employees }) {
       return (a.punchInMin || 0) - (b.punchInMin || 0);
     });
     return arr;
-  }, [detection.weekend]);
+  }, [detection.weekend, selectedWeekendKey]);
 
   // Report exporter — produces a polished, print-friendly HTML file.
   // Why HTML over PDF: jspdf's default helvetica is Latin-1 only,
@@ -2444,6 +2521,16 @@ export default function AttendanceView({ me, employees }) {
       if (!byDate.has(e.dateLabel)) byDate.set(e.dateLabel, []);
       byDate.get(e.dateLabel).push(e);
     });
+    // Friendly weekend label for the chip + active-weekend caption.
+    // E.g. "Fri 1 May – Sat 2 May" for Friday=2026-05-01.
+    const weekendChipLabel = (w) => {
+      const fmt = (yyyymmdd) => {
+        const [y, m, d] = yyyymmdd.split('-').map(Number);
+        return new Date(y, m - 1, d).toLocaleDateString(SAR_LOCALE, { weekday: 'short', day: 'numeric', month: 'short' });
+      };
+      return `${fmt(w.fridayKey)} \u2013 ${fmt(w.saturdayKey)}`;
+    };
+    const activeWeekend = availableWeekends.find(w => w.key === selectedWeekendKey);
     return (
       <div className="rounded-2xl border bg-white p-3 sm:p-5" style={{ borderColor: '#D4C7AB' }}>
         <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
@@ -2455,7 +2542,10 @@ export default function AttendanceView({ me, employees }) {
               Weekend report for Mr John
             </div>
             <div className="text-xs mt-1" style={{ color: '#0A0A0A', opacity: 0.75 }}>
-              {weekendSorted.length} staff attended &middot; sorted by location &rarr; department &rarr; check-in time
+              {activeWeekend
+                ? <>{weekendChipLabel(activeWeekend)} &middot; {weekendSorted.length} staff attended</>
+                : <>{weekendSorted.length} staff attended</>}
+              {' '}&middot; sorted by location &rarr; department &rarr; check-in time
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -2486,6 +2576,41 @@ export default function AttendanceView({ me, employees }) {
             </button>
           </div>
         </div>
+
+        {/* Weekend selector — appears when the file contains 2+
+            weekends. Lets Bashaier pick which weekend to view, export,
+            and email. Single-weekend files skip the selector entirely
+            since there's nothing to choose. */}
+        {availableWeekends.length > 1 && (
+          <div className="mb-4">
+            <div className="text-[10px] mb-1.5" style={{ color: '#0A0A0A', letterSpacing: '0.2em', fontWeight: 700, opacity: 0.7 }}>
+              CHOOSE WEEKEND
+            </div>
+            <div className="flex gap-1.5 flex-wrap">
+              {availableWeekends.map(w => {
+                const isSel = w.key === selectedWeekendKey;
+                return (
+                  <button
+                    key={w.key}
+                    type="button"
+                    onClick={() => setSelectedWeekendKey(w.key)}
+                    className="px-3 py-1.5 rounded-full text-xs transition-all"
+                    style={{
+                      border: isSel ? '2px solid #0F4C2A' : '0.5px solid #D4C7AB',
+                      background: isSel ? '#0F4C2A' : '#FFFFFF',
+                      color: isSel ? '#FFFFFF' : '#0A0A0A',
+                      fontWeight: isSel ? 600 : 500,
+                      cursor: 'pointer',
+                    }}
+                    aria-pressed={isSel}
+                  >
+                    {weekendChipLabel(w)} <span style={{ opacity: 0.75, marginLeft: 4 }}>({w.staff})</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {weekendSorted.length === 0 ? (
           <div className="rounded-xl p-6 text-center text-sm" style={{ background: '#FAF6EC', color: '#0A0A0A', opacity: 0.75 }}>
@@ -2537,16 +2662,24 @@ export default function AttendanceView({ me, employees }) {
   };
 
   // The map FileSummary uses to render the right panel for the
-  // currently-expanded tile. Only built for actionable kinds with
-  // matching day-data — otherwise undefined falls through to the
-  // simple BreakdownPanel inside FileSummary.
-  const actionPanels = (!windowMismatch && !csvIsWeekend) ? {
-    ...(parsed.hasTodayData     ? { late:      buildLatePanel() }      : {}),
-    ...(parsed.hasTodayData     ? { missedIn:  buildMissedInPanel() }  : {}),
-    ...(parsed.hasYesterdayData ? { early:     buildEarlyPanel() }     : {}),
-    ...(parsed.hasYesterdayData ? { missedOut: buildMissedOutPanel() } : {}),
-    ...(detection.weekend.length ? { weekend: buildWeekendPanel() }    : {}),
-  } : {};
+  // currently-expanded tile. Daily panels (late/early/missedIn/
+  // missedOut) require a clean today+yesterday window — they're
+  // gated on !windowMismatch && !csvIsWeekend. The weekend panel
+  // is independent: it can render whenever the file contains any
+  // Fri/Sat rows, regardless of whether the daily window matches.
+  // This supports the retroactive case where Bashaier uploads a
+  // historical export for an older weekend report — the file
+  // doesn't satisfy today+yesterday so the daily flow rejects
+  // (banner shown elsewhere), but the weekend tile still produces
+  // the report.
+  const dailyPanelsOk = !windowMismatch && !csvIsWeekend;
+  const actionPanels = {
+    ...(dailyPanelsOk && parsed.hasTodayData     ? { late:      buildLatePanel() }      : {}),
+    ...(dailyPanelsOk && parsed.hasTodayData     ? { missedIn:  buildMissedInPanel() }  : {}),
+    ...(dailyPanelsOk && parsed.hasYesterdayData ? { early:     buildEarlyPanel() }     : {}),
+    ...(dailyPanelsOk && parsed.hasYesterdayData ? { missedOut: buildMissedOutPanel() } : {}),
+    ...(detection.weekend.length ? { weekend: buildWeekendPanel() } : {}),
+  };
 
   return (
     <div className="space-y-6" style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
@@ -2565,7 +2698,8 @@ export default function AttendanceView({ me, employees }) {
           <li>Approved permissions are cross-referenced automatically &mdash; permitted cases are marked, not actioned.</li>
           <li>Anyone on approved leave for that date is <strong>excluded</strong> from the violation lists.</li>
           <li>Each notice is pre-filled with the right wording &mdash; review it and click <strong>Send</strong> in your mail client.</li>
-          <li>If the file covers a weekend (Fri/Sat), a <strong>weekend attendance</strong> tile appears with an option to <strong>export the report</strong> and <strong>email Mr John</strong> (CC James + DMN SUP team).</li>
+          <li>If the file covers a weekend (Fri/Sat), a <strong>weekend attendance</strong> tile appears with an option to <strong>export the report</strong> and <strong>email Mr John</strong> (CC James + DMN SUP team). The file can include extra dates beyond today+yesterday &mdash; useful if you missed a Sunday and need to recover the weekend, or want to send a report for an older weekend.</li>
+          <li>When the file contains more than one weekend, a <strong>choose weekend</strong> selector appears so you can pick which weekend to view, export, and email.</li>
           <li>On <strong>Sunday</strong>, &ldquo;yesterday&rdquo; means <strong>Thursday</strong> (Fri + Sat are KSA weekend), so the file should span Thursday&rarr;Sunday.</li>
         </ul>
       </div>
@@ -2698,11 +2832,24 @@ export default function AttendanceView({ me, employees }) {
           )}
         </div>
       ) : windowMismatch ? (
-        <WindowMismatchBanner
-          mismatch={windowMismatch}
-          fileName={xlsxFileName}
-          onReset={reset}
-        />
+        <>
+          <WindowMismatchBanner
+            mismatch={windowMismatch}
+            fileName={xlsxFileName}
+            onReset={reset}
+          />
+          {/* Even when the file fails the daily today+yesterday
+              window check, if it contains weekend rows we still
+              render the weekend panel so Bashaier can produce
+              the report for a missed or older weekend. The daily
+              panels stay hidden — those require the working-day
+              window — but weekend reporting is a parallel surface. */}
+          {detection.weekend.length > 0 && (
+            <div className="mt-6">
+              {buildWeekendPanel()}
+            </div>
+          )}
+        </>
       ) : (
         <FileSummary
           fileName={xlsxFileName}
