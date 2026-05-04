@@ -6,6 +6,7 @@ import { summariseMonth } from '../lib/permissionLogic.js';
 import BashaierTasksCard from './BashaierTasksCard.jsx';
 import PendingShiftApprovalsCard from './PendingShiftApprovalsCard.jsx';
 import ManagerShiftCard from './ManagerShiftCard.jsx';
+import HrShiftMonthCard from './HrShiftMonthCard.jsx';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
 
 export default function Dashboard({ me, employees, requests, typeMap, empMap, permissions, onGoToRequests, onGoToReviews, onNewRequest }) {
@@ -638,6 +639,14 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
         <div id="bashaier-tasks-anchor" style={{ scrollMarginTop: '80px' }}>
           <BashaierTasksCard employees={employees} requests={requests} permissions={permissions} />
         </div>
+      )}
+
+      {/* HR/SUP full-fleet shift overview — month grid, grouped by
+          location, every employee with a shift this month. Hidden for
+          regular managers (they get TeamShiftMonthCard on the Shifts
+          tab). Auto-hides if there are no shifts in the visible month. */}
+      {(me?.is_admin || me?.is_hr_reviewer) && (
+        <HrShiftMonthCard me={me} employees={employees} />
       )}
 
       {/* Manager shift schedule — only renders for users with direct reports */}

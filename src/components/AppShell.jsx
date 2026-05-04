@@ -9,6 +9,7 @@ import Dashboard from './Dashboard.jsx';
 import Requests from './Requests.jsx';
 import ManagerShiftCard from './ManagerShiftCard.jsx';
 import ManagerShiftStatusCard from './ManagerShiftStatusCard.jsx';
+import TeamShiftMonthCard from './TeamShiftMonthCard.jsx';
 import Employees from './Employees.jsx';
 import CalendarView from './CalendarView.jsx';
 import SettingsView from './SettingsView.jsx';
@@ -798,6 +799,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
           // file. Defense-in-depth route guard mirrors the buildTabs gate so
           // a forced ?tab=shifts URL from a non-manager renders nothing.
           <div className="space-y-6">
+            <TeamShiftMonthCard me={me} employees={employees} />
             <ManagerShiftCard me={me} employees={employees} />
             <ManagerShiftStatusCard me={me} employees={employees} />
           </div>

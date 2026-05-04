@@ -9,6 +9,7 @@ import { summariseMonth, PERMISSION_QUOTA } from '../lib/permissionLogic.js';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
 import MyApplicationsCard from './MyApplicationsCard.jsx';
 import MyAttendanceCard from './MyAttendanceCard.jsx';
+import MyShiftMonthCard from './MyShiftMonthCard.jsx';
 import MyRejoiningCard from './MyRejoiningCard.jsx';
 import SubstituteFreedCard from './SubstituteFreedCard.jsx';
 import { downloadVacationFormForRequest } from '../lib/vacationForm.js';
@@ -327,6 +328,12 @@ export default function PersonalDashboard({
       {/* Self-service attendance record. Auto-hides when there are no
           violations on file — clean records don't need this card. */}
       <MyAttendanceCard me={me} />
+      {/* Personal shift month grid — shows assigned shifts for the
+          visible month. Complements StaffShiftStatusCard's 30-day
+          status list: list says "what got approved", calendar says
+          "where am I working this month". Auto-hides via
+          ShiftMonthGrid's empty-state when no shifts exist. */}
+      <MyShiftMonthCard me={me} />
     </div>
   );
 }
