@@ -6,7 +6,6 @@ import { summariseMonth } from '../lib/permissionLogic.js';
 import BashaierTasksCard from './BashaierTasksCard.jsx';
 import PendingShiftApprovalsCard from './PendingShiftApprovalsCard.jsx';
 import HrShiftMonthCard from './HrShiftMonthCard.jsx';
-import OffersCard from './OffersCard.jsx';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
 
 export default function Dashboard({ me, employees, requests, typeMap, empMap, permissions, onGoToRequests, onGoToReviews, onNewRequest }) {
@@ -653,13 +652,6 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           for monitoring; managers go to the Shifts tab to assign. */}
       {(me?.is_admin || me?.is_hr_reviewer) && (
         <HrShiftMonthCard me={me} employees={employees} />
-      )}
-
-      {/* Candidate offers — hiring pipeline. Admin + HR only. Auto-
-          hides if there are no offers yet (renders a minimal "New
-          offer" card stub instead of a full empty state). */}
-      {(me?.is_admin || me?.is_hr_reviewer) && (
-        <OffersCard me={me} employees={employees} />
       )}
 
       {/* PIN Requests — moved to modal triggered by the PIN REQUESTS badge.

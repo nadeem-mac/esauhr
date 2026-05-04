@@ -1,11 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import {
-  Shield, UsersRound, ListTree, Database, BarChart3, Info, ChevronRight,
+  Shield, UsersRound, ListTree, Database, BarChart3, Info, ChevronRight, PenLine,
 } from 'lucide-react';
 import { Card } from './Dashboard.jsx';
 import ReviewerPermissionsCard from './ReviewerPermissionsCard.jsx';
 import ManagerAssignmentsCard from './ManagerAssignmentsCard.jsx';
 import MigrationsPanel from './MigrationsPanel.jsx';
+import SignatoriesCard from './SignatoriesCard.jsx';
 
 // =============================================================================
 // SettingsView — admin configuration surface for Nadeem
@@ -76,6 +77,13 @@ const SECTIONS = [
     icon: UsersRound,
     desc: 'Who reports to whom',
     body: ({ employees, me }) => <ManagerAssignmentsCard employees={employees} me={me} />,
+  },
+  {
+    id: 'signatories',
+    label: 'Signatories',
+    icon: PenLine,
+    desc: 'Offer letter signing authorities',
+    body: () => <SignatoriesCard />,
   },
   {
     id: 'leaves',

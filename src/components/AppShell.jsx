@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   LayoutDashboard, ClipboardList, Users, Calendar as CalIcon, Settings,
   Plus, LogOut, Activity, ShieldCheck, RefreshCw
-, Clock , BarChart3 } from 'lucide-react';
+, Clock , BarChart3, UserPlus } from 'lucide-react';
 import { supabase, directGet, directPatch } from '../supabaseClient.js';
 import { loadTemplates as loadEmailTemplates } from '../lib/emailTemplates.js';
 import Dashboard from './Dashboard.jsx';
@@ -24,6 +24,7 @@ import EmployeeDetailModal from './EmployeeDetailModal.jsx';
 import ShiftAcknowledgmentModal from './ShiftAcknowledgmentModal.jsx';
 import InsightsView from './InsightsView.jsx';
 import AdminPanel from './AdminPanel.jsx';
+import HiringView from './HiringView.jsx';
 import PersonalDashboard from './PersonalDashboard.jsx';
 import ManagerDashboard  from './ManagerDashboard.jsx';
 import ReviewerPanel from './ReviewerPanel.jsx';
@@ -50,6 +51,14 @@ function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, me }) {
   // get this tab.
   if (isAdmin || isHrReviewer) {
     base.push({ id: 'employees', label: 'Employees', icon: Users });
+  }
+
+  // Hiring tab — admin and HR-reviewer only. Surfaces the candidate
+  // offer pipeline (offer creation, acceptance tracking, PSN issuance).
+  // Promoted from the Dashboard "Candidate offers" card to its own
+  // tab so it has room to grow as the joiner/leaver flow expands.
+  if (isAdmin || isHrReviewer) {
+    base.push({ id: 'hiring', label: 'Hiring', icon: UserPlus });
   }
 
   // Calendar — everyone
@@ -810,6 +819,9 @@ export default function AppShell({ session, me, onRefreshMe }) {
             requests={requests} balances={balances}
             onSelect={setSelectedEmployee}
           />
+        )}
+        {tab === 'hiring' && (isAdmin || isHrReviewer) && (
+          <HiringView me={me} employees={employees} />
         )}
         {tab === 'calendar' && (
           <CalendarView
