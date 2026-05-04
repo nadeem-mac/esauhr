@@ -2122,8 +2122,21 @@ export default function AttendanceView({ me, employees }) {
     // to "Bashaier Ali" since she's the standing HR reviewer; that
     // matches HR_SIGNATURE elsewhere in the file.
     const preparedBy = me?.name || me?.first_name || 'Bashaier Ali';
-    const yDate = formatDateLong(yesterdayDate);
-    const tDate = formatDateLong(csvDate);
+    // Window dates — driven by the SELECTED weekend's actual Friday
+    // and Saturday, not the daily-upload window. The daily window
+    // could be Sun→Mon (after a Sunday absence) or anything else
+    // that wraps around the weekend, but the report itself is about
+    // the weekend, so the header should read "Friday X to Saturday Y"
+    // every time. Fall back to the daily window only if we somehow
+    // don't have a selected weekend in scope (shouldn't happen, but
+    // safe).
+    const activeWeekend = availableWeekends.find(w => w.key === selectedWeekendKey)
+                       || availableWeekends[0]
+                       || null;
+    const yDate = activeWeekend ? formatDateLong(activeWeekend.fridayKey)   : formatDateLong(yesterdayDate);
+    const tDate = activeWeekend ? formatDateLong(activeWeekend.saturdayKey) : formatDateLong(csvDate);
+    const fnameFrom = activeWeekend ? activeWeekend.fridayKey   : yesterdayDate;
+    const fnameTo   = activeWeekend ? activeWeekend.saturdayKey : csvDate;
 
     // Tiny helper: escape user-provided strings before splicing into
     // the HTML template. We trust the directory data here, but better
@@ -2455,12 +2468,12 @@ export default function AttendanceView({ me, employees }) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Weekend_Attendance_${yesterdayDate}_to_${csvDate}.html`;
+    a.download = `Weekend_Attendance_${fnameFrom}_to_${fnameTo}.html`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }, [weekendSorted, csvDate, yesterdayDate, me]);
+  }, [weekendSorted, csvDate, yesterdayDate, me, availableWeekends, selectedWeekendKey]);
 
   // Email builder — TO Mr John, CC James + DMN SUP team. Body is a
   // brief summary only; the detailed staff list lives in the PDF
@@ -2475,9 +2488,16 @@ export default function AttendanceView({ me, employees }) {
       'jaffar.aldarweash@evergreen-shipping.com.sa',
       'fahad.alhussain@evergreen-shipping.com.sa',
     ];
-    const yDate = formatDateLong(yesterdayDate);
-    const tDate = formatDateLong(csvDate);
-    const subject = `Weekend Attendance Report — ${yesterdayDate} to ${csvDate}`;
+    // Window — the SELECTED weekend's actual Friday and Saturday, not
+    // the daily upload window (same logic as exportWeekendHtml).
+    const activeWeekend = availableWeekends.find(w => w.key === selectedWeekendKey)
+                       || availableWeekends[0]
+                       || null;
+    const yDate = activeWeekend ? formatDateLong(activeWeekend.fridayKey)   : formatDateLong(yesterdayDate);
+    const tDate = activeWeekend ? formatDateLong(activeWeekend.saturdayKey) : formatDateLong(csvDate);
+    const subjFrom = activeWeekend ? activeWeekend.fridayKey   : yesterdayDate;
+    const subjTo   = activeWeekend ? activeWeekend.saturdayKey : csvDate;
+    const subject = `Weekend Attendance Report \u2014 ${subjFrom} to ${subjTo}`;
 
     // Per-day staff count + total hours — high-level summary numbers
     // only, no per-employee rows.
@@ -2509,7 +2529,7 @@ export default function AttendanceView({ me, employees }) {
     const body = lines.join('\n');
     const url = buildMailto({ to, cc, subject, body });
     window.location.href = url;
-  }, [weekendSorted, csvDate, yesterdayDate]);
+  }, [weekendSorted, csvDate, yesterdayDate, availableWeekends, selectedWeekendKey]);
 
   // Weekend panel — custom layout (not a FlaggedSection). Grouped
   // by weekend date with location/department/check-in sort already
