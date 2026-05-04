@@ -94,7 +94,7 @@ export default function VerifyPage({ requestId, mode = 'permission' }) {
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-12"
-         style={{ background: 'var(--paper, #FFFDF7)', color: 'var(--ink, #1F1B16)' }}>
+         style={{ background: 'var(--paper, #FFFFFF)', color: 'var(--ink, #1F1B16)' }}>
       <div className="w-full max-w-md">
 
         <div className="mb-6 text-center">
@@ -166,7 +166,7 @@ function PermissionRequestCard({ request }) {
       {request.manager_decided_at && <Row label="Manager decided">{fmtDateTime(request.manager_decided_at)}</Row>}
       {request.hr_decided_at && <Row label="HR decided">{fmtDateTime(request.hr_decided_at)}</Row>}
 
-      <div className="mt-5 pt-4 text-xs opacity-70" style={{ borderTop: '1px dashed var(--border-soft, #E5E0D5)' }}>
+      <div className="mt-5 pt-4 text-xs opacity-70" style={{ borderTop: '1px dashed var(--border-soft, #E5E5E5)' }}>
         ✓ This request was formally approved and recorded.
         The printed letter is authentic.
       </div>
@@ -230,7 +230,7 @@ function LeaveRequestCard({ request }) {
         </Row>
       )}
 
-      <div className="mt-5 pt-4 text-xs opacity-70" style={{ borderTop: '1px dashed var(--border-soft, #E5E0D5)' }}>
+      <div className="mt-5 pt-4 text-xs opacity-70" style={{ borderTop: '1px dashed var(--border-soft, #E5E5E5)' }}>
         ✓ This leave was formally approved and recorded.
         The printed form is authentic.
       </div>
@@ -296,7 +296,7 @@ function RejoiningRecordCard({ request }) {
 
       {/* Original-leave context — kept as supporting info. */}
       <div className="mt-3 pt-3 text-xs uppercase tracking-wider opacity-50"
-           style={{ borderTop: '1px dashed var(--border-soft, #E5E0D5)' }}>
+           style={{ borderTop: '1px dashed var(--border-soft, #E5E5E5)' }}>
         Original leave
       </div>
       <Row label="Leave type">{typeLabel}</Row>
@@ -305,7 +305,7 @@ function RejoiningRecordCard({ request }) {
 
       {/* Workflow audit trail */}
       <div className="mt-3 pt-3 text-xs uppercase tracking-wider opacity-50"
-           style={{ borderTop: '1px dashed var(--border-soft, #E5E0D5)' }}>
+           style={{ borderTop: '1px dashed var(--border-soft, #E5E5E5)' }}>
         Approval chain
       </div>
       {request.return_submitted_at && (
@@ -326,7 +326,7 @@ function RejoiningRecordCard({ request }) {
         </Row>
       )}
 
-      <div className="mt-5 pt-4 text-xs opacity-70" style={{ borderTop: '1px dashed var(--border-soft, #E5E0D5)' }}>
+      <div className="mt-5 pt-4 text-xs opacity-70" style={{ borderTop: '1px dashed var(--border-soft, #E5E5E5)' }}>
         ✓ This rejoining was formally approved and recorded.
         The printed report is authentic. Payroll has been activated effective the reported-back date.
       </div>

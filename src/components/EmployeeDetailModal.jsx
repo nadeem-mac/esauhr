@@ -89,7 +89,7 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                 const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
                 return (
                   <div key={type.id} className="rounded-xl border p-4"
-                       style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}>
+                       style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <div className="w-2 h-2 rounded-full" style={{ background: type.color }}/>
@@ -121,13 +121,13 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
             <div className="text-xs tracking-widest opacity-60 mb-3">LEAVE HISTORY</div>
             {history.length === 0 ? (
               <div className="rounded-xl border p-6 text-center text-sm opacity-60"
-                   style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}>
+                   style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
                 <Briefcase className="w-5 h-5 mx-auto mb-2"/>
                 No leave records yet.
               </div>
             ) : (
               <ul className="rounded-xl border divide-y"
-                  style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}>
+                  style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
                 {history.map(r => {
                   const tp = typeMap[r.leave_type_id];
                   return (
@@ -187,7 +187,7 @@ function ResetPinSection({ employee }) {
   };
 
   return (
-    <div className="rounded-xl border p-4" style={{ borderColor:'var(--border-soft)', background:'#FFFDF7' }}>
+    <div className="rounded-xl border p-4" style={{ borderColor:'var(--border-soft)', background:'#FFFFFF' }}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <KeyRound className="w-4 h-4 opacity-60" />
@@ -352,7 +352,7 @@ function EditProfilePanel({ employee, employees, onSaved }) {
     // editor surfaces, so Bashaier sees what's editable at a glance.
     return (
       <div className="rounded-xl border p-4"
-           style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}>
+           style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <div className="text-xs tracking-widest opacity-60">PROFILE</div>
           <button
@@ -552,7 +552,7 @@ function MonthlyAttendancePanel({ employee, empMap, me }) {
 
   return (
     <div className="rounded-xl border p-4"
-         style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}>
+         style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div>
           <div className="text-xs tracking-widest opacity-60">MONTHLY ATTENDANCE REPORT</div>

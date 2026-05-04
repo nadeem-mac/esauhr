@@ -287,7 +287,7 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
       <div className="rounded-2xl overflow-hidden"
            style={{
              border: '1px solid #E8DEC4',
-             background: '#FFFDF7',
+             background: '#FFFFFF',
              boxShadow: '0 4px 16px rgba(31,27,22,0.06), 0 1px 3px rgba(31,27,22,0.04)',
            }}>
         {/* Day-of-week header — slight evergreen tint so it stands
@@ -589,7 +589,7 @@ function HoverTooltip({ iso, leaves, perms, shifts, holiday, empMap, typeMap, an
       }}>
       <div className="rounded-xl shadow-lg p-3"
         style={{
-          background: '#FFFDF7',
+          background: '#FFFFFF',
           border: '1px solid var(--border-soft)',
           boxShadow: '0 8px 24px rgba(31, 27, 22, 0.12)',
         }}>
@@ -744,7 +744,7 @@ function DayDetailModal({ iso, leaves, perms, shifts, holiday, empMap, typeMap, 
         className="w-full max-w-2xl rounded-2xl border"
         style={{
           borderColor: 'var(--border-soft)',
-          background: '#FFFDF7',
+          background: '#FFFFFF',
           boxShadow: '0 12px 40px rgba(31,27,22,0.18)',
         }}>
         {/* Header */}
@@ -878,10 +878,10 @@ function DayDetailModal({ iso, leaves, perms, shifts, holiday, empMap, typeMap, 
         </div>
 
         {/* Footer */}
-        <div className="px-5 sm:px-6 py-3 border-t flex items-center justify-end" style={{ borderColor: 'var(--border-soft)', background: '#FAF6EC' }}>
+        <div className="px-5 sm:px-6 py-3 border-t flex items-center justify-end" style={{ borderColor: 'var(--border-soft)', background: '#F7F7F7' }}>
           <button onClick={onClose}
             className="text-xs px-4 py-2 rounded-full"
-            style={{ background: '#0A0A0A', color: '#FFFDF7', fontWeight: 500 }}>
+            style={{ background: '#0A0A0A', color: '#FFFFFF', fontWeight: 500 }}>
             Close
           </button>
         </div>

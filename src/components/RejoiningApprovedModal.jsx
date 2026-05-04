@@ -102,7 +102,7 @@ export default function RejoiningApprovedModal({ request, empMap, onClose }) {
         className="w-full max-w-lg rounded-2xl border"
         style={{
           borderColor: 'var(--border-soft)',
-          background: '#FFFDF7',
+          background: '#FFFFFF',
           boxShadow: '0 12px 40px rgba(31,27,22,0.18)',
         }}
       >

@@ -261,7 +261,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           consistent. Added gentle transition + tiny scale on the colored rail. */}
       <style>{`
         .esau-badge { transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 220ms ease, border-color 220ms ease; }
-        .esau-badge:hover { transform: translateY(-3px); box-shadow: 0 6px 16px rgba(31,27,22,0.08), 0 20px 38px rgba(31,27,22,0.14) !important; border-color: #D4C7AB !important; }
+        .esau-badge:hover { transform: translateY(-3px); box-shadow: 0 6px 16px rgba(31,27,22,0.08), 0 20px 38px rgba(31,27,22,0.14) !important; border-color: #D4D4D4 !important; }
         .esau-badge:active { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(31,27,22,0.06), 0 8px 18px rgba(31,27,22,0.10) !important; }
       `}</style>
 
@@ -269,7 +269,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           Bashaier sees her name + heroMessage as the italic quote; everyone else sees the
           plain greeting. No tiles, no gradients. */}
       {bashaierMode ? (
-        <div className="pb-8" style={{ borderBottom: '1px solid #E5E0D5' }}>
+        <div className="pb-8" style={{ borderBottom: '1px solid #E5E5E5' }}>
           <div className="text-xs mb-3.5" style={{ color: '#9D6B53', letterSpacing: '0.3em' }}>
             — {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase()}
           </div>
@@ -296,7 +296,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           </p>
         </div>
       ) : (
-      <div className="pb-8" style={{ borderBottom: '1px solid #E5E0D5' }}>
+      <div className="pb-8" style={{ borderBottom: '1px solid #E5E5E5' }}>
         <div className="text-xs mb-3.5" style={{ color: '#9D6B53', letterSpacing: '0.3em' }}>
           — {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase()}
         </div>
@@ -333,13 +333,13 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
               <span style={{ fontSize: '14px', fontWeight: 600, color: '#1F1B16' }}>{byLocation.DMM || 0}</span>
               <span className="text-[11px]" style={{ color: '#1F1B16' }}>DMM</span>
             </div>
-            <div style={{ width: '1px', height: '14px', background: '#E5E0D5' }}/>
+            <div style={{ width: '1px', height: '14px', background: '#E5E5E5' }}/>
             <div className="flex items-center gap-1.5">
               <span style={{ fontSize: '14px', lineHeight: 1 }}>📍</span>
               <span style={{ fontSize: '14px', fontWeight: 600, color: '#1F1B16' }}>{byLocation.JED || 0}</span>
               <span className="text-[11px]" style={{ color: '#1F1B16' }}>JED</span>
             </div>
-            <div style={{ width: '1px', height: '14px', background: '#E5E0D5' }}/>
+            <div style={{ width: '1px', height: '14px', background: '#E5E5E5' }}/>
             <div className="flex items-center gap-1.5">
               <span style={{ fontSize: '14px', lineHeight: 1 }}>📍</span>
               <span style={{ fontSize: '14px', fontWeight: 600, color: '#1F1B16' }}>{byLocation.RYD || 0}</span>
@@ -398,7 +398,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
            a per-department male/female breakdown using emoji icons. Badge text
            uses Calibri so it stays clean and modern alongside the editorial
            serif on the rest of the page. */}
-      <div className="pt-7" style={{ borderTop: '1px solid #E5E0D5' }}>
+      <div className="pt-7" style={{ borderTop: '1px solid #E5E5E5' }}>
         <div className="flex items-baseline justify-between flex-wrap gap-3 mb-5">
           <div>
             <div className="text-[10px]" style={{ color: '#9D6B53', letterSpacing: '0.3em' }}>PEOPLE AT ESAU</div>
@@ -432,7 +432,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
                    className="rounded-xl border p-5 esau-card"
                    style={{
                      borderColor: 'var(--border-soft)',
-                     background: '#FFFDF7',
+                     background: '#FFFFFF',
                    }}>
                 {/* Header row: dept code + total — laid out like the canonical
                     Card header (small accent dot + label on the left, count
@@ -474,7 +474,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
                     <span style={{ fontSize: '15px', fontWeight: 600, color: '#1F1B16' }}>{g.male}</span>
                     <span className="text-[11px]" style={{ color: '#1F1B16' }}>men</span>
                   </div>
-                  <div style={{ width: '1px', height: '14px', background: '#E5E0D5' }}/>
+                  <div style={{ width: '1px', height: '14px', background: '#E5E5E5' }}/>
                   <div className="flex items-center gap-1.5">
                     <span style={{ fontSize: '16px', lineHeight: 1 }}>👩</span>
                     <span style={{ fontSize: '15px', fontWeight: 600, color: g.female > 0 ? '#BE185D' : '#1F1B16' }}>{g.female}</span>
@@ -698,7 +698,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           }}>
           <div style={{
             width: '100%', maxWidth: '440px',
-            background: 'linear-gradient(180deg, #FFFDF8 0%, #FFF5E8 100%)',
+            background: 'linear-gradient(180deg, #FFFFFF 0%, #FFF5E8 100%)',
             borderRadius: '20px', padding: '32px',
             boxShadow: '0 20px 50px rgba(0,0,0,0.3)',
             border: '1px solid #F5E6D3',
@@ -739,7 +739,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
                       style={{
                         padding: '12px 18px', borderRadius: '12px',
                         background: 'transparent', color: '#1F1B16',
-                        border: '1px solid #E5E0D5', fontSize: '13px',
+                        border: '1px solid #E5E5E5', fontSize: '13px',
                         cursor: 'pointer', letterSpacing: '0.02em',
                       }}>
                 Remind me later today
@@ -759,7 +759,7 @@ export function Card({ title, subtitle, children, accent }) {
   return (
     <div
       className="rounded-xl border p-5 esau-card"
-      style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}
+      style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}
     >
       {(title || subtitle) && (
         <div className="flex items-baseline justify-between mb-4 pb-3 border-b" style={{ borderColor: 'var(--border-soft)' }}>
@@ -783,7 +783,7 @@ export function Card({ title, subtitle, children, accent }) {
 // rail + bg-white + bespoke box-shadow — visually distinct enough from the
 // info cards (Out of office today, Pending requests, Upcoming leaves) that
 // the page didn't read as one family. Tile gives them the canonical paper
-// chrome (#FFFDF7 + border-soft + esau-card hover) while preserving the
+// chrome (#FFFFFF + border-soft + esau-card hover) while preserving the
 // dept-color identity through the small accent dot and the tinted count
 // pill on the right.
 export function Tile({ label, sublabel, count, accentDark, accentTint, onClick, children }) {
@@ -792,7 +792,7 @@ export function Tile({ label, sublabel, count, accentDark, accentTint, onClick, 
   return (
     <Tag {...tagProps}
          className={`text-left rounded-xl border p-5 esau-card w-full ${onClick ? 'cursor-pointer' : ''}`}
-         style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}>
+         style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
       <div className="flex items-start justify-between pb-3 mb-3 border-b" style={{ borderColor: 'var(--border-soft)' }}>
         <div className="flex items-center gap-2 min-w-0">
           {accentDark && <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: accentDark }} />}
@@ -809,7 +809,7 @@ export function Tile({ label, sublabel, count, accentDark, accentTint, onClick, 
         </div>
         {(count !== undefined && count !== null) && (
           <div className="rounded-full px-3 py-1 flex-shrink-0"
-               style={{ background: accentTint || '#F4EEDF', color: accentDark || '#1F1B16', fontSize: '20px', fontWeight: 700, lineHeight: 1 }}>
+               style={{ background: accentTint || '#F2F2F2', color: accentDark || '#1F1B16', fontSize: '20px', fontWeight: 700, lineHeight: 1 }}>
             {count}
           </div>
         )}
@@ -851,7 +851,7 @@ export function Avatar({ id, name, size = 'md' }) {
   const dim = { sm: 'w-7 h-7 text-[10px]', md: 'w-9 h-9 text-xs', lg: 'w-11 h-11 text-sm', xl: 'w-16 h-16 text-lg' }[size];
   return (
     <div className={`${dim} rounded-full flex items-center justify-center flex-shrink-0`}
-         style={{ background: avatarColor(id), color: '#F4EEDF', fontWeight: 600, letterSpacing: '0.05em' }}>
+         style={{ background: avatarColor(id), color: '#F2F2F2', fontWeight: 600, letterSpacing: '0.05em' }}>
       {getInitials(name)}
     </div>
   );

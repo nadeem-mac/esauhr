@@ -196,7 +196,7 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full flex items-center justify-center"
               style={{ background: 'var(--evergreen-800)' }}>
-              <Icon className="w-5 h-5" style={{ color: '#F4EEDF' }}/>
+              <Icon className="w-5 h-5" style={{ color: '#F2F2F2' }}/>
             </div>
             <div>
               <div className="serif text-xl leading-none" style={{ fontWeight: 600 }}>{cfg.label}</div>

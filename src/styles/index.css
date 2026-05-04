@@ -4,12 +4,18 @@
 @tailwind utilities;
 
 :root {
-  --paper: #FAF7F0;
-  --paper-2: #F4EEDF;
+  /* Theme switched from warm cream to clean white per Nadeem.
+     --paper is the main page background, --paper-2 is the
+     secondary surface (cards, soft sections). The brand-green
+     and accent colours below are unchanged — they're the brand,
+     not the canvas. */
+  --paper: #FFFFFF;
+  --paper-2: #F7F7F7;
+  --paper-3: #EFEFEF;
   --ink: #0F1F1A;
   --ink-soft: #2A3B34;
-  --border: #D9D0BA;
-  --border-soft: #E8E0D1;
+  --border: #E5E5E5;
+  --border-soft: #F0F0F0;
   --evergreen-50:  #F2F6F2;
   --evergreen-100: #E3EDE5;
   --evergreen-200: #BFD5C4;
@@ -32,10 +38,8 @@ html, body, #root {
   text-rendering: optimizeLegibility;
 }
 
-body {
-  background-image: radial-gradient(rgba(15, 40, 24, 0.025) 1px, transparent 1px);
-  background-size: 3px 3px;
-}
+/* Dotted radial-gradient texture removed — added warmth to the
+   cream theme, but reads as noise on a clean white canvas. */
 
 .serif { font-family: 'Fraunces', Georgia, serif; font-optical-sizing: auto; }
 .mono  { font-family: 'SF Mono', 'Menlo', monospace; }
@@ -43,8 +47,8 @@ body {
 /* Scrollbars */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #c9beaa; border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: #b5a993; }
+::-webkit-scrollbar-thumb { background: #D4D4D4; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #A8A8A8; }
 
 /* Animations */
 @keyframes fade-in {

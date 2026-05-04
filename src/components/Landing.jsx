@@ -6,7 +6,7 @@ export default function Landing({ onEnter }) {
   return (
     <div className="min-h-screen overflow-x-hidden">
       {/* ───────────── HERO ───────────── */}
-      <section className="relative" style={{ background: 'var(--evergreen-900)', color: '#F4EEDF' }}>
+      <section className="relative" style={{ background: 'var(--evergreen-900)', color: '#F2F2F2' }}>
         {/* Evergreen flowing lines */}
         <EvergreenLines />
 
@@ -18,7 +18,7 @@ export default function Landing({ onEnter }) {
             <a href="#law" className="text-sm opacity-70 hover:opacity-100 px-3 py-2 hidden sm:inline">Saudi Law</a>
             <button onClick={onEnter}
               className="flex items-center gap-2 px-4 py-2 rounded-full text-sm transition-all"
-              style={{ background: '#F4EEDF', color: 'var(--evergreen-900)' }}>
+              style={{ background: '#F2F2F2', color: 'var(--evergreen-900)' }}>
               Sign in <ArrowRight className="w-4 h-4" />
             </button>
           </div>
@@ -41,12 +41,12 @@ export default function Landing({ onEnter }) {
             <div className="flex flex-wrap gap-3 mt-10">
               <button onClick={onEnter}
                 className="flex items-center gap-2 px-6 py-3.5 rounded-full text-base transition-all hover:translate-x-0.5"
-                style={{ background: '#F4EEDF', color: 'var(--evergreen-900)', fontWeight: 500 }}>
+                style={{ background: '#F2F2F2', color: 'var(--evergreen-900)', fontWeight: 500 }}>
                 Enter the platform <ArrowRight className="w-4 h-4" />
               </button>
               <a href="#features"
                 className="flex items-center gap-2 px-6 py-3.5 rounded-full text-base border transition-all hover:bg-white/5"
-                style={{ borderColor: 'rgba(244,238,223,0.2)', color: '#F4EEDF' }}>
+                style={{ borderColor: 'rgba(244,238,223,0.2)', color: '#F2F2F2' }}>
                 How it works
               </a>
             </div>
@@ -165,7 +165,7 @@ export default function Landing({ onEnter }) {
           </p>
           <button onClick={onEnter}
             className="inline-flex items-center gap-2 mt-10 px-7 py-4 rounded-full text-base transition-all hover:translate-x-0.5"
-            style={{ background: 'var(--evergreen-900)', color: '#F4EEDF', fontWeight: 500 }}>
+            style={{ background: 'var(--evergreen-900)', color: '#F2F2F2', fontWeight: 500 }}>
             Enter Leave Desk <ArrowRight className="w-4 h-4" />
           </button>
         </div>
@@ -235,7 +235,7 @@ function Stat({ number, label }) {
 function Feature({ icon: Icon, title, body }) {
   return (
     <div className="group relative p-7 rounded-xl border transition-all hover:shadow-lg"
-         style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}>
+         style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
       <div className="w-10 h-10 rounded-lg flex items-center justify-center mb-5"
            style={{ background: 'var(--evergreen-50)', color: 'var(--evergreen-500)' }}>
         <Icon className="w-5 h-5" />
@@ -266,7 +266,7 @@ function LawCardStack() {
           className="p-5 rounded-xl border sway"
           style={{
             borderColor: 'var(--border-soft)',
-            background: '#FFFDF7',
+            background: '#FFFFFF',
             animationDelay: `${i * 0.2}s`,
           }}>
           <div className="flex items-center gap-2 mb-3">

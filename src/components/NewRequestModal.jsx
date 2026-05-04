@@ -346,7 +346,7 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
           {/* Live preview / warnings */}
           {employee && leaveType && (
             <div className="rounded-lg border p-4 space-y-3"
-                 style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}>
+                 style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-xs opacity-70">
                   <Calendar className="w-4 h-4"/>

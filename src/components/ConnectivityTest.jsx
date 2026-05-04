@@ -168,7 +168,7 @@ export default function ConnectivityTest() {
         </div>
         <button onClick={run} disabled={running}
           className="flex items-center gap-2 px-4 py-2 rounded-full text-sm border disabled:opacity-50"
-          style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}>
+          style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
           <RefreshCw className={`w-4 h-4 ${running ? 'animate-spin' : ''}`}/>
           {running ? 'Running…' : 'Run again'}
         </button>

@@ -30,9 +30,9 @@ const BRAND_GREEN = '#2D5F3F';
 const BRAND_DARK  = '#1F4530';
 const BRAND_RED   = '#C0392B';   // matches the 'E' on the Evergreen logo
 const HULL_DARK   = '#0F2818';
-const PAPER       = '#FFFDF7';
+const PAPER       = '#FFFFFF';
 const COPPER      = '#9D6B53';
-const SKY_TINT    = '#F4EEDF';
+const SKY_TINT    = '#F2F2F2';
 
 export default function RefreshOverlay({ open, message = 'Refreshing your dashboard…' }) {
   const [mounted, setMounted] = useState(open);

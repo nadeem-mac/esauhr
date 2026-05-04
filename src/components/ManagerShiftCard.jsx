@@ -473,7 +473,7 @@ export default function ManagerShiftCard({ me, employees }) {
                     className="rounded-full flex-none flex items-center justify-center"
                     style={{
                       width: 36, height: 36,
-                      background: isSel ? '#FFFFFF' : 'var(--paper-3, #E8E0CC)',
+                      background: isSel ? '#FFFFFF' : 'var(--paper-3, #EAEAEA)',
                       color: isSel ? 'var(--evergreen-700, #0F4C2A)' : '#0A0A0A',
                       fontWeight: 700, fontSize: '12px', letterSpacing: '0.04em',
                     }}
@@ -785,7 +785,7 @@ export default function ManagerShiftCard({ me, employees }) {
         className="sticky pt-3 mt-2 -mx-4 sm:-mx-5 px-4 sm:px-5 pb-1 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3"
         style={{
           bottom: 0,
-          background: 'var(--paper, #FFFDF7)',
+          background: 'var(--paper, #FFFFFF)',
           borderTop: '1px solid var(--border-soft)',
           zIndex: 5,
         }}

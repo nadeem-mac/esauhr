@@ -1016,7 +1016,7 @@ export default function ReviewerPanel({ me }) {
               {absentManagerNames.length === 1 ? 'They are' : 'They are'} on
               approved leave today, so their team's pending requests are routing
               to you. Rows below tagged <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider"
-                    style={{ background: '#9D6B53', color: '#FFFDF7' }}>DELEGATED</span> belong
+                    style={{ background: '#9D6B53', color: '#FFFFFF' }}>DELEGATED</span> belong
               to that team.
             </div>
           </div>
@@ -1113,7 +1113,7 @@ export default function ReviewerPanel({ me }) {
                                 <span>{emp?.name || '(unknown)'}</span>
                                 {delegatedStaffIds.has(req.employee_id) && (
                                   <span className="text-[9px] px-1.5 py-0.5 rounded font-bold tracking-wider"
-                                        style={{ background: '#9D6B53', color: '#FFFDF7' }}>
+                                        style={{ background: '#9D6B53', color: '#FFFFFF' }}>
                                     DELEGATED
                                   </span>
                                 )}
@@ -1128,7 +1128,7 @@ export default function ReviewerPanel({ me }) {
                                   if (!p) return null;
                                   return (
                                     <span className="text-[9px] px-1.5 py-0.5 rounded font-bold tracking-wider inline-flex items-center gap-1"
-                                          style={{ background: '#7C2D12', color: '#FFFDF7' }}
+                                          style={{ background: '#7C2D12', color: '#FFFFFF' }}
                                           title={`Recurring pattern: ${p.label}. Worth a conversation if this continues.`}>
                                       RECURRING · {p.label.toUpperCase()}
                                     </span>
@@ -1218,7 +1218,7 @@ export default function ReviewerPanel({ me }) {
                               <span>{emp?.name || '(unknown)'}</span>
                               {delegatedStaffIds.has(req.employee_id) && (
                                 <span className="text-[9px] px-1.5 py-0.5 rounded font-bold tracking-wider"
-                                      style={{ background: '#9D6B53', color: '#FFFDF7' }}>
+                                      style={{ background: '#9D6B53', color: '#FFFFFF' }}>
                                   DELEGATED
                                 </span>
                               )}
@@ -1462,7 +1462,7 @@ function AllCaughtUpHero({ recentLeaveDecisions = [], recentPermDecisions = [], 
       className="rounded-2xl border overflow-hidden"
       style={{
         borderColor: 'rgba(15, 76, 42, 0.18)',
-        background: 'linear-gradient(135deg, #F0FDF4 0%, #ECFDF5 60%, #FFFDF7 100%)',
+        background: 'linear-gradient(135deg, #F0FDF4 0%, #ECFDF5 60%, #FFFFFF 100%)',
       }}
     >
       <div className="px-8 py-10 flex flex-col sm:flex-row items-start sm:items-center gap-6">
@@ -1609,7 +1609,7 @@ function RejoiningSection({ queue, empMap, me, onChanged, onApproved }) {
             const busy = busyId === req.id;
             return (
               <li key={req.id} className="rounded-xl px-4 py-3 border"
-                  style={{ background: '#FFFDF7', borderColor: 'var(--border-soft)' }}>
+                  style={{ background: '#FFFFFF', borderColor: 'var(--border-soft)' }}>
                 <div className="flex items-center gap-3 flex-wrap">
                   <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
                        style={{ background: '#ECFDF5', color: '#0F4C2A' }}>
@@ -1760,7 +1760,7 @@ function HistorySection({
             onChange={e => setQuery(e.target.value)}
             placeholder="Search by name, PSN, or department"
             className="w-full pl-9 pr-3 py-1.5 rounded-full border text-xs"
-            style={{ background: '#FFFDF7', borderColor: 'var(--border-soft)', color: '#1F1B16' }}
+            style={{ background: '#FFFFFF', borderColor: 'var(--border-soft)', color: '#1F1B16' }}
           />
         </div>
       </div>
@@ -1857,7 +1857,7 @@ function HistoryItem({ req, empMap, onReopenPermission, onReopenRejoining, onReo
 
   return (
     <li className="rounded-xl px-4 py-2.5 border"
-        style={{ background: '#FFFDF7', borderColor: 'var(--border-soft)' }}>
+        style={{ background: '#FFFFFF', borderColor: 'var(--border-soft)' }}>
       <div className="flex items-center gap-3">
         <div
           className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
@@ -2076,7 +2076,7 @@ function RejectLeaveModal({ request, employee, onClose, onConfirm }) {
         </div>
 
         <div className="px-5 py-3 border-t flex items-center justify-end gap-2"
-          style={{ borderColor: 'var(--border-soft)', background: '#FAF6EC' }}>
+          style={{ borderColor: 'var(--border-soft)', background: '#F7F7F7' }}>
           <button onClick={onClose}
             disabled={submitting}
             className="text-[11px] px-3 py-1.5 rounded-full border"

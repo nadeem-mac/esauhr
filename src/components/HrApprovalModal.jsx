@@ -943,7 +943,7 @@ export default function HrApprovalModal({ request, employee, manager, substitute
             </div>
 
             <div className="px-5 py-3 border-t flex items-center justify-between gap-2 sticky bottom-0"
-              style={{ borderColor: 'var(--border-soft)', background: '#FAF6EC' }}>
+              style={{ borderColor: 'var(--border-soft)', background: '#F7F7F7' }}>
               <a href={SEHHATY_VERIFY_URL} target="_blank" rel="noopener noreferrer"
                 className="text-[11px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border"
                 style={{ borderColor: '#B45309', background: '#FFFFFF', color: '#B45309', fontWeight: 600 }}>

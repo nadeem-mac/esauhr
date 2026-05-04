@@ -260,7 +260,7 @@ export default function ShiftMonthGrid({
 
   return (
     <section className="rounded-2xl border bg-white p-3 sm:p-5"
-      style={{ borderColor: 'var(--border, #E5E0D5)', background: 'var(--paper, #FFFDF7)' }}
+      style={{ borderColor: 'var(--border, #E5E5E5)', background: 'var(--paper, #FFFFFF)' }}
     >
       {/* Header */}
       <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
@@ -279,7 +279,7 @@ export default function ShiftMonthGrid({
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {actionSlot}
-          <div className="flex items-center gap-1 rounded-lg border" style={{ borderColor: 'var(--border, #E5E0D5)' }}>
+          <div className="flex items-center gap-1 rounded-lg border" style={{ borderColor: 'var(--border, #E5E5E5)' }}>
             <button onClick={goPrev}
               className="p-1.5 hover:opacity-70 transition-opacity"
               style={{ color: '#0A0A0A' }}
@@ -329,7 +329,7 @@ export default function ShiftMonthGrid({
         if (!hasAnyRows && !loading) {
           return (
             <div className="rounded-xl p-8 text-center text-sm"
-              style={{ background: 'var(--paper-2, #FAF6EC)', color: '#0A0A0A', opacity: 0.75 }}>
+              style={{ background: 'var(--paper-2, #F7F7F7)', color: '#0A0A0A', opacity: 0.75 }}>
               <CalIcon className="w-5 h-5 inline-block mr-2" style={{ opacity: 0.5 }} />
               {hideEmptyRows
                 ? `No shifts assigned in ${monthLabel}.`
@@ -352,7 +352,7 @@ export default function ShiftMonthGrid({
         if (!hasAnyRows) return null;
         return (
           <>
-          <div className="rounded-lg border overflow-x-auto" style={{ borderColor: 'var(--border, #E5E0D5)', maxHeight: 520 }}>
+          <div className="rounded-lg border overflow-x-auto" style={{ borderColor: 'var(--border, #E5E5E5)', maxHeight: 520 }}>
             <div style={{ minWidth: `calc(180px + ${days.length} * 32px)` }}>
               {/* Sticky header row */}
               <div
@@ -360,14 +360,14 @@ export default function ShiftMonthGrid({
                 style={{
                   display: 'grid',
                   gridTemplateColumns: gridTpl,
-                  background: 'var(--paper-2, #FAF6EC)',
-                  borderBottom: '1px solid var(--border, #E5E0D5)',
+                  background: 'var(--paper-2, #F7F7F7)',
+                  borderBottom: '1px solid var(--border, #E5E5E5)',
                 }}
               >
                 <div className="sticky left-0 z-20 px-3 py-2"
                   style={{
-                    background: 'var(--paper-2, #FAF6EC)',
-                    borderRight: '1px solid var(--border, #E5E0D5)',
+                    background: 'var(--paper-2, #F7F7F7)',
+                    borderRight: '1px solid var(--border, #E5E5E5)',
                     fontSize: 10,
                     color: '#0A0A0A',
                     fontWeight: 700,
@@ -385,7 +385,7 @@ export default function ShiftMonthGrid({
                       className="text-center"
                       style={{
                         padding: '4px 0',
-                        background: isToday ? 'rgba(15,76,42,0.08)' : (isWeekend ? '#F0EBDD' : 'transparent'),
+                        background: isToday ? 'rgba(15,76,42,0.08)' : (isWeekend ? '#F0F0F0' : 'transparent'),
                         fontSize: 10,
                       }}>
                       <div style={{
@@ -416,8 +416,8 @@ export default function ShiftMonthGrid({
                       style={{
                         gridColumn: `1 / -1`,
                         padding: '6px 12px',
-                        background: 'var(--paper-3, #E8E0CC)',
-                        borderBottom: '1px solid var(--border, #E5E0D5)',
+                        background: 'var(--paper-3, #EAEAEA)',
+                        borderBottom: '1px solid var(--border, #E5E5E5)',
                         fontSize: 10,
                         color: '#0A0A0A',
                         fontWeight: 700,
@@ -431,7 +431,7 @@ export default function ShiftMonthGrid({
                       style={{
                         display: 'grid',
                         gridTemplateColumns: gridTpl,
-                        borderBottom: '1px solid var(--border-soft, #F0EBDD)',
+                        borderBottom: '1px solid var(--border-soft, #F0F0F0)',
                       }}>
                       <button
                         type="button"
@@ -441,7 +441,7 @@ export default function ShiftMonthGrid({
                         style={{
                           background: '#FFFFFF',
                           padding: '8px 10px',
-                          borderRight: '1px solid var(--border, #E5E0D5)',
+                          borderRight: '1px solid var(--border, #E5E5E5)',
                           cursor: onEmployeeClick ? 'pointer' : 'default',
                         }}
                         title={onEmployeeClick ? `Open ${emp.name || emp.id}` : (emp.name || emp.id)}
@@ -449,7 +449,7 @@ export default function ShiftMonthGrid({
                         <div className="rounded-full flex-none flex items-center justify-center"
                           style={{
                             width: 24, height: 24,
-                            background: 'var(--paper-3, #E8E0CC)',
+                            background: 'var(--paper-3, #EAEAEA)',
                             color: '#0A0A0A',
                             fontWeight: 700, fontSize: 10, letterSpacing: '0.04em',
                           }}>
@@ -486,11 +486,11 @@ export default function ShiftMonthGrid({
                         const isWeekend = dow === 5 || dow === 6;
                         const isToday = dStr === todayStr;
                         const s = shiftIndex.get(`${emp.id}|${dStr}`);
-                        const cellBg = isToday ? 'rgba(15,76,42,0.04)' : (isWeekend ? '#F8F4E9' : 'transparent');
+                        const cellBg = isToday ? 'rgba(15,76,42,0.04)' : (isWeekend ? '#F5F5F5' : 'transparent');
                         if (!s) {
                           return (
                             <div key={dStr}
-                              style={{ background: cellBg, borderLeft: '1px solid var(--border-soft, #F4EFE0)' }}
+                              style={{ background: cellBg, borderLeft: '1px solid var(--border-soft, #EFEFEF)' }}
                             />
                           );
                         }
@@ -507,7 +507,7 @@ export default function ShiftMonthGrid({
                           <div key={dStr}
                             style={{
                               background: cellBg,
-                              borderLeft: '1px solid var(--border-soft, #F4EFE0)',
+                              borderLeft: '1px solid var(--border-soft, #EFEFEF)',
                               padding: '3px 2px',
                               display: 'flex',
                               alignItems: 'center',
@@ -609,7 +609,7 @@ export default function ShiftMonthGrid({
               minWidth: 220,
               maxWidth: 280,
               background: '#FFFFFF',
-              border: '1px solid var(--border, #E5E0D5)',
+              border: '1px solid var(--border, #E5E5E5)',
               borderRadius: 10,
               boxShadow: '0 8px 24px rgba(15, 23, 42, 0.18)',
               padding: '10px 12px',
@@ -650,7 +650,7 @@ export default function ShiftMonthGrid({
               {hoverTip.isOvernight ? 'Night shift \u2014 starts evening, ends next morning' : 'Day shift'}
             </div>
             <div style={{
-              borderTop: '1px solid var(--border-soft, #F0EBDD)',
+              borderTop: '1px solid var(--border-soft, #F0F0F0)',
               marginTop: 8,
               paddingTop: 8,
             }}>

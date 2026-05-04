@@ -631,7 +631,7 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
           this card; it now has its own home in PendingShiftApprovalsCard. */}
       <div
         className="rounded-xl border p-5 esau-card"
-        style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}
+        style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}
       >
         <div className="flex items-baseline justify-between mb-4 pb-3 border-b" style={{ borderColor: 'var(--border-soft)' }}>
           <div className="flex items-center gap-2">

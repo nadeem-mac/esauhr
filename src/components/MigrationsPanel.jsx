@@ -223,7 +223,7 @@ function MigrationRow({ item, expanded, onToggleExpand, running, disabled, onRun
 
   return (
     <li className="rounded-xl"
-        style={{ border: `1px solid ${border}`, background: '#FFFDF7' }}>
+        style={{ border: `1px solid ${border}`, background: '#FFFFFF' }}>
       <div className="flex items-center gap-2 px-3 py-2.5 flex-wrap">
         <button
           onClick={onToggleExpand}

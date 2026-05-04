@@ -277,7 +277,7 @@ export default function MyApplicationsCard({
     <section
       id="your-applications"
       className="rounded-xl border p-5 esau-card"
-      style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}
+      style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}
     >
       {/* Header */}
       <div className="flex items-start justify-between mb-4 pb-3 border-b"
@@ -362,7 +362,7 @@ export default function MyApplicationsCard({
           recent / actionable items. */}
       {items.length > 0 && (
         <div className="mt-4 pt-3 text-[10px] italic text-center"
-             style={{ color: '#1F1B16', opacity: 0.6, borderTop: '1px dashed var(--border-soft, #E5E0D5)' }}>
+             style={{ color: '#1F1B16', opacity: 0.6, borderTop: '1px dashed var(--border-soft, #E5E5E5)' }}>
           Showing your applications from the last 90 days · Older records are archived in HR
         </div>
       )}

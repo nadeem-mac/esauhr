@@ -98,7 +98,7 @@ export default function PermissionStatusCard({ me }) {
   return (
     <section
       className="rounded-xl border p-5 esau-card"
-      style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}
+      style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}
     >
       {/* Header */}
       <div className="flex items-start justify-between mb-4 pb-3 border-b" style={{ borderColor: 'var(--border-soft)' }}>

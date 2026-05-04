@@ -74,7 +74,7 @@ export default function Requests({ requests, leaveTypes, typeMap, empMap, me, on
         <div className="flex gap-2">
           <button onClick={exportCSV}
             className="flex items-center gap-2 px-3 py-2 rounded-full text-sm border"
-            style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}>
+            style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
             <Download className="w-4 h-4"/> Export
           </button>
           <button onClick={onNewRequest}
@@ -125,7 +125,7 @@ export default function Requests({ requests, leaveTypes, typeMap, empMap, me, on
             const isBusy = busyId === r.id;
             return (
               <div key={r.id} className="rounded-xl border p-4 flex flex-wrap items-center gap-4 cursor-pointer hover:shadow-sm transition-shadow"
-                   style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}
+                   style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}
                    onClick={() => setTimelineRequest(r)}
                    title="Click to see approval progress">
                 <Avatar id={emp.id} name={emp.name} size="lg"/>

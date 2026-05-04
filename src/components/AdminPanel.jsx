@@ -216,7 +216,7 @@ export default function AdminPanel({ session, me, onRefreshMe }) {
         </div>
       ) : pending.length === 0 ? (
         <div className="rounded-2xl p-6 text-center"
-          style={{ background: '#FFFDF7', border: '1px solid var(--border-soft)' }}>
+          style={{ background: '#FFFFFF', border: '1px solid var(--border-soft)' }}>
           <UserCheck className="w-7 h-7 mx-auto mb-2" style={{ color: '#0A0A0A', opacity: 0.5 }}/>
           <p className="text-sm" style={{ color: '#0A0A0A', fontWeight: 500 }}>No pending requests right now.</p>
           <p className="text-xs mt-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>
@@ -229,7 +229,7 @@ export default function AdminPanel({ session, me, onRefreshMe }) {
             const issued = issuedPins[req.id];
             return (
               <li key={req.id} className="rounded-2xl p-4 sm:p-5"
-                style={{ background: '#FFFDF7', border: '1px solid var(--border-soft)' }}>
+                style={{ background: '#FFFFFF', border: '1px solid var(--border-soft)' }}>
                 <div className="flex items-start justify-between gap-4 flex-wrap">
                   <div>
                     <div className="text-xs tracking-widest font-mono" style={{ color: '#0A0A0A', opacity: 0.7 }}>
@@ -295,7 +295,7 @@ export default function AdminPanel({ session, me, onRefreshMe }) {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* RECENT DECISIONS */}
         <section className="rounded-2xl p-4 sm:p-5"
-          style={{ background: '#FFFDF7', border: '1px solid var(--border-soft)' }}>
+          style={{ background: '#FFFFFF', border: '1px solid var(--border-soft)' }}>
           <h3 className="text-xs tracking-[0.25em] mb-3" style={{ color: '#0A0A0A', fontWeight: 700 }}>
             RECENT DECISIONS · {recent.length}
           </h3>
@@ -342,7 +342,7 @@ export default function AdminPanel({ session, me, onRefreshMe }) {
 
       {/* ─────────── ACTIVITY LOG (admin-only) ─────────── */}
       <section className="rounded-2xl p-4 sm:p-5"
-        style={{ background: '#FFFDF7', border: '1px solid var(--border-soft)' }}>
+        style={{ background: '#FFFFFF', border: '1px solid var(--border-soft)' }}>
         <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
           <div>
             <h3 className="text-xs tracking-[0.25em]" style={{ color: '#0A0A0A', fontWeight: 700 }}>ACTIVITY LOG</h3>
@@ -382,7 +382,7 @@ export default function AdminPanel({ session, me, onRefreshMe }) {
                   style={{
                     borderColor: auditCategory === c ? '#0A0A0A' : 'var(--border-soft)',
                     background:  auditCategory === c ? '#0A0A0A' : '#FFFFFF',
-                    color:       auditCategory === c ? '#FFFDF7' : '#0A0A0A',
+                    color:       auditCategory === c ? '#FFFFFF' : '#0A0A0A',
                   }}>
                   {c.toUpperCase()}
                 </button>
@@ -514,7 +514,7 @@ function SignInActivity({ auditLog, loading, onRefresh }) {
 
   return (
     <section className="rounded-2xl p-4 sm:p-5"
-      style={{ background: '#FFFDF7', border: '1px solid var(--border-soft)' }}>
+      style={{ background: '#FFFFFF', border: '1px solid var(--border-soft)' }}>
       <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
         <div>
           <h3 className="text-xs tracking-[0.25em]" style={{ color: '#0A0A0A', fontWeight: 700 }}>

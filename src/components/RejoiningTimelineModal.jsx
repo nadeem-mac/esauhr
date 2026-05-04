@@ -91,7 +91,7 @@ export default function RejoiningTimelineModal({ request, empMap = {}, onClose }
         className="w-full max-w-xl rounded-2xl border"
         style={{
           borderColor: 'var(--border-soft)',
-          background: '#FFFDF7',
+          background: '#FFFFFF',
           boxShadow: '0 12px 40px rgba(31,27,22,0.18)',
         }}
       >
@@ -135,7 +135,7 @@ export default function RejoiningTimelineModal({ request, empMap = {}, onClose }
               <li key={s.key} className="flex gap-3 pb-4 relative">
                 {!isLast && (
                   <div className="absolute left-[15px] top-9 bottom-0 w-px"
-                       style={{ background: '#E5E0D5' }} />
+                       style={{ background: '#E5E5E5' }} />
                 )}
                 <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center border-2"
                      style={{ borderColor: ringColor, background: fillColor }}>

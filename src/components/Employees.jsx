@@ -53,7 +53,7 @@ export default function Employees({ employees, leaveTypes, requests, balances, o
       </div>
 
       <div className="rounded-xl border overflow-hidden"
-           style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}>
+           style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
         <div className="hidden md:grid grid-cols-12 gap-3 px-4 py-3 text-[10px] tracking-widest opacity-60 border-b"
              style={{ borderColor: 'var(--border-soft)' }}>
           <div className="col-span-5">NAME</div>

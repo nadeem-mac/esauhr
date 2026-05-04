@@ -4,7 +4,7 @@ import { AlertCircle } from 'lucide-react';
 export default function ConfigMissing() {
   return (
     <div className="min-h-screen flex items-center justify-center p-6" style={{ background: 'var(--paper)' }}>
-      <div className="max-w-xl w-full rounded-xl border p-8" style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}>
+      <div className="max-w-xl w-full rounded-xl border p-8" style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
         <div className="flex items-center gap-3 mb-4" style={{ color: 'var(--clay)' }}>
           <AlertCircle className="w-6 h-6" />
           <div className="serif text-2xl" style={{ fontWeight: 500 }}>Configuration missing</div>

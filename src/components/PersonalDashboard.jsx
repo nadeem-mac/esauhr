@@ -400,7 +400,7 @@ function TodayBanner({ me, requests, permissions, leaveTypes }) {
 
 /* === Colorful gradient tile === */
 // Paper-chrome tile — matches the canonical .esau-card look (rounded-xl,
-// #FFFDF7 background, soft warm border, gentle hover lift). Keeps a small
+// #FFFFFF background, soft warm border, gentle hover lift). Keeps a small
 // dose of brand color via the accent dot in the header and the optional
 // progress bar fill, but the surrounding chrome is the same as every other
 // card on the page.
@@ -413,7 +413,7 @@ function ColorTile({ accent = '#1F1B16', label, icon: Icon, stat, unit = '', des
   return (
     <div onClick={onClick}
       className={`rounded-xl border p-5 esau-card flex flex-col justify-between ${onClick ? 'cursor-pointer' : ''}`}
-      style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7', minHeight: '140px' }}>
+      style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', minHeight: '140px' }}>
       {/* Header — accent dot + label on the left, icon on the right */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 min-w-0">
@@ -464,7 +464,7 @@ function FlagTile({ monthSummary }) {
   return (
     <div
       className="rounded-xl border p-5 esau-card flex flex-col justify-between"
-      style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7', minHeight: '140px' }}
+      style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', minHeight: '140px' }}
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">

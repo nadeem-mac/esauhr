@@ -139,7 +139,7 @@ export default function MyAttendanceCard({ me }) {
 
   return (
     <section className="rounded-2xl border overflow-hidden mb-4"
-      style={{ borderColor: 'var(--border-soft)', background: '#FFFDF7' }}>
+      style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
       <div className="px-5 py-4 border-b flex items-start justify-between gap-3 flex-wrap"
            style={{ borderColor: 'var(--border-soft)' }}>
         <div>
