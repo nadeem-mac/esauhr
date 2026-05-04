@@ -323,11 +323,13 @@ begin
        and join_date <= current_date
     returning id, name, join_date
   )
-  insert into public.audit_log (action, entity_type, entity_id, actor, details)
+  insert into public.audit_log (action, target_type, target_id, target_label, actor_psn, actor_name, details)
   select 'lifecycle.promote_to_active',
          'employee',
          id,
+         name,
          'SYSTEM',
+         'System (lifecycle cron)',
          jsonb_build_object('name', name, 'join_date', join_date)
     from promoted;
 
@@ -343,11 +345,13 @@ begin
        and last_working_day < current_date
     returning id, name, last_working_day
   )
-  insert into public.audit_log (action, entity_type, entity_id, actor, details)
+  insert into public.audit_log (action, target_type, target_id, target_label, actor_psn, actor_name, details)
   select 'lifecycle.mark_departed',
          'employee',
          id,
+         name,
          'SYSTEM',
+         'System (lifecycle cron)',
          jsonb_build_object('name', name, 'last_working_day', last_working_day)
     from departed;
 
@@ -361,12 +365,12 @@ begin
      and expires_at < now();
 
   -- Summary log entry so it's visible the cron ran even on quiet days
-  insert into public.audit_log (action, entity_type, entity_id, actor, details)
+  insert into public.audit_log (action, target_type, actor_psn, actor_name, details)
   values (
     'lifecycle.daily_run',
     'system',
-    null,
     'SYSTEM',
+    'System (lifecycle cron)',
     jsonb_build_object(
       'promoted_count', promoted_count,
       'departed_count', departed_count,
