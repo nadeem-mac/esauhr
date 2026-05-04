@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Card } from './Dashboard.jsx';
 import { supabase, directGet, directPost, directDelete } from '../supabaseClient.js';
-import { Loader2, Check, Lock, CheckCircle2 } from 'lucide-react';
+import { Loader2, Check, Lock, CheckCircle2, Clock } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ManagerShiftCard
@@ -89,6 +89,12 @@ export default function ManagerShiftCard({ me, employees }) {
   const [staffId, setStaffId] = useState('');
   const [weekOffset, setWeekOffset] = useState(0); // 0 = this week
   const [shifts, setShifts] = useState({});
+  // Snapshot of shifts as loaded from the DB. Used by the
+  // pendingDispatchPreview memo to distinguish a real delete
+  // (clearing a saved day) from a no-op (toggling off a day that
+  // was never saved). Updated only by loadWeek so user edits don't
+  // drift it.
+  const [loadedShifts, setLoadedShifts] = useState({});
   // Which day is currently in focus for the time-editor panel. `null`
   // means no day has been picked yet — the panel stays collapsed and
   // the manager just sees the day grid. Resets when staff or week
@@ -159,6 +165,10 @@ export default function ManagerShiftCard({ me, employees }) {
       };
     });
     setShifts(next);
+    // Snapshot what was loaded so the dispatch preview can tell
+    // "clearing a saved day" from "toggling off a never-saved day"
+    // — only the former actually fires a DELETE.
+    setLoadedShifts(next);
     setLoading(false);
   }, [staffId, days]);
 
@@ -296,10 +306,16 @@ export default function ManagerShiftCard({ me, employees }) {
     days.forEach(d => {
       const key = ymd(d);
       const s = shifts[key];
-      // Never touch the past, and never overwrite a shift the staff
-      // member has already accepted — re-saving would reset its status
-      // back to pending and silently invalidate their acknowledgment.
-      if (d < today || s?.status === 'accepted') return;
+      // Never touch the past, never overwrite an already-acknowledged
+      // shift (re-saving would silently reset to pending and invalidate
+      // the staff's acknowledgment), and never overwrite a row that
+      // was already dispatched and is awaiting acknowledgment — once
+      // saved, the day is locked. The day-card UI also disables
+      // these states, so this skip is belt-and-braces in case
+      // anything sneaks past the front-end gate.
+      if (d < today) return;
+      if (s?.status === 'accepted') return;
+      if (s?.status === 'pending')  return;
       if (!s) return;
       if (s.on) {
         upserts.push({
@@ -383,6 +399,70 @@ export default function ManagerShiftCard({ me, employees }) {
   const isThisWeek = weekOffset === 0;
   const canSave = !loading && !saving && days.some(d => d >= today);
 
+  // Pre-compute what the next save-and-send will dispatch and what
+  // it will clear, so the confirmation modal can show the manager
+  // exactly what's about to happen before they commit. Mirrors the
+  // skip logic in handleSave: past days, accepted shifts, and
+  // already-pending shifts are excluded — the manager can only
+  // ever dispatch a new "on" entry or clear an "off" toggle for a
+  // day that's not yet locked.
+  const pendingDispatchPreview = useMemo(() => {
+    const dispatch = []; // { dateKey, dow, dayLabel, start, end, isOvernight }
+    const clear    = []; // { dateKey, dow, dayLabel }
+    days.forEach(d => {
+      if (d < today) return;
+      const key = ymd(d);
+      const s = shifts[key];
+      if (!s) return;
+      if (s.status === 'accepted' || s.status === 'pending') return;
+      const dayLabel = d.toLocaleDateString(SAR_LOCALE, { day: 'numeric', month: 'short' });
+      const dow = DOW_SHORT[d.getDay()];
+      if (s.on) {
+        dispatch.push({
+          dateKey: key,
+          dow, dayLabel,
+          start: s.start,
+          end: s.end,
+          isOvernight: s.start && s.end && s.start > s.end,
+        });
+      } else {
+        // Only counts as a "clear" if a shift previously existed
+        // for this day. New off toggles on never-saved days are
+        // no-ops.
+        if (loadedShifts[key]) {
+          clear.push({ dateKey: key, dow, dayLabel });
+        }
+      }
+    });
+    return { dispatch, clear };
+  }, [days, shifts, loadedShifts, today]);
+
+  const hasPendingChanges = pendingDispatchPreview.dispatch.length > 0
+                         || pendingDispatchPreview.clear.length > 0;
+
+  // Confirmation gate. The "Save and send" button now opens this
+  // modal first; manager reviews the preview, clicks "Confirm
+  // dispatch" to actually save. Per Nadeem: once dispatched, the
+  // day is locked (handled by dayKindFor + the save-loop skip
+  // above). Confirmation is the moment-of-no-return so the manager
+  // gets one explicit pause to verify times before they're sent.
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const openConfirm = () => {
+    if (!canSave) return;
+    if (!hasPendingChanges) {
+      setToast('\u2713 No changes to save.');
+      setTimeout(() => setToast(''), 4000);
+      return;
+    }
+    setError('');
+    setToast('');
+    setConfirmOpen(true);
+  };
+  const confirmAndSave = () => {
+    setConfirmOpen(false);
+    handleSave();
+  };
+
   // Initials helper for the staff card avatars. Falls back to the
   // first two characters of whatever string we have if the name
   // can't be split into first/last.
@@ -422,12 +502,22 @@ export default function ManagerShiftCard({ me, employees }) {
 
   // Day-card visual state — five buckets that drive the styling
   // table. Past locks the card; accepted locks but with brand-green
-  // emphasis; on/off toggle between cream-and-beige (off) and
-  // green-tinted (on). Selected adds a 2px ring on top.
+  // emphasis; pending locks with amber emphasis (saved + waiting on
+  // staff acknowledgment); on/off toggle between cream-and-beige
+  // (off) and green-tinted (on). Selected adds a 2px ring on top.
+  //
+  // 'pending' kind means the row exists in the database with
+  // status='pending' — manager has already saved & dispatched, the
+  // staff member has not yet acknowledged. Once dispatched, the
+  // day is locked: the manager can't silently change the time
+  // out from under the staff. To change a dispatched day, the
+  // staff would need to decline (which lets it go back to off),
+  // or — TODO — a withdraw mechanism that deletes the pending row.
   const dayKindFor = (d, s) => {
     if (d < today) return 'past';
     if (s?.status === 'accepted') return 'accepted';
     if (s?.status === 'declined') return 'declined';
+    if (s?.status === 'pending')  return 'pending';
     if (s?.on) return 'on';
     return 'off';
   };
@@ -598,7 +688,7 @@ export default function ManagerShiftCard({ me, employees }) {
                 const s = shifts[key] || { on: false, start: DEFAULT_START, end: DEFAULT_END, status: null };
                 const kind = dayKindFor(d, s);
                 const isSel = selectedDay === key;
-                const isLocked = kind === 'past' || kind === 'accepted';
+                const isLocked = kind === 'past' || kind === 'accepted' || kind === 'pending';
 
                 // Style table by kind
                 let bg, fg, br, label;
@@ -606,6 +696,19 @@ export default function ManagerShiftCard({ me, employees }) {
                   bg = 'transparent'; fg = '#0A0A0A'; br = '0.5px solid var(--border)'; label = 'Past';
                 } else if (kind === 'accepted') {
                   bg = 'var(--evergreen-600)'; fg = '#FFFFFF'; br = '2px solid var(--evergreen-600)'; label = 'Accepted';
+                } else if (kind === 'pending') {
+                  // Saved & dispatched, awaiting staff acknowledgment.
+                  // Light amber background to visually echo the pending
+                  // status colour used elsewhere (legend chip, status
+                  // pill, tooltip border). Times rendered on the chip
+                  // so the manager sees what was sent without unlocking.
+                  bg = '#FEF6E2';
+                  fg = '#854F0B';
+                  br = '0.5px solid #E8C896';
+                  const overnight = s.start && s.end && s.start > s.end;
+                  label = overnight
+                    ? `${s.start}\u2192${s.end}`
+                    : `${s.start}\u2013${s.end}`;
                 } else if (kind === 'declined') {
                   bg = 'var(--clay-50, #FCF1ED)'; fg = '#0A0A0A'; br = '0.5px solid var(--clay-200, #E5C5BD)'; label = 'Declined';
                 } else if (kind === 'on') {
@@ -623,8 +726,10 @@ export default function ManagerShiftCard({ me, employees }) {
                 } else {
                   bg = 'var(--paper-2)'; fg = '#0A0A0A'; br = '0.5px solid var(--border)'; label = 'Off';
                 }
-                // Selection ring overrides the border
-                if (isSel && kind !== 'accepted') {
+                // Selection ring overrides the border (skipped for
+                // accepted + pending — both are locked, no selection
+                // needed).
+                if (isSel && kind !== 'accepted' && kind !== 'pending') {
                   br = '2px solid var(--evergreen-600)';
                 }
                 const opacity = kind === 'past' ? 0.5 : 1;
@@ -661,6 +766,7 @@ export default function ManagerShiftCard({ me, employees }) {
                       fontWeight: 500,
                     }}>
                       {kind === 'accepted' && <CheckCircle2 className="w-3 h-3 inline mr-0.5 -mt-0.5" />}
+                      {kind === 'pending'  && <Clock className="w-2.5 h-2.5 inline mr-0.5 -mt-0.5" />}
                       {kind === 'past' && <Lock className="w-2.5 h-2.5 inline mr-0.5 -mt-0.5" />}
                       {label}
                     </div>
@@ -796,12 +902,12 @@ export default function ManagerShiftCard({ me, employees }) {
           ) : toast ? (
             <span style={{ color: 'var(--evergreen-700, #0F4C2A)', fontWeight: 500 }}>{toast}</span>
           ) : (
-            <>Past days and accepted shifts are locked. Saved entries are dispatched to the staff member for acknowledgment. Once they accept, the shift is final and locked &mdash; the time is used by HR for attendance checks.</>
+            <>Past, dispatched, and accepted days are locked. Click <strong>Save and send</strong> to review and dispatch new entries; once confirmed, those days lock too.</>
           )}
         </div>
         <button
           type="button"
-          onClick={handleSave}
+          onClick={openConfirm}
           disabled={!canSave}
           className="px-4 py-2.5 rounded-lg text-sm flex items-center justify-center gap-2 transition-opacity shrink-0"
           style={{
@@ -816,6 +922,138 @@ export default function ManagerShiftCard({ me, employees }) {
           {saving ? 'Saving\u2026' : 'Save and send'}
         </button>
       </div>
+
+      {/* ── Confirm-dispatch modal ─────────────────────────────────
+          Opens when the manager clicks "Save and send". Shows a
+          summary of every day about to be dispatched (with times,
+          night-shift annotations) plus any days about to be cleared.
+          Manager confirms → handleSave fires. Cancel closes the
+          modal without saving.
+
+          After confirmation + save, the dispatched days become
+          'pending' kind in the day grid (amber tint, locked). The
+          manager cannot silently change a dispatched time out from
+          under the staff member they sent it to. To change a
+          dispatched day, the staff would need to decline and the
+          manager would dispatch a fresh entry. */}
+      {confirmOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Confirm shift dispatch"
+          onClick={() => setConfirmOpen(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 50,
+            background: 'rgba(15, 23, 42, 0.45)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 16,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#FFFFFF',
+              border: '1px solid var(--border)',
+              borderRadius: 14,
+              boxShadow: '0 20px 50px rgba(15, 23, 42, 0.25)',
+              width: '100%',
+              maxWidth: 480,
+              maxHeight: 'calc(100vh - 32px)',
+              overflowY: 'auto',
+              padding: '20px 22px',
+            }}
+          >
+            <div className="text-[10px] tracking-[0.25em] mb-1.5" style={{ color: '#0A0A0A', fontWeight: 700 }}>
+              CONFIRM SHIFT DISPATCH
+            </div>
+            <div style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#0A0A0A', marginBottom: 6 }}>
+              Send shifts to {(directReports.find(e => e.id === staffId)?.name || '').split(' ')[0] || 'staff'}?
+            </div>
+            <div className="text-xs leading-relaxed mb-4" style={{ color: '#0A0A0A' }}>
+              Once you confirm, the day(s) below are dispatched to {(directReports.find(e => e.id === staffId)?.name || '').split(' ')[0] || 'the staff member'} for acknowledgment, and the times become locked on your end. To change a dispatched day later, the staff would need to decline and you'd dispatch a fresh entry.
+            </div>
+
+            {/* Dispatch list */}
+            {pendingDispatchPreview.dispatch.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <div className="text-[10px] tracking-[0.2em] mb-1.5" style={{ color: '#854F0B', fontWeight: 700 }}>
+                  DISPATCH &middot; {pendingDispatchPreview.dispatch.length} DAY{pendingDispatchPreview.dispatch.length === 1 ? '' : 'S'}
+                </div>
+                <div style={{ background: '#FEF6E2', border: '1px solid #E8C896', borderRadius: 8, padding: '8px 10px' }}>
+                  {pendingDispatchPreview.dispatch.map((row) => (
+                    <div key={row.dateKey} className="flex items-center justify-between gap-3 py-1" style={{ fontSize: 12 }}>
+                      <span style={{ color: '#0A0A0A', fontWeight: 600 }}>
+                        {row.dow} {row.dayLabel}
+                      </span>
+                      <span style={{ color: '#854F0B', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+                        {row.start} {row.isOvernight ? '\u2192' : '\u2013'} {row.end}
+                        {row.isOvernight && (
+                          <span style={{ fontSize: 10, fontWeight: 500, marginLeft: 4, opacity: 0.85 }}>
+                            next day
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Clear list */}
+            {pendingDispatchPreview.clear.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <div className="text-[10px] tracking-[0.2em] mb-1.5" style={{ color: '#791F1F', fontWeight: 700 }}>
+                  CLEAR &middot; {pendingDispatchPreview.clear.length} DAY{pendingDispatchPreview.clear.length === 1 ? '' : 'S'}
+                </div>
+                <div style={{ background: '#FCEFEF', border: '1px solid #E8B5B0', borderRadius: 8, padding: '8px 10px' }}>
+                  {pendingDispatchPreview.clear.map((row) => (
+                    <div key={row.dateKey} className="flex items-center justify-between gap-3 py-1" style={{ fontSize: 12 }}>
+                      <span style={{ color: '#0A0A0A', fontWeight: 600 }}>
+                        {row.dow} {row.dayLabel}
+                      </span>
+                      <span style={{ color: '#791F1F', fontWeight: 600 }}>
+                        Removed
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div className="flex gap-2 mt-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setConfirmOpen(false)}
+                className="px-4 py-2 rounded-lg text-sm transition-opacity"
+                style={{
+                  background: 'transparent',
+                  color: '#0A0A0A',
+                  border: '1px solid var(--border)',
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmAndSave}
+                className="px-4 py-2 rounded-lg text-sm flex items-center justify-center gap-2 transition-opacity"
+                style={{
+                  background: 'var(--evergreen-600)',
+                  color: '#FFFFFF',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                <Check className="w-4 h-4" />
+                Confirm dispatch
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </Card>
   );
 }
