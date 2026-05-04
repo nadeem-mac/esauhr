@@ -111,6 +111,24 @@ export default function ShiftMonthGrid({
   const [shifts, setShifts] = useState([]);
   const [loading, setLoading] = useState(false);
 
+  // Hover-tooltip state. Tracks the currently-hovered shift cell + its
+  // viewport coordinates so a richer tooltip can render at fixed
+  // position above (or below, if near the top) the cell. Clears on
+  // mouse-leave. The browser-native title= attribute remains on the
+  // cell as accessibility fallback for screen readers and contexts
+  // where hover doesn't fire (touch, focus-only navigation).
+  const [hoverTip, setHoverTip] = useState(null);
+  const handleCellEnter = useCallback((e, payload) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    setHoverTip({
+      x: rect.left + rect.width / 2,
+      yTop:    rect.top,
+      yBottom: rect.bottom,
+      ...payload,
+    });
+  }, []);
+  const handleCellLeave = useCallback(() => setHoverTip(null), []);
+
   // Month bounds in local YYYY-MM-DD
   const firstDay = useMemo(() => new Date(year, month, 1), [year, month]);
   const lastDay  = useMemo(() => new Date(year, month + 1, 0), [year, month]);
@@ -479,10 +497,12 @@ export default function ShiftMonthGrid({
                         const style = chipStyle(s.status);
                         const label = formatChipLabel(s.start_time, s.end_time);
                         const isAccepted = s.status === 'accepted';
-                        const tooltip =
+                        const isOvernight = s.start_time && s.end_time && s.start_time > s.end_time;
+                        const tooltipText =
                           `${emp.name || emp.id} \u2014 ${d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}\n` +
-                          `${s.start_time ? s.start_time.slice(0,5) : '?'} \u2192 ${s.end_time ? s.end_time.slice(0,5) : '?'}\n` +
-                          `${s.status}${isAccepted ? ' \u2014 acknowledged & locked' : ''}`;
+                          `${s.start_time ? s.start_time.slice(0,5) : '?'} \u2192 ${s.end_time ? s.end_time.slice(0,5) : '?'}` +
+                          (isOvernight ? ' (next day)' : '') + '\n' +
+                          `${isOvernight ? 'Night shift (overnight) \u2014 ' : ''}${s.status}${isAccepted ? ' \u2014 acknowledged & locked' : ''}`;
                         return (
                           <div key={dStr}
                             style={{
@@ -501,7 +521,18 @@ export default function ShiftMonthGrid({
                                 boxShadow: 'inset 0 0 0 1px rgba(15, 76, 42, 0.20)',
                               } : {}),
                             }}
-                            title={tooltip}
+                            title={tooltipText}
+                            onMouseEnter={(e) => handleCellEnter(e, {
+                              empName: emp.name || emp.id,
+                              empPsn:  emp.id,
+                              dateStr: d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }),
+                              startStr: s.start_time ? s.start_time.slice(0, 5) : '\u2014',
+                              endStr:   s.end_time   ? s.end_time.slice(0, 5)   : '\u2014',
+                              isOvernight,
+                              status: s.status,
+                              isAccepted,
+                            })}
+                            onMouseLeave={handleCellLeave}
                           >
                             <div style={{
                               ...style,
@@ -536,6 +567,118 @@ export default function ShiftMonthGrid({
             <span>Arrow (&rarr;) indicates an overnight shift</span>
           </div>
         </>
+        );
+      })()}
+
+      {/* Rich hover tooltip — anchored to the hovered cell. Positioned
+          fixed so it can escape the grid's overflow-x: auto clipping.
+          Auto-flips below the cell when the cell is near the top of
+          the viewport so the tooltip never gets pushed off-screen. */}
+      {hoverTip && (() => {
+        const flipBelow = hoverTip.yTop < 180;
+        const tipPosStyle = flipBelow
+          ? { top: hoverTip.yBottom + 6, transform: 'translateX(-50%)' }
+          : { top: hoverTip.yTop - 6,    transform: 'translate(-50%, -100%)' };
+        const headerColor =
+          hoverTip.status === 'declined' ? '#A32D2D'
+          : hoverTip.isAccepted          ? '#0F4C2A'
+          :                                '#854F0B';
+        const statusBadgeStyle =
+          hoverTip.status === 'declined' ? { background: '#FCEBEB', color: '#791F1F', border: '1px solid #A32D2D' }
+          : hoverTip.isAccepted          ? { background: '#0F4C2A', color: '#FFFFFF', border: '1px solid #0F4C2A' }
+          :                                { background: '#FAEEDA', color: '#854F0B', border: '1px solid #BA7517' };
+        const statusLabel =
+          hoverTip.isAccepted          ? 'Accepted & locked'
+          : hoverTip.status === 'pending'  ? 'Pending acknowledgment'
+          : hoverTip.status === 'declined' ? 'Declined'
+          : hoverTip.status;
+        const statusDetail =
+          hoverTip.isAccepted          ? 'Final and locked. HR uses this time to check punch-in and punch-out.'
+          : hoverTip.status === 'pending'  ? 'Waiting for staff to acknowledge.'
+          : hoverTip.status === 'declined' ? 'Manager will follow up.'
+          : '';
+        return (
+          <div
+            role="tooltip"
+            style={{
+              position: 'fixed',
+              left: hoverTip.x,
+              ...tipPosStyle,
+              zIndex: 100,
+              pointerEvents: 'none',
+              minWidth: 220,
+              maxWidth: 280,
+              background: '#FFFFFF',
+              border: '1px solid var(--border, #E5E0D5)',
+              borderRadius: 10,
+              boxShadow: '0 8px 24px rgba(15, 23, 42, 0.18)',
+              padding: '10px 12px',
+              fontSize: 12,
+              lineHeight: 1.45,
+              color: '#0A0A0A',
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: 13, color: '#0A0A0A', marginBottom: 1 }}>
+              {hoverTip.empName}
+            </div>
+            <div style={{ fontSize: 11, color: '#0A0A0A', opacity: 0.65, fontVariantNumeric: 'tabular-nums', marginBottom: 8 }}>
+              {hoverTip.empPsn} &middot; {hoverTip.dateStr}
+            </div>
+            <div style={{
+              fontSize: 14,
+              fontWeight: 600,
+              color: headerColor,
+              fontVariantNumeric: 'tabular-nums',
+              letterSpacing: '0.01em',
+            }}>
+              {hoverTip.startStr} {hoverTip.isOvernight ? '\u2192' : '\u2013'} {hoverTip.endStr}
+              {hoverTip.isOvernight && (
+                <span style={{ fontSize: 10, fontWeight: 500, marginLeft: 6, opacity: 0.85 }}>
+                  next day
+                </span>
+              )}
+            </div>
+            <div style={{
+              fontSize: 11,
+              fontWeight: 600,
+              color: hoverTip.isOvernight ? '#854F0B' : '#0A0A0A',
+              opacity: 0.85,
+              marginTop: 2,
+              letterSpacing: '0.04em',
+              textTransform: 'uppercase',
+            }}>
+              {hoverTip.isOvernight ? 'Night shift \u2014 starts evening, ends next morning' : 'Day shift'}
+            </div>
+            <div style={{
+              borderTop: '1px solid var(--border-soft, #F0EBDD)',
+              marginTop: 8,
+              paddingTop: 8,
+            }}>
+              <div style={{
+                display: 'inline-block',
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: '0.12em',
+                textTransform: 'uppercase',
+                padding: '2px 8px',
+                borderRadius: 999,
+                ...statusBadgeStyle,
+              }}>
+                {statusLabel}
+              </div>
+              {statusDetail && (
+                <div style={{
+                  fontSize: 11,
+                  color: '#0A0A0A',
+                  opacity: 0.8,
+                  marginTop: 6,
+                  lineHeight: 1.5,
+                }}>
+                  {statusDetail}
+                </div>
+              )}
+            </div>
+          </div>
         );
       })()}
     </section>
