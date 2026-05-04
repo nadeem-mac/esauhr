@@ -2526,7 +2526,7 @@ export default function AttendanceView({ me, employees }) {
     const weekendChipLabel = (w) => {
       const fmt = (yyyymmdd) => {
         const [y, m, d] = yyyymmdd.split('-').map(Number);
-        return new Date(y, m - 1, d).toLocaleDateString(SAR_LOCALE, { weekday: 'short', day: 'numeric', month: 'short' });
+        return new Date(y, m - 1, d).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
       };
       return `${fmt(w.fridayKey)} \u2013 ${fmt(w.saturdayKey)}`;
     };
