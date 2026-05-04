@@ -84,48 +84,44 @@ create index if not exists idx_employees_last_working_day  on public.employees(l
 
 
 -- ════════════════════════════════════════════════════════════════════
--- SECTION 2 — TRIGGER: KEEP active IN SYNC WITH employment_status
+-- SECTION 2 — UPDATE current_employees VIEW TO INCLUDE on_notice
 -- ════════════════════════════════════════════════════════════════════
--- The portal's existing queries filter on the `active` boolean to
--- decide who shows up in dashboards. Rather than rewrite every
--- query, we keep `active` as a derived value. Pre-joiners and
--- departed staff are not active. Everyone else is.
+-- The portal's current_employees view filters on employment_status =
+-- 'active'. With the new lifecycle states, that's too narrow:
 --
--- This means the rest of the codebase doesn't need to change —
--- existing `where active = true` filters automatically exclude
--- pre-joiners and departed staff once their status changes.
+--   pre_joining → CORRECTLY excluded (haven't started yet)
+--   active      → INCLUDED (current behaviour, preserved)
+--   on_notice   → MUST be included — they're still working through
+--                 their notice period and need full portal access
+--   on_leave    → INCLUDED (existing legacy state — preserved)
+--   departed    → CORRECTLY excluded (account closed)
+--   terminated  → CORRECTLY excluded (existing legacy behaviour)
+--
+-- Recreate the view with the broader filter. Existing queries that
+-- read from current_employees automatically pick up on_notice staff
+-- without any frontend code change. Queries that filter directly on
+-- employment_status keep working the way they already do.
+--
+-- The employees table has NO `active` boolean column — employment_
+-- status IS the single source of truth. No trigger needed.
 
-create or replace function public.sync_employees_active_flag()
-returns trigger
-language plpgsql
-as $$
-begin
-  -- Active flag derived from employment_status. pre_joining and
-  -- departed staff are not "active" for everyday queries; on_notice
-  -- staff still are (they're working through their notice period).
-  if NEW.employment_status in ('active','on_notice','on_leave') then
-    NEW.active := true;
-  else
-    NEW.active := false;  -- pre_joining, departed, terminated
-  end if;
-  return NEW;
-end;
-$$;
-
-drop trigger if exists trg_employees_sync_active on public.employees;
-create trigger trg_employees_sync_active
-  before insert or update of employment_status
-  on public.employees
-  for each row
-  execute function public.sync_employees_active_flag();
-
--- One-time backfill so the active flag matches the new derivation
--- on existing rows. After this, the trigger keeps it correct.
-update public.employees
-   set active = case
-     when employment_status in ('active','on_notice','on_leave') then true
-     else false
-   end;
+create or replace view public.current_employees as
+select
+  e.*,
+  (select coalesce(sum(r.days), 0)
+    from public.leave_requests r
+    where r.employee_id = e.id
+      and r.status = 'approved'
+      and extract(year from r.start_date) = extract(year from now())
+  ) as total_days_used,
+  (select coalesce(sum(r.days), 0)
+    from public.leave_requests r
+    where r.employee_id = e.id
+      and r.status = 'pending'
+      and extract(year from r.start_date) = extract(year from now())
+  ) as total_days_pending
+from public.employees e
+where e.employment_status in ('active', 'on_notice', 'on_leave');
 
 
 -- ════════════════════════════════════════════════════════════════════
@@ -296,8 +292,9 @@ create index if not exists idx_resignations_stage    on public.resignation_reque
 --      last_working_day has passed.
 --
 -- Each transition writes to audit_log so there's an actor='SYSTEM'
--- record of the flip. The trigger from SECTION 2 keeps the active
--- flag in sync automatically.
+-- record of the flip. The current_employees view from SECTION 2
+-- automatically picks up the new state since it filters on
+-- employment_status directly.
 --
 -- Requires pg_cron extension (already enabled on Supabase). Riyadh
 -- is UTC+3 with no DST, so midnight Riyadh = 21:00 UTC.
@@ -485,7 +482,8 @@ end $$;
 -- ════════════════════════════════════════════════════════════════════
 -- After this migration applies successfully:
 --   • employees has 4 new columns and an extended status check
---   • Trigger keeps `active` derived from employment_status
+--   • current_employees view includes on_notice + on_leave staff
+--     so during-notice employees keep showing up in normal queries
 --   • Three new tables exist: offer_letters, resignation_requests,
 --     signatories
 --   • Daily cron job scheduled at 21:00 UTC (midnight Riyadh)
@@ -499,10 +497,10 @@ end $$;
 --   union all select 'resignation_requests', count(*) from public.resignation_requests
 --   union all select 'signatories',          count(*) from public.signatories;
 --
---   select employment_status, active, count(*)
+--   select employment_status, count(*)
 --     from public.employees
---    group by employment_status, active
---    order by employment_status, active;
+--    group by employment_status
+--    order by employment_status;
 --
 --   select jobname, schedule, active from cron.job
 --    where jobname = 'lifecycle_daily_transitions';
