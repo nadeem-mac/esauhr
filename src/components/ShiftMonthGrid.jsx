@@ -49,20 +49,29 @@ function formatChipLabel(start, end) {
   return `${sh}-${eh}`;
 }
 
-// Map status + SUP-approval flag → tailwind-free style object so the cell
-// renders consistently across all three callers without depending on
-// theme variables that may not be loaded in every host.
-function chipStyle(status, notifiedHrAt) {
+// Map status → style. Per Nadeem: shift acknowledgment is between
+// the manager and the staff member directly — no SUP / HR approval
+// step. Once staff accepts, the shift is final and locked. Status
+// colours collapse to three:
+//
+//   pending   → amber   (waiting on staff acknowledgment)
+//   accepted  → green   (final, locked, cross-referenced to attendance)
+//   declined  → red
+//
+// The previous "approved by SUP" dark-green state is gone; older
+// rows that may still have notified_hr_at populated render exactly
+// the same as a fresh accepted row — the column is now ignored
+// downstream.
+function chipStyle(status) {
   if (status === 'declined') {
     return { background: '#FCEBEB', border: '1px solid #A32D2D', color: '#791F1F' };
   }
-  if (status === 'accepted' && notifiedHrAt) {
-    // Approved by SUP — solid dark green, white text
-    return { background: '#3B6D11', border: '1px solid #3B6D11', color: '#FFFFFF' };
-  }
   if (status === 'accepted') {
-    // Acknowledged but not yet SUP-approved — light green
-    return { background: '#C0DD97', border: '1px solid #639922', color: '#173404' };
+    // Solid brand green — the strong, unmistakable "this shift is
+    // final" treatment Nadeem asked for. Equivalent prominence to
+    // the old SUP-approved chip, applied at the staff-acknowledged
+    // step instead.
+    return { background: '#0F4C2A', border: '1px solid #0F4C2A', color: '#FFFFFF' };
   }
   // pending or anything else — amber
   return { background: '#FAEEDA', border: '1px solid #BA7517', color: '#854F0B' };
@@ -122,7 +131,7 @@ export default function ShiftMonthGrid({
       const ids = employees.map(e => e.id).join(',');
       const data = await directGet(
         'employee_shifts',
-        `select=id,employee_id,shift_date,shift_start,shift_end,status,notified_hr_at,set_by` +
+        `select=id,employee_id,shift_date,start_time,end_time,status,set_by` +
         `&shift_date=gte.${ymd(firstDay)}&shift_date=lte.${ymd(lastDay)}` +
         `&employee_id=in.(${encodeURIComponent(ids)})` +
         `&order=shift_date.asc`,
@@ -280,15 +289,11 @@ export default function ShiftMonthGrid({
       <div className="flex flex-wrap gap-3 mb-3 text-[11px]" style={{ color: '#0A0A0A' }}>
         <span className="inline-flex items-center gap-1.5">
           <span style={{ width: 10, height: 10, background: '#FAEEDA', border: '1px solid #BA7517', borderRadius: 2, display: 'inline-block' }}></span>
-          Pending
+          Pending acknowledgment
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span style={{ width: 10, height: 10, background: '#C0DD97', border: '1px solid #639922', borderRadius: 2, display: 'inline-block' }}></span>
-          Accepted
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span style={{ width: 10, height: 10, background: '#3B6D11', border: '1px solid #3B6D11', borderRadius: 2, display: 'inline-block' }}></span>
-          Approved by SUP
+          <span style={{ width: 10, height: 10, background: '#0F4C2A', border: '1px solid #0F4C2A', borderRadius: 2, display: 'inline-block' }}></span>
+          Accepted &amp; locked
         </span>
         <span className="inline-flex items-center gap-1.5">
           <span style={{ width: 10, height: 10, background: '#FCEBEB', border: '1px solid #A32D2D', borderRadius: 2, display: 'inline-block' }}></span>
@@ -466,12 +471,13 @@ export default function ShiftMonthGrid({
                             />
                           );
                         }
-                        const style = chipStyle(s.status, s.notified_hr_at);
-                        const label = formatChipLabel(s.shift_start, s.shift_end);
+                        const style = chipStyle(s.status);
+                        const label = formatChipLabel(s.start_time, s.end_time);
+                        const isAccepted = s.status === 'accepted';
                         const tooltip =
                           `${emp.name || emp.id} \u2014 ${d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}\n` +
-                          `${s.shift_start ? s.shift_start.slice(0,5) : '?'} \u2192 ${s.shift_end ? s.shift_end.slice(0,5) : '?'}\n` +
-                          `${s.status}${s.status === 'accepted' && s.notified_hr_at ? ' (approved by SUP)' : ''}`;
+                          `${s.start_time ? s.start_time.slice(0,5) : '?'} \u2192 ${s.end_time ? s.end_time.slice(0,5) : '?'}\n` +
+                          `${s.status}${isAccepted ? ' \u2014 acknowledged & locked' : ''}`;
                         return (
                           <div key={dStr}
                             style={{
@@ -481,6 +487,14 @@ export default function ShiftMonthGrid({
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
+                              // Highlight accepted days with a subtle glow + green
+                              // tint behind the chip so the day stands out from
+                              // pending/declined neighbours when the manager,
+                              // staff or HR scans the row.
+                              ...(isAccepted ? {
+                                background: 'rgba(15, 76, 42, 0.10)',
+                                boxShadow: 'inset 0 0 0 1px rgba(15, 76, 42, 0.20)',
+                              } : {}),
                             }}
                             title={tooltip}
                           >

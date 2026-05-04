@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
-  CheckCircle2, XCircle, Clock, Bell, Loader2, RefreshCw, ChevronDown, ChevronRight,
+  CheckCircle2, XCircle, Clock, Loader2, RefreshCw, ChevronDown, ChevronRight,
 } from 'lucide-react';
 import { directGet, supabase } from '../supabaseClient.js';
 
@@ -186,13 +186,9 @@ export default function ManagerShiftStatusCard({ me, employees }) {
           bg="#ECFDF5"
           icon={<CheckCircle2 className="w-3.5 h-3.5" />}
         />
-        <RollupTile
-          label="Approved by SUP"
-          count={total.approvedBySup}
-          color="#1D4ED8"
-          bg="#DBEAFE"
-          icon={<Bell className="w-3.5 h-3.5" />}
-        />
+        {/* "Approved by SUP" tile removed — shift acknowledgment is
+            now between manager and staff directly. Once accepted, the
+            shift is final and locked. */}
         <RollupTile
           label="Declined"
           count={total.declined}
@@ -222,17 +218,16 @@ export default function ManagerShiftStatusCard({ me, employees }) {
 
 function countByStatus(rows) {
   // Four buckets: pending / accepted / declined are mutually exclusive on
-  // status. approvedBySup is a SECONDARY count that overlaps with accepted —
-  // an accepted shift becomes "approved by SUP" once Bashaier (or whoever
-  // is acting in the SUP-review role) signs off and notified_hr_at gets a
-  // timestamp. We surface it as its own tile so the manager can see at a
-  // glance which accepted shifts have been fully greenlit through HR.
-  const c = { pending: 0, accepted: 0, declined: 0, approvedBySup: 0 };
+  // status. Per Nadeem: shift acknowledgment is between the manager
+  // and the staff member directly — no SUP/HR sign-off step. Once
+  // staff accepts, the shift is final and locked. The previous
+  // approvedBySup count is retired; accepted alone is the final
+  // state.
+  const c = { pending: 0, accepted: 0, declined: 0 };
   rows.forEach(r => {
     if (r.status === 'pending')  c.pending++;
     if (r.status === 'accepted') c.accepted++;
     if (r.status === 'declined') c.declined++;
-    if (r.status === 'accepted' && r.notified_hr_at != null) c.approvedBySup++;
   });
   return c;
 }
@@ -326,15 +321,8 @@ function ShiftStatusRow({ shift }) {
     );
     detailEl = (
       <span style={{ color: '#1F1B16' }}>
-        Accepted {fmtTimestamp(shift.accepted_at)}
-        {shift.notified_hr_at && (
-          <>
-            {' '}·{' '}
-            <span style={{ color: '#1D4ED8' }} className="inline-flex items-center gap-1">
-              <Bell className="w-2.5 h-2.5" /> Approved by SUP
-            </span>
-          </>
-        )}
+        Accepted {fmtTimestamp(shift.accepted_at)} &middot;{' '}
+        <span style={{ color: '#0F4C2A', fontWeight: 600 }}>locked</span>
       </span>
     );
   } else if (shift.status === 'declined') {

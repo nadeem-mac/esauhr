@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { CheckCircle2, XCircle, Clock, Bell, Loader2, RefreshCw } from 'lucide-react';
+import { CheckCircle2, XCircle, RefreshCw } from 'lucide-react';
 import { directGet, supabase } from '../supabaseClient.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -73,13 +73,15 @@ export default function StaffShiftStatusCard({ me }) {
     return () => { try { supabase.removeChannel(channel); } catch {} };
   }, [me?.id, load]);
 
-  // Roll-up counts across the visible window
+  // Roll-up counts across the visible window. Per Nadeem: shift
+  // acknowledgment is between manager and staff directly — once
+  // accepted, the shift is final and locked. No more SUP "approval"
+  // step. Buckets simplify to two: accepted (locked) and declined.
   const counts = useMemo(() => {
-    const c = { awaiting: 0, approved: 0, declined: 0 };
+    const c = { accepted: 0, declined: 0 };
     rows.forEach(r => {
       if (r.status === 'declined') c.declined++;
-      else if (r.status === 'accepted' && r.notified_hr_at != null) c.approved++;
-      else if (r.status === 'accepted') c.awaiting++;
+      else if (r.status === 'accepted') c.accepted++;
     });
     return c;
   }, [rows]);
@@ -104,7 +106,7 @@ export default function StaffShiftStatusCard({ me }) {
             Recent activity
           </div>
           <div className="text-xs mt-1" style={SMALL_TEXT}>
-            Status of your shift decisions in the last 30 days. Approval flows from you to the SUP (Bashaier).
+            Status of your shift decisions in the last 30 days. Once you accept a shift, it's final &mdash; the time is locked and used by HR for attendance checks.
           </div>
         </div>
         <button
@@ -120,20 +122,13 @@ export default function StaffShiftStatusCard({ me }) {
         </button>
       </div>
 
-      {/* Roll-up tiles — three buckets covering the post-decision states.
+      {/* Roll-up tiles — two buckets covering the post-decision states.
           Pending shifts live on the action card above this one and are
           intentionally absent here. */}
-      <div className="grid grid-cols-3 gap-2 mt-4">
+      <div className="grid grid-cols-2 gap-2 mt-4">
         <Pill
-          label="Awaiting SUP"
-          count={counts.awaiting}
-          color="#1D4ED8"
-          bg="#DBEAFE"
-          icon={<Clock className="w-3.5 h-3.5" />}
-        />
-        <Pill
-          label="Approved"
-          count={counts.approved}
+          label="Accepted &amp; locked"
+          count={counts.accepted}
           color="#0F4C2A"
           bg="#ECFDF5"
           icon={<CheckCircle2 className="w-3.5 h-3.5" />}
@@ -200,33 +195,21 @@ function Row({ shift }) {
         {shift.decline_reason ? <em>"{shift.decline_reason}"</em> : 'Manager will follow up.'}
       </span>
     );
-  } else if (shift.status === 'accepted' && shift.notified_hr_at != null) {
+  } else if (shift.status === 'accepted') {
+    // Single accepted state — the shift is final once you accept.
+    // No SUP approval step, no waiting. The time is locked and HR
+    // uses it for cross-referencing your attendance on the day.
     statusEl = (
       <span
         className="text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1"
-        style={{ background: '#ECFDF5', color: '#0F4C2A', fontWeight: 700, letterSpacing: '0.1em' }}
+        style={{ background: '#0F4C2A', color: '#FFFFFF', fontWeight: 700, letterSpacing: '0.1em' }}
       >
-        <CheckCircle2 className="w-2.5 h-2.5" /> APPROVED BY SUP
+        <CheckCircle2 className="w-2.5 h-2.5" /> ACCEPTED &amp; LOCKED
       </span>
     );
     detailEl = (
       <span style={{ color: '#1F1B16' }}>
-        Final approval issued. You're confirmed for this shift.
-      </span>
-    );
-  } else {
-    // accepted, awaiting SUP
-    statusEl = (
-      <span
-        className="text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1"
-        style={{ background: '#DBEAFE', color: '#1D4ED8', fontWeight: 700, letterSpacing: '0.1em' }}
-      >
-        <Bell className="w-2.5 h-2.5" /> AWAITING SUP
-      </span>
-    );
-    detailEl = (
-      <span style={{ color: '#1F1B16' }}>
-        You accepted. Final approval pending with the SUP (Bashaier).
+        You're confirmed for this shift. The time is locked and used by HR for attendance checks.
       </span>
     );
   }

@@ -628,11 +628,13 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           leave/permission cards above and the monthly-report tasks below
           because conceptually it's a third "things to approve" surface,
           parallel to leave approvals — not a sibling of report drafting. */}
-      {me?.is_hr_reviewer && !me?.is_admin && (
-        <div className="mt-5">
-          <PendingShiftApprovalsCard employees={employees} />
-        </div>
-      )}
+      {/* PendingShiftApprovalsCard removed: per Nadeem, shift
+          acknowledgment is now between the manager and the staff
+          member directly. Once staff accepts, the shift is final and
+          locked — no SUP/HR approval step. The component file is
+          left in the tree for now in case of audit needs but is no
+          longer mounted. The HrShiftMonthCard below is the new
+          HR-side view for monitoring shifts (read-only, no approvals). */}
 
       {/* Bashaier's tasks — only for HR reviewer who isn't admin */}
       {me?.is_hr_reviewer && !me?.is_admin && (
