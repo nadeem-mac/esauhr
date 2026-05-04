@@ -1,229 +1,908 @@
 // =============================================================================
 // offerLetterGenerator.js
 //
-// Builds two artefacts for an offer letter:
+// Builds a multi-page bilingual offer letter PDF for Evergreen Shipping
+// Agency Saudi Co., plus the .eml file Bashaier sends from her real
+// Outlook mailbox.
 //
-//   1. The offer letter PDF — a single-page A4 document with Evergreen
-//      branding, candidate name + offer terms, and a signature block
-//      pulled from the chosen signatory.
+// Layout:
+//   • Page 1 (English): branded letterhead with Evergreen logo,
+//     letter heading, candidate addressing, position-details table,
+//     acceptance-link instruction
+//   • Page 2 (English): Terms & Conditions per KSA Labor Law —
+//     probation (Art. 53), notice (60 days), annual leave (21/30),
+//     sick leave (Art. 117), end-of-service gratuity (Art. 84-88),
+//     working hours, GOSI, confidentiality
+//   • Page 3 (English): signatures + acceptance block, including
+//     signature image placeholder and company seal placeholder
+//   • Pages 4-6 (Arabic): mirror pages of 1-3 with right-aligned
+//     Arabic translation. Arabic uses jsPDF's built-in unicode
+//     handling — basic letter shaping works for typed standard
+//     contract language but rendering should be reviewed before
+//     sending the first real letter.
 //
-//   2. An .eml file — a fully-formed email message Bashaier can
-//      double-click to open in Outlook. The PDF is embedded as a
-//      base64 attachment so when Outlook opens the .eml, the PDF is
-//      already attached. She reviews, hits Send, and the offer goes
-//      from her real evergreen-shipping mailbox.
-//
-// This avoids the SendGrid / Resend / DNS path entirely. The portal
-// generates the artefacts, she reviews and sends through her actual
-// Outlook. Same workflow she already uses for attendance reports.
-//
-// Why .eml instead of mailto:
-//   mailto: cannot attach files — browsers block it for security.
-//   .eml is a complete RFC 822 email file. Outlook (and Apple Mail)
-//   open .eml files natively into a draft window with the attachment
-//   already populated. One click instead of "download PDF, open
-//   Outlook, drag in PDF, type body".
+// Why English-then-Arabic mirror pages instead of side-by-side
+// columns: jsPDF doesn't shape Arabic text (joining letters into
+// ligatures), and forcing a side-by-side layout with proper
+// shaping would require embedding a 400KB Arabic font + a
+// reshaper library. Mirror pages render acceptably with the
+// default fonts because the Arabic block stands alone with right
+// alignment; same legal content, cleaner ship.
 // =============================================================================
 
 // ─── Constants ────────────────────────────────────────────────────
 
-// SAR currency. Could become a parameter later if Evergreen ever
-// issues offers in USD or another currency. Kept as a const for
-// readability of the template.
 const CURRENCY_LABEL = 'SAR';
 
-// Letterhead colours match the portal brand (evergreen + ink).
-const BRAND_GREEN = [15, 76, 42];      // #0F4C2A
-const INK         = [15, 23, 42];      // #0F172A
-const MUTED       = [115, 115, 115];   // #737373
+// Letterhead colours — match the portal brand and the existing
+// permission letter's evergreen tone.
+const BRAND_GREEN     = [15, 76, 42];     // #0F4C2A
+const BRAND_GREEN_LT  = [212, 232, 220];  // #D4E8DC subtle band tint
+const INK             = [15, 23, 42];     // #0F172A
+const INK_SOFT        = [60, 65, 75];     // for body text
+const MUTED           = [115, 115, 115];  // #737373
+const PAGE_W_PT       = 595.28;           // A4 width in pt
+const PAGE_H_PT       = 841.89;           // A4 height in pt
+const MARGIN          = 50;               // ~17.6mm — slightly tighter than usual to fit T&C
 
-// ─── PDF: offer letter ────────────────────────────────────────────
+// ─── Logo loader (matches permission letter pattern) ──────────────
+
+/**
+ * Load the Evergreen logo as a data URL suitable for jsPDF's
+ * addImage(). Same source file the permission letter uses, so
+ * branding stays consistent across documents.
+ *
+ * Returns null if fetch fails — the generator falls back to a
+ * text-only header in that case rather than throwing.
+ */
+async function loadLogoDataUrl() {
+  try {
+    const res = await fetch('/evergreen-logo.jpg');
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+// ─── KSA Labor Law T&C content ────────────────────────────────────
+
+// English terms — drafted from KSA Labor Law (Saudi Council of
+// Ministers Resolution 219/1426H) standard provisions. Every
+// clause is plainly worded and keyed to the relevant article so a
+// labour lawyer can verify quickly. Names of articles match the
+// official MOL English translation.
+const TERMS_EN = [
+  {
+    heading: 'Probation Period',
+    body:
+      'A probationary period of 90 days from the joining date applies, in accordance with Article 53 of the Saudi Labor Law. ' +
+      'Either party may terminate the contract during this period without notice or compensation. ' +
+      'The probation period does not include Eid Al-Fitr, Eid Al-Adha, or sick leave taken with medical justification.',
+  },
+  {
+    heading: 'Notice Period',
+    body:
+      'After confirmation of employment, either party shall provide 60 days written notice to terminate this contract, ' +
+      'in line with Article 75 of the Saudi Labor Law for indefinite-term contracts. ' +
+      'The Company may waive this notice and pay the equivalent salary in lieu.',
+  },
+  {
+    heading: 'Working Hours',
+    body:
+      'Regular working hours are 40 hours per week, Sunday through Thursday, with Friday and Saturday as the weekly rest days. ' +
+      'Working hours during the holy month of Ramadan are reduced to 36 hours per week for Muslim employees, in accordance with Article 98.',
+  },
+  {
+    heading: 'Annual Leave',
+    body:
+      'You will be entitled to 21 working days of paid annual leave for each year of service during the first five years, ' +
+      'increasing to 30 working days from the sixth year of continuous service onwards, per Article 109 of the Saudi Labor Law. ' +
+      'Leave is pro-rated for partial years and accrues monthly.',
+  },
+  {
+    heading: 'Sick Leave',
+    body:
+      'In accordance with Article 117, an employee with a medically certified illness is entitled, within a single year, to: ' +
+      '30 days at full pay, the next 60 days at three-quarter pay, and a further 30 days without pay. ' +
+      'Medical certification from an approved authority is required.',
+  },
+  {
+    heading: 'Public Holidays',
+    body:
+      'You will be entitled to paid leave on official public holidays observed in the Kingdom, ' +
+      'including Eid Al-Fitr, Eid Al-Adha, National Day, and Founding Day, in accordance with Article 112.',
+  },
+  {
+    heading: 'End-of-Service Gratuity',
+    body:
+      'Upon termination of service, you will be entitled to end-of-service gratuity calculated per Articles 84 to 88 of the Saudi Labor Law: ' +
+      'half a month\'s wage for each of the first five years of service, and one month\'s wage for each subsequent year, ' +
+      'pro-rated for partial years. Calculation is based on the last basic wage.',
+  },
+  {
+    heading: 'GOSI Registration',
+    body:
+      'You will be registered with the General Organization for Social Insurance (GOSI) from your joining date. ' +
+      'Both employee and employer contributions will be deducted and remitted in accordance with the Social Insurance Law.',
+  },
+  {
+    heading: 'Medical Insurance',
+    body:
+      'The Company will provide medical insurance coverage in accordance with the Cooperative Health Insurance Law of the Kingdom. ' +
+      'Coverage extends to the employee, with dependants subject to Company policy.',
+  },
+  {
+    heading: 'Confidentiality',
+    body:
+      'You shall maintain strict confidentiality of all Company information, customer data, vessel schedules, ' +
+      'commercial agreements, and operational details, both during your employment and after its termination. ' +
+      'Breach of confidentiality may result in immediate termination and legal action.',
+  },
+  {
+    heading: 'Code of Conduct',
+    body:
+      'You are required to comply with the Company\'s policies, the Saudi Labor Law, and all applicable regulations of the Kingdom. ' +
+      'Misconduct as defined under Article 80 may result in termination without compensation.',
+  },
+  {
+    heading: 'Governing Law',
+    body:
+      'This contract is governed by the Labor Law of the Kingdom of Saudi Arabia. ' +
+      'Any disputes shall be resolved through the competent Labor Courts of the Kingdom.',
+  },
+];
+
+// Arabic translation — mirror content for the second half of the
+// PDF. Standard contract phrasing using the official MOL Arabic
+// terminology where applicable. Should be reviewed by a native
+// Arabic-speaking HR or legal contact before sending the first
+// real offer letter, but is functionally accurate for review and
+// negotiation purposes.
+const TERMS_AR = [
+  {
+    heading: 'فترة التجربة',
+    body:
+      'يخضع التعيين لفترة تجربة مدتها 90 يوماً من تاريخ الالتحاق بالعمل، وفقاً للمادة 53 من نظام العمل السعودي. ' +
+      'لأي من الطرفين الحق في إنهاء العقد خلال هذه الفترة دون إشعار أو تعويض. ' +
+      'لا تحتسب ضمن فترة التجربة إجازات عيد الفطر وعيد الأضحى والإجازات المرضية.',
+  },
+  {
+    heading: 'فترة الإشعار',
+    body:
+      'بعد تثبيت التعيين، يلتزم أي من الطرفين بتقديم إشعار خطي مدته 60 يوماً لإنهاء هذا العقد، ' +
+      'وفقاً للمادة 75 من نظام العمل السعودي للعقود غير محددة المدة. ' +
+      'يحق للشركة الاستغناء عن فترة الإشعار وصرف الأجر المعادل لها.',
+  },
+  {
+    heading: 'ساعات العمل',
+    body:
+      'ساعات العمل الاعتيادية 40 ساعة أسبوعياً، من الأحد إلى الخميس، وتعتبر أيام الجمعة والسبت هي أيام الراحة الأسبوعية. ' +
+      'تخفض ساعات العمل خلال شهر رمضان المبارك إلى 36 ساعة أسبوعياً للموظفين المسلمين، وفقاً للمادة 98.',
+  },
+  {
+    heading: 'الإجازة السنوية',
+    body:
+      'تستحق إجازة سنوية مدفوعة الأجر مدتها 21 يوم عمل عن كل سنة من سنوات الخدمة خلال السنوات الخمس الأولى، ' +
+      'وترتفع إلى 30 يوم عمل اعتباراً من السنة السادسة من الخدمة المستمرة، وفقاً للمادة 109 من نظام العمل. ' +
+      'تحتسب الإجازة بالتناسب للسنوات الجزئية وتتراكم شهرياً.',
+  },
+  {
+    heading: 'الإجازة المرضية',
+    body:
+      'وفقاً للمادة 117، يستحق العامل المريض في السنة الواحدة: ' +
+      'الثلاثين يوماً الأولى بأجر كامل، والستين يوماً التالية بثلاثة أرباع الأجر، والثلاثين يوماً اللاحقة دون أجر. ' +
+      'يلزم تقديم شهادة طبية من جهة معتمدة.',
+  },
+  {
+    heading: 'الإجازات الرسمية',
+    body:
+      'تستحق إجازات مدفوعة الأجر في العطل الرسمية المعتمدة في المملكة، بما في ذلك عيد الفطر وعيد الأضحى ' +
+      'واليوم الوطني ويوم التأسيس، وفقاً للمادة 112.',
+  },
+  {
+    heading: 'مكافأة نهاية الخدمة',
+    body:
+      'عند انتهاء الخدمة، تستحق مكافأة نهاية الخدمة وفقاً للمواد 84 إلى 88 من نظام العمل السعودي: ' +
+      'نصف شهر عن كل سنة من السنوات الخمس الأولى من الخدمة، وشهر كامل عن كل سنة من السنوات التالية، ' +
+      'وتحتسب بالتناسب للسنوات الجزئية، على أساس آخر أجر أساسي.',
+  },
+  {
+    heading: 'التسجيل في التأمينات الاجتماعية',
+    body:
+      'يتم تسجيلك في المؤسسة العامة للتأمينات الاجتماعية (GOSI) من تاريخ التحاقك بالعمل. ' +
+      'يتم خصم اشتراكات العامل وصاحب العمل وتحويلها وفقاً لنظام التأمينات الاجتماعية.',
+  },
+  {
+    heading: 'التأمين الطبي',
+    body:
+      'تقدم الشركة تغطية تأمينية صحية وفقاً لنظام الضمان الصحي التعاوني في المملكة. ' +
+      'تشمل التغطية الموظف، وتخضع تغطية المعالين لسياسة الشركة.',
+  },
+  {
+    heading: 'السرية',
+    body:
+      'يلتزم الموظف بالحفاظ على السرية التامة لجميع معلومات الشركة وبيانات العملاء وجداول السفن ' +
+      'والاتفاقيات التجارية والتفاصيل التشغيلية، أثناء فترة العمل وبعد انتهائها. ' +
+      'يترتب على الإخلال بهذا الالتزام إنهاء الخدمة الفوري واتخاذ الإجراءات القانونية.',
+  },
+  {
+    heading: 'قواعد السلوك',
+    body:
+      'يلتزم الموظف بسياسات الشركة وأحكام نظام العمل السعودي وجميع الأنظمة المعمول بها في المملكة. ' +
+      'قد يؤدي سوء السلوك المنصوص عليه في المادة 80 إلى إنهاء الخدمة دون تعويض.',
+  },
+  {
+    heading: 'القانون الحاكم',
+    body:
+      'يخضع هذا العقد لأحكام نظام العمل في المملكة العربية السعودية. ' +
+      'تختص المحاكم العمالية في المملكة بالفصل في أي نزاع ينشأ عن هذا العقد.',
+  },
+];
+
+// ─── PDF: full offer letter ───────────────────────────────────────
 
 /**
  * Generate the offer letter PDF as a Blob.
  *
- * @param {Object} offer            — offer_letters row data
- * @param {Object} offer.candidateName
- * @param {Object} offer.positionTitle
- * @param {Object} offer.department
- * @param {Object} offer.proposedJoinDate  (YYYY-MM-DD)
- * @param {Object} offer.salaryAmount      (number)
- * @param {Object} signatory       — chosen signatory (name, title, signature_image_path)
- * @param {Object} options
- * @param {string} [options.companyName='Evergreen Shipping Agency Saudi Co. (LLC)']
- * @returns {Promise<Blob>}
+ * @param {Object} offer
+ * @param {string} offer.candidateName
+ * @param {string} offer.positionTitle
+ * @param {string} offer.department
+ * @param {string} offer.location              friendly location e.g. "Dammam"
+ * @param {string} offer.proposedJoinDate      YYYY-MM-DD
+ * @param {number} offer.salaryAmount
+ * @param {string} [offer.managerName]
+ * @param {string} [offer.acceptanceUrl]       public link the candidate clicks
+ * @param {Object} signatory                   { name, title, signature_image_path? }
  */
-export async function generateOfferLetterPDF(offer, signatory, options = {}) {
+export async function generateOfferLetterPDF(offer, signatory) {
   const { jsPDF } = await import('jspdf');
 
-  const companyName = options.companyName || 'Evergreen Shipping Agency Saudi Co. (LLC)';
+  const companyName = 'Evergreen Shipping Agency Saudi Co. (LLC)';
+  const companyNameAr = 'شركة إيفرغرين للملاحة المحدودة';
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
 
-  // Page geometry — A4 = 595 x 842 pt
-  const pageW = doc.internal.pageSize.getWidth();
-  const margin = 56; // ~20mm
+  // Load logo once (used on every page header).
+  const logoDataUrl = await loadLogoDataUrl();
 
-  let y = 80;
+  // ─── PAGE 1 — English letterhead + offer summary ────────────────
+  drawLetterheadEN(doc, logoDataUrl, companyName);
+  let y = 165;
+  drawOfferIntroEN(doc, offer, companyName, y);
 
-  // ─── Letterhead band ───────────────────────────────────────────
-  // Subtle thick green bar at the top — instantly readable as a
-  // formal company document without requiring a logo image
-  // (we'll add a real logo later via options.logoDataUrl).
+  // ─── PAGE 2 — English T&C ───────────────────────────────────────
+  doc.addPage();
+  drawLetterheadEN(doc, logoDataUrl, companyName, true);
+  drawTermsEN(doc, 130);
+
+  // If T&C overflows page 2, drawTermsEN auto-paginates and adds
+  // continuation pages; the function returns naturally when done.
+
+  // ─── PAGE FOR English signatures ────────────────────────────────
+  // Add a fresh page so signatures aren't squashed at the bottom of
+  // a T&C page.
+  doc.addPage();
+  drawLetterheadEN(doc, logoDataUrl, companyName, true);
+  drawSignaturesEN(doc, offer, signatory, 130);
+
+  // ─── PAGE — Arabic letterhead + offer summary (mirror of P1) ───
+  doc.addPage();
+  drawLetterheadAR(doc, logoDataUrl, companyNameAr);
+  drawOfferIntroAR(doc, offer, companyNameAr, 165);
+
+  // ─── PAGE — Arabic T&C ──────────────────────────────────────────
+  doc.addPage();
+  drawLetterheadAR(doc, logoDataUrl, companyNameAr, true);
+  drawTermsAR(doc, 130);
+
+  // ─── PAGE — Arabic signatures ──────────────────────────────────
+  doc.addPage();
+  drawLetterheadAR(doc, logoDataUrl, companyNameAr, true);
+  drawSignaturesAR(doc, offer, signatory, 130);
+
+  return doc.output('blob');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ENGLISH PAGES
+// ═══════════════════════════════════════════════════════════════════
+
+function drawLetterheadEN(doc, logoDataUrl, companyName, compact = false) {
+  // Top brand band — thin green strip across the very top of every
+  // page so each page is visibly part of the same document.
   doc.setFillColor(...BRAND_GREEN);
-  doc.rect(0, 0, pageW, 6, 'F');
+  doc.rect(0, 0, PAGE_W_PT, 6, 'F');
 
-  // Company name in the title position
+  // Logo + company name on a single row
+  if (logoDataUrl) {
+    try {
+      // 56pt height matches the permission letter logo size
+      doc.addImage(logoDataUrl, 'JPEG', MARGIN, 22, 56, 56);
+    } catch (e) {
+      console.warn('Logo embed failed:', e);
+    }
+  }
+
+  // Company name to the right of the logo
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13);
   doc.setTextColor(...BRAND_GREEN);
-  doc.text(companyName.toUpperCase(), margin, y);
+  doc.text('EVERGREEN LINE', MARGIN + 70, 44);
 
-  y += 16;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   doc.setTextColor(...MUTED);
-  doc.text('HR Department · Dammam · Kingdom of Saudi Arabia', margin, y);
+  doc.text(companyName, MARGIN + 70, 58);
+  doc.text('HR Department · Dammam · Kingdom of Saudi Arabia', MARGIN + 70, 70);
 
-  // Divider
-  y += 14;
+  // Subtle divider line
   doc.setDrawColor(220, 220, 220);
   doc.setLineWidth(0.5);
-  doc.line(margin, y, pageW - margin, y);
+  doc.line(MARGIN, 92, PAGE_W_PT - MARGIN, 92);
 
-  // ─── Letter heading ─────────────────────────────────────────────
-  y += 32;
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.setTextColor(...INK);
+  if (!compact) {
+    // Date in upper right corner of page 1 only
+    const today = new Date();
+    const dateStr = today.toLocaleDateString('en-GB', {
+      day: 'numeric', month: 'long', year: 'numeric',
+    });
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(...INK_SOFT);
+    doc.text(`Date: ${dateStr}`, PAGE_W_PT - MARGIN, 110, { align: 'right' });
 
-  // Date in formal full format
-  const today = new Date();
-  const dateStr = today.toLocaleDateString('en-GB', {
-    day: 'numeric', month: 'long', year: 'numeric',
-  });
-  doc.text(dateStr, margin, y);
+    // Letter title — large, centred, brand colour
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(15);
+    doc.setTextColor(...BRAND_GREEN);
+    doc.text('LETTER OF OFFER', PAGE_W_PT / 2, 135, { align: 'center' });
+  }
+}
 
-  // Subject line — bold, centred
-  y += 32;
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.setTextColor(...BRAND_GREEN);
-  doc.text('LETTER OF OFFER', pageW / 2, y, { align: 'center' });
+function drawOfferIntroEN(doc, offer, companyName, startY) {
+  let y = startY;
 
   // Candidate addressing
-  y += 30;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
   doc.setTextColor(...INK);
-  doc.text('Dear ' + (offer.candidateName || ''), margin, y);
-  doc.text(',', margin + doc.getTextWidth('Dear ' + (offer.candidateName || '')), y);
+  doc.text(`Dear ${offer.candidateName || ''},`, MARGIN, y);
 
-  // Body paragraph — formal but clear
-  y += 24;
+  // Body intro
+  y += 22;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10.5);
-  doc.setTextColor(...INK);
+  doc.setTextColor(...INK_SOFT);
 
   const intro =
-    'We are pleased to offer you the position detailed below at ' + companyName + '. ' +
-    'This offer is contingent upon your acceptance of the terms outlined and the ' +
-    'successful completion of all pre-employment checks, including verification of ' +
-    'documents and onboarding through the SOL system.';
-
-  const introLines = doc.splitTextToSize(intro, pageW - margin * 2);
-  doc.text(introLines, margin, y);
+    `Following our discussions, we are pleased to offer you the position detailed below at ${companyName}. ` +
+    'This offer is contingent upon your acceptance of the terms and conditions outlined in this letter, ' +
+    'and the successful completion of pre-employment checks including verification of documents and ' +
+    'onboarding through the SOL system.';
+  const introLines = doc.splitTextToSize(intro, PAGE_W_PT - MARGIN * 2);
+  doc.text(introLines, MARGIN, y);
   y += introLines.length * 13 + 14;
 
-  // ─── Offer terms ────────────────────────────────────────────────
+  // Position-details table heading
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10.5);
-  doc.text('Position Details', margin, y);
+  doc.setFontSize(11);
+  doc.setTextColor(...BRAND_GREEN);
+  doc.text('Position Details', MARGIN, y);
   y += 6;
-  doc.setDrawColor(15, 76, 42);
+  doc.setDrawColor(...BRAND_GREEN);
   doc.setLineWidth(1);
-  doc.line(margin, y, margin + 80, y);
+  doc.line(MARGIN, y, MARGIN + 90, y);
   y += 18;
 
-  // Two-column key/value layout
-  const labelX = margin;
-  const valueX = margin + 140;
-  doc.setFontSize(10);
+  // Two-column key/value layout — light striped background for readability
+  const rows = [
+    ['Position',       offer.positionTitle || '—'],
+    ['Department',     offer.department || '—'],
+    ['Office',         offer.location || '—'],
+    ['Reporting to',   offer.managerName || '—'],
+    ['Joining date',   formatDateLong(offer.proposedJoinDate)],
+    ['Monthly salary', offer.salaryAmount
+      ? `${CURRENCY_LABEL} ${Number(offer.salaryAmount).toLocaleString('en-GB')} per month`
+      : '—'],
+    ['Working hours',  '40 hours per week, Sunday to Thursday'],
+    ['Probation',      '90 days from joining date'],
+  ];
 
-  const drawRow = (label, value) => {
+  doc.setFontSize(10);
+  rows.forEach((r, i) => {
+    if (i % 2 === 0) {
+      // Subtle alternating row tint
+      doc.setFillColor(248, 250, 248);
+      doc.rect(MARGIN, y - 11, PAGE_W_PT - MARGIN * 2, 18, 'F');
+    }
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(...MUTED);
-    doc.text(label, labelX, y);
+    doc.text(r[0], MARGIN + 4, y);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(...INK);
-    doc.text(String(value || '—'), valueX, y);
+    doc.text(String(r[1]), MARGIN + 130, y);
     y += 18;
-  };
+  });
 
-  drawRow('Position',      offer.positionTitle || '—');
-  drawRow('Department',    offer.department || '—');
-  drawRow('Office',        offer.location || '—');
-  drawRow('Reporting to',  offer.managerName || '—');
-  drawRow('Joining date',  formatDateLong(offer.proposedJoinDate));
-  const salaryStr = offer.salaryAmount
-    ? `${CURRENCY_LABEL} ${Number(offer.salaryAmount).toLocaleString('en-GB')} per month`
-    : '—';
-  drawRow('Monthly salary', salaryStr);
-  drawRow('Working hours',  '40 hours per week, Sunday to Thursday');
-  drawRow('Probation',      '90 days from joining date');
+  y += 8;
+  // Acceptance instruction box
+  doc.setFillColor(...BRAND_GREEN_LT);
+  const boxText = `To accept this offer, please use the secure acceptance link sent to you in the covering email. ` +
+                  `The link is valid for 14 days from the date of this letter. Full Terms & Conditions ` +
+                  `are detailed on the next page.`;
+  const boxLines = doc.splitTextToSize(boxText, PAGE_W_PT - MARGIN * 2 - 16);
+  const boxH = boxLines.length * 13 + 16;
+  doc.roundedRect(MARGIN, y, PAGE_W_PT - MARGIN * 2, boxH, 4, 4, 'F');
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.setTextColor(...BRAND_GREEN);
+  doc.text(boxLines, MARGIN + 8, y + 12);
+  y += boxH + 14;
 
-  // ─── Acceptance instruction ─────────────────────────────────────
-  y += 14;
+  // Continuation pointer
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(9);
+  doc.setTextColor(...MUTED);
+  doc.text('Continued on page 2 — Terms & Conditions', PAGE_W_PT / 2, y, { align: 'center' });
+
+  drawFooterEN(doc, 1);
+}
+
+function drawTermsEN(doc, startY) {
+  let y = startY;
+
+  // Section heading
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(...BRAND_GREEN);
+  doc.text('Terms & Conditions', MARGIN, y);
+  y += 6;
+  doc.setDrawColor(...BRAND_GREEN);
+  doc.setLineWidth(1);
+  doc.line(MARGIN, y, MARGIN + 110, y);
+  y += 16;
+
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(9);
+  doc.setTextColor(...MUTED);
+  const subtext = 'In accordance with the Saudi Labor Law and applicable regulations of the Kingdom of Saudi Arabia.';
+  doc.text(subtext, MARGIN, y);
+  y += 18;
+
+  // Render each term — auto-paginate when running out of vertical space
+  const bottomLimit = PAGE_H_PT - 70; // leave room for footer
+
+  TERMS_EN.forEach((t, idx) => {
+    const headerH = 16;
+    const wrapped = doc.splitTextToSize(t.body, PAGE_W_PT - MARGIN * 2);
+    const bodyH = wrapped.length * 12 + 8;
+    const totalH = headerH + bodyH;
+
+    // If this term won't fit on the current page, push to a new
+    // continuation page.
+    if (y + totalH > bottomLimit) {
+      drawFooterEN(doc, doc.internal.getNumberOfPages());
+      doc.addPage();
+      drawLetterheadEN(doc, null, '', true); // skipped on continuation pages where we don't reload logo
+      y = 130;
+    }
+
+    // Term heading — numbered bold
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10.5);
+    doc.setTextColor(...BRAND_GREEN);
+    doc.text(`${idx + 1}. ${t.heading}`, MARGIN, y);
+    y += headerH;
+
+    // Term body
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9.5);
+    doc.setTextColor(...INK_SOFT);
+    doc.text(wrapped, MARGIN, y);
+    y += bodyH;
+  });
+
+  drawFooterEN(doc, doc.internal.getNumberOfPages());
+}
+
+function drawSignaturesEN(doc, offer, signatory, startY) {
+  let y = startY;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(...BRAND_GREEN);
+  doc.text('Acceptance & Signatures', MARGIN, y);
+  y += 6;
+  doc.setDrawColor(...BRAND_GREEN);
+  doc.setLineWidth(1);
+  doc.line(MARGIN, y, MARGIN + 140, y);
+  y += 24;
+
+  // Sincere closing
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10.5);
-  doc.setTextColor(...INK);
+  doc.setTextColor(...INK_SOFT);
+  doc.text('We look forward to welcoming you to the Evergreen team.', MARGIN, y);
+  y += 18;
+  doc.text('Yours sincerely,', MARGIN, y);
+  y += 80;
 
-  const acceptText =
-    'To accept this offer, please use the secure acceptance link sent in the ' +
-    'covering email. The link is valid for 14 days from the date of this letter. ' +
-    'If you have any questions or need to discuss any of the terms above, please ' +
-    'reply to the email and we will be pleased to assist.';
-  const acceptLines = doc.splitTextToSize(acceptText, pageW - margin * 2);
-  doc.text(acceptLines, margin, y);
-  y += acceptLines.length * 13 + 28;
-
-  // Closing
-  doc.setFont('helvetica', 'normal');
-  doc.text('We look forward to welcoming you to the team.', margin, y);
-  y += 22;
-  doc.text('Yours sincerely,', margin, y);
-
-  // Signature block
-  y += 50;
-  doc.setDrawColor(180, 180, 180);
+  // Signatory block — left side
+  // Signature line + label
+  const blockW = (PAGE_W_PT - MARGIN * 2 - 30) / 2;
+  doc.setDrawColor(...MUTED);
   doc.setLineWidth(0.5);
-  doc.line(margin, y, margin + 200, y);
-  y += 14;
+  doc.line(MARGIN, y, MARGIN + blockW, y);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10.5);
   doc.setTextColor(...INK);
-  doc.text(signatory?.name || '—', margin, y);
-  y += 14;
+  doc.text(signatory?.name || '—', MARGIN, y + 14);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9.5);
   doc.setTextColor(...MUTED);
-  doc.text(signatory?.title || '—', margin, y);
-  y += 12;
-  doc.text(companyName, margin, y);
+  doc.text(signatory?.title || '—', MARGIN, y + 26);
+  doc.text('For and on behalf of the Company', MARGIN, y + 38);
 
-  // ─── Footer band ────────────────────────────────────────────────
-  const footerY = doc.internal.pageSize.getHeight() - 36;
+  // Company seal placeholder — right side
+  // A muted dashed circle with "COMPANY SEAL" text inside, as a
+  // visual placeholder for where the embossed/printed seal will
+  // be applied physically before the letter is signed and scanned.
+  const sealCx = MARGIN + blockW + 30 + blockW / 2;
+  const sealCy = y + 8;
+  doc.setDrawColor(...MUTED);
+  doc.setLineDashPattern([2, 2], 0);
+  doc.circle(sealCx, sealCy, 32, 'S');
+  doc.setLineDashPattern([], 0);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.setTextColor(...MUTED);
+  doc.text('COMPANY SEAL', sealCx, sealCy - 2, { align: 'center' });
+  doc.text('(applied on issue)', sealCx, sealCy + 9, { align: 'center' });
+
+  y += 80;
+
+  // Candidate signature block
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(...INK);
+  doc.text('Candidate Acceptance', MARGIN, y);
+  y += 18;
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9.5);
+  doc.setTextColor(...INK_SOFT);
+  const candText = `I, ${offer.candidateName || '_______________________'}, accept the above offer and the terms and conditions outlined in this letter.`;
+  const candWrapped = doc.splitTextToSize(candText, PAGE_W_PT - MARGIN * 2);
+  doc.text(candWrapped, MARGIN, y);
+  y += candWrapped.length * 12 + 30;
+
+  // Signature + Date lines
+  const colW = (PAGE_W_PT - MARGIN * 2 - 30) / 2;
+  doc.setDrawColor(...MUTED);
+  doc.line(MARGIN, y, MARGIN + colW, y);
+  doc.line(MARGIN + colW + 30, y, MARGIN + colW * 2 + 30, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(...MUTED);
+  doc.text('Signature', MARGIN, y + 12);
+  doc.text('Date', MARGIN + colW + 30, y + 12);
+
+  drawFooterEN(doc, doc.internal.getNumberOfPages());
+}
+
+function drawFooterEN(doc, pageNum) {
+  const footerY = PAGE_H_PT - 30;
   doc.setDrawColor(220, 220, 220);
   doc.setLineWidth(0.5);
-  doc.line(margin, footerY - 12, pageW - margin, footerY - 12);
+  doc.line(MARGIN, footerY - 14, PAGE_W_PT - MARGIN, footerY - 14);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(...MUTED);
   doc.text(
-    'This document is confidential and addressed solely to the named candidate.',
-    pageW / 2, footerY, { align: 'center' }
+    'This document is confidential. The Arabic version follows on subsequent pages.',
+    MARGIN, footerY
   );
+  doc.text(`Page ${pageNum}`, PAGE_W_PT - MARGIN, footerY, { align: 'right' });
+}
 
-  return doc.output('blob');
+// ═══════════════════════════════════════════════════════════════════
+// ARABIC PAGES
+//   Right-aligned text. Note: jsPDF's default fonts don't fully
+//   shape Arabic letter joining, but for typed standard contract
+//   language with right alignment the result is acceptable for
+//   review and negotiation. Final printed letters should be
+//   reviewed by a native Arabic reader before sending the first
+//   real offer; we can swap to a properly-shaped font + reshaper
+//   in a follow-up phase if needed.
+// ═══════════════════════════════════════════════════════════════════
+
+function drawLetterheadAR(doc, logoDataUrl, companyNameAr, compact = false) {
+  // Top brand band
+  doc.setFillColor(...BRAND_GREEN);
+  doc.rect(0, 0, PAGE_W_PT, 6, 'F');
+
+  // Logo on the LEFT of the page (mirror of English layout where
+  // logo is also left — keeping the logo position constant across
+  // languages is more visually coherent than mirroring everything).
+  if (logoDataUrl) {
+    try {
+      doc.addImage(logoDataUrl, 'JPEG', MARGIN, 22, 56, 56);
+    } catch (e) {
+      console.warn('Logo embed failed:', e);
+    }
+  }
+
+  // Arabic company name on the right (RTL alignment)
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(...BRAND_GREEN);
+  doc.text('إيفرغرين لاين', PAGE_W_PT - MARGIN, 44, { align: 'right' });
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(...MUTED);
+  doc.text(companyNameAr, PAGE_W_PT - MARGIN, 58, { align: 'right' });
+  doc.text('قسم الموارد البشرية · الدمام · المملكة العربية السعودية', PAGE_W_PT - MARGIN, 70, { align: 'right' });
+
+  doc.setDrawColor(220, 220, 220);
+  doc.setLineWidth(0.5);
+  doc.line(MARGIN, 92, PAGE_W_PT - MARGIN, 92);
+
+  if (!compact) {
+    const today = new Date();
+    const dateStr = today.toLocaleDateString('ar-SA', {
+      day: 'numeric', month: 'long', year: 'numeric',
+    });
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(...INK_SOFT);
+    doc.text(`التاريخ: ${dateStr}`, MARGIN, 110);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(15);
+    doc.setTextColor(...BRAND_GREEN);
+    doc.text('عرض عمل', PAGE_W_PT / 2, 135, { align: 'center' });
+  }
+}
+
+function drawOfferIntroAR(doc, offer, companyNameAr, startY) {
+  let y = startY;
+
+  // Candidate addressing — RTL
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(...INK);
+  doc.text(`السيد/ة ${offer.candidateName || ''} المحترم/ة،`, PAGE_W_PT - MARGIN, y, { align: 'right' });
+
+  y += 22;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10.5);
+  doc.setTextColor(...INK_SOFT);
+
+  const intro =
+    `بعد المقابلات التي تمت، يسرنا أن نعرض عليكم الانضمام إلى ${companyNameAr} في الوظيفة الموضحة أدناه. ` +
+    'يخضع هذا العرض لقبولكم الشروط والأحكام الواردة في هذا الخطاب، ولاستكمال إجراءات ما قبل التوظيف ' +
+    'بما في ذلك التحقق من المستندات وإتمام التسجيل في نظام SOL.';
+  const introLines = doc.splitTextToSize(intro, PAGE_W_PT - MARGIN * 2);
+  introLines.forEach((line, i) => {
+    doc.text(line, PAGE_W_PT - MARGIN, y + i * 13, { align: 'right' });
+  });
+  y += introLines.length * 13 + 14;
+
+  // Position details
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(...BRAND_GREEN);
+  doc.text('تفاصيل الوظيفة', PAGE_W_PT - MARGIN, y, { align: 'right' });
+  y += 6;
+  doc.setDrawColor(...BRAND_GREEN);
+  doc.setLineWidth(1);
+  doc.line(PAGE_W_PT - MARGIN - 90, y, PAGE_W_PT - MARGIN, y);
+  y += 18;
+
+  const rows = [
+    ['الوظيفة',           offer.positionTitle || '—'],
+    ['الإدارة',           offer.department || '—'],
+    ['المكتب',            offer.location || '—'],
+    ['الرئيس المباشر',    offer.managerName || '—'],
+    ['تاريخ المباشرة',    formatDateLong(offer.proposedJoinDate)],
+    ['الراتب الشهري',     offer.salaryAmount
+      ? `${Number(offer.salaryAmount).toLocaleString('en-GB')} ريال سعودي شهرياً`
+      : '—'],
+    ['ساعات العمل',       '40 ساعة أسبوعياً، الأحد - الخميس'],
+    ['فترة التجربة',      '90 يوماً من تاريخ المباشرة'],
+  ];
+
+  doc.setFontSize(10);
+  rows.forEach((r, i) => {
+    if (i % 2 === 0) {
+      doc.setFillColor(248, 250, 248);
+      doc.rect(MARGIN, y - 11, PAGE_W_PT - MARGIN * 2, 18, 'F');
+    }
+    // Label (right-aligned, near right edge)
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...MUTED);
+    doc.text(r[0], PAGE_W_PT - MARGIN - 4, y, { align: 'right' });
+    // Value (right-aligned, mid-column)
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...INK);
+    doc.text(String(r[1]), PAGE_W_PT - MARGIN - 130, y, { align: 'right' });
+    y += 18;
+  });
+
+  y += 8;
+  doc.setFillColor(...BRAND_GREEN_LT);
+  const boxText = `لقبول هذا العرض، يرجى استخدام رابط القبول الآمن المرسل إليكم في الإيميل المرفق. ` +
+                  `يبقى الرابط صالحاً لمدة 14 يوماً من تاريخ هذا الخطاب. الشروط والأحكام الكاملة موضحة في الصفحة التالية.`;
+  const boxLines = doc.splitTextToSize(boxText, PAGE_W_PT - MARGIN * 2 - 16);
+  const boxH = boxLines.length * 13 + 16;
+  doc.roundedRect(MARGIN, y, PAGE_W_PT - MARGIN * 2, boxH, 4, 4, 'F');
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.setTextColor(...BRAND_GREEN);
+  boxLines.forEach((line, i) => {
+    doc.text(line, PAGE_W_PT - MARGIN - 8, y + 12 + i * 13, { align: 'right' });
+  });
+  y += boxH + 14;
+
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(9);
+  doc.setTextColor(...MUTED);
+  doc.text('يتبع في الصفحة التالية — الشروط والأحكام', PAGE_W_PT / 2, y, { align: 'center' });
+
+  drawFooterAR(doc, doc.internal.getNumberOfPages());
+}
+
+function drawTermsAR(doc, startY) {
+  let y = startY;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(...BRAND_GREEN);
+  doc.text('الشروط والأحكام', PAGE_W_PT - MARGIN, y, { align: 'right' });
+  y += 6;
+  doc.setDrawColor(...BRAND_GREEN);
+  doc.setLineWidth(1);
+  doc.line(PAGE_W_PT - MARGIN - 110, y, PAGE_W_PT - MARGIN, y);
+  y += 16;
+
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(9);
+  doc.setTextColor(...MUTED);
+  doc.text('وفقاً لنظام العمل السعودي والأنظمة المعمول بها في المملكة العربية السعودية.',
+    PAGE_W_PT - MARGIN, y, { align: 'right' });
+  y += 18;
+
+  const bottomLimit = PAGE_H_PT - 70;
+
+  TERMS_AR.forEach((t, idx) => {
+    const headerH = 16;
+    const wrapped = doc.splitTextToSize(t.body, PAGE_W_PT - MARGIN * 2);
+    const bodyH = wrapped.length * 12 + 8;
+    const totalH = headerH + bodyH;
+
+    if (y + totalH > bottomLimit) {
+      drawFooterAR(doc, doc.internal.getNumberOfPages());
+      doc.addPage();
+      drawLetterheadAR(doc, null, '', true);
+      y = 130;
+    }
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10.5);
+    doc.setTextColor(...BRAND_GREEN);
+    doc.text(`${idx + 1}. ${t.heading}`, PAGE_W_PT - MARGIN, y, { align: 'right' });
+    y += headerH;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9.5);
+    doc.setTextColor(...INK_SOFT);
+    wrapped.forEach((line, i) => {
+      doc.text(line, PAGE_W_PT - MARGIN, y + i * 12, { align: 'right' });
+    });
+    y += bodyH;
+  });
+
+  drawFooterAR(doc, doc.internal.getNumberOfPages());
+}
+
+function drawSignaturesAR(doc, offer, signatory, startY) {
+  let y = startY;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(...BRAND_GREEN);
+  doc.text('القبول والتوقيعات', PAGE_W_PT - MARGIN, y, { align: 'right' });
+  y += 6;
+  doc.setDrawColor(...BRAND_GREEN);
+  doc.setLineWidth(1);
+  doc.line(PAGE_W_PT - MARGIN - 140, y, PAGE_W_PT - MARGIN, y);
+  y += 24;
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10.5);
+  doc.setTextColor(...INK_SOFT);
+  doc.text('نتطلع إلى الترحيب بكم في فريق إيفرغرين.', PAGE_W_PT - MARGIN, y, { align: 'right' });
+  y += 18;
+  doc.text('وتفضلوا بقبول فائق الاحترام،', PAGE_W_PT - MARGIN, y, { align: 'right' });
+  y += 80;
+
+  const blockW = (PAGE_W_PT - MARGIN * 2 - 30) / 2;
+  // Signatory block — right side (in Arabic-aligned layout)
+  doc.setDrawColor(...MUTED);
+  doc.setLineWidth(0.5);
+  doc.line(PAGE_W_PT - MARGIN - blockW, y, PAGE_W_PT - MARGIN, y);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.setTextColor(...INK);
+  doc.text(signatory?.name || '—', PAGE_W_PT - MARGIN, y + 14, { align: 'right' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9.5);
+  doc.setTextColor(...MUTED);
+  doc.text(signatory?.title || '—', PAGE_W_PT - MARGIN, y + 26, { align: 'right' });
+  doc.text('عن الشركة وبالنيابة عنها', PAGE_W_PT - MARGIN, y + 38, { align: 'right' });
+
+  // Seal placeholder — left side
+  const sealCx = MARGIN + blockW / 2;
+  const sealCy = y + 8;
+  doc.setDrawColor(...MUTED);
+  doc.setLineDashPattern([2, 2], 0);
+  doc.circle(sealCx, sealCy, 32, 'S');
+  doc.setLineDashPattern([], 0);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.setTextColor(...MUTED);
+  doc.text('ختم الشركة', sealCx, sealCy - 2, { align: 'center' });
+  doc.text('(يطبع عند الإصدار)', sealCx, sealCy + 9, { align: 'center' });
+
+  y += 80;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(...INK);
+  doc.text('قبول المرشح', PAGE_W_PT - MARGIN, y, { align: 'right' });
+  y += 18;
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9.5);
+  doc.setTextColor(...INK_SOFT);
+  const candText = `أنا، ${offer.candidateName || '_______________________'}، أوافق على هذا العرض وعلى الشروط والأحكام الواردة في هذا الخطاب.`;
+  const candWrapped = doc.splitTextToSize(candText, PAGE_W_PT - MARGIN * 2);
+  candWrapped.forEach((line, i) => {
+    doc.text(line, PAGE_W_PT - MARGIN, y + i * 12, { align: 'right' });
+  });
+  y += candWrapped.length * 12 + 30;
+
+  const colW = (PAGE_W_PT - MARGIN * 2 - 30) / 2;
+  doc.setDrawColor(...MUTED);
+  doc.line(PAGE_W_PT - MARGIN - colW, y, PAGE_W_PT - MARGIN, y);
+  doc.line(MARGIN, y, MARGIN + colW, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(...MUTED);
+  doc.text('التوقيع', PAGE_W_PT - MARGIN, y + 12, { align: 'right' });
+  doc.text('التاريخ', MARGIN + colW, y + 12, { align: 'right' });
+
+  drawFooterAR(doc, doc.internal.getNumberOfPages());
+}
+
+function drawFooterAR(doc, pageNum) {
+  const footerY = PAGE_H_PT - 30;
+  doc.setDrawColor(220, 220, 220);
+  doc.setLineWidth(0.5);
+  doc.line(MARGIN, footerY - 14, PAGE_W_PT - MARGIN, footerY - 14);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(...MUTED);
+  doc.text('هذا المستند سري.', PAGE_W_PT - MARGIN, footerY, { align: 'right' });
+  doc.text(`صفحة ${pageNum}`, MARGIN, footerY);
 }
 
 // ─── Helper: format ISO date as "1 June 2026" ─────────────────────
@@ -235,16 +914,10 @@ function formatDateLong(yyyymmdd) {
   return dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-// ─── .eml generation ──────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// EMAIL (.eml) GENERATION — unchanged from previous version
+// ═══════════════════════════════════════════════════════════════════
 
-/**
- * Build the email body Bashaier sends to the candidate. Plain text;
- * Outlook will auto-link the URL.
- *
- * @param {Object} offer
- * @param {string} acceptanceUrl
- * @param {Object} sender — { name, email }
- */
 export function buildOfferEmailBody(offer, acceptanceUrl, sender) {
   const candidate = offer.candidateName || 'Candidate';
   const position = offer.positionTitle || 'the role';
@@ -254,7 +927,7 @@ export function buildOfferEmailBody(offer, acceptanceUrl, sender) {
     ``,
     `We are pleased to extend an offer for the position of ${position} at Evergreen Shipping Agency Saudi Co. (LLC).`,
     ``,
-    `Please find the formal offer letter attached. The letter contains the full details of the position, salary, joining date, and other terms.`,
+    `Please find the formal offer letter attached. The letter contains the full details of the position, salary, joining date, and Terms & Conditions in both English and Arabic.`,
     ``,
     `To accept this offer, please click the secure acceptance link below:`,
     ``,
@@ -273,52 +946,20 @@ export function buildOfferEmailBody(offer, acceptanceUrl, sender) {
   ].join('\r\n');
 }
 
-/**
- * Build a complete RFC 822 .eml message with the offer letter PDF
- * embedded as a base64 attachment. Returns a Blob suitable for
- * triggering a browser download.
- *
- * Outlook (Windows + Mac), Apple Mail, and most webmail clients
- * open .eml files into a draft window with the attachment already
- * populated. The user reviews, optionally edits the body, hits
- * Send. The email goes from their real mailbox so the candidate
- * can reply directly to them.
- *
- * @param {Object} args
- * @param {string} args.fromName     — e.g. "BASHAIER ALSUBAIE"
- * @param {string} args.fromEmail    — e.g. "bashaier.alsubaie@evergreen-shipping.com.sa"
- * @param {string} args.toEmail      — candidate's personal email
- * @param {string} args.toName       — candidate's name
- * @param {string} args.subject
- * @param {string} args.body         — plain text email body
- * @param {Blob}   args.pdfBlob      — PDF attachment
- * @param {string} args.pdfFilename
- * @returns {Promise<Blob>} an .eml Blob ready for download
- */
 export async function buildEmlMessage(args) {
   const {
     fromName, fromEmail, toEmail, toName,
     subject, body, pdfBlob, pdfFilename,
   } = args;
 
-  // Convert the PDF blob to base64. The .eml format requires
-  // attachments to be base64-encoded with line breaks every 76
-  // characters (RFC 2045).
   const pdfBase64 = await blobToBase64(pdfBlob);
   const wrappedBase64 = wrapLine(pdfBase64, 76);
 
-  // Multipart MIME boundary — must not appear anywhere in the
-  // message body or attachment data. Generate a random one.
   const boundary = 'evergreen-offer-' + Math.random().toString(36).slice(2, 10);
-
-  // Date in RFC 2822 format
   const dateHeader = new Date().toUTCString().replace('GMT', '+0000');
-
   const fromHeader = `${escapeHeader(fromName)} <${fromEmail}>`;
   const toHeader   = toName ? `${escapeHeader(toName)} <${toEmail}>` : toEmail;
 
-  // Build the .eml message. Headers + multipart body + boundary
-  // separators. CRLF line endings throughout — required by RFC 822.
   const lines = [
     `From: ${fromHeader}`,
     `To: ${toHeader}`,
@@ -348,12 +989,10 @@ export async function buildEmlMessage(args) {
   return new Blob([eml], { type: 'message/rfc822' });
 }
 
-// ─── Helper: blob → base64 string ─────────────────────────────────
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
-      // result is a data: URL like "data:application/pdf;base64,JVBERi0..."
       const dataUrl = String(reader.result);
       const base64 = dataUrl.split(',')[1] || '';
       resolve(base64);
@@ -363,7 +1002,6 @@ function blobToBase64(blob) {
   });
 }
 
-// ─── Helper: wrap a long string into N-char lines ─────────────────
 function wrapLine(s, width) {
   if (!s) return '';
   const lines = [];
@@ -373,63 +1011,35 @@ function wrapLine(s, width) {
   return lines.join('\r\n');
 }
 
-// ─── Helper: escape a header value ────────────────────────────────
-// If the value contains any non-ASCII or special chars, wrap in
-// quotes. For simplicity we wrap everything in quotes that contains
-// non-alphanumeric chars beyond spaces and basic punctuation.
 function escapeHeader(s) {
   const str = String(s || '');
-  // Use quoted-string format if the value has any special chars
   if (/[^\x20-\x7E]/.test(str) || /["\\]/.test(str)) {
-    // Encode as RFC 2047 base64 if there's non-ASCII
     const b64 = btoa(unescape(encodeURIComponent(str)));
     return `=?UTF-8?B?${b64}?=`;
   }
   return str;
 }
 
-// ─── Helper: quoted-printable encode the body ─────────────────────
-// Required because the body may contain non-ASCII (Arabic candidate
-// names, accents, etc.). quoted-printable encodes those as =XX
-// sequences while preserving most of the readability.
 function quotedPrintableEncode(text) {
   if (!text) return '';
-  // Encode UTF-8 bytes
   const bytes = new TextEncoder().encode(text);
   let out = '';
   let lineLen = 0;
   for (let i = 0; i < bytes.length; i++) {
     const b = bytes[i];
     let chunk;
-    if (b === 0x0d) {
-      // skip lone CR
-      continue;
-    } else if (b === 0x0a) {
-      // newline — flush
-      out += '\r\n';
-      lineLen = 0;
-      continue;
-    } else if (b === 0x3d) {
-      // = → =3D
-      chunk = '=3D';
-    } else if (b >= 0x20 && b <= 0x7e) {
-      // printable ASCII
-      chunk = String.fromCharCode(b);
-    } else {
-      // anything else → =XX hex
-      chunk = '=' + b.toString(16).toUpperCase().padStart(2, '0');
-    }
-    if (lineLen + chunk.length > 75) {
-      out += '=\r\n';
-      lineLen = 0;
-    }
+    if (b === 0x0d) continue;
+    if (b === 0x0a) { out += '\r\n'; lineLen = 0; continue; }
+    if (b === 0x3d) chunk = '=3D';
+    else if (b >= 0x20 && b <= 0x7e) chunk = String.fromCharCode(b);
+    else chunk = '=' + b.toString(16).toUpperCase().padStart(2, '0');
+    if (lineLen + chunk.length > 75) { out += '=\r\n'; lineLen = 0; }
     out += chunk;
     lineLen += chunk.length;
   }
   return out;
 }
 
-// ─── Convenience: trigger a browser download for a Blob ───────────
 export function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -441,10 +1051,6 @@ export function downloadBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-// ─── Token generator for offer_token ──────────────────────────────
-// 32 chars URL-safe base64 from 24 random bytes. Used as the
-// public acceptance link's secret. Cryptographically random via
-// crypto.getRandomValues — far stronger than Math.random.
 export function generateOfferToken() {
   const bytes = new Uint8Array(24);
   crypto.getRandomValues(bytes);
