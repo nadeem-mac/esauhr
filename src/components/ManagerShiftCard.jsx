@@ -348,13 +348,13 @@ export default function ManagerShiftCard({ me, employees }) {
       //   3. Nothing changed — terse no-op.
       let summary;
       if (nDays && nRemoved) {
-        summary = `✓ Shift roster issued — ${nDays} day${nDays === 1 ? '' : 's'} dispatched, ${nRemoved} cleared. ${staffName} will be asked to acknowledge on next sign-in. Final approval will be issued by the SUP (Bashaier) once acknowledged.`;
+        summary = `\u2713 Saved \u2014 ${nDays} day${nDays === 1 ? '' : 's'} dispatched, ${nRemoved} cleared. Waiting for ${staffName} to acknowledge. Once accepted, the shift is final and locked \u2014 they must attend at the time you've set.`;
       } else if (nDays) {
-        summary = `✓ Shift roster issued — ${nDays} day${nDays === 1 ? '' : 's'} dispatched. ${staffName} will be asked to acknowledge on next sign-in. Final approval will be issued by the SUP (Bashaier) once acknowledged.`;
+        summary = `\u2713 Saved \u2014 ${nDays} day${nDays === 1 ? '' : 's'} dispatched. Waiting for ${staffName} to acknowledge. Once accepted, the shift is final and locked \u2014 they must attend at the time you've set.`;
       } else if (nRemoved) {
-        summary = `✓ Schedule updated — ${nRemoved} day${nRemoved === 1 ? '' : 's'} cleared.`;
+        summary = `\u2713 Saved \u2014 ${nRemoved} day${nRemoved === 1 ? '' : 's'} cleared.`;
       } else {
-        summary = '✓ No changes to save.';
+        summary = '\u2713 No changes to save.';
       }
       setToast(summary);
       setTimeout(() => setToast(''), 9000);
@@ -796,7 +796,7 @@ export default function ManagerShiftCard({ me, employees }) {
           ) : toast ? (
             <span style={{ color: 'var(--evergreen-700, #0F4C2A)', fontWeight: 500 }}>{toast}</span>
           ) : (
-            <>Past days and accepted shifts are locked. Saved entries are dispatched to the staff member for acknowledgment, then routed to the SUP (Bashaier) for final approval.</>
+            <>Past days and accepted shifts are locked. Saved entries are dispatched to the staff member for acknowledgment. Once they accept, the shift is final and locked &mdash; the time is used by HR for attendance checks.</>
           )}
         </div>
         <button

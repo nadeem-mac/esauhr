@@ -33,19 +33,24 @@ import { directGet, supabase } from '../supabaseClient.js';
 
 const DOW_SHORT = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
-// Format the chip label. We map the two known presets explicitly so the
-// label is shorter than the raw HH-HH for the common cases (9-5 / 8-4),
-// and use a single 'N' for overnight shifts (start > end). Everything
-// else falls back to "Hs-He" with no leading zero.
+// Format the chip label. Two preset shorthands match the editor's
+// "9 – 5" and "8 – 4" preset chips so the visual continuity is
+// preserved from the manager picking a preset to the staff/HR seeing
+// the chip. Overnight shifts (start > end, e.g. 23:00 → 07:00) show
+// the arrow instead of a hyphen so the next-day end is visually
+// distinct. Everything else falls through to "Hs-He" with no leading
+// zero.
+//
+// The previous 'N' shorthand was retired — it was self-descriptive
+// only if you knew the convention, which Nadeem rightly flagged.
+// Numbers are always more legible.
 function formatChipLabel(start, end) {
   if (!start || !end) return '';
   if (start === '09:00' && end === '17:00') return '9-5';
   if (start === '08:00' && end === '16:00') return '8-4';
-  // Overnight shift — start > end (e.g. 23:00 -> 07:00)
-  if (start > end) return 'N';
-  // Custom day shift — show start and end hour without leading zero
   const sh = parseInt(start.slice(0, 2), 10);
   const eh = parseInt(end.slice(0, 2), 10);
+  if (start > end) return `${sh}\u2192${eh}`; // overnight: e.g. "23→7"
   return `${sh}-${eh}`;
 }
 
@@ -524,11 +529,11 @@ export default function ShiftMonthGrid({
           <div className="text-[11px] mt-2 flex flex-wrap gap-3" style={{ color: '#0A0A0A', opacity: 0.7 }}>
             <span>{totalShiftsThisMonth} shift{totalShiftsThisMonth === 1 ? '' : 's'} in {monthLabel}</span>
             <span>&middot;</span>
-            <span>Hover any cell for full time range</span>
+            <span>Hover any cell for the full time range</span>
             <span>&middot;</span>
             <span>Fri/Sat shaded as KSA weekend</span>
             <span>&middot;</span>
-            <span>"N" = night shift</span>
+            <span>Arrow (&rarr;) indicates an overnight shift</span>
           </div>
         </>
         );

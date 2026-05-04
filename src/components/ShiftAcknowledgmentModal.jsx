@@ -102,11 +102,15 @@ export default function ShiftAcknowledgmentModal({ me, pendingShifts, employees,
 
       setDoneDecision(decision);
       setStep('done');
-      // Brief confirmation, then close so AppShell refreshes
+      // Brief confirmation, then close so AppShell refreshes. Longer
+      // dwell on accept (3s) than decline (1.5s) because the accept
+      // message now explains the consequence (locked time, attendance
+      // cross-check) which deserves a moment to read.
+      const closeAfterMs = decision === 'accept' ? 3000 : 1500;
       setTimeout(() => {
         if (onResolved) onResolved();
         onClose();
-      }, 1100);
+      }, closeAfterMs);
     } catch (e) {
       setError(e?.message || 'Could not save your decision. Please try again.');
       setStep(decision === 'decline' ? 'declining' : 'review');
@@ -183,12 +187,12 @@ export default function ShiftAcknowledgmentModal({ me, pendingShifts, employees,
                 />
               </div>
               <div className="text-lg" style={{ fontWeight: 600, color: '#1F1B16' }}>
-                {doneDecision === 'decline' ? 'Decline recorded.' : 'Acceptance recorded.'}
+                {doneDecision === 'decline' ? 'Decline recorded.' : 'Shift accepted & locked.'}
               </div>
               <div className="text-sm max-w-sm" style={SMALL_TEXT}>
                 {doneDecision === 'decline'
                   ? 'Your manager will be notified and will follow up with you to discuss the schedule.'
-                  : 'Final approval is now pending with the SUP (Bashaier). You will see the status update on your dashboard once approved.'}
+                  : 'Your shift is now confirmed. You must attend on the marked day(s) at the time your manager has assigned. HR uses this time to check your punch-in and punch-out against expected arrival and departure.'}
               </div>
             </div>
           ) : (

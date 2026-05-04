@@ -5,7 +5,6 @@ import { todayISO, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLo
 import { summariseMonth } from '../lib/permissionLogic.js';
 import BashaierTasksCard from './BashaierTasksCard.jsx';
 import PendingShiftApprovalsCard from './PendingShiftApprovalsCard.jsx';
-import ManagerShiftCard from './ManagerShiftCard.jsx';
 import HrShiftMonthCard from './HrShiftMonthCard.jsx';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
 
@@ -646,13 +645,14 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
       {/* HR/SUP full-fleet shift overview — month grid, grouped by
           location, every employee with a shift this month. Hidden for
           regular managers (they get TeamShiftMonthCard on the Shifts
-          tab). Auto-hides if there are no shifts in the visible month. */}
+          tab). Auto-hides if there are no shifts in the visible month.
+          The shift EDITOR (ManagerShiftCard) is intentionally NOT
+          mounted here — per Nadeem, dispatching shifts is a manager
+          function. Bashaier and admin see the read-only month grid
+          for monitoring; managers go to the Shifts tab to assign. */}
       {(me?.is_admin || me?.is_hr_reviewer) && (
         <HrShiftMonthCard me={me} employees={employees} />
       )}
-
-      {/* Manager shift schedule — only renders for users with direct reports */}
-      <ManagerShiftCard me={me} employees={employees} />
 
       {/* PIN Requests — moved to modal triggered by the PIN REQUESTS badge.
            Card is always mounted (display:none on the modal wrapper hides it
