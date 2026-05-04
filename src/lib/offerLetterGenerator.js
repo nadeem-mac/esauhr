@@ -161,6 +161,7 @@ export async function generateOfferLetterPDF(offer, signatory, options = {}) {
 
   drawRow('Position',      offer.positionTitle || '—');
   drawRow('Department',    offer.department || '—');
+  drawRow('Office',        offer.location || '—');
   drawRow('Reporting to',  offer.managerName || '—');
   drawRow('Joining date',  formatDateLong(offer.proposedJoinDate));
   const salaryStr = offer.salaryAmount

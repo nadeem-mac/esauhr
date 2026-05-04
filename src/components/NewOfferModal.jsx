@@ -18,8 +18,9 @@
 // =============================================================================
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Loader2, Mail, FileText, AlertCircle, Sparkles } from 'lucide-react';
+import { X, Loader2, Mail, FileText, AlertCircle, Sparkles, Plus } from 'lucide-react';
 import { directGet, directPost } from '../supabaseClient.js';
+import { LOCATION_LABELS } from '../lib/leaveLogic.js';
 import {
   generateOfferLetterPDF,
   buildOfferEmailBody,
@@ -28,9 +29,76 @@ import {
   generateOfferToken,
 } from '../lib/offerLetterGenerator.js';
 
+// Position catalogue keyed by department code. Drives the
+// position-title dropdown in the New Offer form. Each list is the
+// canonical set of role titles HR uses internally; if a position
+// doesn't fit, a "Custom…" option lets Bashaier type a free-text
+// title. Update these lists in one place when new roles are
+// introduced.
+const POSITIONS_BY_DEPARTMENT = {
+  SUP: [
+    'Supervisor',
+    'Senior Supervisor',
+    'Operations Supervisor',
+    'Government Affairs Officer',
+    'Government Relations Officer',
+    'Customs Coordinator',
+    'Document Controller',
+  ],
+  BIZ: [
+    'Business Analyst',
+    'Sales Executive',
+    'Senior Sales Executive',
+    'Account Manager',
+    'Business Development Officer',
+    'Marketing Coordinator',
+  ],
+  CSD: [
+    'Customer Service Officer',
+    'Senior Customer Service Officer',
+    'Customer Service Coordinator',
+    'Documentation Officer',
+    'Booking Officer',
+    'Import Coordinator',
+    'Export Coordinator',
+  ],
+  OPS: [
+    'Operations Officer',
+    'Senior Operations Officer',
+    'Vessel Operations Officer',
+    'Yard Coordinator',
+    'Logistics Coordinator',
+  ],
+  HR: [
+    'HR Officer',
+    'Senior HR Officer',
+    'HR Coordinator',
+    'HR Reviewer',
+    'Recruitment Officer',
+  ],
+  IT: [
+    'IT Officer',
+    'IT Support Engineer',
+    'Systems Administrator',
+    'Software Developer',
+  ],
+  FIN: [
+    'Accountant',
+    'Senior Accountant',
+    'Finance Officer',
+    'Finance Coordinator',
+    'Chief Accountant',
+  ],
+};
+
+// Full position list across all departments — used as fallback when
+// the chosen department isn't in the catalogue (e.g. a department
+// added to the org chart but not yet listed above).
+const ALL_POSITIONS = Array.from(
+  new Set(Object.values(POSITIONS_BY_DEPARTMENT).flat())
+).sort();
+
 const TODAY = new Date().toISOString().slice(0, 10);
-// Default join date suggestion: first of next month. Helps Bashaier
-// avoid the common typo of accidentally setting today as join date.
 function defaultJoinDate() {
   const d = new Date();
   d.setMonth(d.getMonth() + 1);
@@ -44,7 +112,9 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
   const [candidateEmail, setCandidateEmail] = useState('');
   const [candidatePhone, setCandidatePhone] = useState('');
   const [positionTitle, setPositionTitle] = useState('');
+  const [positionCustom, setPositionCustom] = useState(''); // free-text fallback
   const [department, setDepartment] = useState('');
+  const [location, setLocation] = useState('DMM'); // default to Dammam HQ
   const [proposedJoinDate, setProposedJoinDate] = useState(defaultJoinDate());
   const [salaryAmount, setSalaryAmount] = useState('');
   const [managerId, setManagerId] = useState('');
@@ -52,6 +122,12 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
 
   const [signatories, setSignatories] = useState([]);
   const [signatoriesLoading, setSignatoriesLoading] = useState(false);
+
+  // Inline signatory add (so user doesn't have to leave the form)
+  const [signatoryAdding, setSignatoryAdding] = useState(false);
+  const [newSigName, setNewSigName] = useState('');
+  const [newSigTitle, setNewSigTitle] = useState('');
+  const [savingNewSig, setSavingNewSig] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -63,24 +139,37 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
     setCandidateEmail('');
     setCandidatePhone('');
     setPositionTitle('');
+    setPositionCustom('');
     setDepartment('');
+    setLocation('DMM');
     setProposedJoinDate(defaultJoinDate());
     setSalaryAmount('');
     setManagerId('');
     setSignatoryId('');
+    setSignatoryAdding(false);
+    setNewSigName('');
+    setNewSigTitle('');
     setError('');
-    // Load signatories every open so freshly added ones appear
-    setSignatoriesLoading(true);
-    directGet('signatories', 'select=*&active=eq.true&order=display_order.asc')
-      .then(rows => setSignatories(rows || []))
-      .catch(e => {
-        console.warn('signatories load failed:', e);
-        setSignatories([]);
-      })
-      .finally(() => setSignatoriesLoading(false));
+    loadSignatories();
   }, [open]);
 
-  // ─── Derived: department list and managers ──────────────────────
+  async function loadSignatories() {
+    setSignatoriesLoading(true);
+    try {
+      const rows = await directGet(
+        'signatories',
+        'select=*&active=eq.true&order=display_order.asc'
+      );
+      setSignatories(rows || []);
+    } catch (e) {
+      console.warn('signatories load failed:', e);
+      setSignatories([]);
+    } finally {
+      setSignatoriesLoading(false);
+    }
+  }
+
+  // ─── Derived: departments, managers, locations ──────────────────
   // Departments come from the existing employees table — keeps the
   // values consistent with the rest of the portal.
   const departments = useMemo(() => {
@@ -89,31 +178,105 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
     return [...set].sort();
   }, [employees]);
 
-  // Managers: anyone with is_manager flag, sorted by name. The
-  // candidate doesn't exist as an employee yet, so manager_id
-  // points at someone real on the active roster.
+  // Locations from real employee data, ordered alphabetically by
+  // their friendly label. Falls back to the canonical KSA office
+  // list if employees haven't been seeded yet.
+  const locations = useMemo(() => {
+    const set = new Set();
+    (employees || []).forEach(e => { if (e.location) set.add(e.location); });
+    if (set.size === 0) {
+      ['DMM', 'JED', 'RYD'].forEach(c => set.add(c));
+    }
+    return [...set].sort((a, b) =>
+      (LOCATION_LABELS[a] || a).localeCompare(LOCATION_LABELS[b] || b)
+    );
+  }, [employees]);
+
+  // Managers: anyone with at least one direct report (i.e. someone
+  // else has manager_id = their.id) PLUS any admin or HR reviewer.
+  // Previously this filtered on a non-existent is_manager column,
+  // which gave Bashaier an empty list.
   const managers = useMemo(() => {
-    return (employees || [])
-      .filter(e => e.is_manager || e.is_admin)
+    if (!employees) return [];
+    const managerIds = new Set();
+    employees.forEach(e => {
+      if (e.manager_id) managerIds.add(e.manager_id);
+    });
+    return employees
+      .filter(e =>
+        managerIds.has(e.id) ||
+        e.is_admin ||
+        e.is_hr_reviewer
+      )
       .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   }, [employees]);
 
+  // Available positions for the chosen department. Falls back to
+  // ALL_POSITIONS when the dept isn't in the catalogue, and stays
+  // empty until a department is selected (forces dept-first flow).
+  const availablePositions = useMemo(() => {
+    if (!department) return [];
+    return POSITIONS_BY_DEPARTMENT[department] || ALL_POSITIONS;
+  }, [department]);
+
+  // When the department changes, clear the position so the user
+  // re-picks from the now-relevant list.
+  useEffect(() => {
+    setPositionTitle('');
+    setPositionCustom('');
+  }, [department]);
+
   // ─── Validation ─────────────────────────────────────────────────
+  const finalPositionTitle = positionTitle === '__CUSTOM__'
+    ? positionCustom.trim()
+    : positionTitle.trim();
+
   const errors = useMemo(() => {
     const list = [];
     if (!candidateName.trim()) list.push('Candidate name is required');
     if (!candidateEmail.trim()) list.push('Personal email is required');
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidateEmail.trim())) list.push('Personal email format looks invalid');
-    if (!positionTitle.trim()) list.push('Position title is required');
     if (!department) list.push('Department is required');
+    if (!finalPositionTitle) list.push('Position title is required');
+    if (!location) list.push('Location is required');
     if (!proposedJoinDate) list.push('Joining date is required');
     else if (proposedJoinDate < TODAY) list.push('Joining date must be today or in the future');
     if (!salaryAmount || Number(salaryAmount) <= 0) list.push('Salary must be greater than zero');
-    if (!signatoryId) list.push('Signatory is required (add one in Settings → Signatories first if the list is empty)');
+    if (!signatoryId) list.push('Signatory is required (add one below if the list is empty)');
     return list;
-  }, [candidateName, candidateEmail, positionTitle, department, proposedJoinDate, salaryAmount, signatoryId]);
+  }, [candidateName, candidateEmail, finalPositionTitle, department, location, proposedJoinDate, salaryAmount, signatoryId]);
 
   const canSubmit = !submitting && errors.length === 0;
+
+  // ─── Inline signatory creation ─────────────────────────────────
+  async function saveNewSignatory() {
+    if (!newSigName.trim() || !newSigTitle.trim()) return;
+    setSavingNewSig(true);
+    try {
+      const inserted = await directPost(
+        'signatories',
+        {
+          name: newSigName.trim(),
+          title: newSigTitle.trim(),
+          active: true,
+          display_order: 100,
+        },
+        { returning: 'representation' }
+      );
+      const created = Array.isArray(inserted) ? inserted[0] : inserted;
+      if (created?.id) {
+        setSignatories(prev => [...prev, created]);
+        setSignatoryId(created.id);
+        setSignatoryAdding(false);
+        setNewSigName('');
+        setNewSigTitle('');
+      }
+    } catch (e) {
+      alert(e?.message || 'Could not save signatory.');
+    } finally {
+      setSavingNewSig(false);
+    }
+  }
 
   // ─── Submit ─────────────────────────────────────────────────────
   async function handleGenerate() {
@@ -122,7 +285,6 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
     setError('');
 
     try {
-      // 1) Build the offer row
       const offerToken = generateOfferToken();
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 14);
@@ -131,7 +293,7 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
         candidate_name:       candidateName.trim(),
         candidate_email:      candidateEmail.trim().toLowerCase(),
         candidate_phone:      candidatePhone.trim() || null,
-        position_title:       positionTitle.trim(),
+        position_title:       finalPositionTitle,
         department:           department,
         proposed_join_date:   proposedJoinDate,
         salary_amount:        Number(salaryAmount),
@@ -150,14 +312,14 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
         throw new Error('Insert returned no row');
       }
 
-      // 2) Generate the PDF
       const signatory = signatories.find(s => s.id === signatoryId);
       const manager = managers.find(m => m.id === managerId);
       const pdfBlob = await generateOfferLetterPDF(
         {
           candidateName:    candidateName.trim(),
-          positionTitle:    positionTitle.trim(),
+          positionTitle:    finalPositionTitle,
           department:       department,
+          location:         LOCATION_LABELS[location] || location,
           proposedJoinDate: proposedJoinDate,
           salaryAmount:     Number(salaryAmount),
           managerName:      manager?.name || null,
@@ -165,11 +327,10 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
         signatory
       );
 
-      // 3) Build email body + .eml
       const acceptanceUrl = `${window.location.origin}/accept-offer?token=${offerToken}`;
-      const subject = `Offer of employment — ${positionTitle.trim()} — Evergreen Shipping`;
+      const subject = `Offer of employment — ${finalPositionTitle} — Evergreen Shipping`;
       const body = buildOfferEmailBody(
-        { candidateName: candidateName.trim(), positionTitle: positionTitle.trim() },
+        { candidateName: candidateName.trim(), positionTitle: finalPositionTitle },
         acceptanceUrl,
         { name: me?.name || 'BASHAIER ALSUBAIE', email: me?.email || 'bashaier.alsubaie@evergreen-shipping.com.sa' }
       );
@@ -188,20 +349,9 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
         pdfFilename,
       });
 
-      // 4) Trigger the .eml download — Bashaier double-clicks it,
-      // Outlook opens with PDF attached + body filled in. She
-      // reviews and hits Send.
       downloadBlob(eml, `Offer_${safeNameForFile}.eml`);
+      setTimeout(() => downloadBlob(pdfBlob, pdfFilename), 600);
 
-      // 5) Optionally also surface the PDF on disk so she has a
-      // standalone copy to file in HR records. Done in a follow-up
-      // download to avoid Chrome's "blocked multiple downloads"
-      // warning — small delay between them.
-      setTimeout(() => {
-        downloadBlob(pdfBlob, pdfFilename);
-      }, 600);
-
-      // Notify caller and close
       if (onCreated) onCreated(created);
       onClose();
     } catch (e) {
@@ -286,9 +436,9 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
 
         {/* Offer details */}
         <FormSection title="Offer details">
-          <Field label="Position title *" required>
-            <Input value={positionTitle} onChange={setPositionTitle} placeholder="e.g. CSD Officer" />
-          </Field>
+          {/* Department FIRST so position dropdown is meaningful. Two-
+              column grid pairs Department with Location since both are
+              location-y org placement decisions. */}
           <div className="grid grid-cols-2 gap-3">
             <Field label="Department *" required>
               <Select value={department} onChange={setDepartment}>
@@ -296,17 +446,54 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
                 {departments.map(d => <option key={d} value={d}>{d}</option>)}
               </Select>
             </Field>
-            <Field label="Reporting to (manager)">
-              <Select value={managerId} onChange={setManagerId}>
-                <option value="">— none / TBD —</option>
-                {managers.map(m => (
-                  <option key={m.id} value={m.id}>
-                    {m.name} ({m.id})
+            <Field label="Location *" required>
+              <Select value={location} onChange={setLocation}>
+                {locations.map(l => (
+                  <option key={l} value={l}>
+                    {LOCATION_LABELS[l] || l} ({l})
                   </option>
                 ))}
               </Select>
             </Field>
           </div>
+
+          {/* Position dropdown — hydrated from the per-department
+              catalogue. "Custom…" reveals a free-text input for roles
+              not in the list (e.g. a brand-new title nobody has
+              before). */}
+          <Field label="Position title *" required>
+            <Select value={positionTitle} onChange={setPositionTitle} disabled={!department}>
+              <option value="">{department ? '— select position —' : 'Pick department first'}</option>
+              {availablePositions.map(p => <option key={p} value={p}>{p}</option>)}
+              <option value="__CUSTOM__">Custom… (type your own)</option>
+            </Select>
+            {positionTitle === '__CUSTOM__' && (
+              <div className="mt-2">
+                <Input
+                  value={positionCustom}
+                  onChange={setPositionCustom}
+                  placeholder="Type the exact position title for the offer letter"
+                />
+              </div>
+            )}
+          </Field>
+
+          <Field label="Reporting to (manager) *" required>
+            <Select value={managerId} onChange={setManagerId}>
+              <option value="">— select manager —</option>
+              {managers.map(m => (
+                <option key={m.id} value={m.id}>
+                  {m.name} — {m.id} · {m.department || '—'}
+                </option>
+              ))}
+            </Select>
+            {managers.length === 0 && (
+              <div className="text-[11px] mt-1 opacity-70" style={{ color: '#854F0B' }}>
+                No managers found. The list pulls from anyone who has direct reports, plus admin/HR reviewer roles.
+              </div>
+            )}
+          </Field>
+
           <div className="grid grid-cols-2 gap-3">
             <Field label="Joining date *" required>
               <Input type="date" value={proposedJoinDate} onChange={setProposedJoinDate} />
@@ -324,34 +511,72 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
           </div>
         </FormSection>
 
-        {/* Signatory */}
+        {/* Signatory — with inline add */}
         <FormSection title="Letter signatory">
           {signatoriesLoading ? (
             <div className="flex items-center gap-2 text-xs" style={{ color: '#0A0A0A', opacity: 0.6 }}>
               <Loader2 className="w-3 h-3 animate-spin" /> Loading signatories…
             </div>
-          ) : signatories.length === 0 ? (
+          ) : signatoryAdding ? (
             <div
-              className="rounded-lg p-3 text-xs flex items-start gap-2"
-              style={{ background: '#FEF3C7', border: '1px solid #F0CB69', color: '#854F0B' }}
+              className="rounded-lg p-3 space-y-2"
+              style={{ background: '#FEF6E2', border: '1px solid #E8C896' }}
             >
-              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-              <div>
-                No signatories configured yet. Add one in <strong>Settings → Signatories</strong> (coming next), or via SQL editor for now. The signatory's name and title appears in the offer letter signature block.
+              <div className="text-[11px] mb-1" style={{ color: '#854F0B', fontWeight: 700 }}>
+                ADD NEW SIGNATORY
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <Input value={newSigName} onChange={setNewSigName} placeholder="Name (e.g. John Ho)" />
+                <Input value={newSigTitle} onChange={setNewSigTitle} placeholder="Title (e.g. Country Head)" />
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button
+                  type="button"
+                  onClick={() => { setSignatoryAdding(false); setNewSigName(''); setNewSigTitle(''); }}
+                  className="text-[11px] px-3 py-1.5 rounded-full"
+                  style={{ background: 'transparent', color: '#0A0A0A', border: '1px solid var(--border)', cursor: 'pointer' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={saveNewSignatory}
+                  disabled={!newSigName.trim() || !newSigTitle.trim() || savingNewSig}
+                  className="text-[11px] px-3 py-1.5 rounded-full inline-flex items-center gap-1.5 disabled:opacity-50"
+                  style={{ background: 'var(--evergreen-600)', color: '#FFFFFF', fontWeight: 600, cursor: 'pointer' }}
+                >
+                  {savingNewSig ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                  Save signatory
+                </button>
               </div>
             </div>
           ) : (
-            <Field label="Signed by *" required>
-              <Select value={signatoryId} onChange={setSignatoryId}>
-                <option value="">— select —</option>
-                {signatories.map(s => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} — {s.title}
-                    {s.department_scope ? ` (${s.department_scope})` : ''}
-                  </option>
-                ))}
-              </Select>
-            </Field>
+            <>
+              <Field label="Signed by *" required>
+                <Select value={signatoryId} onChange={setSignatoryId}>
+                  <option value="">— select —</option>
+                  {signatories.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} — {s.title}
+                      {s.department_scope ? ` (${s.department_scope})` : ''}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <button
+                type="button"
+                onClick={() => setSignatoryAdding(true)}
+                className="text-[11px] mt-1 inline-flex items-center gap-1"
+                style={{ color: 'var(--evergreen-700, #0F4C2A)', fontWeight: 600, cursor: 'pointer' }}
+              >
+                <Plus className="w-3 h-3" /> Add a new signatory
+              </button>
+              {signatories.length === 0 && (
+                <div className="text-[11px] mt-1 opacity-70" style={{ color: '#854F0B' }}>
+                  No signatories yet. Click "Add a new signatory" above to create the first one.
+                </div>
+              )}
+            </>
           )}
         </FormSection>
 
@@ -368,7 +593,6 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
           </div>
         )}
 
-        {/* Hard error from submit */}
         {error && (
           <div
             className="rounded-lg p-3 text-xs mb-3 flex items-start gap-2"
@@ -415,9 +639,8 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
           </button>
         </div>
 
-        {/* Footer note */}
         <div className="text-[11px] mt-3 leading-relaxed" style={{ color: '#0A0A0A', opacity: 0.6 }}>
-          On generate: offer is recorded with a 14-day acceptance window. PDF and Outlook draft (.eml) download — open the .eml to review and send. The candidate clicks the link in your email to accept.
+          On generate: offer is recorded with a 14-day acceptance window. PDF and Outlook draft (.eml) download — open the .eml to review and send.
         </div>
       </div>
     </div>
@@ -466,17 +689,19 @@ function Input({ value, onChange, placeholder, type = 'text', min, step }) {
   );
 }
 
-function Select({ value, onChange, children }) {
+function Select({ value, onChange, children, disabled }) {
   return (
     <select
       value={value}
       onChange={e => onChange(e.target.value)}
+      disabled={disabled}
       className="w-full text-sm rounded-lg px-3 py-2"
       style={{
-        background: '#FFFFFF',
+        background: disabled ? 'var(--paper-2)' : '#FFFFFF',
         border: '1px solid var(--border)',
         color: '#0A0A0A',
         outline: 'none',
+        cursor: disabled ? 'not-allowed' : 'pointer',
       }}
     >
       {children}
