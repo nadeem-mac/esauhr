@@ -827,28 +827,35 @@ export default function AttendanceView({ me, employees }) {
     return () => { cancelled = true; };
   }, [csvDate, yesterdayDate]);
 
-  // P4: fetch employee_shifts the staff have accepted for BOTH the
-  // CSV's date AND the previous-working-day yesterdayDate. The
-  // attendance flow scores today's late arrivals + missed-punch-in
-  // AND yesterday's early departures + missed-punch-out, so both
-  // dates need their accepted overrides on hand. Without yesterday,
-  // early-departure detection on a 14:00–22:00 night shift would
-  // fall back to the default 17:00 cutoff and either fire a false
-  // positive or miss a real early-out.
+  // P4: fetch employee_shifts the staff have accepted for a 3-day
+  // window: day-before-yesterday, yesterday, and today. Three dates
+  // because the night-shift bridge below maps a shift's start day
+  // to its end day (start + 1). For the bridge to fire correctly
+  // on YESTERDAY's row (when the previous day's shift bled into
+  // yesterday morning), we need that previous day's shift in the
+  // override index. Ditto today's row — needs yesterday's shift to
+  // recognise a Y→T overnight.
   //
   // Only status='accepted' rows are honoured — pending/declined
   // fall back to the defaults so an unconfirmed manager schedule
   // never affects HR. The shiftOverrideById memo below indexes by
-  // (employee_id, shift_date) so today's and yesterday's overrides
-  // don't clobber each other in the lookup map.
+  // (employee_id, shift_date) so multiple dates' overrides don't
+  // clobber each other in the lookup map.
   useEffect(() => {
     if (!csvDate) { setAcceptedShifts([]); return; }
     let cancelled = false;
     (async () => {
       try {
-        const dateList = yesterdayDate
-          ? [`"${yesterdayDate}"`, `"${csvDate}"`].join(',')
-          : `"${csvDate}"`;
+        const dates = [csvDate];
+        if (yesterdayDate) {
+          dates.unshift(yesterdayDate);
+          // Calendar day before yesterday — local-date math, no UTC drift.
+          const [yy, mm, dd] = yesterdayDate.split('-').map(Number);
+          const dt = new Date(yy, mm - 1, dd - 1);
+          const dayBefore = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+          dates.unshift(dayBefore);
+        }
+        const dateList = dates.map(s => `"${s}"`).join(',');
         const data = await directGet(
           `employee_shifts?select=employee_id,shift_date,start_time,end_time,status` +
           `&status=eq.accepted&shift_date=in.(${dateList})`
@@ -968,6 +975,47 @@ export default function AttendanceView({ me, employees }) {
     });
     return m;
   }, [acceptedShifts]);
+
+  // ── Night-shift bridge ────────────────────────────────────────────
+  // Maps the END day of a night shift back to its START day. Keyed
+  // by `${employee}|${endDate}` where endDate = startDate + 1 day,
+  // valued by the original night shift { startDate, startStr, endStr }.
+  //
+  // Why this exists: the fingerprint export aggregates punches by
+  // calendar day. A staff member working 23:00 → 07:00 next day
+  // shows up in the export as TWO single-punch rows:
+  //
+  //   Day 1 (start day): First Punch 23:00, Last Punch 23:00 (or empty)
+  //   Day 2 (end day):   First Punch 07:00, Last Punch 07:00 (or empty)
+  //
+  // Without bridging, both rows look like missed-punch days. With the
+  // bridge index, detection can recognise the END-day row as the
+  // second half of yesterday's night shift and score the punch-out
+  // against yesterday's end_time — and conversely, recognise the
+  // START-day row as a night-shift-start and score the punch-in
+  // against tonight's start_time.
+  const nightShiftBridge = useMemo(() => {
+    const m = {};
+    Object.entries(shiftOverrideById).forEach(([key, ov]) => {
+      if (!ov?.startStr || !ov?.endStr) return;
+      // Night shift = start time later than end time (e.g. 23:00 > 07:00)
+      if (ov.startStr <= ov.endStr) return;
+      const [empKey, startDate] = key.split('|');
+      // Compute next-day date string (locally — no UTC drift)
+      const [y, mo, d] = startDate.split('-').map(Number);
+      const nextDt = new Date(y, mo - 1, d + 1);
+      const yy = nextDt.getFullYear();
+      const mm = String(nextDt.getMonth() + 1).padStart(2, '0');
+      const dd = String(nextDt.getDate()).padStart(2, '0');
+      const endDate = `${yy}-${mm}-${dd}`;
+      m[`${empKey}|${endDate}`] = {
+        startDate,
+        startStr: ov.startStr,
+        endStr:   ov.endStr,
+      };
+    });
+    return m;
+  }, [shiftOverrideById]);
 
   // Build employee lookup by ID (PSN) and name
   // Build employee lookup. Three indices, each robust to a different
@@ -1098,14 +1146,29 @@ export default function AttendanceView({ me, employees }) {
       // a 2-day file may have its own accepted shift — yesterday's
       // override doesn't bleed into today's detection and vice versa.
       const override = shiftOverrideById[`${empKey}|${rowDate}`];
+      // Bridge from yesterday: is this row the END of a night shift
+      // that STARTED on the previous day? If so, the punch-out check
+      // uses the previous day's end_time, and the missed-punch-in
+      // check is suppressed (correct: there isn't a fresh punch-in).
+      const bridgeFromPrev = nightShiftBridge[`${empKey}|${rowDate}`];
+      // Is the override for THIS row a night shift (start > end)?
+      const isNightShiftStart = !!override && override.startStr > override.endStr;
+      const isNightShiftEnd   = !!bridgeFromPrev;
       const sched = override
         ? {
             startStr: override.startStr,
             endStr:   override.endStr,
             lateCutoffStr:  addMinutesToTime(override.startStr,  +15),
+            // For night shifts, the "early cutoff" on the start day
+            // is meaningless (the shift doesn't end on this date).
+            // We only use earlyCutoffStr for non-night shifts in the
+            // early-departure branch below.
             earlyCutoffStr: addMinutesToTime(override.endStr,    -15),
-            label: 'Custom shift (' + override.startStr + '–' + override.endStr + ')',
+            label: isNightShiftStart
+              ? 'Night shift (' + override.startStr + ' → ' + override.endStr + ' next day)'
+              : 'Custom shift (' + override.startStr + '–' + override.endStr + ')',
             isCustom: true,
+            isNightShift: isNightShiftStart,
           }
         : scheduleFor(emp);
       const lateCutoffMin   = timeToMinutes(sched.lateCutoffStr);
@@ -1116,14 +1179,93 @@ export default function AttendanceView({ me, employees }) {
       const punchInMin  = timeToMinutes(punchInStr);
       const punchOutMin = timeToMinutes(punchOutStr);
 
+      // ── NIGHT-SHIFT BRIDGE — END DAY ──────────────────────────────────
+      // This row's date is the END of a night shift that started
+      // on the previous day. The relevant punch is the morning
+      // clock-out. We score it against the previous day's accepted
+      // end_time, and SUPPRESS the standard late/missed-punch-in
+      // check that would otherwise fire on this date.
+      if (isNightShiftEnd) {
+        const endStr      = bridgeFromPrev.endStr;
+        const endCutoffStr = addMinutesToTime(endStr, -15);
+        const endCutoffMin = timeToMinutes(endCutoffStr);
+        const endMin       = timeToMinutes(endStr);
+        // The morning clock-out shows in punchInStr (only punch of
+        // the day if no other shifts that date). Fall through to
+        // punchOutStr if punchInStr is empty for any reason.
+        const outStr = punchInStr || punchOutStr;
+        const outMin = timeToMinutes(outStr);
+        if (!outMin) {
+          // No morning punch found at all — actual missed punch-out
+          // on the night shift. Surface as missedOut on the END date,
+          // referencing the bridged shift label so the email body
+          // and panel header explain the night-shift context.
+          out.missedOut.push({
+            id: 'row-' + idx, employee: emp, row,
+            missingType: 'out',
+            punchInStr, punchOutStr,
+            scheduledStart: bridgeFromPrev.startStr,
+            scheduledEnd:   endStr,
+            lateCutoff: addMinutesToTime(bridgeFromPrev.startStr, +15),
+            scheduleLabel: 'Night shift (' + bridgeFromPrev.startStr + ' → ' + endStr + ' next day, completed today)',
+            isCustomShift: true,
+            dateLabel: rowDate,
+            isNightShiftEnd: true,
+          });
+          return;
+        }
+        if (outMin < endCutoffMin) {
+          // Early departure on the night-shift end day. Permission
+          // index uses the END date for the early_leave check.
+          const permKey = String(emp.id).toUpperCase() + '|early_leave|' + rowDate;
+          const perm = permIndex.get(permKey) || null;
+          let permStatus = 'EARLY_NO_PERMISSION';
+          let minutesBeyond = null;
+          if (perm) {
+            const permStartMin = timeToMinutes(String(perm.time_from || '').slice(0, 5));
+            if (Number.isFinite(permStartMin) && outMin < permStartMin) {
+              permStatus = 'EARLY_BEYOND';
+              minutesBeyond = permStartMin - outMin;
+            } else {
+              permStatus = 'EARLY_PERMITTED';
+            }
+          }
+          out.early.push({
+            id: 'row-' + idx, employee: emp, row,
+            punchOutStr: outStr, punchOutMin: outMin,
+            scheduledStart: bridgeFromPrev.startStr,
+            scheduledEnd:   endStr,
+            lateCutoff: addMinutesToTime(bridgeFromPrev.startStr, +15),
+            earlyCutoff: endCutoffStr,
+            scheduleLabel: 'Night shift (' + bridgeFromPrev.startStr + ' → ' + endStr + ' next day, completed today)',
+            isCustomShift: true,
+            minutesEarly: endMin - outMin,
+            isSup: isSupTeam(emp),
+            permission: perm, permStatus, minutesBeyond,
+            dateLabel: rowDate,
+            isNightShiftEnd: true,
+          });
+          return;
+        }
+        // Worked the full night shift through to (or beyond) the
+        // scheduled end time. No violation. Don't add to onTime —
+        // that's reserved for fresh-day punch-ins, and a 07:00
+        // night-shift end isn't a "first punch in" of the day.
+        return;
+      }
+
       // ── TODAY's rows: Late arrival + Missed punch-in ─────────────────
       if (isToday) {
         // Missed punch-in: no first punch on file. Treat as the bigger
         // problem and skip the late check (we don't know when they
         // arrived). Includes "both missing" (probably absent).
+        // Exception: night-shift START — we still check late arrival
+        // below, and don't expect a punch-out (it'll be tomorrow).
         if (!punchInMin) {
           out.missedIn.push({
             id: 'row-' + idx, employee: emp, row,
+            // For night shifts, "missing both" still means absent —
+            // they didn't show up for the start of their overnight.
             missingType: !punchOutMin ? 'both' : 'in',
             punchInStr, punchOutStr,
             scheduledStart: sched.startStr,
@@ -1172,6 +1314,69 @@ export default function AttendanceView({ me, employees }) {
       }
 
       // ── YESTERDAY's rows: Early departure + Missed punch-out ─────────
+      // SPECIAL CASE — night-shift START on yesterday:
+      //   The shift runs 23:00 yesterday → 07:00 today. Yesterday's
+      //   relevant punch is the START punch-in (not punch-out — that
+      //   lives on today's row, handled by the bridge block above).
+      //   We score punch-in for late arrival, and SUPPRESS the
+      //   missed-punch-out / early-departure check that would
+      //   otherwise fire (correct: there's no punch-out expected
+      //   on yesterday's row for an overnight shift).
+      if (isYesterday && isNightShiftStart) {
+        if (!punchInMin) {
+          // No clock-in for the night shift — missed-punch on the
+          // START side. Surface as missedIn (not missedOut) since
+          // conceptually they failed to arrive, even though it's
+          // yesterday's row.
+          out.missedIn.push({
+            id: 'row-' + idx, employee: emp, row,
+            missingType: 'in',
+            punchInStr, punchOutStr,
+            scheduledStart: sched.startStr,
+            scheduledEnd:   sched.endStr,
+            lateCutoff: sched.lateCutoffStr,
+            scheduleLabel: sched.label,
+            isCustomShift: true,
+            dateLabel: rowDate,
+            isNightShiftStart: true,
+          });
+          return;
+        }
+        if (punchInMin > lateCutoffMin) {
+          const permKey = String(emp.id).toUpperCase() + '|late_arrival|' + rowDate;
+          const perm = permIndex.get(permKey) || null;
+          let permStatus = 'LATE_NO_PERMISSION';
+          let minutesBeyond = null;
+          if (perm) {
+            const permEndMin = timeToMinutes(String(perm.time_to || '').slice(0, 5));
+            if (Number.isFinite(permEndMin) && punchInMin > permEndMin) {
+              permStatus = 'LATE_BEYOND';
+              minutesBeyond = punchInMin - permEndMin;
+            } else {
+              permStatus = 'LATE_PERMITTED';
+            }
+          }
+          out.late.push({
+            id: 'row-' + idx, employee: emp, row,
+            punchInStr, punchInMin,
+            minutesLate: punchInMin - lateCutoffMin,
+            scheduledStart: sched.startStr,
+            scheduledEnd: sched.endStr,
+            lateCutoff: sched.lateCutoffStr,
+            scheduleLabel: sched.label,
+            isCustomShift: true,
+            permission: perm, permStatus, minutesBeyond,
+            dateLabel: rowDate,
+            isNightShiftStart: true,
+          });
+          return;
+        }
+        // Arrived within grace on the night shift start. The
+        // punch-out check happens tomorrow (on today's row, via
+        // the night-shift-end bridge block). Done.
+        return;
+      }
+
       if (isYesterday) {
         // Missed punch-out: had a punch-in but no punch-out by EOD.
         // Could be a real missed punch (forgot to clock out) or rare
@@ -1312,7 +1517,7 @@ export default function AttendanceView({ me, employees }) {
     // file order so the memo's sort owns the canonical order.
 
     return out;
-  }, [parsed.rows, parsed.weekendRows, csvDate, yesterdayDate, empById, empByDigits, onLeaveOnDate, shiftOverrideById, permIndex]);
+  }, [parsed.rows, parsed.weekendRows, csvDate, yesterdayDate, empById, empByDigits, onLeaveOnDate, shiftOverrideById, nightShiftBridge, permIndex]);
 
   // File handling
   const handleFile = useCallback(async (file) => {
