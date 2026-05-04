@@ -827,17 +827,31 @@ export default function AttendanceView({ me, employees }) {
     return () => { cancelled = true; };
   }, [csvDate, yesterdayDate]);
 
-  // P4: fetch employee_shifts the staff have accepted for the CSV's date.
-  // These take precedence over the default 08:00–17:00 / SUP 08:00–16:00.
-  // Only status='accepted' rows are honoured — pending/declined fall back
-  // to the defaults so an unconfirmed manager schedule never affects HR.
+  // P4: fetch employee_shifts the staff have accepted for BOTH the
+  // CSV's date AND the previous-working-day yesterdayDate. The
+  // attendance flow scores today's late arrivals + missed-punch-in
+  // AND yesterday's early departures + missed-punch-out, so both
+  // dates need their accepted overrides on hand. Without yesterday,
+  // early-departure detection on a 14:00–22:00 night shift would
+  // fall back to the default 17:00 cutoff and either fire a false
+  // positive or miss a real early-out.
+  //
+  // Only status='accepted' rows are honoured — pending/declined
+  // fall back to the defaults so an unconfirmed manager schedule
+  // never affects HR. The shiftOverrideById memo below indexes by
+  // (employee_id, shift_date) so today's and yesterday's overrides
+  // don't clobber each other in the lookup map.
   useEffect(() => {
     if (!csvDate) { setAcceptedShifts([]); return; }
     let cancelled = false;
     (async () => {
       try {
+        const dateList = yesterdayDate
+          ? [`"${yesterdayDate}"`, `"${csvDate}"`].join(',')
+          : `"${csvDate}"`;
         const data = await directGet(
-          'employee_shifts?select=employee_id,start_time,end_time,status&status=eq.accepted&shift_date=eq.' + csvDate
+          `employee_shifts?select=employee_id,shift_date,start_time,end_time,status` +
+          `&status=eq.accepted&shift_date=in.(${dateList})`
         );
         if (!cancelled) setAcceptedShifts(data || []);
       } catch (e) {
@@ -846,7 +860,7 @@ export default function AttendanceView({ me, employees }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [csvDate]);
+  }, [csvDate, yesterdayDate]);
 
   // P5: pre-load already-logged violations for the data date so revisiting
   // the same file shows the rows that have already been emailed.
@@ -937,11 +951,17 @@ export default function AttendanceView({ me, employees }) {
   // P4: fast lookup of accepted-shift override for the current csvDate, keyed
   // by employee_id (uppercased). Stored as { startStr, endStr } — the time
   // strings are normalised to 'HH:MM' (Postgres returns 'HH:MM:SS').
+  // Index of accepted shifts keyed by (employee_id, shift_date) so
+  // detection can pick the right override for the row it's looking
+  // at. If we keyed by employee_id alone, today's shift would
+  // overwrite yesterday's (or vice versa) and the wrong cutoff
+  // would apply to one of the two dates.
   const shiftOverrideById = useMemo(() => {
     const m = {};
     (acceptedShifts || []).forEach(s => {
-      if (!s?.employee_id || !s?.start_time || !s?.end_time) return;
-      m[String(s.employee_id).toUpperCase()] = {
+      if (!s?.employee_id || !s?.start_time || !s?.end_time || !s?.shift_date) return;
+      const key = `${String(s.employee_id).toUpperCase()}|${s.shift_date}`;
+      m[key] = {
         startStr: String(s.start_time).slice(0, 5),
         endStr:   String(s.end_time).slice(0, 5),
       };
@@ -1074,7 +1094,10 @@ export default function AttendanceView({ me, employees }) {
         return;
       }
       const empKey = String(emp.id || '').toUpperCase();
-      const override = shiftOverrideById[empKey];
+      // Look up the override by (employee, row's date). Each row in
+      // a 2-day file may have its own accepted shift — yesterday's
+      // override doesn't bleed into today's detection and vice versa.
+      const override = shiftOverrideById[`${empKey}|${rowDate}`];
       const sched = override
         ? {
             startStr: override.startStr,
