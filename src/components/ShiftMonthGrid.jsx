@@ -583,6 +583,18 @@ export default function ShiftMonthGrid({
           hoverTip.status === 'declined' ? '#A32D2D'
           : hoverTip.isAccepted          ? '#0F4C2A'
           :                                '#854F0B';
+        // Tooltip card background + border + divider tinted by status
+        // so the colour itself signals what's going on at a glance —
+        // light green for accepted (locked), light amber for pending
+        // (waiting), light red for declined (manager will follow up).
+        // Same colour family as the legend chips, just lightened to
+        // remain readable as a card surface.
+        const cardStyle =
+          hoverTip.status === 'declined'
+            ? { background: '#FCEFEF', border: '1px solid #E8B5B0', divider: '1px solid #F2D6D2' }
+          : hoverTip.isAccepted
+            ? { background: '#ECFDF3', border: '1px solid #A7D8B7', divider: '1px solid #C9E8D2' }
+            : { background: '#FEF6E2', border: '1px solid #E8C896', divider: '1px solid #F2DDB1' };
         const statusBadgeStyle =
           hoverTip.status === 'declined' ? { background: '#FCEBEB', color: '#791F1F', border: '1px solid #A32D2D' }
           : hoverTip.isAccepted          ? { background: '#0F4C2A', color: '#FFFFFF', border: '1px solid #0F4C2A' }
@@ -608,8 +620,8 @@ export default function ShiftMonthGrid({
               pointerEvents: 'none',
               minWidth: 220,
               maxWidth: 280,
-              background: '#FFFFFF',
-              border: '1px solid var(--border, #E5E5E5)',
+              background: cardStyle.background,
+              border: cardStyle.border,
               borderRadius: 10,
               boxShadow: '0 8px 24px rgba(15, 23, 42, 0.18)',
               padding: '10px 12px',
@@ -650,7 +662,7 @@ export default function ShiftMonthGrid({
               {hoverTip.isOvernight ? 'Night shift \u2014 starts evening, ends next morning' : 'Day shift'}
             </div>
             <div style={{
-              borderTop: '1px solid var(--border-soft, #F0F0F0)',
+              borderTop: cardStyle.divider,
               marginTop: 8,
               paddingTop: 8,
             }}>
