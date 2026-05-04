@@ -234,13 +234,30 @@ function isKsaWeekend(yyyymmdd) {
 // 2-day file workflow: when Bashaier uploads a file on day X, "yesterday"
 // for end-of-day checks (early departures + missed punch-out) is the
 // previous working day, not necessarily X-1.
+// Most-recent working day before the given date. Skips KSA weekend
+// (Fri+Sat). e.g. Sun → Thu (skip Sat+Fri); Tue → Mon; Mon → Sun.
+//
+// IMPORTANT — this used to use new Date('YYYY-MM-DDT00:00:00') +
+// d.toISOString().slice(0,10) for every step. Both halves drifted to
+// UTC: the constructor is local but toISOString returns UTC, so in
+// KSA (UTC+3) every formatted step lost a day. The bug visible to
+// Bashaier: Mon May 4 came back as Apr 30 (because each "previous
+// day" got mis-formatted one further back, walking through Sat+Fri
+// it should have skipped). Fix: build the Date with the year/month/
+// day constructor (unambiguously local), use d.getDay() to test the
+// weekend (no formatting at all), and only format with local Y-M-D
+// at the very end.
 function previousWorkingDay(yyyymmdd) {
   if (!yyyymmdd) return null;
-  const d = new Date(yyyymmdd + 'T00:00:00');
+  const [y, m, d] = yyyymmdd.split('-').map(Number);
+  const dt = new Date(y, m - 1, d); // local-noon construction is safer but local-midnight works for date-only math
   do {
-    d.setDate(d.getDate() - 1);
-  } while (isKsaWeekend(d.toISOString().slice(0, 10)));
-  return d.toISOString().slice(0, 10);
+    dt.setDate(dt.getDate() - 1);
+  } while (dt.getDay() === 5 || dt.getDay() === 6); // KSA weekend = Fri (5) + Sat (6)
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
 }
 
 // Today's date in local time (browser clock) as YYYY-MM-DD. Avoids
@@ -548,8 +565,19 @@ function buildMailto({ to, cc, subject, body }) {
   // spaces as '+' which several mail clients leave literally as '+' instead of
   // decoding back to a space. encodeURIComponent uses '%20' for spaces, which
   // every mail client decodes correctly.
+  //
+  // CC is joined with ';' (semicolon), not ',' (comma). The mailto: spec
+  // (RFC 6068) technically uses comma, but Outlook on Windows treats a
+  // comma-separated CC list as a SINGLE address with embedded commas — the
+  // recipients become invalid and have to be re-typed. Semicolon is what
+  // Outlook actually parses correctly, and other clients (Apple Mail,
+  // Gmail web, Outlook for Mac) accept both. Per Bashaier's observation
+  // when the CC field showed a single rejected address — fix is to use
+  // ';' here. Same separator used in the To field would also help if we
+  // ever added multiple To-addresses, but for now To is always one
+  // address.
   const parts = [];
-  const ccStr = (cc || []).filter(Boolean).join(',');
+  const ccStr = (cc || []).filter(Boolean).join(';');
   if (ccStr)   parts.push('cc='      + encodeURIComponent(ccStr));
   if (subject) parts.push('subject=' + encodeURIComponent(subject));
   if (body)    parts.push('body='    + encodeURIComponent(body));

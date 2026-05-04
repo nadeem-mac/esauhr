@@ -898,7 +898,10 @@ export function buildPermissionEmailDraft({ employee, manager, hrApprover, reque
 
 function buildMailto({ to, cc, subject, body }) {
   const params = new URLSearchParams();
-  if (cc.length) params.set('cc', cc.join(','));
+  // Semicolon separator for CC — Outlook on Windows treats comma-
+  // separated lists as a single embedded-comma address. Same fix
+  // applied to AttendanceView's buildMailto for the same reason.
+  if (cc.length) params.set('cc', cc.join(';'));
   params.set('subject', subject);
   params.set('body', body);
   return `mailto:${encodeURIComponent(to)}?${params.toString().replace(/\+/g, '%20')}`;
