@@ -291,6 +291,10 @@ export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
           display: 'flex',
           flexDirection: 'column',
           boxShadow: '-12px 0 32px rgba(0,0,0,0.18)',
+          // Calibri throughout the panel — Bashaier prefers it over
+          // the serif we were using before. Cascades down so every
+          // label/heading inside picks it up unless explicitly overridden.
+          fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
           animation: closing
             ? 'detail-panel-in 0.22s cubic-bezier(0.4, 0, 0.6, 1) reverse forwards'
             : 'detail-panel-in 0.42s cubic-bezier(0.34, 1.56, 0.64, 1)',
@@ -333,7 +337,7 @@ export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
           </div>
           <h2
             style={{
-              fontFamily: 'Georgia, serif',
+              fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
               fontSize: 24,
               color: '#1F1B16',
               marginTop: 2,
@@ -512,7 +516,7 @@ function AttendanceTab({ loading, monthly, summary }) {
               >
                 <div
                   style={{
-                    fontFamily: 'Georgia, serif',
+                    fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
                     fontSize: 24,
                     color: meta.fg,
                     fontWeight: 700,
@@ -546,113 +550,261 @@ function AttendanceTab({ loading, monthly, summary }) {
         </div>
       )}
 
-      {/* Monthly groups */}
-      {monthly.map((g, gi) => {
-        const monthCounts = g.rows.reduce((acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc; }, {});
-        return (
-          <div key={`${g.year}-${g.month}`} style={{ marginBottom: 18 }}>
-            <div className="flex items-baseline justify-between mb-2">
-              <div
-                style={{
-                  fontFamily: 'Georgia, serif',
-                  fontSize: 16,
-                  color: '#1F1B16',
-                  fontWeight: 700,
-                }}
-              >
-                {MONTH_NAMES[g.month]} {g.year}
-              </div>
-              <div className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.55 }}>
-                {g.rows.length} {g.rows.length === 1 ? 'record' : 'records'}
-              </div>
-            </div>
+      {/* Monthly calendar grids — one per month with data */}
+      {monthly.map((g) => (
+        <MonthCalendar
+          key={`${g.year}-${g.month}`}
+          year={g.year}
+          monthIdx={g.month}
+          rows={g.rows}
+        />
+      ))}
+    </div>
+  );
+}
 
-            {/* Mini-summary chip strip */}
-            <div className="flex flex-wrap gap-1 mb-2">
-              {Object.entries(monthCounts).map(([k, v]) => {
-                const meta = statusMeta(k);
-                return (
-                  <span
-                    key={k}
-                    style={{
-                      background: meta.bg, color: meta.fg, border: `1px solid ${meta.border}`,
-                      fontSize: 10, padding: '1px 6px', borderRadius: 999, fontWeight: 700,
-                    }}
-                  >
-                    {meta.label}: {v}
-                  </span>
-                );
-              })}
-            </div>
+// ─── MonthCalendar ──────────────────────────────────────────────────
+// Renders a single month as a 7-column wall-calendar grid. Each cell
+// shows the day number plus a status chip when there's an
+// attendance_daily record for that date. The cell background is
+// faintly tinted with the status color, the chip carries the icon
+// (P / LT / AB / AL / etc.), and a tiny line of punch times sits
+// underneath when room allows.
+//
+// Layout details:
+//   • 7 columns, 5–6 rows depending on month
+//   • Day-of-week header row (S M T W T F S)
+//   • Sun-first (matches Saudi week orientation, Saturday end)
+//   • KSA weekend (Fri+Sat) gets a faint beige tint when empty
+//   • Today's column gets a green outline
+//   • Future days (after today) are dimmed
+//   • Hover any cell with data → native title tooltip with full detail
+function MonthCalendar({ year, monthIdx, rows }) {
+  const firstOfMonth = new Date(year, monthIdx, 1);
+  const lastOfMonth  = new Date(year, monthIdx + 1, 0);
+  const daysInMonth  = lastOfMonth.getDate();
+  // Pad cells before day 1 so day 1 lands in the right weekday column.
+  // Sun=0, Mon=1, ..., Sat=6.
+  const padBefore = firstOfMonth.getDay();
 
-            {/* Rows */}
-            <div
+  // Index records by day-of-month (1..31)
+  const byDay = new Map();
+  for (const r of rows) {
+    const day = parseInt(r.attendance_date.slice(8, 10), 10);
+    byDay.set(day, r);
+  }
+
+  // Per-month chip-strip counts
+  const monthCounts = rows.reduce((acc, r) => {
+    acc[r.status] = (acc[r.status] || 0) + 1;
+    return acc;
+  }, {});
+
+  // Today / future cutoff
+  const today = new Date();
+  const isCurrentMonth = today.getFullYear() === year && today.getMonth() === monthIdx;
+  const todayDay = isCurrentMonth ? today.getDate() : null;
+
+  return (
+    <div style={{ marginBottom: 22 }}>
+      {/* Month title + record count */}
+      <div className="flex items-baseline justify-between mb-2">
+        <div
+          style={{
+            fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
+            fontSize: 17,
+            color: '#1F1B16',
+            fontWeight: 700,
+            letterSpacing: '-0.005em',
+          }}
+        >
+          {MONTH_NAMES[monthIdx]} {year}
+        </div>
+        <div className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.55 }}>
+          {rows.length} {rows.length === 1 ? 'record' : 'records'}
+        </div>
+      </div>
+
+      {/* Mini chip strip */}
+      <div className="flex flex-wrap gap-1 mb-2">
+        {Object.entries(monthCounts).map(([k, v]) => {
+          const meta = statusMeta(k);
+          return (
+            <span
+              key={k}
               style={{
-                background: '#FFFFFF',
-                border: '1px solid #E5E5E5',
-                borderRadius: 10,
-                overflow: 'hidden',
+                background: meta.bg,
+                color:      meta.fg,
+                border:     `1px solid ${meta.border}`,
+                fontSize: 10, padding: '1px 6px', borderRadius: 999, fontWeight: 700,
               }}
             >
-              {g.rows.map((r, ri) => {
-                const meta = statusMeta(r.status);
-                const detail = r.status === 'late'
-                  ? `${r.late_minutes || 0} min late`
-                  : r.status === 'short'
-                    ? `${r.early_leave_minutes || 0} min early out`
-                    : r.status === 'present' && r.first_punch
-                      ? `${trimTime(r.first_punch)} \u2192 ${trimTime(r.last_punch)}`
-                      : meta.label;
-                return (
-                  <div
-                    key={r.attendance_date}
-                    style={{
-                      padding: '8px 12px',
-                      borderTop: ri === 0 ? 'none' : '1px solid #F0F0F0',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 10,
-                      animation: `detail-row-in 0.32s ease-out ${Math.min(ri * 12, 240)}ms both`,
-                    }}
-                  >
+              {meta.label}: {v}
+            </span>
+          );
+        })}
+      </div>
+
+      {/* Calendar grid */}
+      <div
+        style={{
+          background: '#FFFFFF',
+          border: '1px solid #E5E5E5',
+          borderRadius: 12,
+          padding: 8,
+          overflow: 'hidden',
+        }}
+      >
+        {/* Weekday header */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4, marginBottom: 4 }}>
+          {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((label, i) => (
+            <div
+              key={i}
+              style={{
+                textAlign: 'center',
+                padding: '4px 0',
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: '0.16em',
+                color: '#0A0A0A',
+                opacity: (i === 5 || i === 6) ? 0.5 : 0.7,
+                background: (i === 5 || i === 6) ? '#FAF5EE' : 'transparent',
+                borderRadius: 4,
+              }}
+            >
+              {label}
+            </div>
+          ))}
+        </div>
+
+        {/* Day cells */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
+          {Array.from({ length: padBefore }).map((_, i) => (
+            <div key={`pad-${i}`} />
+          ))}
+          {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
+            const r = byDay.get(day);
+            const dt = new Date(year, monthIdx, day);
+            const dow = dt.getDay();
+            const isWeekend = dow === 5 || dow === 6;
+            const isToday = todayDay === day;
+            const isFuture = dt > today && !isToday;
+            const meta = r ? statusMeta(r.status) : null;
+            // Tooltip — full detail for hover
+            const tipParts = [];
+            tipParts.push(dt.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' }));
+            if (r) {
+              tipParts.push(meta.label);
+              if (r.status === 'late' && r.late_minutes != null)
+                tipParts.push(`${r.late_minutes} min late`);
+              else if (r.status === 'short' && r.early_leave_minutes != null)
+                tipParts.push(`${r.early_leave_minutes} min early out`);
+              if (r.first_punch || r.last_punch)
+                tipParts.push(`${trimTime(r.first_punch) || '—'} → ${trimTime(r.last_punch) || '—'}`);
+              if (r.notes) tipParts.push(r.notes);
+            }
+            return (
+              <div
+                key={day}
+                title={tipParts.join('\n')}
+                style={{
+                  position: 'relative',
+                  background: r
+                    ? meta.bg
+                    : isToday
+                      ? 'rgba(15,76,42,0.04)'
+                      : isWeekend ? '#FAF5EE' : '#FFFFFF',
+                  border: '1px solid ' + (
+                    isToday ? '#0F4C2A' : (r ? meta.border : '#F0F0F0')
+                  ),
+                  borderRadius: 8,
+                  minHeight: 60,
+                  padding: 5,
+                  fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
+                  cursor: r ? 'help' : 'default',
+                  opacity: isFuture ? 0.4 : 1,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  transition: 'transform 0.15s ease',
+                }}
+                onMouseEnter={(e) => { if (r) e.currentTarget.style.transform = 'scale(1.04)'; }}
+                onMouseLeave={(e) => { if (r) e.currentTarget.style.transform = 'scale(1)'; }}
+              >
+                {/* Day number — top-right */}
+                <div
+                  style={{
+                    fontSize: 11,
+                    fontWeight: isToday ? 800 : 600,
+                    color: r ? meta.fg : (isToday ? '#0F4C2A' : '#1F1B16'),
+                    textAlign: 'right',
+                    lineHeight: 1,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {day}
+                </div>
+
+                {r && (
+                  <>
+                    {/* Status chip — middle */}
                     <div
                       style={{
-                        background: meta.bg,
-                        color: meta.fg,
-                        border: `1px solid ${meta.border}`,
-                        borderRadius: 6,
-                        width: 28,
-                        height: 24,
-                        display: 'inline-flex',
+                        flex: 1,
+                        display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        fontWeight: 700,
-                        fontSize: 10,
-                        flexShrink: 0,
+                        marginTop: 2,
                       }}
                     >
-                      {meta.icon}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="text-[12px]" style={{ color: '#1F1B16', fontWeight: 600 }}>
-                        {fmtDate(r.attendance_date)}
+                      <div
+                        style={{
+                          background: '#FFFFFF',
+                          color: meta.fg,
+                          border: `1px solid ${meta.border}`,
+                          borderRadius: 4,
+                          fontSize: 10,
+                          fontWeight: 700,
+                          padding: '1px 4px',
+                          letterSpacing: '0.04em',
+                          minWidth: 18,
+                          textAlign: 'center',
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      >
+                        {meta.icon}
                       </div>
-                      <div className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.65 }}>
-                        {detail}
-                        {r.first_punch && r.status !== 'present' && (
-                          <span style={{ marginLeft: 6 }}>
-                            &middot; {trimTime(r.first_punch)} {r.last_punch ? `\u2192 ${trimTime(r.last_punch)}` : ''}
-                          </span>
+                    </div>
+
+                    {/* Tiny punch summary — bottom (only fits when present) */}
+                    {r.first_punch && (
+                      <div
+                        style={{
+                          fontSize: 8.5,
+                          color: meta.fg,
+                          opacity: 0.85,
+                          textAlign: 'center',
+                          fontVariantNumeric: 'tabular-nums',
+                          lineHeight: 1.15,
+                          marginTop: 2,
+                          fontWeight: 600,
+                        }}
+                      >
+                        {trimTime(r.first_punch)}
+                        {r.last_punch && (
+                          <>
+                            <br/>
+                            <span style={{ opacity: 0.6 }}>{trimTime(r.last_punch)}</span>
+                          </>
                         )}
                       </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
@@ -696,7 +848,7 @@ function LeaveTab({ loading, rows, leaveTypeName }) {
             animation: 'detail-tile-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0ms both',
           }}
         >
-          <div style={{ fontFamily: 'Georgia, serif', fontSize: 24, color: '#115E59', fontWeight: 700, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+          <div style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif', fontSize: 24, color: '#115E59', fontWeight: 700, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
             {rows.length}
           </div>
           <div className="text-[10px] mt-1" style={{ color: '#0A0A0A', opacity: 0.7, fontWeight: 600, letterSpacing: '0.08em' }}>
@@ -710,7 +862,7 @@ function LeaveTab({ loading, rows, leaveTypeName }) {
             animation: 'detail-tile-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 50ms both',
           }}
         >
-          <div style={{ fontFamily: 'Georgia, serif', fontSize: 24, color: '#115E59', fontWeight: 700, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+          <div style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif', fontSize: 24, color: '#115E59', fontWeight: 700, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
             {totalDays}
           </div>
           <div className="text-[10px] mt-1" style={{ color: '#0A0A0A', opacity: 0.7, fontWeight: 600, letterSpacing: '0.08em' }}>
