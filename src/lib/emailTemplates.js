@@ -138,3 +138,45 @@ export async function saveTemplates(value, actorPsn) {
 export function invalidate() {
   cache = null;
 }
+
+/**
+ * Render the HR signature as a plain-text block ready to drop into
+ * an email body. Uses the canonical format Bashaier specified for
+ * all auto-generated emails:
+ *
+ *   Thanks and regards,
+ *
+ *   BASHAIER ALI
+ *   Evergreen Shipping Agency Saudi Co.,(L.L.C)
+ *   ESAU - SADMN SUP/ HR DEPT
+ *   Whatsapp: 966-54 320 9694
+ *   Tel: 966-013 813 8563 – Ext 8543
+ *   Email:bashaier.alsubaie@evergreen-shipping.com.sa
+ *
+ * If `sig` is not passed, falls back to the cached templates (or
+ * defaults if the cache hasn't been hydrated yet). All consumers
+ * are encouraged to call this rather than rolling their own
+ * formatting so any future change to Bashaier's signature
+ * propagates through the entire app in one place.
+ *
+ * @param {Object} [sig] - Optional signature object. If omitted,
+ *                         uses the cached `hr_signature` from the
+ *                         email_templates row, falling back to
+ *                         DEFAULT_TEMPLATES.hr_signature.
+ * @returns {string} Multi-line plain-text signature block, ready
+ *                   to concatenate into an email body. No leading
+ *                   or trailing newline — caller controls that.
+ */
+export function renderHrSignature(sig) {
+  const s = sig || (cache && cache.hr_signature) || DEFAULT_TEMPLATES.hr_signature;
+  return [
+    'Thanks and regards,',
+    '',
+    s.name,
+    s.company,
+    s.unit,
+    `Whatsapp: ${s.whatsapp}`,
+    `Tel: ${s.tel}`,
+    `Email:${s.email}`,
+  ].join('\n');
+}

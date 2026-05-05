@@ -40,6 +40,8 @@
 // the offer record for internal tracking, just not displayed).
 // =============================================================================
 
+import { renderHrSignature } from './emailTemplates.js';
+
 const A4_W_PX = 794;
 const A4_H_PX = 1123;
 const RENDER_SCALE = 2;
@@ -946,7 +948,12 @@ export function buildOfferEmailBody(offer, acceptanceUrl, sender) {
   const candidate = offer.candidateName || 'Candidate';
   const position = offer.positionTitle || 'the role';
 
-  return [
+  // Body lines, joined with \r\n at the end. The signature block
+  // is rendered from emailTemplates.renderHrSignature() so we
+  // share one canonical signature across every email the portal
+  // generates on Bashaier's behalf — change in one place,
+  // propagates everywhere.
+  const body = [
     `Dear ${candidate},`,
     ``,
     `We are pleased to extend an offer for the position of ${position} at Evergreen Shipping Agency Saudi Co. (LLC).`,
@@ -965,11 +972,10 @@ export function buildOfferEmailBody(offer, acceptanceUrl, sender) {
     ``,
     `We look forward to welcoming you to the team.`,
     ``,
-    `Best regards,`,
-    `${sender.name}`,
-    `Evergreen Shipping Agency Saudi Co. (LLC)`,
-    `${sender.email}`,
+    renderHrSignature(),  // canonical signature block
   ].join('\r\n');
+
+  return body;
 }
 
 export async function buildEmlMessage(args) {
