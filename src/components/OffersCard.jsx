@@ -673,6 +673,30 @@ function OfferRow({ offer, employees, onChanged, onIssuePsn, me, readOnly = fals
             </button>
           )}
 
+          {/* Offer Link — copies the candidate's acceptance URL to
+              the clipboard so Bashaier can paste it elsewhere (a
+              follow-up WhatsApp, a separate manual email, etc.).
+              Hidden in read-only mode (viewers shouldn't be sharing
+              the candidate's private acceptance link). The toast
+              flashes "Copied!" for 1.5s after a successful copy. */}
+          {!readOnly && (
+            <button
+              onClick={copyLink}
+              className="text-[11px] px-2.5 py-1 rounded-full inline-flex items-center gap-1.5"
+              style={{
+                background: copyToast ? '#0F4C2A' : 'transparent',
+                color: copyToast ? '#FFFFFF' : '#0A0A0A',
+                border: '1px solid ' + (copyToast ? '#0F4C2A' : 'var(--border)'),
+                fontWeight: 500,
+                cursor: 'pointer',
+              }}
+              title="Copy the candidate's acceptance link"
+            >
+              <Copy className="w-3 h-3" />
+              {copyToast ? 'Copied!' : 'Offer Link'}
+            </button>
+          )}
+
           {/* Withdraw — only on offer_sent (still pending response).
               Hidden in read-only mode. */}
           {!readOnly && offer.status === 'offer_sent' && (
