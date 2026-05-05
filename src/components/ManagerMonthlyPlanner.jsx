@@ -307,6 +307,15 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
     if (!employeeId || !monthSel) return;
     setPlanLoading(true);
     setErrorMsg('');
+    // Reset edit-cap state immediately so the Save button doesn't
+    // briefly show the PREVIOUS employee's locked "Saved" label
+    // while the new employee's tracker row is being fetched. The
+    // tracker fetch later in this function then sets these to the
+    // correct values for the newly-selected (employee, month).
+    setLastCommittedAt(null);
+    setEditCount(0);
+    setEditMode('editing');
+    setPlan({});
     try {
       const fromKey = ymd(startOfMonth(monthSel.year, monthSel.monthIdx));
       const toKey   = ymd(endOfMonth(monthSel.year, monthSel.monthIdx));
@@ -422,10 +431,17 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
       // locked/editing state of the Save button.
       try {
         const planKey = ymd(startOfMonth(monthSel.year, monthSel.monthIdx));
+        // Scope by employee_id — without it, switching the dropdown
+        // from staff A to staff B would return A's tracker row and
+        // wrongly lock the form for B. Each (manager, employee, month)
+        // tuple has its own tracker row, matched by the new
+        // (manager_id, employee_id, plan_month) unique constraint
+        // on monthly_shift_plans.
         const planRows = await directGet(
           'monthly_shift_plans',
           `select=last_committed_at,shifts_count,edit_count` +
           `&manager_id=eq.${encodeURIComponent(me.id)}` +
+          `&employee_id=eq.${encodeURIComponent(employeeId)}` +
           `&plan_month=eq.${planKey}` +
           `&limit=1`,
           { timeoutMs: 6000 }
@@ -834,12 +850,18 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
       //    first save (when no last_committed_at yet) keeps it at 0.
       //    Same upsert API fix as above — must pass upsert:true +
       //    onConflict, not raw headers.
+      //
+      //    Tracker is keyed by (manager_id, employee_id, plan_month).
+      //    Without employee_id, switching the dropdown from staff A
+      //    to staff B would return A's tracker row and wrongly lock
+      //    the form for B (the previous design's bug).
       const isFirstSave = !lastCommittedAt;
       const newEditCount = isFirstSave ? 0 : Math.min(editCount + 1, MAX_EDITS);
       await directPost(
         'monthly_shift_plans',
         [{
           manager_id:        me.id,
+          employee_id:       employeeId,
           plan_month:        fromKey,
           shifts_count:      rows.length,
           last_committed_at: new Date().toISOString(),
@@ -848,7 +870,7 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
         }],
         {
           upsert: true,
-          onConflict: 'manager_id,plan_month',
+          onConflict: 'manager_id,employee_id,plan_month',
           timeoutMs: 8000,
         }
       );
