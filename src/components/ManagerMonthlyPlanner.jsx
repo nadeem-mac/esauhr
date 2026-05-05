@@ -195,35 +195,48 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
     }
   }, [myReports, employeeId]);
 
-  // Once on mount, check whether THIS manager has already committed
-  // the current month's plan. If yes, AND next month is unlocked,
-  // flip the default selection from current to next so the manager
-  // lands on the more relevant tab. We only flip ONCE — if the
-  // manager later clicks the current tab manually we don't bounce
-  // them back.
+  // Once on mount, check whether THIS manager has committed plans
+  // for ALL their direct reports for the current month. If yes,
+  // AND next month is unlocked, flip the default selection from
+  // current to next so the manager lands on the more relevant tab.
+  // We only flip ONCE — if the manager later clicks the current
+  // tab manually we don't bounce them back.
+  //
+  // Semantics under per-employee tracker: the previous version
+  // flipped after ANY plan was saved for current month, which was
+  // wrong — saving Khalid alone shouldn't flip the default away
+  // from May when 5 other reports are still unplanned. Now we
+  // require commits.size >= myReports.length.
   useEffect(() => {
     if (!me?.id) return;
+    if (myReports.length === 0) return; // nothing to flip on
     let cancelled = false;
     (async () => {
       try {
         const cur = monthChoices[0];
         const planKey = ymd(startOfMonth(cur.year, cur.monthIdx));
+        // Fetch ALL committed (employee_id) for this (manager, month)
+        // so we can count distinct committed employees.
         const rows = await directGet(
           'monthly_shift_plans',
-          `select=last_committed_at` +
+          `select=employee_id,last_committed_at` +
           `&manager_id=eq.${encodeURIComponent(me.id)}` +
-          `&plan_month=eq.${planKey}` +
-          `&limit=1`,
+          `&plan_month=eq.${planKey}`,
           { timeoutMs: 6000 }
         );
         if (cancelled) return;
-        const committed = Boolean(rows?.[0]?.last_committed_at);
-        setCurrentMonthCommitted(committed);
-        // Refine the default: only flip to next if current is
-        // committed AND next is unlocked AND we're still showing
-        // the initial default (haven't navigated yet).
+        const committedEmployees = new Set(
+          (rows || [])
+            .filter(r => r.last_committed_at && r.employee_id)
+            .map(r => r.employee_id)
+        );
+        const allCommitted = committedEmployees.size >= myReports.length;
+        setCurrentMonthCommitted(allCommitted);
+        // Refine the default: only flip to next if all direct reports
+        // have committed plans for current month AND next month is
+        // unlocked AND we're still showing the initial default.
         const nxt = monthChoices[1];
-        if (committed && nxt && !nxt.locked) {
+        if (allCommitted && nxt && !nxt.locked) {
           setMonthSel(prev => (prev?.monthIdx === cur.monthIdx ? nxt : prev));
         }
       } catch {
@@ -231,11 +244,11 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
       }
     })();
     return () => { cancelled = true; };
-    // monthChoices is a stable useMemo result; me.id is the only
-    // real dependency. We don't include monthChoices to avoid re-
-    // running on every render.
+    // monthChoices is a stable useMemo result. Re-run if the manager's
+    // direct-report set changes (rare admin reassignment) so the
+    // "all committed" comparison stays accurate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [me?.id]);
+  }, [me?.id, myReports.length]);
 
   // ─── Plan state ────────────────────────────────────────────────────
   // Map of date-key (YYYY-MM-DD) → { selected: bool, start, end }.
