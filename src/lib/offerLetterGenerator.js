@@ -646,12 +646,25 @@ function buildLetterHtml(offer, signatory) {
          content above and below. The .offer-letter container is
          locked to A4 height (1123px), so the spacer can't grow
          past the page boundary — content always stays on one
-         page. max-height caps the push so signatures don't
-         overflow into page 2 on slightly-taller renders. */
+         page.
+
+         max-height tuning notes:
+           • Too low (40px): signatures float in the middle of
+             the page, lots of awkward whitespace below.
+           • Too high (no cap): on slower-rendering machines the
+             content can spill onto page 2 because pixel rounding
+             pushes total height past 1123px.
+           • 90px is the sweet spot: on a fully-tightened layout
+             it lets signatures sit comfortably in the lower
+             third without hitting page boundary.
+
+         The page-break-inside: avoid rule (in @media print
+         below) provides a backstop — if total content rounds up
+         past A4, Chromium will shrink-to-fit rather than split. */
       .offer-letter .spacer {
         flex: 1 1 auto;
         min-height: 0;
-        max-height: 40px;
+        max-height: 90px;
       }
 
       /* ─── SIGNATURES ─── */
