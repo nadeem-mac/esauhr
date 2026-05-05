@@ -841,28 +841,52 @@ export default function AttendanceView({ me, employees }) {
   // never affects HR. The shiftOverrideById memo below indexes by
   // (employee_id, shift_date) so multiple dates' overrides don't
   // clobber each other in the lookup map.
+  // ─────────────────────────────────────────────────────────────────
+  // Shift-aware attendance — fetch the month's shifts for the CSV date
+  //
+  // The attendance evaluator needs two things from the shift table:
+  //
+  //   1. A per-(employee, date) schedule override for days where the
+  //      employee has been assigned a shift. Used to set the right
+  //      lateness / early-leave cutoffs (e.g. FAHAD's Saturday shift
+  //      is 13:00-22:00, not the standard 08:00-17:00).
+  //
+  //   2. A way to detect "this person is shift staff for the month
+  //      but has no shift TODAY" — that's their off-day per their
+  //      manager's plan, not absence. Without this, FAHAD's Sun-Fri
+  //      off-days get scored against the standard schedule and he
+  //      shows up late/absent on every off-day.
+  //
+  // To answer #2 we have to fetch the WHOLE month's shifts, not just
+  // the CSV day + neighbors. A row for the CSV date alone wouldn't
+  // tell us whether the employee is on a roster.
+  //
+  // Both PENDING and ACCEPTED shifts count as schedule — the manager
+  // has assigned them; staff acknowledgment is a separate workflow.
+  // If we waited for acceptance, an unacknowledged shift would
+  // default to 08:00-17:00 evaluation, which is exactly wrong for
+  // shift staff on their day off.
   useEffect(() => {
     if (!csvDate) { setAcceptedShifts([]); return; }
     let cancelled = false;
     (async () => {
       try {
-        const dates = [csvDate];
-        if (yesterdayDate) {
-          dates.unshift(yesterdayDate);
-          // Calendar day before yesterday — local-date math, no UTC drift.
-          const [yy, mm, dd] = yesterdayDate.split('-').map(Number);
-          const dt = new Date(yy, mm - 1, dd - 1);
-          const dayBefore = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-          dates.unshift(dayBefore);
-        }
-        const dateList = dates.map(s => `"${s}"`).join(',');
+        // First and last day of the CSV's month — captures all
+        // shifts whose date falls in that month, regardless of
+        // CSV day or weekend.
+        const [yy, mm] = csvDate.split('-').map(Number);
+        const monthStart = `${yy}-${String(mm).padStart(2, '0')}-01`;
+        const lastDay = new Date(yy, mm, 0).getDate();
+        const monthEnd = `${yy}-${String(mm).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
         const data = await directGet(
           `employee_shifts?select=employee_id,shift_date,start_time,end_time,status` +
-          `&status=eq.accepted&shift_date=in.(${dateList})`
+          `&status=in.(pending,accepted)` +
+          `&shift_date=gte.${monthStart}&shift_date=lte.${monthEnd}`
         );
         if (!cancelled) setAcceptedShifts(data || []);
       } catch (e) {
-        console.warn('Could not fetch accepted shifts:', e);
+        console.warn('Could not fetch month shifts:', e);
         if (!cancelled) setAcceptedShifts([]);
       }
     })();
@@ -971,9 +995,28 @@ export default function AttendanceView({ me, employees }) {
       m[key] = {
         startStr: String(s.start_time).slice(0, 5),
         endStr:   String(s.end_time).slice(0, 5),
+        status:   s.status, // 'pending' or 'accepted' — kept for surfacing in the UI
       };
     });
     return m;
+  }, [acceptedShifts]);
+
+  // Set of employees who are on a shift roster THIS MONTH. If an
+  // employee has any shift assigned (pending or accepted) for any
+  // day in the CSV's month, they're treated as shift staff for the
+  // whole month. This drives the "off-day" detection: a shift staff
+  // member with no shift on the CSV's date is on their planned
+  // off-day, NOT absent or late.
+  //
+  // Stored as a Set of uppercase PSNs. acceptedShifts already covers
+  // the whole month (the fetch above expanded the window), so a
+  // single pass populates it.
+  const shiftStaffThisMonth = useMemo(() => {
+    const s = new Set();
+    (acceptedShifts || []).forEach(row => {
+      if (row?.employee_id) s.add(String(row.employee_id).toUpperCase());
+    });
+    return s;
   }, [acceptedShifts]);
 
   // ── Night-shift bridge ────────────────────────────────────────────
@@ -1108,6 +1151,7 @@ export default function AttendanceView({ me, employees }) {
       early: [], missedOut: [],
       onTime: [], onLeave: [], unknownEmp: [],
       weekend: [],
+      shiftOffDay: [], // shift staff who showed up on their planned off-day
     };
     if (!parsed.rows.length && !(parsed.weekendRows || []).length) return out;
 
@@ -1151,6 +1195,30 @@ export default function AttendanceView({ me, employees }) {
       // uses the previous day's end_time, and the missed-punch-in
       // check is suppressed (correct: there isn't a fresh punch-in).
       const bridgeFromPrev = nightShiftBridge[`${empKey}|${rowDate}`];
+
+      // ── SHIFT-STAFF OFF-DAY ─────────────────────────────────────────
+      // If the employee is on a shift roster THIS MONTH but has no
+      // shift assigned for this specific date AND no night-shift end
+      // bridging from yesterday, they're on their planned off-day.
+      // Per the manager's plan that's their weekend equivalent — we
+      // skip the standard 08:00-17:00 evaluation entirely.
+      //
+      // We still surface the row in a dedicated bucket so Bashaier
+      // sees that they showed up on an off-day (could be a quirk to
+      // note) but it does NOT count as late or absent.
+      const isShiftStaffOnRoster = shiftStaffThisMonth.has(empKey);
+      if (isShiftStaffOnRoster && !override && !bridgeFromPrev) {
+        out.shiftOffDay.push({
+          id: 'row-' + idx,
+          row,
+          employee: emp,
+          dateLabel: rowDate,
+          punchInStr:  (row['First Punch'] || '').trim(),
+          punchOutStr: (row['Last Punch']  || '').trim(),
+        });
+        return;
+      }
+
       // Is the override for THIS row a night shift (start > end)?
       const isNightShiftStart = !!override && override.startStr > override.endStr;
       const isNightShiftEnd   = !!bridgeFromPrev;
@@ -1512,12 +1580,13 @@ export default function AttendanceView({ me, employees }) {
     out.missedIn.sort(byName);        // no punch-in available; use name
     out.onLeave.sort(byName);
     out.unknownEmp.sort(byPsn);
+    out.shiftOffDay.sort(byName);
     // weekend already sorted (location → dept → check-in) by the
     // weekendSorted memo downstream — leave the raw out.weekend in
     // file order so the memo's sort owns the canonical order.
 
     return out;
-  }, [parsed.rows, parsed.weekendRows, csvDate, yesterdayDate, empById, empByDigits, onLeaveOnDate, shiftOverrideById, nightShiftBridge, permIndex]);
+  }, [parsed.rows, parsed.weekendRows, csvDate, yesterdayDate, empById, empByDigits, onLeaveOnDate, shiftOverrideById, shiftStaffThisMonth, nightShiftBridge, permIndex]);
 
   // File handling
   const handleFile = useCallback(async (file) => {
@@ -3106,14 +3175,15 @@ export default function AttendanceView({ me, employees }) {
           totalRows={parsed.rows.length}
           offDateCount={parsed.offDateCount}
           counts={{
-            late:      detection.late.length,
-            missedIn:  detection.missedIn.length,
-            early:     detection.early.length,
-            missedOut: detection.missedOut.length,
-            onTime:    detection.onTime.length,
-            onLeave:   detection.onLeave.length,
-            unknown:   detection.unknownEmp.length,
-            weekend:   detection.weekend.length,
+            late:        detection.late.length,
+            missedIn:    detection.missedIn.length,
+            early:       detection.early.length,
+            missedOut:   detection.missedOut.length,
+            onTime:      detection.onTime.length,
+            onLeave:     detection.onLeave.length,
+            unknown:     detection.unknownEmp.length,
+            weekend:     detection.weekend.length,
+            shiftOffDay: detection.shiftOffDay.length,
           }}
           dates={{ today: csvDate, yesterday: yesterdayDate }}
           windowAvail={{ today: parsed.hasTodayData, yesterday: parsed.hasYesterdayData }}
@@ -3530,6 +3600,40 @@ function FileSummary({
             </div>
           )}
 
+          {/* SHIFT roster — surfaces only when there are shift staff
+              who showed up on a planned off-day (the manager's plan
+              has them off, but they punched in anyway). Useful for
+              Bashaier to see at a glance — could be voluntary cover,
+              an error, or a misalignment with the roster. The row
+              is informational only — does NOT count as late or
+              absent because the staff isn't expected today per
+              their shift plan. */}
+          {counts.shiftOffDay > 0 && (
+            <div>
+              <div className="flex items-baseline gap-2 mb-2">
+                <span className="text-[10px] tracking-[0.25em]" style={{ fontWeight: 700, color: '#0A0A0A' }}>
+                  SHIFT ROSTER
+                </span>
+                <span className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+                  Showed up on a planned off-day
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <CountPill
+                  kind="shiftOffDay"
+                  icon="🗓️"
+                  label="Shift off-day attendance"
+                  count={counts.shiftOffDay}
+                  color="#3B4279"
+                  tint="#EEF0FA"
+                  subtext="not late or absent per roster"
+                  isOpen={drillKind === 'shiftOffDay'}
+                  onClick={() => setDrillKind(drillKind === 'shiftOffDay' ? null : 'shiftOffDay')}
+                />
+              </div>
+            </div>
+          )}
+
           {/* WEEKEND attendance — Mr John's report. Surfaces only
               when the file's window includes a weekend day with
               actual punches (typically Sunday's import covering
@@ -3680,6 +3784,7 @@ function BreakdownPanel({ kind, detection, onClose }) {
     missedOut: { title: 'Missed punch-out',accent: '#7E22CE', tint: '#FAF5FF', icon: '🚪', empty: 'All staff have a punch-out on record.' },
     onLeave:   { title: 'On leave',        accent: '#0E7490', tint: '#ECFEFF', icon: '🌴', empty: 'Nobody on approved leave today.' },
     unknown:   { title: 'Unrecognised',    accent: '#991B1B', tint: '#FEF2F2', icon: '?',  empty: 'No unrecognised employees in the file.' },
+    shiftOffDay: { title: 'Shift off-day attendance', accent: '#3B4279', tint: '#EEF0FA', icon: '🗓️', empty: 'No shift staff showed up on a planned off-day.' },
   };
   const cfg = config[kind] || config.late;
   // Map kind → detection bucket key (unknown is stored under unknownEmp).
@@ -3710,6 +3815,10 @@ function BreakdownPanel({ kind, detection, onClose }) {
     if (kind === 'onTime')  return `In ${e.punchInStr || '—'} · Out ${e.punchOutStr || '—'}`;
     if (kind === 'onLeave') return 'Approved leave on file — excluded from violation checks';
     if (kind === 'unknown') return `File listed: "${e.csvName || '(no name)'}" · ID ${e.empId || '?'} — not in employee directory`;
+    if (kind === 'shiftOffDay') {
+      const inOut = `In ${e.punchInStr || '—'} · Out ${e.punchOutStr || '—'}`;
+      return `${inOut} · per roster: planned off-day, no schedule applied`;
+    }
     return '';
   };
 
