@@ -3823,18 +3823,18 @@ function FileSummary({
                   SHIFT ROSTER
                 </span>
                 <span className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
-                  Showed up on a planned off-day
+                  Worked off-roster &middot; click for details
                 </span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <CountPill
                   kind="shiftOffDay"
                   icon="🗓️"
-                  label="Shift off-day attendance"
+                  label="Worked off-roster"
                   count={counts.shiftOffDay}
                   color="#3B4279"
                   tint="#EEF0FA"
-                  subtext="not late or absent per roster"
+                  subtext="no shift planned for the date"
                   isOpen={drillKind === 'shiftOffDay'}
                   onClick={() => setDrillKind(drillKind === 'shiftOffDay' ? null : 'shiftOffDay')}
                 />
@@ -3992,12 +3992,26 @@ function BreakdownPanel({ kind, detection, onClose }) {
     missedOut: { title: 'Missed punch-out',accent: '#7E22CE', tint: '#FAF5FF', icon: '🚪', empty: 'All staff have a punch-out on record.' },
     onLeave:   { title: 'On leave',        accent: '#0E7490', tint: '#ECFEFF', icon: '🌴', empty: 'Nobody on approved leave today.' },
     unknown:   { title: 'Unrecognised',    accent: '#991B1B', tint: '#FEF2F2', icon: '?',  empty: 'No unrecognised employees in the file.' },
-    shiftOffDay: { title: 'Shift off-day attendance', accent: '#3B4279', tint: '#EEF0FA', icon: '🗓️', empty: 'No shift staff showed up on a planned off-day.' },
+    shiftOffDay: { title: 'Shift staff working off-roster', accent: '#3B4279', tint: '#EEF0FA', icon: '🗓️', empty: 'No shift staff worked outside their roster.' },
   };
   const cfg = config[kind] || config.late;
   // Map kind → detection bucket key (unknown is stored under unknownEmp).
   const bucketKey = kind === 'unknown' ? 'unknownEmp' : kind;
   const entries = detection[bucketKey] || [];
+
+  // Format a YYYY-MM-DD as e.g. "Mon, 4 May 2026" so the row is
+  // immediately readable (the raw ISO string is hard to parse at
+  // a glance — Bashaier shouldn't have to mentally translate
+  // "2026-05-04" into a weekday).
+  const fmtDateWithWeekday = (ymd) => {
+    if (!ymd) return '';
+    const [y, m, d] = String(ymd).split('-').map(n => parseInt(n, 10));
+    if (!y || !m || !d) return ymd;
+    const dt = new Date(y, m - 1, d);
+    return dt.toLocaleDateString('en-GB', {
+      weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
+    });
+  };
 
   // Per-kind one-line detail. Tries to give Bashaier the most useful
   // single-glance fact about each entry.
@@ -4024,8 +4038,11 @@ function BreakdownPanel({ kind, detection, onClose }) {
     if (kind === 'onLeave') return 'Approved leave on file — excluded from violation checks';
     if (kind === 'unknown') return `File listed: "${e.csvName || '(no name)'}" · ID ${e.empId || '?'} — not in employee directory`;
     if (kind === 'shiftOffDay') {
-      const inOut = `In ${e.punchInStr || '—'} · Out ${e.punchOutStr || '—'}`;
-      return `${inOut} · per roster: planned off-day, no schedule applied`;
+      // Phrasing chosen to be unambiguous: tells Bashaier (1) what
+      // they punched, (2) that there's no shift on file for the
+      // date, and (3) explicitly that this is NOT a violation.
+      const inOut = `Punched ${e.punchInStr || '—'} → ${e.punchOutStr || '—'}`;
+      return `${inOut} · No shift planned for this date — not flagged as late or absent`;
     }
     return '';
   };
@@ -4062,7 +4079,37 @@ function BreakdownPanel({ kind, detection, onClose }) {
           {cfg.empty}
         </div>
       ) : (
-        <ul className="p-2 space-y-1.5 max-h-[40vh] overflow-y-auto">
+        <>
+          {/* Per-kind guidance note. Currently used only for
+              shiftOffDay because that bucket is the most likely to
+              be misunderstood — Bashaier might think these rows
+              indicate a violation. The note explicitly says they
+              don't, and points at the manager's plan as the
+              source of truth so she knows where to investigate. */}
+          {kind === 'shiftOffDay' && (
+            <div
+              className="m-2 p-3 rounded-md text-[12px] leading-relaxed"
+              style={{
+                background: cfg.tint,
+                border: `1px solid ${cfg.accent}30`,
+                color: '#0A0A0A',
+              }}
+            >
+              <div className="text-[10px] tracking-[0.18em] mb-1" style={{ color: cfg.accent, fontWeight: 700 }}>
+                WHAT THIS MEANS
+              </div>
+              <p style={{ margin: 0 }}>
+                These employees punched in on a date with <strong>no shift assigned</strong> in the system.
+                They are <strong>not late or absent</strong> — the schedule check is skipped because the manager has
+                not planned a shift here.
+              </p>
+              <p style={{ margin: '6px 0 0 0' }}>
+                If you expected a shift on this date, ask the manager to update their plan in <em>Shifts → Monthly Planner</em>.
+                If the employee voluntarily came in for cover or extra hours, this is informational only.
+              </p>
+            </div>
+          )}
+          <ul className="p-2 space-y-1.5 max-h-[40vh] overflow-y-auto">
           {entries.map((e, i) => (
             <li key={e.id || `entry-${i}`}
                 className="rounded-md px-3 py-2 border"
@@ -4085,7 +4132,7 @@ function BreakdownPanel({ kind, detection, onClose }) {
                 {e.dateLabel && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded"
                         style={{ background: '#F4F4EE', color: '#0A0A0A', fontWeight: 600 }}>
-                    {e.dateLabel}
+                    {fmtDateWithWeekday(e.dateLabel)}
                   </span>
                 )}
               </div>
@@ -4095,6 +4142,7 @@ function BreakdownPanel({ kind, detection, onClose }) {
             </li>
           ))}
         </ul>
+        </>
       )}
     </div>
   );
