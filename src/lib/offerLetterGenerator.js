@@ -241,11 +241,12 @@ export async function openOfferLetterPrintWindow(offer, signatory) {
   </div>
 
   <script>
-    // Auto-trigger print once the logo image has loaded. If the
-    // logo fails or takes too long, we still open the dialog so
-    // the user isn't stuck.
+    // Auto-trigger print once all images (logo + company seal) have
+    // loaded. If any image fails or takes too long, the safety
+    // timeout still opens the dialog so the user isn't stuck.
     (function() {
-      var img = document.querySelector('img.evg-logo');
+      var imgs = Array.prototype.slice.call(document.querySelectorAll('img'));
+      var pending = imgs.filter(function(i) { return !i.complete; }).length;
       var triggered = false;
       function go() {
         if (triggered) return;
@@ -254,12 +255,19 @@ export async function openOfferLetterPrintWindow(offer, signatory) {
         // captures it.
         setTimeout(function() { window.print(); }, 250);
       }
-      if (!img || img.complete) {
+      if (pending === 0) {
         go();
       } else {
-        img.addEventListener('load', go);
-        img.addEventListener('error', go);
-        setTimeout(go, 3000); // safety fallback
+        imgs.forEach(function(i) {
+          if (i.complete) return;
+          var done = function() {
+            pending--;
+            if (pending <= 0) go();
+          };
+          i.addEventListener('load', done);
+          i.addEventListener('error', done);
+        });
+        setTimeout(go, 3500); // safety fallback if any image hangs
       }
     })();
   </script>
@@ -676,23 +684,32 @@ function buildLetterHtml(offer, signatory) {
         letter-spacing: 0.2px;
       }
 
+      /* Real company seal — applied as a slightly rotated PNG with
+         authentic blue-stamp transparency. The slight rotation
+         (-4deg) and reduced opacity (0.85) mimic ink-on-paper:
+         a hand-applied stamp is never perfectly axis-aligned and
+         the ink density varies across the impression. */
       .offer-letter .seal {
-        width: 110px;
-        height: 110px;
-        border: 2px dashed #B5B5B5;
-        border-radius: 50%;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        font-size: 7.5px;
-        color: #999;
-        text-align: center;
-        line-height: 1.4;
-        font-weight: 600;
-        letter-spacing: 0.3px;
+        width: 130px;
+        height: 130px;
         align-self: center;
         margin: 0 auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+      }
+      .offer-letter .seal img.seal-img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        opacity: 0.88;
+        transform: rotate(-4deg);
+        /* The seal renders transparent-bg on white so it doesn't
+           need a backdrop. The mix-blend-mode preserves the ink
+           feel when the seal sits over light grid lines or the
+           bottom border of a dashed area. */
+        mix-blend-mode: multiply;
       }
 
       .offer-letter .candidate-confirm {
@@ -865,11 +882,9 @@ function buildLetterHtml(offer, signatory) {
           </div>
         </div>
 
-        <!-- MIDDLE: Company seal placeholder -->
+        <!-- MIDDLE: Company seal — actual stamped image -->
         <div class="seal">
-          <div>COMPANY</div>
-          <div>SEAL</div>
-          <div class="ar" style="margin-top:5px;">ختم الشركة</div>
+          <img class="seal-img" src="/company-seal.png" alt="Company Seal · ختم الشركة" />
         </div>
 
         <!-- RIGHT: Candidate signature -->
