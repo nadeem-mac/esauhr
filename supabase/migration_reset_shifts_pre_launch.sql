@@ -56,12 +56,19 @@ end $$;
 --    employee_id, plan_month) and live independently of
 --    employee_shifts — there's no FK relationship — so order
 --    here is just for tidiness, not correctness.
-delete from public.monthly_shift_plans;
+--
+--    `WHERE id IS NOT NULL` matches every row (id is the UUID
+--    PK, never null) but satisfies Supabase's no-bare-DELETE
+--    guard. Without an explicit WHERE clause, the platform
+--    rejects the statement with code 21000 to protect against
+--    accidental table wipes — even when wiping is exactly what
+--    you intended.
+delete from public.monthly_shift_plans where id is not null;
 
 -- 2. Wipe the actual shift rows. This also clears any pending /
 --    accepted / declined acknowledgments since they live on the
 --    same row (status, accepted_at, declined_at columns).
-delete from public.employee_shifts;
+delete from public.employee_shifts where id is not null;
 
 do $$
 declare
