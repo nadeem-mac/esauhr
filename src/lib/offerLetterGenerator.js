@@ -248,10 +248,10 @@ function buildLetterHtml(offer, signatory) {
       /* ─── TITLE ─── */
       .offer-letter h2.title {
         text-align: center;
-        font-size: 18px;
+        font-size: 16px;
         color: #0F4C2A;
         font-weight: 700;
-        margin: 8px 0 10px;
+        margin: 4px 0 6px;
         letter-spacing: 1.5px;
         flex-shrink: 0;
       }
@@ -261,26 +261,26 @@ function buildLetterHtml(offer, signatory) {
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 16px;
-        margin-bottom: 10px;
+        margin-bottom: 6px;
         flex-shrink: 0;
       }
       .offer-letter .intro p {
-        margin: 0 0 4px;
-        line-height: 1.45;
-        font-size: 10.5px;
+        margin: 0 0 3px;
+        line-height: 1.4;
+        font-size: 10px;
       }
       .offer-letter .intro strong { color: #0F172A; font-weight: 700; }
 
       /* ─── SECTION BANDS ─── */
       .offer-letter .band {
         background: #D4E8DC;
-        padding: 6px 10px;
+        padding: 4px 10px;
         font-weight: 700;
         color: #0F4C2A;
-        font-size: 11px;
+        font-size: 10.5px;
         display: flex;
         justify-content: space-between;
-        margin: 6px 0 6px;
+        margin: 4px 0 4px;
         letter-spacing: 0.5px;
         flex-shrink: 0;
       }
@@ -402,36 +402,32 @@ function buildLetterHtml(offer, signatory) {
       .offer-letter .terms-list {
         list-style: none;
         padding: 0;
-        margin: 0 0 6px;
+        margin: 0 0 4px;
         flex-shrink: 0;
       }
       .offer-letter .terms-list li {
-        padding: 3px 0;
-        border-bottom: 1px dotted #F0F0F0;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+        padding: 2px 0;
         white-space: nowrap;
       }
-      .offer-letter .terms-list li:last-child { border-bottom: none; }
       .offer-letter .terms-list .term-en,
       .offer-letter .terms-list .term-ar {
-        display: block;
-        font-size: 9.5px;
-        line-height: 1.4;
+        font-size: 9px;
+        line-height: 1.3;
       }
       .offer-letter .terms-list .term-en::before {
         content: '◆ ';
         color: #0F4C2A;
         font-weight: 700;
-        font-size: 8px;
-      }
-      .offer-letter .terms-list .term-ar {
-        font-size: 9.5px;
-        margin-top: 1px;
+        font-size: 7.5px;
       }
       .offer-letter .terms-list .term-ar::before {
         content: '◆ ';
         color: #0F4C2A;
         font-weight: 700;
-        font-size: 8px;
+        font-size: 7.5px;
       }
 
       /* ─── 14-DAY VALIDITY CALLOUT (prominent) ─── */
@@ -440,8 +436,8 @@ function buildLetterHtml(offer, signatory) {
         border: 1.5px solid #DC2626;
         border-left: 5px solid #DC2626;
         border-radius: 4px;
-        padding: 10px 14px;
-        margin: 8px 0;
+        padding: 7px 12px;
+        margin: 6px 0 4px;
         flex-shrink: 0;
       }
       .offer-letter .validity-callout .row {
@@ -451,15 +447,15 @@ function buildLetterHtml(offer, signatory) {
         align-items: center;
       }
       .offer-letter .validity-callout .head {
-        font-size: 11px;
+        font-size: 10.5px;
         font-weight: 700;
         color: #991B1B;
-        margin-bottom: 2px;
+        margin-bottom: 1px;
         letter-spacing: 0.3px;
       }
-      .offer-letter .validity-callout .head.ar { font-size: 11.5px; }
+      .offer-letter .validity-callout .head.ar { font-size: 11px; }
       .offer-letter .validity-callout .deadline {
-        font-size: 10px;
+        font-size: 9.5px;
         color: #0F172A;
         font-weight: 600;
       }
@@ -467,11 +463,11 @@ function buildLetterHtml(offer, signatory) {
 
       /* ─── ACCEPTANCE NOTE ─── */
       .offer-letter .accept-note {
-        font-size: 9.5px;
+        font-size: 9px;
         color: #525252;
-        margin: 4px 0;
+        margin: 3px 0;
         padding: 0 2px;
-        line-height: 1.5;
+        line-height: 1.4;
         flex-shrink: 0;
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -479,14 +475,14 @@ function buildLetterHtml(offer, signatory) {
       }
 
       /* ─── SPACER PUSHING SIGNATURES TO BOTTOM ─── */
-      .offer-letter .spacer { flex: 1 1 auto; }
+      .offer-letter .spacer { flex: 1 1 auto; min-height: 8px; }
 
       /* ─── SIGNATURES ─── */
       .offer-letter .signatures {
         display: grid;
-        grid-template-columns: 1.4fr 100px 1fr;
+        grid-template-columns: 1.4fr 90px 1fr;
         gap: 14px;
-        margin-top: 14px;
+        margin-top: 6px;
         align-items: stretch;
         flex-shrink: 0;
       }
@@ -497,63 +493,68 @@ function buildLetterHtml(offer, signatory) {
         font-size: 9.5px;
       }
       .offer-letter .sig-label {
-        font-size: 8.5px;
+        font-size: 8px;
         color: #525252;
         text-transform: uppercase;
         letter-spacing: 0.5px;
-        margin-bottom: 14px;
+        margin-bottom: 10px;
         font-weight: 600;
       }
       .offer-letter .sig-line {
         border-top: 1px solid #525252;
-        margin-bottom: 6px;
+        margin-bottom: 5px;
         height: 0;
       }
       .offer-letter .sig-name {
-        font-size: 11.5px;
+        font-size: 11px;
         color: #0F172A;
         font-weight: 700;
         letter-spacing: 0.3px;
       }
       .offer-letter .sig-title {
-        font-size: 10px;
+        font-size: 9.5px;
         color: #525252;
         margin-top: 1px;
-        margin-bottom: 8px;
+        margin-bottom: 5px;
       }
       .offer-letter .corp-block {
-        margin-top: 4px;
-        padding-top: 6px;
+        margin-top: 3px;
+        padding-top: 4px;
         border-top: 1px dashed #D5D5D5;
-        font-size: 8.5px;
-        line-height: 1.55;
+        font-size: 8px;
+        line-height: 1.5;
         color: #0F172A;
       }
       .offer-letter .corp-block .corp-line { color: #525252; }
-      .offer-letter .corp-block .corp-name { font-weight: 700; color: #0F4C2A; }
+      .offer-letter .corp-block .corp-name {
+        font-weight: 700;
+        color: #0F4C2A;
+        font-size: 9px;
+        letter-spacing: 0.2px;
+      }
 
       .offer-letter .seal {
-        width: 100px;
-        height: 100px;
+        width: 90px;
+        height: 90px;
         border: 2px dashed #B5B5B5;
         border-radius: 50%;
         display: flex;
         flex-direction: column;
         justify-content: center;
         align-items: center;
-        font-size: 8px;
+        font-size: 7.5px;
         color: #999;
         text-align: center;
         line-height: 1.4;
         font-weight: 600;
         letter-spacing: 0.3px;
-        align-self: center;
-        margin: 0 auto;
+        align-self: flex-start;
+        margin: 14px auto 0;
       }
 
       .offer-letter .candidate-confirm {
-        margin-top: 6px;
-        font-size: 8.5px;
+        margin-top: 4px;
+        font-size: 8px;
         color: #525252;
         line-height: 1.4;
         font-style: italic;
@@ -669,13 +670,13 @@ function buildLetterHtml(offer, signatory) {
       </div>
 
       <ul class="terms-list">
-        ${termRow('Probation: 90 days from joining date (Article 53)', 'فترة التجربة: 90 يوماً من تاريخ المباشرة (المادة 53)')}
-        ${termRow('Notice period: 60 days written notice (Article 75)', 'فترة الإشعار: 60 يوماً إشعار خطي (المادة 75)')}
-        ${termRow('Annual leave: 21 days (years 1–5), 30 days from year 6 (Art. 109)', 'الإجازة السنوية: 21 يوماً (السنوات 1-5)، 30 يوماً من السنة 6 (المادة 109)')}
-        ${termRow('Sick leave: 30 days full + 60 days at 75% + 30 days unpaid (Art. 117)', 'الإجازة المرضية: 30 يوم بأجر كامل + 60 يوم بثلاثة أرباع الأجر + 30 يوم بدون أجر (المادة 117)')}
+        ${termRow('Probation: 90 days from joining (Article 53)', 'فترة التجربة: 90 يوماً من تاريخ المباشرة (م. 53)')}
+        ${termRow('Notice period: 60 days written (Article 75)', 'فترة الإشعار: 60 يوماً إشعار خطي (م. 75)')}
+        ${termRow('Annual leave: 21 days (yr 1–5), 30 days from yr 6', 'الإجازة السنوية: 21 يوماً (1-5)، 30 يوماً من السنة 6')}
+        ${termRow('Sick leave: 30 full + 60 at 75% + 30 unpaid (Art. 117)', 'الإجازة المرضية: 30 + 60 (75%) + 30 بدون أجر (م. 117)')}
         ${termRow('End-of-service gratuity per Articles 84–88', 'مكافأة نهاية الخدمة وفقاً للمواد 84-88')}
-        ${termRow('GOSI registration + medical insurance from joining date', 'التسجيل في التأمينات الاجتماعية + تأمين صحي من تاريخ المباشرة')}
-        ${termRow('Confidentiality of Company information during &amp; after employment', 'السرية التامة لمعلومات الشركة أثناء العمل وبعده')}
+        ${termRow('GOSI registration + medical insurance from joining', 'التأمينات الاجتماعية + تأمين صحي من المباشرة')}
+        ${termRow('Confidentiality of Company info during &amp; after work', 'السرية التامة لمعلومات الشركة أثناء وبعد العمل')}
       </ul>
 
       <!-- 14-DAY VALIDITY CALLOUT (prominent, red accent) -->
@@ -778,8 +779,8 @@ function termRow(en, ar) {
   const e = escapeHtml;
   return `
     <li>
-      <div class="term-en">${e(en)}</div>
-      <div class="term-ar ar">${e(ar)}</div>
+      <span class="term-en">${e(en)}</span>
+      <span class="term-ar ar">${e(ar)}</span>
     </li>
   `;
 }
