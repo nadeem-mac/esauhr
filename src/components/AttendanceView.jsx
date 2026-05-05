@@ -9,6 +9,57 @@ import { parseTimeCardXlsx, TimeCardParseError } from '../lib/timeCard.js';
 import { buildAttendanceRows, recordAttendanceRows } from '../lib/attendanceRecorder.js';
 import AttendanceMonthGrid from './AttendanceMonthGrid.jsx';
 
+// ─── Error Boundary for AttendanceView sections ───────────────────────
+// Without this, a render-time exception anywhere in the tree under
+// AttendanceView (a bad accessor in AttendanceMonthGrid on fresh
+// data, a malformed shift row from the planner, an undefined
+// memo) would unmount the whole page — Bashaier sees a blank
+// screen with no recourse but to refresh.
+//
+// The boundary catches the error, displays the message in red, and
+// keeps the rest of the page (upload area, processed report,
+// weekend section) usable. Console gets the full stack trace for
+// debugging.
+class AttendanceErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    // eslint-disable-next-line no-console
+    console.error('[AttendanceView ErrorBoundary]', this.props.label || '', error, info);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="rounded-xl border p-4"
+          style={{ borderColor: '#FCA5A5', background: '#FEF2F2', color: '#991B1B' }}>
+          <div className="text-[10px] tracking-widest font-bold mb-1">
+            {this.props.label ? `${this.props.label.toUpperCase()} FAILED TO RENDER` : 'SECTION FAILED TO RENDER'}
+          </div>
+          <div className="text-xs font-mono break-all">
+            {String(this.state.error?.message || this.state.error)}
+          </div>
+          <div className="text-[10px] mt-2 opacity-70">
+            Open the browser DevTools console for the full stack trace. The rest of the page remains usable.
+          </div>
+          <button
+            onClick={() => this.setState({ error: null })}
+            className="text-[11px] mt-2 px-3 py-1 rounded-full"
+            style={{ background: '#991B1B', color: '#FFFFFF', fontWeight: 600 }}
+          >
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 /* ────────────────────────────────────────────────────────────────────────
    Daily attendance check — driven by Time Card xlsx upload.
 
@@ -589,7 +640,21 @@ function buildMailto({ to, cc, subject, body }) {
 // ────────────────────────────────────────────────────────────────────────
 // MAIN COMPONENT
 // ────────────────────────────────────────────────────────────────────────
-export default function AttendanceView({ me, employees, leaveTypes = [] }) {
+// Outer wrapper — wraps the heavy AttendanceView inner component in
+// the error boundary so a render crash anywhere shows a useful red
+// box instead of blanking the page. Bashaier was hitting this:
+// "When I upload a file the screen goes blank." With the boundary
+// in place, she'll see the actual error message and can copy it
+// for debugging.
+export default function AttendanceView(props) {
+  return (
+    <AttendanceErrorBoundary label="Attendance">
+      <AttendanceViewInner {...props} />
+    </AttendanceErrorBoundary>
+  );
+}
+
+function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // The xlsx ingestion replaces the legacy CSV path entirely. We hold
   // the parsed result rather than the raw text — there's no use case
   // for re-parsing on the fly the way the CSV path was wired.
@@ -1672,6 +1737,11 @@ export default function AttendanceView({ me, employees, leaveTypes = [] }) {
   const lastRecordedRef = useRef('');
   useEffect(() => {
     if (!csvDate || !parsed.rows?.length) return;
+    // Defensive: detection may be undefined for a tick during the
+    // state transition right after a new file is parsed. Bail out
+    // until the detection memo has resolved — we'll re-run via the
+    // dep array when it does.
+    if (!detection || !Array.isArray(detection.late)) return;
     const fingerprint = [
       csvDate, yesterdayDate || '',
       detection.late.length, detection.early.length, detection.onTime.length,
@@ -1681,6 +1751,12 @@ export default function AttendanceView({ me, employees, leaveTypes = [] }) {
     ].join(':');
     if (lastRecordedRef.current === fingerprint) return;
     lastRecordedRef.current = fingerprint;
+
+    // Wrap the WHOLE setup + dispatch in a try/catch so any
+    // synchronous exception (a malformed parsed.rows entry, an
+    // unexpected shiftOverrideById key shape, etc.) is logged
+    // instead of bubbling up to React and unmounting the tree.
+    try {
 
     // Build per-date sets of employees who appeared in the file +
     // employees who had a shift, so the recorder can detect pure
@@ -1749,6 +1825,13 @@ export default function AttendanceView({ me, employees, leaveTypes = [] }) {
         console.warn('attendance_daily recording failed (non-fatal):', e);
       }
     })();
+    } catch (outerErr) {
+      // Synchronous setup error — log and bail. Critically, we do
+      // NOT rethrow: the recorder is best-effort, the calendar
+      // refilling on a future upload is preferable to crashing
+      // the whole AttendanceView with a blank screen.
+      console.error('attendance_daily recorder setup failed:', outerErr);
+    }
   }, [csvDate, yesterdayDate, detection, parsed.rows, employees, empById, empByDigits, shiftOverrideById, leaveByEmpDateMap, me?.id]);
 
   // File handling
@@ -3319,7 +3402,9 @@ export default function AttendanceView({ me, employees, leaveTypes = [] }) {
           updates live as new rows land. Filters to employees who
           have at least one record this month — directory members
           who've never been uploaded for stay hidden. */}
-      <AttendanceMonthGrid employees={employees} />
+      <AttendanceErrorBoundary label="Monthly attendance calendar">
+        <AttendanceMonthGrid employees={employees} />
+      </AttendanceErrorBoundary>
 
       {/* ─── Pending end-of-day review banner ───────────────────────────
           Surfaces dates where the morning pass was completed but the
