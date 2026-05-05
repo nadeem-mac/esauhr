@@ -116,7 +116,10 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
   const [department, setDepartment] = useState('');
   const [location, setLocation] = useState('DMM'); // default to Dammam HQ
   const [proposedJoinDate, setProposedJoinDate] = useState(defaultJoinDate());
-  const [salaryAmount, setSalaryAmount] = useState('');
+  const [salaryBasic, setSalaryBasic] = useState('');
+  const [salaryHousing, setSalaryHousing] = useState('');
+  const [salaryTransport, setSalaryTransport] = useState('');
+  const [salaryOther, setSalaryOther] = useState('');
   const [managerId, setManagerId] = useState('');
   const [signatoryId, setSignatoryId] = useState('');
 
@@ -143,7 +146,10 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
     setDepartment('');
     setLocation('DMM');
     setProposedJoinDate(defaultJoinDate());
-    setSalaryAmount('');
+    setSalaryBasic('');
+    setSalaryHousing('');
+    setSalaryTransport('');
+    setSalaryOther('');
     setManagerId('');
     setSignatoryId('');
     setSignatoryAdding(false);
@@ -231,6 +237,20 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
     ? positionCustom.trim()
     : positionTitle.trim();
 
+  // Salary breakdown — five separate fields per the standard
+  // Evergreen joining report format (Basic + Housing + Transportation
+  // + Other = Total). Total is auto-computed from the four
+  // components. Bashaier enters each value individually so the
+  // offer letter displays the same breakdown the candidate will
+  // see on their formal joining report later.
+  const salaryTotal = useMemo(() => {
+    const b = Number(salaryBasic) || 0;
+    const h = Number(salaryHousing) || 0;
+    const t = Number(salaryTransport) || 0;
+    const o = Number(salaryOther) || 0;
+    return b + h + t + o;
+  }, [salaryBasic, salaryHousing, salaryTransport, salaryOther]);
+
   const errors = useMemo(() => {
     const list = [];
     if (!candidateName.trim()) list.push('Candidate name is required');
@@ -241,10 +261,11 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
     if (!location) list.push('Location is required');
     if (!proposedJoinDate) list.push('Joining date is required');
     else if (proposedJoinDate < TODAY) list.push('Joining date must be today or in the future');
-    if (!salaryAmount || Number(salaryAmount) <= 0) list.push('Salary must be greater than zero');
+    if (!salaryBasic || Number(salaryBasic) <= 0) list.push('Basic salary must be greater than zero');
+    if (salaryTotal <= 0) list.push('Total salary must be greater than zero');
     if (!signatoryId) list.push('Signatory is required (add one below if the list is empty)');
     return list;
-  }, [candidateName, candidateEmail, finalPositionTitle, department, location, proposedJoinDate, salaryAmount, signatoryId]);
+  }, [candidateName, candidateEmail, finalPositionTitle, department, location, proposedJoinDate, salaryBasic, salaryTotal, signatoryId]);
 
   const canSubmit = !submitting && errors.length === 0;
 
@@ -290,20 +311,24 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
       expiresAt.setDate(expiresAt.getDate() + 14);
 
       const row = {
-        candidate_name:       candidateName.trim(),
-        candidate_email:      candidateEmail.trim().toLowerCase(),
-        candidate_phone:      candidatePhone.trim() || null,
-        position_title:       finalPositionTitle,
-        department:           department,
-        proposed_join_date:   proposedJoinDate,
-        salary_amount:        Number(salaryAmount),
-        salary_currency:      'SAR',
-        manager_id:           managerId || null,
-        signatory_id:         signatoryId,
-        offer_token:          offerToken,
-        expires_at:           expiresAt.toISOString(),
-        status:               'offer_sent',
-        created_by_id:        me?.id || null,
+        candidate_name:        candidateName.trim(),
+        candidate_email:       candidateEmail.trim().toLowerCase(),
+        candidate_phone:       candidatePhone.trim() || null,
+        position_title:        finalPositionTitle,
+        department:            department,
+        proposed_join_date:    proposedJoinDate,
+        salary_amount:         salaryTotal,
+        salary_basic:          Number(salaryBasic) || 0,
+        salary_housing:        Number(salaryHousing) || 0,
+        salary_transportation: Number(salaryTransport) || 0,
+        salary_other:          Number(salaryOther) || 0,
+        salary_currency:       'SAR',
+        manager_id:            managerId || null,
+        signatory_id:          signatoryId,
+        offer_token:           offerToken,
+        expires_at:            expiresAt.toISOString(),
+        status:                'offer_sent',
+        created_by_id:         me?.id || null,
       };
 
       const inserted = await directPost('offer_letters', row, { returning: 'representation' });
@@ -321,7 +346,11 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
           department:       department,
           location:         LOCATION_LABELS[location] || location,
           proposedJoinDate: proposedJoinDate,
-          salaryAmount:     Number(salaryAmount),
+          salaryBasic:      Number(salaryBasic) || 0,
+          salaryHousing:    Number(salaryHousing) || 0,
+          salaryTransport:  Number(salaryTransport) || 0,
+          salaryOther:      Number(salaryOther) || 0,
+          salaryTotal:      salaryTotal,
           managerName:      manager?.name || null,
         },
         signatory
@@ -494,21 +523,39 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
             )}
           </Field>
 
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Joining date *" required>
-              <Input type="date" value={proposedJoinDate} onChange={setProposedJoinDate} />
-            </Field>
-            <Field label="Monthly salary (SAR) *" required>
-              <Input
-                type="number"
-                value={salaryAmount}
-                onChange={setSalaryAmount}
-                placeholder="e.g. 8000"
-                min="0"
-                step="100"
-              />
-            </Field>
-          </div>
+          <Field label="Joining date *" required>
+            <Input type="date" value={proposedJoinDate} onChange={setProposedJoinDate} />
+          </Field>
+
+          {/* Salary breakdown — matches the formal joining report
+              format. Bashaier enters each component, total is
+              auto-computed and shown on a green tile. The four
+              components and the total all appear separately on
+              the offer letter PDF. */}
+          <Field label="Salary breakdown (SAR per month) *">
+            <div
+              className="rounded-lg border p-3"
+              style={{ borderColor: 'var(--border)', background: 'var(--paper)' }}
+            >
+              <div className="grid grid-cols-2 gap-2">
+                <SalaryInput label="Basic Salary *" value={salaryBasic}    onChange={setSalaryBasic}    placeholder="e.g. 3900" />
+                <SalaryInput label="Housing Allowance" value={salaryHousing}  onChange={setSalaryHousing}  placeholder="e.g. 1500" />
+                <SalaryInput label="Transportation"    value={salaryTransport} onChange={setSalaryTransport} placeholder="e.g. 600" />
+                <SalaryInput label="Other Allowance"   value={salaryOther}    onChange={setSalaryOther}    placeholder="0" />
+              </div>
+              <div
+                className="rounded-md mt-2 px-3 py-2 flex items-center justify-between"
+                style={{ background: '#ECFDF3', border: '1px solid #A7D8B7' }}
+              >
+                <div className="text-[10px] tracking-widest" style={{ color: '#0F4C2A', fontWeight: 700 }}>
+                  TOTAL SALARY
+                </div>
+                <div className="text-base" style={{ color: '#0F4C2A', fontWeight: 700 }}>
+                  SAR {salaryTotal.toLocaleString('en-GB')}
+                </div>
+              </div>
+            </div>
+          </Field>
         </FormSection>
 
         {/* Signatory — with inline add */}
@@ -706,5 +753,32 @@ function Select({ value, onChange, children, disabled }) {
     >
       {children}
     </select>
+  );
+}
+
+// Compact salary breakdown input — small label above a number
+// input, styled to fit four-across in the breakdown card.
+function SalaryInput({ label, value, onChange, placeholder }) {
+  return (
+    <label className="block">
+      <div className="text-[10px] mb-1 opacity-65" style={{ color: '#0A0A0A', fontWeight: 600 }}>
+        {label}
+      </div>
+      <input
+        type="number"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        min="0"
+        step="100"
+        className="w-full text-sm rounded-md px-2 py-1.5"
+        style={{
+          background: '#FFFFFF',
+          border: '1px solid var(--border)',
+          color: '#0A0A0A',
+          outline: 'none',
+        }}
+      />
+    </label>
   );
 }
