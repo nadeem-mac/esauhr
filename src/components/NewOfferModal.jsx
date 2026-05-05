@@ -201,24 +201,23 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
   // Managers are filtered by the OFFICE the offer is for. Per
   // Nadeem the authoritative reporting-line lists are:
   //
-  //   Dammam (DMM):  Fahad (SUP), Sadakath, Sharique, Haider
+  //   Dammam (DMM):  Fahad Sulaiman (H94712), Sadakath, Sharique
   //   Riyadh (RYD):  Zaher, Sadakath
-  //   Jeddah (JED):  James, Sonnie, Naoman
+  //   Jeddah (JED):  James, Seyed Naoman, Sonnie
   //
   // We match against these allowlists by first-name substring
   // (case-insensitive) so the dropdown always shows the right
   // people regardless of how their full name is stored in the
-  // employees table (e.g. "Sadakathullah" matches "Sadakath",
-  // "MOHAMMED FAHAD" matches "Fahad"). Filtering also requires
-  // the manager's record to be at the same office.
+  // employees table (e.g. "Sadakathullah" matches "sadakath",
+  // "FAHAD SULAIMAN" matches "fahad sulaiman").
   //
   // The dropdown stays disabled until BOTH Department and
   // Location are set, matching the dependent-field pattern we
   // already use for Position.
   const MANAGER_ALLOWLIST_BY_LOCATION = {
-    DMM: ['fahad', 'sadakath', 'sharique', 'haider'],
+    DMM: ['fahad sulaiman', 'sadakath', 'sharique'],
     RYD: ['zaher', 'sadakath'],
-    JED: ['james', 'sonnie', 'naoman'],
+    JED: ['james', 'naoman', 'sonnie'],
   };
 
   const managers = useMemo(() => {
