@@ -1021,6 +1021,14 @@ export function buildOfferEmailBody(offer, acceptanceUrl, sender) {
   // share one canonical signature across every email the portal
   // generates on Bashaier's behalf — change in one place,
   // propagates everywhere.
+  //
+  // The acceptance URL is wrapped in an ASCII separator box so it
+  // visually pops in plain-text email clients (Outlook, Gmail, Apple
+  // Mail). Modern clients auto-detect bare URLs and make them
+  // clickable, so the URL itself stays unwrapped (no markdown link
+  // syntax — that doesn't render in plain text). The bracket-arrow
+  // glyphs (►► ◄◄) give it the strongest visual weight a plain-text
+  // email allows.
   const body = [
     `Dear ${candidate},`,
     ``,
@@ -1028,9 +1036,16 @@ export function buildOfferEmailBody(offer, acceptanceUrl, sender) {
     ``,
     `Please find the formal offer letter attached. The letter contains the full details of the position, salary breakdown, joining date, and key terms in both English and Arabic.`,
     ``,
-    `To accept this offer, please click the secure acceptance link below:`,
+    `═══════════════════════════════════════════════════════════════`,
     ``,
-    `  ${acceptanceUrl}`,
+    `►►  CLICK HERE TO REVIEW AND ACCEPT YOUR OFFER  ◄◄`,
+    ``,
+    `    ${acceptanceUrl}`,
+    ``,
+    `    You'll be asked to verify your identity using your email`,
+    `    address and Iqama / National ID before you can respond.`,
+    ``,
+    `═══════════════════════════════════════════════════════════════`,
     ``,
     `IMPORTANT: This offer is valid for 7 days only. Please accept within this period or the offer will expire automatically.`,
     ``,
