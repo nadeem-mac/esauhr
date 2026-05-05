@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import {
   Upload, FileText, Clock, AlertTriangle, Mail, CheckCircle2,
   X, Calendar, Briefcase, Users, Send, Sparkles,
-  ChevronDown, ChevronUp, HelpCircle,
 } from 'lucide-react';
 import { directGet, directPost } from '../supabaseClient.js';
 import { parseTimeCardXlsx, TimeCardParseError } from '../lib/timeCard.js';
@@ -638,12 +637,13 @@ export default function AttendanceView({ me, employees }) {
   // clean.
   const [drillKind, setDrillKind] = useState(null);
 
-  // Whether the "How it works" panel at the top of the page is
-  // expanded. Closed by default — most days Bashaier doesn't need
-  // the full guidance and the upload box should be the first thing
-  // she sees. Opens on click; the chevron rotates and the rules
-  // appear in a clean, scannable layout.
-  const [helpOpen, setHelpOpen] = useState(false);
+  // Which help tile is currently expanded. null = nothing open
+  // (the default — most days Bashaier knows the workflow and the
+  // upload box should be the first thing she sees). Setting this
+  // to one of 'workflow' | 'shift' | 'leave' | 'mail' opens that
+  // tile's content panel below the grid with a bounce animation.
+  // Clicking the active tile a second time closes it.
+  const [activeHelpTile, setActiveHelpTile] = useState(null);
 
   // View mode is no longer needed — the 2-day workflow runs both
   // morning (today's late + missed-in) and end-of-day (yesterday's
@@ -3008,108 +3008,149 @@ export default function AttendanceView({ me, employees }) {
 
   return (
     <div className="space-y-6" style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
-      {/* Header — compact. The verbose 9-bullet block is now folded
-          into a collapsible "How it works" panel below; most days
-          Bashaier doesn't need the full guidance and the upload box
-          should be the first thing she sees on the page. */}
+      {/* Header — compact. Heading is small Calibri (matched to the
+          username pill in the top bar) so it doesn't dominate the
+          page. The verbose 9-bullet help block is now four
+          interactive tiles that pop with a bounce when clicked —
+          discoverable without eating vertical space when closed. */}
       <div>
         <div className="text-[10px] mb-2 flex items-center gap-2" style={{ color: '#1F1B16', letterSpacing: '0.3em' }}>
           <span className="inline-block w-7 h-px" style={{ background: '#1F1B16' }}/>ATTENDANCE
         </div>
-        <h1 className="leading-none" style={{ fontFamily: 'Georgia, serif', fontSize: 'clamp(2.2rem, 4.5vw, 3rem)', fontWeight: 400, color: '#1F1B16', letterSpacing: '-0.02em' }}>
+        {/* Small Calibri heading — same visual weight as the username
+            pill in AppShell (text-base font-bold leading-tight). */}
+        <h1
+          className="leading-tight"
+          style={{
+            fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
+            fontSize: 16,
+            fontWeight: 700,
+            color: '#1F1B16',
+          }}
+        >
           Daily attendance check.
         </h1>
-        <p className="text-sm mt-3 max-w-3xl" style={{ color: '#0A0A0A' }}>
+        <p className="text-sm mt-1.5 max-w-3xl" style={{ color: '#0A0A0A', opacity: 0.8 }}>
           Upload the Time Card xlsx covering yesterday and today &mdash; late arrivals, early departures, missed punches, and shift off-days are flagged automatically.
         </p>
 
-        {/* "How it works" — collapsible. All the detailed rules
-            live here, opened only when wanted. The four shift-staff
-            bullets at the end are new; they document the
-            shift-aware evaluation behaviour Bashaier needs to
-            understand when reading off-day attendance. */}
-        <div className="mt-4 max-w-3xl">
-          <button
-            type="button"
-            onClick={() => setHelpOpen(v => !v)}
-            aria-expanded={helpOpen}
-            className="w-full inline-flex items-center justify-between gap-2 px-4 py-2.5 rounded-lg"
+        {/* Inline keyframes for the tile + panel animations.
+            • help-tile-pop fires on the active tile button each
+              time it becomes active (replays via key on activeHelpTile).
+            • help-panel-pop fires on the content panel for the same
+              reason, slightly bouncier so the reveal feels alive. */}
+        <style>{`
+          @keyframes help-tile-pop {
+            0%   { transform: scale(1); }
+            40%  { transform: scale(1.06); }
+            70%  { transform: scale(0.97); }
+            100% { transform: scale(1); }
+          }
+          @keyframes help-panel-pop {
+            0%   { transform: scale(0.92) translateY(-6px); opacity: 0; }
+            55%  { transform: scale(1.02) translateY(0);    opacity: 1; }
+            80%  { transform: scale(0.99) translateY(0);    opacity: 1; }
+            100% { transform: scale(1)    translateY(0);    opacity: 1; }
+          }
+        `}</style>
+
+        {/* Tile grid — 4 across on desktop, 2x2 on tablet, 1 col on
+            mobile. Each tile is a button that opens its content
+            panel below. Hover lifts + scales subtly; click triggers
+            a tighter pop animation on the tile and a larger
+            bounce-in on the panel. */}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 max-w-4xl">
+          <HelpTile
+            id="workflow"
+            label="DAILY WORKFLOW"
+            sub="Upload, today vs yesterday, KSA Sunday rule"
+            icon={<Calendar className="w-4 h-4" />}
+            accent="#0F4C2A"
+            tint="#ECFDF3"
+            isActive={activeHelpTile === 'workflow'}
+            onClick={() => setActiveHelpTile(t => t === 'workflow' ? null : 'workflow')}
+          />
+          <HelpTile
+            id="shift"
+            label="SHIFT STAFF"
+            sub="Auto-detected, custom hours, off-days"
+            icon={<Users className="w-4 h-4" />}
+            accent="#3B4279"
+            tint="#EEF0FA"
+            isActive={activeHelpTile === 'shift'}
+            onClick={() => setActiveHelpTile(t => t === 'shift' ? null : 'shift')}
+          />
+          <HelpTile
+            id="leave"
+            label="LEAVE & WEEKENDS"
+            sub="Permissions, leave excludes, weekend tile"
+            icon={<Briefcase className="w-4 h-4" />}
+            accent="#854F0B"
+            tint="#FEF6E2"
+            isActive={activeHelpTile === 'leave'}
+            onClick={() => setActiveHelpTile(t => t === 'leave' ? null : 'leave')}
+          />
+          <HelpTile
+            id="mail"
+            label="SENDING NOTICES"
+            sub="Pre-filled wording, review, click Send"
+            icon={<Mail className="w-4 h-4" />}
+            accent="#7E22CE"
+            tint="#FAF5FF"
+            isActive={activeHelpTile === 'mail'}
+            onClick={() => setActiveHelpTile(t => t === 'mail' ? null : 'mail')}
+          />
+        </div>
+
+        {/* Active tile's content panel — re-keyed on activeHelpTile
+            so React unmounts/remounts on tile switch, replaying
+            the bounce animation each time. */}
+        {activeHelpTile && (
+          <div
+            key={activeHelpTile}
+            role="region"
+            aria-label="Help content"
+            className="mt-3 p-4 sm:p-5 rounded-lg max-w-4xl"
             style={{
-              background: helpOpen ? '#F5F5F0' : '#FAFAF7',
+              background: '#FFFFFF',
               border: '1px solid #E5E5DD',
-              color: '#0A0A0A',
-              cursor: 'pointer',
-              fontWeight: 500,
-              fontSize: 13,
-              transition: 'background 0.15s',
+              animation: 'help-panel-pop 0.36s cubic-bezier(0.34, 1.56, 0.64, 1)',
+              transformOrigin: 'top center',
             }}
           >
-            <span className="inline-flex items-center gap-2">
-              <HelpCircle className="w-4 h-4" style={{ opacity: 0.7 }} />
-              How it works
-            </span>
-            {helpOpen
-              ? <ChevronUp   className="w-4 h-4" style={{ opacity: 0.7 }} />
-              : <ChevronDown className="w-4 h-4" style={{ opacity: 0.7 }} />
-            }
-          </button>
-
-          {helpOpen && (
-            <div
-              className="mt-2 p-4 sm:p-5 rounded-lg"
-              style={{ background: '#FFFFFF', border: '1px solid #E5E5DD' }}
-            >
-              {/* Section: The daily workflow */}
-              <div className="mb-4">
-                <div className="text-[10px] tracking-[0.18em] mb-2" style={{ color: '#0A0A0A', fontWeight: 700 }}>
-                  THE DAILY WORKFLOW
-                </div>
-                <ul className="text-[13px] space-y-1.5 list-disc pl-5" style={{ color: '#0A0A0A', lineHeight: 1.55 }}>
-                  <li>Every morning, export the <strong>Time Card (.xlsx)</strong> covering yesterday and today, then upload it here.</li>
-                  <li><strong>Today&rsquo;s data</strong> is checked for late arrivals and missed punch-in.</li>
-                  <li><strong>Yesterday&rsquo;s data</strong> is checked for early departures and missed punch-out.</li>
-                  <li>On <strong>Sunday</strong>, &ldquo;yesterday&rdquo; means <strong>Thursday</strong> (Fri + Sat are KSA weekend), so the file should span Thursday&rarr;Sunday.</li>
-                </ul>
-              </div>
-
-              {/* Section: Shift staff */}
-              <div className="mb-4">
-                <div className="text-[10px] tracking-[0.18em] mb-2" style={{ color: '#3B4279', fontWeight: 700 }}>
-                  SHIFT STAFF
-                </div>
-                <ul className="text-[13px] space-y-1.5 list-disc pl-5" style={{ color: '#0A0A0A', lineHeight: 1.55 }}>
-                  <li>Shift staff are detected automatically from their manager&rsquo;s saved monthly plan &mdash; no manual setup needed here.</li>
-                  <li>Their schedule comes from the assigned shift, not the standard 08:00&ndash;17:00. Late and early cutoffs follow that shift&rsquo;s start and end times.</li>
-                  <li>On a planned <strong>off-day</strong>, attending does NOT count as late or absent &mdash; it shows under the &ldquo;Shift off-day&rdquo; tile so you still see the row.</li>
-                  <li>Pending shifts (assigned by the manager, not yet acknowledged by staff) also count as schedule &mdash; staff acknowledgment is separate from attendance evaluation.</li>
-                </ul>
-              </div>
-
-              {/* Section: Permissions, leave, weekends */}
-              <div className="mb-4">
-                <div className="text-[10px] tracking-[0.18em] mb-2" style={{ color: '#0A0A0A', fontWeight: 700 }}>
-                  PERMISSIONS, LEAVE & WEEKENDS
-                </div>
-                <ul className="text-[13px] space-y-1.5 list-disc pl-5" style={{ color: '#0A0A0A', lineHeight: 1.55 }}>
-                  <li>Approved permissions are cross-referenced automatically &mdash; permitted cases are marked, not actioned.</li>
-                  <li>Anyone on approved leave for that date is excluded from the violation lists.</li>
-                  <li>If the file covers a weekend (Fri/Sat), a <strong>weekend attendance</strong> tile appears with options to export the report and email Mr John (CC James + DMN SUP team). The file can include extra dates beyond today + yesterday &mdash; useful for recovering a missed Sunday or sending an older weekend.</li>
-                  <li>When the file contains more than one weekend, a <strong>choose weekend</strong> selector appears so you can pick which one to view, export, and email.</li>
-                </ul>
-              </div>
-
-              {/* Section: Sending notices */}
-              <div>
-                <div className="text-[10px] tracking-[0.18em] mb-2" style={{ color: '#0A0A0A', fontWeight: 700 }}>
-                  SENDING NOTICES
-                </div>
-                <ul className="text-[13px] space-y-1.5 list-disc pl-5" style={{ color: '#0A0A0A', lineHeight: 1.55 }}>
-                  <li>Each notice is pre-filled with the right wording &mdash; review it and click <strong>Send</strong> in your mail client.</li>
-                </ul>
-              </div>
-            </div>
-          )}
-        </div>
+            {activeHelpTile === 'workflow' && (
+              <ul className="text-[13px] space-y-1.5 list-disc pl-5" style={{ color: '#0A0A0A', lineHeight: 1.55 }}>
+                <li>Every morning, export the <strong>Time Card (.xlsx)</strong> covering yesterday and today, then upload it here.</li>
+                <li><strong>Today&rsquo;s data</strong> is checked for late arrivals and missed punch-in.</li>
+                <li><strong>Yesterday&rsquo;s data</strong> is checked for early departures and missed punch-out.</li>
+                <li>On <strong>Sunday</strong>, &ldquo;yesterday&rdquo; means <strong>Thursday</strong> (Fri + Sat are KSA weekend), so the file should span Thursday&rarr;Sunday.</li>
+              </ul>
+            )}
+            {activeHelpTile === 'shift' && (
+              <ul className="text-[13px] space-y-1.5 list-disc pl-5" style={{ color: '#0A0A0A', lineHeight: 1.55 }}>
+                <li>Shift staff are detected automatically from their manager&rsquo;s saved monthly plan &mdash; no manual setup needed here.</li>
+                <li>Their schedule comes from the assigned shift, not the standard 08:00&ndash;17:00. Late and early cutoffs follow that shift&rsquo;s start and end times.</li>
+                <li>On a planned <strong>off-day</strong>, attending does NOT count as late or absent &mdash; it shows under the &ldquo;Shift off-day&rdquo; tile so you still see the row.</li>
+                <li>Pending shifts (assigned by the manager, not yet acknowledged by staff) also count as schedule &mdash; staff acknowledgment is separate from attendance evaluation.</li>
+              </ul>
+            )}
+            {activeHelpTile === 'leave' && (
+              <ul className="text-[13px] space-y-1.5 list-disc pl-5" style={{ color: '#0A0A0A', lineHeight: 1.55 }}>
+                <li>Approved permissions are cross-referenced automatically &mdash; permitted cases are marked, not actioned.</li>
+                <li>Anyone on approved leave for that date is excluded from the violation lists.</li>
+                <li>If the file covers a weekend (Fri/Sat), a <strong>weekend attendance</strong> tile appears with options to export the report and email Mr John (CC James + DMN SUP team). The file can include extra dates beyond today + yesterday &mdash; useful for recovering a missed Sunday or sending an older weekend.</li>
+                <li>When the file contains more than one weekend, a <strong>choose weekend</strong> selector appears so you can pick which one to view, export, and email.</li>
+              </ul>
+            )}
+            {activeHelpTile === 'mail' && (
+              <ul className="text-[13px] space-y-1.5 list-disc pl-5" style={{ color: '#0A0A0A', lineHeight: 1.55 }}>
+                <li>Each notice is pre-filled with the right wording &mdash; review it in your mail client and click <strong>Send</strong>.</li>
+                <li>The TO and CC lists are set automatically based on the violation type (late, early, missed punch) and the staff member&rsquo;s department.</li>
+                <li>The notice is logged so revisiting the same file shows which rows have already been emailed.</li>
+              </ul>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ─── Pending end-of-day review banner ───────────────────────────
@@ -3551,6 +3592,82 @@ function WindowMismatchBanner({ mismatch, fileName, onReset }) {
         will be the last working day before the weekend (e.g. on Sunday, the previous working day is Thursday).
       </div>
     </div>
+  );
+}
+
+// ─── HelpTile ──────────────────────────────────────────────────────────
+// Compact card used in the page-header help grid. Idle: pale tint with
+// an accent border. Hover: lifts + scales subtly. Active: filled accent
+// background, replays a quick pop animation each time it becomes
+// active so Bashaier sees the visual feedback when she clicks.
+//
+// All 4 tiles use the same component, just different accent colours
+// and labels — keeps the grid visually consistent while letting each
+// tile have its own identity (greenfor workflow, navy for shift,
+// amber for leave, purple for mail).
+function HelpTile({ id, label, sub, icon, accent, tint, isActive, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={isActive}
+      aria-controls={`help-panel-${id}`}
+      className="text-left rounded-lg p-3 transition-all"
+      style={{
+        background: isActive ? tint : '#FFFFFF',
+        border: '1.5px solid ' + (isActive ? accent : '#E5E5DD'),
+        cursor: 'pointer',
+        // Lift + scale on hover via CSS hover (Tailwind-free for
+        // precision). A soft shadow comes in alongside the lift.
+        // The active state replays the help-tile-pop keyframe via
+        // the `key` swap on the wrapper if needed; for now a static
+        // active visual is enough since the panel itself bounces.
+        boxShadow: isActive
+          ? `0 2px 12px ${accent}25`
+          : '0 1px 3px rgba(0,0,0,0.04)',
+        transform: 'scale(1)',
+        animation: isActive ? 'help-tile-pop 0.32s ease-out' : 'none',
+        // Hover effect — handled inline so we don't need a global
+        // stylesheet rule. The :hover pseudo can't be expressed in
+        // a style prop, so we use CSS via a class. Tailwind's
+        // hover:scale and hover:shadow utilities cover it nicely.
+      }}
+      onMouseEnter={e => {
+        if (!isActive) {
+          e.currentTarget.style.transform = 'scale(1.025)';
+          e.currentTarget.style.boxShadow = `0 4px 14px ${accent}20`;
+        }
+      }}
+      onMouseLeave={e => {
+        if (!isActive) {
+          e.currentTarget.style.transform = 'scale(1)';
+          e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)';
+        }
+      }}
+    >
+      <div className="flex items-center gap-2 mb-1.5">
+        <span
+          className="inline-flex items-center justify-center rounded-md"
+          style={{
+            width: 26, height: 26,
+            background: tint,
+            color: accent,
+            border: '1px solid ' + accent + '30',
+          }}
+        >
+          {icon}
+        </span>
+        <span
+          className="text-[10px] tracking-[0.15em]"
+          style={{ color: accent, fontWeight: 700 }}
+        >
+          {label}
+        </span>
+      </div>
+      <div className="text-[12px]" style={{ color: '#0A0A0A', opacity: 0.78, lineHeight: 1.45 }}>
+        {sub}
+      </div>
+    </button>
   );
 }
 
