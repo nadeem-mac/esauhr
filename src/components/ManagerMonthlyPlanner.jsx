@@ -54,7 +54,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Card } from './Dashboard.jsx';
-import { directGet, directPost, directDelete, supabase } from '../supabaseClient.js';
+import { directGet, directPost, directDelete, directPatchQuery, supabase } from '../supabaseClient.js';
 import {
   Loader2, Save, Calendar as CalIcon, Lock, Moon, CheckCircle2, Sparkles, Copy, X,
 } from 'lucide-react';
@@ -254,6 +254,36 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
   const [dayPopover, setDayPopover] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
 
+  // ─── Edit-cap state ────────────────────────────────────────────────
+  // The save flow is: first save commits the plan, button greys out
+  // and an Edit button appears next to it. Manager hits Edit to
+  // re-enable saves. Up to 3 edits after the initial save (so a
+  // total of 4 commits) are allowed; the 4th edit attempt is blocked.
+  //
+  // editCount mirrors the monthly_shift_plans.edit_count column for
+  // this (manager_id, plan_month) pair. Loaded with the rest of the
+  // plan; refetched after each save.
+  //
+  // editMode: 'editing' = save button enabled (initial state for
+  //            unsaved plans, or after Edit click)
+  //           'locked'  = save button greyed; Edit button visible
+  //                       if edits remain, or both buttons disabled
+  //                       if cap is reached
+  const [editCount, setEditCount] = useState(0);
+  const [editMode, setEditMode]   = useState('editing');
+  const MAX_EDITS = 3;
+
+  // ─── Impact-confirmation dialog state ─────────────────────────────
+  // When a save would re-pend already-accepted shifts (because their
+  // times changed or the day was removed), we pause the save and
+  // surface a confirmation modal listing the impacted shifts. The
+  // manager confirms or backs out; on confirm, the save runs and
+  // the impacted shifts are flipped back to pending. Without this
+  // a manager could silently invalidate staff acknowledgments.
+  //
+  // Shape: { rows, datesToDelete, impactedAccepted: [{date, name, ...}] }
+  const [pendingConfirm, setPendingConfirm] = useState(null);
+
   // ─── Build the empty calendar for the selected month ───────────────
   // Returns an array of date-keys (YYYY-MM-DD) for every day in the
   // month, plus the day-of-week index (0=Sun) for grid alignment.
@@ -387,13 +417,14 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
       setStart(derivedStart || DEFAULT_START);
       setEnd(derivedEnd || DEFAULT_END);
 
-      // Fetch last-committed-at for this (manager, month) so we can
-      // show a "last saved Tuesday at 3:42 PM" affordance.
+      // Fetch last-committed-at + edit_count for this (manager, month)
+      // so we can show "last saved Tuesday at 3:42 PM" + drive the
+      // locked/editing state of the Save button.
       try {
         const planKey = ymd(startOfMonth(monthSel.year, monthSel.monthIdx));
         const planRows = await directGet(
           'monthly_shift_plans',
-          `select=last_committed_at,shifts_count` +
+          `select=last_committed_at,shifts_count,edit_count` +
           `&manager_id=eq.${encodeURIComponent(me.id)}` +
           `&plan_month=eq.${planKey}` +
           `&limit=1`,
@@ -401,8 +432,17 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
         );
         const r = Array.isArray(planRows) ? planRows[0] : null;
         setLastCommittedAt(r?.last_committed_at || null);
+        const ec = Number.isInteger(r?.edit_count) ? r.edit_count : 0;
+        setEditCount(ec);
+        // If the plan has already been committed (last_committed_at
+        // is non-null), open in 'locked' mode — manager has to click
+        // Edit to make changes. If never saved before, open in
+        // 'editing' so the first save works without an extra click.
+        setEditMode(r?.last_committed_at ? 'locked' : 'editing');
       } catch {
         setLastCommittedAt(null);
+        setEditCount(0);
+        setEditMode('editing');
       }
     } catch (e) {
       console.warn('Plan load failed:', e);
@@ -580,18 +620,51 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
     });
   }, [start, end]);
 
-  // ─── Save ──────────────────────────────────────────────────────────
-  async function save() {
+  // ─── Save (two-stage flow) ─────────────────────────────────────────
+  // Stage 1: prepareSave() — gathers the payload, checks the edit
+  // cap, queries for any already-accepted shifts that this save
+  // would change/remove, and either:
+  //   • opens the confirmation modal (if accepted shifts will be
+  //     impacted), so the manager confirms before invalidating
+  //     staff acknowledgments, OR
+  //   • proceeds straight to executeSave() if no impact.
+  //
+  // Stage 2: executeSave({ rows, datesToDelete, impactedAccepted })
+  // does the actual writes:
+  //   1. Upsert the new/updated shifts (status = 'pending').
+  //      For impacted accepted shifts this AUTO-CLEARS the
+  //      acceptance because we send status='pending' on every
+  //      row in the upsert payload — staff will see them in
+  //      their acknowledgment queue again.
+  //   2. Clear accepted_at/declined_at/decline_reason on impacted
+  //      rows so the staff-side modal treats them as fresh.
+  //   3. Bulk-delete the unchecked-day rows.
+  //   4. Upsert the monthly_shift_plans tracker (bumps edit_count
+  //      after the first save).
+  //   5. Toast + lock the form (editMode='locked').
+  async function prepareSave() {
     if (!employeeId || !monthSel || saving) return;
-    // Defense-in-depth: even if the segmented control somehow let
-    // a locked month through, refuse the save here. The dropdown
-    // is the primary gate; this is the belt-and-braces backup.
     if (monthSel.locked) {
       setErrorMsg(`That month doesn't unlock until ${monthSel.unlockLabel}. Please plan the current month first.`);
       return;
     }
+    if (editMode !== 'editing') {
+      // Belt-and-braces: button should already be greyed in 'locked'
+      // mode, but if state ever gets out of sync this catches it.
+      setErrorMsg('The plan is locked. Click "Edit schedule" to make changes.');
+      return;
+    }
+    if (editCount >= MAX_EDITS) {
+      // Caught here AND in the Edit handler. Means the manager has
+      // already used up their 3 edits and somehow still has the
+      // Save button enabled.
+      setErrorMsg(`You've reached the limit of ${MAX_EDITS} edits for this month. Contact HR to make further changes.`);
+      return;
+    }
+
     setSaving(true);
     setErrorMsg('');
+
     try {
       const fromKey = ymd(startOfMonth(monthSel.year, monthSel.monthIdx));
       const toKey   = ymd(endOfMonth(monthSel.year, monthSel.monthIdx));
@@ -614,12 +687,90 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
         }
       }
 
-      // Upsert — on conflict do update via PostgREST's resolution=
-      // merge-duplicates header, scoped to (employee_id, shift_date).
-      // 30s timeout because a 30-day month with 6 reports could
-      // brush against the default on a slow connection — the upsert
-      // itself is one round trip but PostgREST's MERGE path is
-      // slower than a plain INSERT.
+      // Pre-flight: pull existing rows in the window WITH their
+      // acceptance state so we can flag impacted ones.
+      const fromForExisting = todayK > fromKey ? todayK : fromKey;
+      const existing = await directGet(
+        'employee_shifts',
+        `select=shift_date,start_time,end_time,status,accepted_at` +
+        `&employee_id=eq.${encodeURIComponent(employeeId)}` +
+        `&shift_date=gte.${fromForExisting}&shift_date=lte.${toKey}`,
+        { timeoutMs: 12000 }
+      );
+
+      const existingByDate = new Map();
+      for (const r of (existing || [])) existingByDate.set(r.shift_date, r);
+
+      const keepKeys = new Set(rows.map(r => r.shift_date));
+      const datesToDelete = Array.from(existingByDate.keys()).filter(d => !keepKeys.has(d));
+
+      // Find impacted ACCEPTED shifts: anything that's currently
+      // status='accepted' OR has an accepted_at, AND will either
+      //   (a) be deleted (day unchecked), or
+      //   (b) have its time changed (start or end differs).
+      // Time strings are normalised to 'HH:MM' for comparison so
+      // PG's 'HH:MM:SS' format doesn't false-flag a "change".
+      const norm = t => trimTime(t);
+      const impactedAccepted = [];
+      for (const ex of (existing || [])) {
+        const wasAccepted = ex.status === 'accepted' || Boolean(ex.accepted_at);
+        if (!wasAccepted) continue;
+
+        if (!keepKeys.has(ex.shift_date)) {
+          impactedAccepted.push({
+            date: ex.shift_date,
+            kind: 'removed',
+            oldStart: norm(ex.start_time),
+            oldEnd:   norm(ex.end_time),
+            newStart: null,
+            newEnd:   null,
+          });
+          continue;
+        }
+
+        const newRow = rows.find(r => r.shift_date === ex.shift_date);
+        if (newRow) {
+          const oldS = norm(ex.start_time);
+          const oldE = norm(ex.end_time);
+          const newS = norm(newRow.start_time);
+          const newE = norm(newRow.end_time);
+          if (oldS !== newS || oldE !== newE) {
+            impactedAccepted.push({
+              date: ex.shift_date,
+              kind: 'time-changed',
+              oldStart: oldS, oldEnd: oldE,
+              newStart: newS, newEnd: newE,
+            });
+          }
+        }
+      }
+
+      const payload = { rows, datesToDelete, impactedAccepted, fromKey };
+
+      if (impactedAccepted.length > 0) {
+        // Open the confirmation modal — executeSave runs only if
+        // the manager confirms.
+        setSaving(false);
+        setPendingConfirm(payload);
+        return;
+      }
+
+      // No impact — write straight through.
+      await executeSave(payload);
+    } catch (e) {
+      console.error('Save preflight failed:', e);
+      setErrorMsg(e?.message || 'Could not check the plan before saving. Please try again.');
+      setSaving(false);
+    }
+  }
+
+  async function executeSave({ rows, datesToDelete, impactedAccepted, fromKey }) {
+    setSaving(true);
+    setErrorMsg('');
+    try {
+      // 1. Upsert. Sending status='pending' on every row means
+      //    impacted accepted rows automatically lose their accepted
+      //    status — staff will be re-prompted on their next sign-in.
       if (rows.length > 0) {
         await directPost(
           'employee_shifts?on_conflict=employee_id,shift_date',
@@ -631,31 +782,35 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
         );
       }
 
-      // Delete rows for days that are NOT selected (manager unchecked
-      // a previously-saved day). One bulk DELETE-by-filter call instead
-      // of fetching-then-deleting-each-row. PostgREST accepts
-      // `shift_date=in.(d1,d2,...)` for set-membership filters.
-      const keepKeys = new Set(rows.map(r => r.shift_date));
-      // Find existing rows in the window so we know what to remove.
-      const existing = await directGet(
-        'employee_shifts',
-        `select=shift_date` +
-        `&employee_id=eq.${encodeURIComponent(employeeId)}` +
-        `&shift_date=gte.${todayK > fromKey ? todayK : fromKey}` +
-        `&shift_date=lte.${toKey}`,
-        { timeoutMs: 12000 }
-      );
-      const datesToDelete = (existing || [])
-        .map(r => r.shift_date)
-        .filter(d => !keepKeys.has(d));
+      // 2. Clear acknowledgment fields on the impacted rows so the
+      //    staff-side modal treats them as fresh shifts. We use the
+      //    bulk patch query helper. Best-effort — failure here just
+      //    means the audit fields are stale; the status flip in step
+      //    1 already drives the re-acknowledgment flow.
+      if (impactedAccepted.some(i => i.kind === 'time-changed')) {
+        const dates = impactedAccepted
+          .filter(i => i.kind === 'time-changed')
+          .map(i => i.date);
+        if (dates.length > 0) {
+          const inList = dates.map(d => encodeURIComponent(d)).join(',');
+          const filter =
+            `employee_id=eq.${encodeURIComponent(rows[0]?.employee_id || employeeId)}` +
+            `&shift_date=in.(${inList})`;
+          try {
+            await directPatchQuery(
+              'employee_shifts',
+              filter,
+              { accepted_at: null, declined_at: null, decline_reason: null, notified_hr_at: null },
+              { timeoutMs: 10000 }
+            );
+          } catch (e) {
+            console.warn('Acknowledgment-clear failed (non-fatal):', e?.message || e);
+          }
+        }
+      }
 
+      // 3. Bulk delete unchecked-day rows.
       if (datesToDelete.length > 0) {
-        // Single bulk delete — PostgREST's `in.(...)` filter takes a
-        // comma-separated list and deletes everything matching it
-        // plus the employee_id scope, in one round trip. Way faster
-        // than the previous one-call-per-row approach and avoids
-        // the malformed-URL bug that hung on a wrong directDelete
-        // signature.
         const inList = datesToDelete.map(d => encodeURIComponent(d)).join(',');
         const filter =
           `employee_id=eq.${encodeURIComponent(employeeId)}` +
@@ -663,15 +818,14 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
         try {
           await directDelete('employee_shifts', filter, { timeoutMs: 12000 });
         } catch (e) {
-          // Non-fatal — surface to console but don't block the save.
-          // Worst case: the unchecked-but-not-deleted rows linger;
-          // the manager re-saves and they get cleaned up next time.
           console.warn('shift bulk delete failed (non-fatal):', e?.message || e);
         }
       }
 
-      // Upsert the monthly_shift_plans tracker row so the reminder
-      // system knows this month is done. Same on-conflict pattern.
+      // 4. Upsert tracker. Bump edit_count on subsequent saves; the
+      //    first save (when no last_committed_at yet) keeps it at 0.
+      const isFirstSave = !lastCommittedAt;
+      const newEditCount = isFirstSave ? 0 : Math.min(editCount + 1, MAX_EDITS);
       await directPost(
         'monthly_shift_plans?on_conflict=manager_id,plan_month',
         [{
@@ -680,6 +834,7 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
           shifts_count:      rows.length,
           last_committed_at: new Date().toISOString(),
           last_committed_by: me.id,
+          edit_count:        newEditCount,
         }],
         {
           headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
@@ -687,21 +842,43 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
         }
       );
 
-      // Toast — SuccessToast pattern (we'll set our own state and
-      // render inline since the rest of the dashboard mounts only
-      // a small subset of toasts).
       const empName = myReports.find(r => r.id === employeeId)?.name || 'employee';
+      const editsLeft = MAX_EDITS - newEditCount;
+      const editsLine = isFirstSave
+        ? `Click "Edit schedule" if you need to make changes — up to ${MAX_EDITS} edits allowed per month.`
+        : (editsLeft > 0
+            ? `${editsLeft} ${editsLeft === 1 ? 'edit' : 'edits'} remaining for this month.`
+            : `You've used all ${MAX_EDITS} allowed edits for this month. Further changes need HR.`);
+      const acknowledgmentLine = impactedAccepted.length > 0
+        ? ` ${impactedAccepted.length} previously-accepted ${impactedAccepted.length === 1 ? 'shift was' : 'shifts were'} reset and will need re-confirmation.`
+        : ' Staff will be asked to acknowledge each shift on their next sign-in.';
+
       setSavedToast({
-        title: 'Shift plan saved',
-        body: `${rows.length} ${rows.length === 1 ? 'shift' : 'shifts'} saved for ${empName} for ${monthLabel(monthSel.year, monthSel.monthIdx)}. Staff will be asked to acknowledge each shift on their next sign-in.`,
+        title: isFirstSave ? 'Shift plan saved' : 'Shift plan updated',
+        body: `${rows.length} ${rows.length === 1 ? 'shift' : 'shifts'} saved for ${empName} for ${monthLabel(monthSel.year, monthSel.monthIdx)}.${acknowledgmentLine} ${editsLine}`,
       });
       setLastCommittedAt(new Date().toISOString());
+      setEditCount(newEditCount);
+      setEditMode('locked');
+      setPendingConfirm(null);
     } catch (e) {
       console.error('Plan save failed:', e);
       setErrorMsg(e?.message || 'Could not save the plan. Please try again.');
     } finally {
       setSaving(false);
     }
+  }
+
+  // ─── Edit handler ──────────────────────────────────────────────────
+  // Manager clicks "Edit schedule" to re-enable Save. Refused if the
+  // edit cap has been hit.
+  function startEditing() {
+    if (editCount >= MAX_EDITS) {
+      setErrorMsg(`You've reached the limit of ${MAX_EDITS} edits for this month. Contact HR to make further changes.`);
+      return;
+    }
+    setEditMode('editing');
+    setErrorMsg('');
   }
 
   // ─── Empty state ────────────────────────────────────────────────────
@@ -877,26 +1054,70 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
         />
       )}
 
-      {/* Save row */}
+      {/* Save row — has two buttons that swap visibility based on
+          editMode:
+            • editing: Save enabled (if there's something to save)
+            • locked:  Save greyed out, "Edit schedule" appears next
+                       to it. Edit is enabled until the 3-edit cap
+                       is hit; after that it greys out too with a
+                       tooltip explaining HR is needed for further
+                       changes. */}
       <div className="mt-4 flex items-center justify-between gap-3 flex-wrap">
-        <div className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+        <div className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.7, maxWidth: 360 }}>
           Past dates can't be edited. Saved shifts go to the staff member for acknowledgment.
+          {lastCommittedAt && editCount > 0 && (
+            <> · <strong>{Math.max(0, MAX_EDITS - editCount)}</strong> of <strong>{MAX_EDITS}</strong> edits remaining</>
+          )}
         </div>
-        <button
-          onClick={save}
-          disabled={saving || planLoading || selectedCount === 0}
-          className="rounded-lg inline-flex items-center gap-2 px-4 py-2 text-sm"
-          style={{
-            background: 'var(--evergreen-600)',
-            color: '#FFFFFF',
-            fontWeight: 600,
-            cursor: (saving || planLoading || selectedCount === 0) ? 'not-allowed' : 'pointer',
-            opacity: (saving || planLoading || selectedCount === 0) ? 0.5 : 1,
-          }}
-        >
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-          Save {selectedCount > 0 ? `${selectedCount} ${selectedCount === 1 ? 'shift' : 'shifts'}` : 'plan'}
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Edit schedule — only visible AFTER an initial save and
+              while the form is locked. Disabled if cap reached. */}
+          {lastCommittedAt && editMode === 'locked' && (
+            <button
+              onClick={startEditing}
+              disabled={editCount >= MAX_EDITS}
+              className="rounded-lg inline-flex items-center gap-2 px-4 py-2 text-sm"
+              style={{
+                background: 'transparent',
+                color: editCount >= MAX_EDITS ? '#A3A3A3' : '#0F4C2A',
+                border: '1px solid ' + (editCount >= MAX_EDITS ? 'var(--border)' : '#A7D8B7'),
+                fontWeight: 500,
+                cursor: editCount >= MAX_EDITS ? 'not-allowed' : 'pointer',
+                opacity: editCount >= MAX_EDITS ? 0.6 : 1,
+              }}
+              title={editCount >= MAX_EDITS
+                ? `Edit limit reached (${MAX_EDITS} edits used). Contact HR for further changes.`
+                : 'Click to make changes to this saved plan'
+              }
+            >
+              {editCount >= MAX_EDITS ? <Lock className="w-4 h-4" /> : null}
+              Edit schedule
+            </button>
+          )}
+
+          <button
+            onClick={prepareSave}
+            disabled={saving || planLoading || selectedCount === 0 || editMode === 'locked'}
+            className="rounded-lg inline-flex items-center gap-2 px-4 py-2 text-sm"
+            style={{
+              background: 'var(--evergreen-600)',
+              color: '#FFFFFF',
+              fontWeight: 600,
+              cursor: (saving || planLoading || selectedCount === 0 || editMode === 'locked') ? 'not-allowed' : 'pointer',
+              opacity: (saving || planLoading || selectedCount === 0 || editMode === 'locked') ? 0.5 : 1,
+            }}
+            title={editMode === 'locked'
+              ? 'Plan is saved. Click "Edit schedule" to make changes.'
+              : 'Save the plan'
+            }
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            {lastCommittedAt
+              ? (editMode === 'locked' ? 'Saved' : 'Save changes')
+              : `Save ${selectedCount > 0 ? `${selectedCount} ${selectedCount === 1 ? 'shift' : 'shifts'}` : 'plan'}`
+            }
+          </button>
+        </div>
       </div>
 
       {errorMsg && (
@@ -928,6 +1149,18 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
           onResetToBulk={() => resetDayToBulk(dayPopover.dateKey)}
           onRemove={() => removeDay(dayPopover.dateKey)}
           onClose={() => setDayPopover(null)}
+        />
+      )}
+
+      {/* Acknowledgment-impact confirmation — surfaces when the
+          manager's edit would invalidate already-accepted shifts.
+          Lists the impacted dates and asks for confirmation before
+          re-pending. */}
+      {pendingConfirm && (
+        <AcknowledgmentImpactDialog
+          impacted={pendingConfirm.impactedAccepted}
+          onCancel={() => { setPendingConfirm(null); setSaving(false); }}
+          onConfirm={() => executeSave(pendingConfirm)}
         />
       )}
     </Card>
@@ -1281,6 +1514,173 @@ function DayEditPopover({
           >
             <Save className="w-3 h-3" />
             Save changes
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Acknowledgment-impact confirmation dialog ────────────────────────
+// Shown when a manager's edit would invalidate already-accepted
+// shifts. Lists the impacted shifts (date + nature of change) and
+// asks for explicit confirmation before re-pending. Without this
+// step, staff acknowledgments could silently become stale (KHALID
+// agreed to 11:00–20:00 but the row now says 11:00–14:00 with no
+// re-acknowledgment).
+//
+// On Confirm: parent runs executeSave which clears the acceptance
+// fields and flips status back to pending. Staff see the changed
+// shifts in their queue on next sign-in.
+//
+// On Cancel: parent resets pendingConfirm + saving; nothing is
+// written.
+function AcknowledgmentImpactDialog({ impacted, onCancel, onConfirm }) {
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    function onKey(e) { if (e.key === 'Escape') onCancel?.(); }
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [onCancel]);
+
+  // Format an impacted item into a human-readable line. Pulls
+  // weekday + day + month from the date for context.
+  function fmtRow(item) {
+    const [y, m, d] = item.date.split('-').map(n => parseInt(n, 10));
+    const dt = new Date(y, m - 1, d);
+    const day = dt.toLocaleDateString(SAR_LOCALE, {
+      weekday: 'short', day: 'numeric', month: 'short',
+    });
+    if (item.kind === 'removed') {
+      return `${day} — was ${item.oldStart}–${item.oldEnd}, now removed`;
+    }
+    return `${day} — was ${item.oldStart}–${item.oldEnd}, now ${item.newStart}–${item.newEnd}`;
+  }
+
+  const count = impacted.length;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Confirm changes to accepted shifts"
+      onClick={onCancel}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 65,
+        background: 'rgba(15, 23, 42, 0.55)',
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'center',
+        padding: '40px 16px',
+        overflowY: 'auto',
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: '100%',
+          maxWidth: 480,
+          background: '#FFFFFF',
+          borderRadius: 12,
+          padding: '20px 22px',
+          boxShadow: '0 12px 40px rgba(0,0,0,0.20)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+          <div
+            style={{
+              flexShrink: 0,
+              width: 32,
+              height: 32,
+              borderRadius: '50%',
+              background: '#FEF6E2',
+              color: '#854F0B',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Sparkles className="w-4 h-4" />
+          </div>
+          <div style={{ fontSize: 11, letterSpacing: '0.18em', fontWeight: 700, color: '#854F0B' }}>
+            CHANGES WILL RESET ACCEPTANCES
+          </div>
+        </div>
+
+        <h2 style={{ fontSize: 16, fontWeight: 600, color: '#0A0A0A', margin: '0 0 8px' }}>
+          {count} previously-accepted {count === 1 ? 'shift' : 'shifts'} will need re-confirmation
+        </h2>
+
+        <p style={{ fontSize: 13, color: '#0A0A0A', opacity: 0.75, lineHeight: 1.5, margin: '0 0 12px' }}>
+          The staff member already accepted {count === 1 ? 'this shift' : 'these shifts'}, but your changes
+          mean they need to confirm again. Their previous acceptance will be cleared and the shift will
+          go back to pending in their queue.
+        </p>
+
+        <div
+          style={{
+            background: 'var(--paper-2)',
+            border: '1px solid var(--border-soft)',
+            borderRadius: 8,
+            padding: '10px 12px',
+            marginBottom: 14,
+            maxHeight: 200,
+            overflowY: 'auto',
+          }}
+        >
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', color: '#0A0A0A', marginBottom: 6 }}>
+            IMPACTED SHIFTS
+          </div>
+          <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+            {impacted.map(item => (
+              <li
+                key={item.date}
+                style={{
+                  fontSize: 12,
+                  color: '#0A0A0A',
+                  padding: '4px 0',
+                  borderBottom: '1px dashed var(--border-soft)',
+                }}
+              >
+                {fmtRow(item)}
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button
+            onClick={onCancel}
+            className="text-sm px-4 py-2 rounded-lg"
+            style={{
+              background: 'transparent',
+              color: '#0A0A0A',
+              border: '1px solid var(--border)',
+              fontWeight: 500,
+              cursor: 'pointer',
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="text-sm px-4 py-2 rounded-lg inline-flex items-center gap-2"
+            style={{
+              background: '#854F0B',
+              color: '#FFFFFF',
+              border: '1px solid #854F0B',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            Confirm and save
           </button>
         </div>
       </div>
