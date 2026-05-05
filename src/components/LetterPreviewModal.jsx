@@ -106,6 +106,66 @@ export default function LetterPreviewModal({ offer, onClose, readOnly = false })
     );
   }, [offer, signatory]);
 
+  // Print handler — opens a clean popup window with just the letter
+  // and triggers the browser's print dialog there. Trying to print
+  // the modal itself via window.print() proved unreliable: the
+  // overlay's position:fixed + overflow:auto + z-index layering
+  // doesn't translate cleanly to a print stylesheet (CSS rules to
+  // hide the toolbar/overlay produced blank pages on Bashaier's
+  // machine). A fresh window with just the letter content + a tiny
+  // print stylesheet sidesteps the whole layering problem.
+  function handlePrint() {
+    const win = window.open('', '_blank', 'width=900,height=1100');
+    if (!win) {
+      alert('The print window was blocked. Please allow pop-ups for this site and try again.');
+      return;
+    }
+    const safeName = (offer.candidate_name || 'Candidate')
+      .replace(/[^\w\s-]/g, '')
+      .replace(/\s+/g, '_');
+
+    const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Offer_Letter_${safeName}</title>
+  <style>
+    @page { size: A4 portrait; margin: 0; }
+    @media print { body { margin: 0; } }
+    html, body { margin: 0; padding: 0; background: #fff; }
+  </style>
+</head>
+<body>
+  ${letterHtml}
+  <script>
+    (function(){
+      var imgs = Array.prototype.slice.call(document.querySelectorAll('img'));
+      var pending = imgs.filter(function(i){ return !i.complete; }).length;
+      var triggered = false;
+      function go(){
+        if (triggered) return;
+        triggered = true;
+        setTimeout(function(){ window.print(); }, 250);
+      }
+      if (pending === 0) { go(); }
+      else {
+        imgs.forEach(function(i){
+          if (i.complete) return;
+          var done = function(){ pending--; if (pending <= 0) go(); };
+          i.addEventListener('load', done);
+          i.addEventListener('error', done);
+        });
+        setTimeout(go, 3500);
+      }
+    })();
+  </script>
+</body>
+</html>`;
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+  }
+
   if (!offer) return null;
 
   return (
@@ -163,7 +223,7 @@ export default function LetterPreviewModal({ offer, onClose, readOnly = false })
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           {!readOnly && (
             <button
-              onClick={() => window.print()}
+              onClick={handlePrint}
               style={{
                 background: '#FFFFFF',
                 color: '#0F4C2A',
@@ -206,7 +266,15 @@ export default function LetterPreviewModal({ offer, onClose, readOnly = false })
 
       {/* Letter card — matches the candidate-side styling exactly:
           794px max-width, 2px green border, 16px rounded corners,
-          green-tinted shadow. */}
+          green-tinted shadow.
+
+          The .offer-letter container has height:1123px + overflow:hidden
+          baked in (needed for the print-to-PDF flow so it fits A4
+          exactly). In the modal context that can clip the bottom of
+          the letter if rendering pushes content past 1123px. We
+          override both inside the card so the letter grows naturally
+          to fit all its content. The visual result is the same on a
+          full-A4 render; only edge-case overflow behaviour differs. */}
       <div
         onClick={e => e.stopPropagation()}
         style={{
@@ -220,6 +288,16 @@ export default function LetterPreviewModal({ offer, onClose, readOnly = false })
           marginBottom: 24,
         }}
       >
+        <style>{`
+          /* Scoped override for the in-modal preview only. The print
+             window and acceptance page keep the original A4 constraints. */
+          [role="dialog"] [aria-label="Offer letter preview"] .offer-letter,
+          [aria-label="Offer letter preview"] .offer-letter {
+            height: auto !important;
+            min-height: 1123px;
+            overflow: visible !important;
+          }
+        `}</style>
         {loadingSig ? (
           <div style={{
             padding: 60,
@@ -235,56 +313,6 @@ export default function LetterPreviewModal({ offer, onClose, readOnly = false })
           <div dangerouslySetInnerHTML={{ __html: letterHtml }} />
         )}
       </div>
-
-      {/* Print-blocking style block for read-only viewers. Kept inside
-          the modal so it only applies while the modal is mounted —
-          Bashaier (full-access) doesn't get her print pipeline broken. */}
-      {readOnly && (
-        <style>{`
-          @media print {
-            body > *:not([role="dialog"]) { visibility: hidden !important; }
-            [role="dialog"] > *:not([data-letter-card]) { visibility: hidden !important; }
-            body::after {
-              content: "Printing this preview is restricted. Please contact HR for an official copy.";
-              visibility: visible;
-              position: fixed;
-              top: 50%;
-              left: 50%;
-              transform: translate(-50%, -50%);
-              font-family: Arial, sans-serif;
-              font-size: 16px;
-              color: #525252;
-              text-align: center;
-              max-width: 320px;
-            }
-          }
-        `}</style>
-      )}
-
-      {/* Print-only style for Bashaier so the modal toolbar disappears
-          on the printed page (just the letter prints). */}
-      {!readOnly && (
-        <style>{`
-          @media print {
-            [role="dialog"] {
-              position: static !important;
-              background: transparent !important;
-              padding: 0 !important;
-              overflow: visible !important;
-            }
-            [role="dialog"] > div:first-child { display: none !important; }
-            [role="dialog"] > div:nth-child(2) {
-              max-width: none !important;
-              border: none !important;
-              border-radius: 0 !important;
-              box-shadow: none !important;
-              margin: 0 !important;
-            }
-            body > *:not([role="dialog"]) { display: none !important; }
-            @page { size: A4 portrait; margin: 0; }
-          }
-        `}</style>
-      )}
     </div>
   );
 }

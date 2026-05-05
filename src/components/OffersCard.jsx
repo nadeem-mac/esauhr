@@ -507,15 +507,18 @@ function OfferRow({ offer, employees, onChanged, onIssuePsn, me, readOnly = fals
       { name: me?.name || 'BASHAIER ALSUBAIE', email: me?.email || 'bashaier.alsubaie@evergreen-shipping.com.sa' }
     );
 
-    // mailto: encoding — to / cc / subject / body all need percent-
-    // encoding. cc is comma-separated. Body's newlines must be %0D%0A.
-    // Outlook is permissive about long mailto: URLs (Chrome cap is
-    // ~32K bytes which is more than enough for the offer body).
-    const params = new URLSearchParams();
-    params.set('cc', uniqueCc.join(','));
-    params.set('subject', subject);
-    params.set('body', body);
-    const mailto = `mailto:${encodeURIComponent(candidateEmail)}?${params.toString()}`;
+    // mailto: encoding. URLSearchParams produces application/x-www-
+    // form-urlencoded format which encodes spaces as '+' — that's
+    // wrong for RFC 6068 mailto: URLs, where spaces must be %20.
+    // Outlook treats '+' literally and shows pluses everywhere there
+    // should be spaces, so we build the query string manually with
+    // encodeURIComponent (which uses %20 for spaces).
+    const qs = [
+      `cc=${encodeURIComponent(uniqueCc.join(','))}`,
+      `subject=${encodeURIComponent(subject)}`,
+      `body=${encodeURIComponent(body)}`,
+    ].join('&');
+    const mailto = `mailto:${encodeURIComponent(candidateEmail)}?${qs}`;
 
     // window.location.assign() opens the user's default mail handler
     // (Outlook on Bashaier's machine). Doesn't navigate the portal
@@ -621,7 +624,7 @@ function OfferRow({ offer, employees, onChanged, onIssuePsn, me, readOnly = fals
         </div>
 
         {/* Actions */}
-        <div className="flex flex-col items-end gap-1.5 shrink-0">
+        <div className="flex flex-row items-center gap-1.5 shrink-0 flex-wrap">
           {/* Contract — visible to ALL users on EVERY status. Opens
               an in-page modal showing the bilingual offer letter
               with the same green-bordered card styling the candidate
