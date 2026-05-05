@@ -61,6 +61,71 @@ class AttendanceErrorBoundary extends React.Component {
   }
 }
 
+// ─── ZoneHeader ───────────────────────────────────────────────────────
+// Visual divider used at the top of each of AttendanceView's three
+// zones. Gives Bashaier a clear "you are now in [zone]" beat so the
+// page reads as three distinct flows rather than one wall of widgets:
+//
+//   Zone 1 — SEE                  the monthly overview / dashboard
+//   Zone 2 — DO EVERY DAY         the daily upload + results
+//   Zone 3 — ONE-TIME SETUP       the historical backfill panel
+//
+// Visual: a numbered circle on the left (the zone number, dimmed),
+// a kicker label above the title (e.g. "DO EVERY DAY"), the title
+// itself in serif, and a one-paragraph explainer underneath. The
+// `accent` prop tints the kicker + circle border so each zone has
+// its own subtle color.
+function ZoneHeader({ number, kicker, title, body, accent = '#1F1B16' }) {
+  return (
+    <div
+      className="flex items-start gap-3 mt-2"
+      style={{ paddingTop: 14, borderTop: '1px solid #E5E5E5' }}
+    >
+      <div
+        className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center"
+        style={{
+          background: '#FFFFFF',
+          border: `1.5px solid ${accent}`,
+          color: accent,
+          fontFamily: 'Georgia, serif',
+          fontSize: 16,
+          fontWeight: 700,
+          marginTop: 2,
+        }}
+        aria-hidden
+      >
+        {number}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div
+          className="text-[10px] mb-1"
+          style={{ color: accent, letterSpacing: '0.25em', fontWeight: 700 }}
+        >
+          {kicker}
+        </div>
+        <div
+          style={{
+            fontFamily: 'Georgia, serif',
+            fontSize: 22,
+            color: '#1F1B16',
+            lineHeight: 1.15,
+          }}
+        >
+          {title}
+        </div>
+        {body && (
+          <p
+            className="text-sm mt-1.5 max-w-3xl"
+            style={{ color: '#0A0A0A', opacity: 0.78, lineHeight: 1.5 }}
+          >
+            {body}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ────────────────────────────────────────────────────────────────────────
    Daily attendance check — driven by Time Card xlsx upload.
 
@@ -3267,10 +3332,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             color: '#1F1B16',
           }}
         >
-          Daily attendance check.
+          Attendance.
         </h1>
         <p className="text-sm mt-1.5 max-w-3xl" style={{ color: '#0A0A0A', opacity: 0.8 }}>
-          Upload the Time Card xlsx covering yesterday and today &mdash; late arrivals, early departures, missed punches, and shift off-days are flagged automatically.
+          The page is split into three zones below: <strong>see</strong> the month so far, <strong>upload</strong> today's file (your daily routine), and one section for <strong>one-time backfill</strong> if you need to import history.
         </p>
 
         {/* Inline keyframes for the tile + panel animations.
@@ -3404,12 +3469,32 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           have at least one record this month — directory members
           who've never been uploaded for stay hidden. */}
       <AttendanceErrorBoundary label="Monthly attendance calendar">
+        {/* ZONE 1 — SEE
+            The accumulating monthly overview. This is the dashboard
+            view that builds up as Bashaier uploads daily files. Lives
+            at the top so it's the first thing she sees on page load. */}
+        <ZoneHeader
+          number={1}
+          kicker="SEE"
+          title="Monthly overview"
+          body="One row per employee, one column per day. Each chip shows that day's status — present, late, absent, on leave, sick, or off-day. Hover any cell for the full detail. The calendar updates live every time a daily file is uploaded."
+        />
         <AttendanceMonthGrid employees={employees} />
       </AttendanceErrorBoundary>
 
-      <AttendanceErrorBoundary label="Historical backfill">
-        <AttendanceBackfillPanel me={me} employees={employees} />
-      </AttendanceErrorBoundary>
+      {/* ZONE 2 — DAILY ROUTINE
+          What Bashaier does every morning. The pending-EOD banner
+          (when active) warns about days where the morning pass was
+          done but the end-of-day pass is overdue. Below it: the
+          drop-zone, then all the results sections that appear after
+          a successful upload. */}
+      <ZoneHeader
+        number={2}
+        kicker="DO EVERY DAY"
+        title="Daily upload"
+        body="Upload the Time Card xlsx covering yesterday and today. The system flags late arrivals, early departures, missed punches, and shift off-days, and lets you email notices in one click. Upload here and the calendar above updates automatically."
+        accent="#0F4C2A"
+      />
 
       {/* ─── Pending end-of-day review banner ───────────────────────────
           Surfaces dates where the morning pass was completed but the
@@ -3737,6 +3822,23 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           }}
         />
       )}
+
+      {/* ZONE 3 — ONE-TIME SETUP
+          Historical backfill panel. Lives at the very bottom because
+          it's a one-shot tool: import months that predate the daily
+          flow, then never touch this again. Visually distinct from
+          Zone 2's daily action so Bashaier doesn't accidentally use
+          the wrong upload path. Collapsed by default. */}
+      <ZoneHeader
+        number={3}
+        kicker="ONE-TIME SETUP"
+        title="Historical backfill"
+        body="Use this once to fill in attendance for months before the daily flow began. Imports rows as 'present' only — no late/short/absent evaluation, since historical shift schedules aren't available. After backfill is done, the daily flow above takes over and writes properly evaluated rows from that day forward."
+        accent="#854F0B"
+      />
+      <AttendanceErrorBoundary label="Historical backfill">
+        <AttendanceBackfillPanel me={me} employees={employees} />
+      </AttendanceErrorBoundary>
     </div>
   );
 }
