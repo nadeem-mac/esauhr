@@ -1155,9 +1155,9 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
                 onClick={() => toggleOffWeekday(dow)}
                 className="text-[11px] px-3 py-1.5 rounded-full inline-flex items-center gap-1"
                 style={{
-                  background: isOff ? '#F5F5F5'   : 'var(--paper-2)',
-                  color:      isOff ? '#525252'   : '#0A0A0A',
-                  border:     '1px solid ' + (isOff ? '#A3A3A3' : 'var(--border)'),
+                  background: isOff ? '#EEF0FA'   : 'var(--paper-2)',
+                  color:      isOff ? '#3B4279'   : '#0A0A0A',
+                  border:     '1px solid ' + (isOff ? '#3B4279' : 'var(--border)'),
                   fontWeight: isOff ? 600 : 500,
                   cursor: 'pointer',
                 }}
@@ -1167,7 +1167,7 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
                   : `Click to mark every ${label} as off-day`
                 }
               >
-                {isOff && <span style={{ fontSize: 10, opacity: 0.7 }}>OFF</span>}
+                {isOff && <span style={{ fontSize: 10, opacity: 0.85, letterSpacing: '0.05em' }}>OFF</span>}
                 {label}
               </button>
             );
@@ -1361,14 +1361,14 @@ function CalendarGrid({ monthDays, plan, offWeekdaysSet, onToggle }) {
                   : cell.selected
                     ? 'var(--evergreen-600)'
                     : isOffPattern
-                      ? '#EAEAE6'
+                      ? '#EEF0FA'
                       : isWeekend ? '#FAF5EE' : 'var(--paper)',
                 color: isPast
                   ? '#A3A3A3'
                   : cell.selected
                     ? '#FFFFFF'
                     : isOffPattern
-                      ? '#525252'
+                      ? '#3B4279'
                       : '#0A0A0A',
                 border: '1px solid ' + (
                   isPast
@@ -1376,7 +1376,7 @@ function CalendarGrid({ monthDays, plan, offWeekdaysSet, onToggle }) {
                     : cell.selected
                       ? 'var(--evergreen-600)'
                       : isOffPattern
-                        ? '#A3A3A3'
+                        ? '#3B4279'
                         : isToday ? '#0F4C2A' : 'var(--border)'
                 ),
                 cursor: isPast ? 'not-allowed' : 'pointer',

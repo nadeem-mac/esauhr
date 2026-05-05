@@ -109,6 +109,11 @@ export default function ShiftMonthGrid({
   const [year, setYear]   = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth()); // 0-indexed
   const [shifts, setShifts] = useState([]);
+  // Off-pattern map: employeeId → Set<weekday-number 0-6>. Built from
+  // monthly_shift_plans rows for the visible month. Used by the
+  // calendar render to show OFF cells with a distinct blue tint on
+  // the manager-marked off-days, even on dates with no shift.
+  const [offPatternByEmp, setOffPatternByEmp] = useState(() => new Map());
   const [loading, setLoading] = useState(false);
 
   // Hover-tooltip state. Tracks the currently-hovered shift cell + its
@@ -147,6 +152,7 @@ export default function ShiftMonthGrid({
   const refetch = useCallback(async () => {
     if (!employees || !employees.length) {
       setShifts([]);
+      setOffPatternByEmp(new Map());
       return;
     }
     setLoading(true);
@@ -161,8 +167,44 @@ export default function ShiftMonthGrid({
         { timeoutMs: 9000 }
       );
       setShifts(data || []);
+
+      // Fetch the off-pattern for the same employees and the visible
+      // month from monthly_shift_plans. The tracker is keyed by
+      // (manager_id, employee_id, plan_month) — there can be multiple
+      // rows per employee if they've ever changed manager. We just
+      // pick the most recent row per employee_id, since the off-
+      // pattern is "current" for that employee at this point.
+      try {
+        const planMonthKey = ymd(firstDay);
+        const trackerRows = await directGet(
+          'monthly_shift_plans',
+          `select=employee_id,off_weekdays,last_committed_at` +
+          `&plan_month=eq.${planMonthKey}` +
+          `&employee_id=in.(${encodeURIComponent(ids)})` +
+          `&order=last_committed_at.desc`,
+          { timeoutMs: 6000 }
+        );
+        const m = new Map();
+        (trackerRows || []).forEach(r => {
+          if (!r?.employee_id) return;
+          // Most recent first via the order=last_committed_at.desc — only
+          // set if not already present so we keep the latest per employee.
+          if (m.has(r.employee_id)) return;
+          if (Array.isArray(r.off_weekdays) && r.off_weekdays.length > 0) {
+            m.set(r.employee_id, new Set(r.off_weekdays));
+          } else {
+            m.set(r.employee_id, new Set());
+          }
+        });
+        setOffPatternByEmp(m);
+      } catch {
+        // Off-pattern fetch failure is non-fatal — grid still renders
+        // shifts, just without the OFF cells.
+        setOffPatternByEmp(new Map());
+      }
     } catch {
       setShifts([]);
+      setOffPatternByEmp(new Map());
     } finally {
       setLoading(false);
     }
@@ -188,6 +230,14 @@ export default function ShiftMonthGrid({
       .channel('shift-month-grid')
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'employee_shifts' },
+        () => trigger()
+      )
+      // Also listen on monthly_shift_plans so when a manager toggles
+      // an off-day pattern in the planner and saves, every open
+      // ShiftMonthGrid (Bashaier's HR view, the manager's team view,
+      // a staff member's own view) refreshes its OFF cells live.
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'monthly_shift_plans' },
         () => trigger()
       )
       .subscribe();
@@ -487,7 +537,48 @@ export default function ShiftMonthGrid({
                         const isToday = dStr === todayStr;
                         const s = shiftIndex.get(`${emp.id}|${dStr}`);
                         const cellBg = isToday ? 'rgba(15,76,42,0.04)' : (isWeekend ? '#F5F5F5' : 'transparent');
+                        // Off-pattern check: this employee has a saved
+                        // off-pattern AND this weekday is in it AND no
+                        // shift exists for the date (shift wins). Used
+                        // to render an OFF chip with a distinctive blue
+                        // tint, matching the planner's off-day styling
+                        // so the two surfaces look consistent.
+                        const empOffSet = offPatternByEmp.get(emp.id);
+                        const isOffPattern = !s && empOffSet && empOffSet.has(dow);
                         if (!s) {
+                          if (isOffPattern) {
+                            return (
+                              <div
+                                key={dStr}
+                                style={{
+                                  background: cellBg,
+                                  borderLeft: '1px solid var(--border-soft, #EFEFEF)',
+                                  padding: '3px 2px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                }}
+                                title={`${emp.name || emp.id} \u2014 ${d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}\nOff-day per the manager's weekly pattern`}
+                              >
+                                <div style={{
+                                  background: '#EEF0FA',
+                                  color: '#3B4279',
+                                  border: '1px solid #C7CFE5',
+                                  borderRadius: 4,
+                                  width: '100%',
+                                  minHeight: 22,
+                                  fontSize: 9,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  fontWeight: 700,
+                                  letterSpacing: '0.06em',
+                                }}>
+                                  OFF
+                                </div>
+                              </div>
+                            );
+                          }
                           return (
                             <div key={dStr}
                               style={{ background: cellBg, borderLeft: '1px solid var(--border-soft, #EFEFEF)' }}
@@ -557,7 +648,7 @@ export default function ShiftMonthGrid({
               ))}
             </div>
           </div>
-          <div className="text-[11px] mt-2 flex flex-wrap gap-3" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+          <div className="text-[11px] mt-2 flex flex-wrap gap-3 items-center" style={{ color: '#0A0A0A', opacity: 0.8 }}>
             <span>{totalShiftsThisMonth} shift{totalShiftsThisMonth === 1 ? '' : 's'} in {monthLabel}</span>
             <span>&middot;</span>
             <span>Hover any cell for the full time range</span>
@@ -565,6 +656,20 @@ export default function ShiftMonthGrid({
             <span>Fri/Sat shaded as KSA weekend</span>
             <span>&middot;</span>
             <span>Arrow (&rarr;) indicates an overnight shift</span>
+            <span>&middot;</span>
+            <span className="inline-flex items-center gap-1">
+              <span style={{
+                background: '#EEF0FA',
+                color: '#3B4279',
+                border: '1px solid #C7CFE5',
+                borderRadius: 3,
+                fontSize: 9,
+                padding: '1px 5px',
+                fontWeight: 700,
+                letterSpacing: '0.06em',
+              }}>OFF</span>
+              = manager-marked off-day
+            </span>
           </div>
         </>
         );
