@@ -646,10 +646,12 @@ function buildLetterHtml(offer, signatory) {
          content above and below. The .offer-letter container is
          locked to A4 height (1123px), so the spacer can't grow
          past the page boundary — content always stays on one
-         page. */
+         page. max-height caps the push so signatures don't
+         overflow into page 2 on slightly-taller renders. */
       .offer-letter .spacer {
         flex: 1 1 auto;
         min-height: 0;
+        max-height: 40px;
       }
 
       /* ─── SIGNATURES ─── */
