@@ -109,10 +109,17 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy }) {
   let maxDate = null;
   const now = new Date().toISOString();
 
+  // Validate ISO date shape — parser already returns YYYY-MM-DD, but
+  // defend against unexpected null/garbage.
+  const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
+
   for (const r of (parsedRows || [])) {
     parsed++;
     const psn = String(r.psn || '').toUpperCase().trim();
-    const dateIso = isoDate(r.date);
+    // Date comes from parseTimeCardXlsx already in YYYY-MM-DD form
+    // via parseDdmmyyyy. Use it directly — DON'T re-parse as
+    // DD/MM/YYYY (the bug that caused 4901 rows to silently skip).
+    const dateIso = (r.date && ISO_RE.test(r.date)) ? r.date : null;
     if (!psn || !dateIso) { skipped++; continue; }
 
     // Resolve to canonical employee_id
