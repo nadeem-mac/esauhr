@@ -9,6 +9,7 @@ import { parseTimeCardXlsx, TimeCardParseError } from '../lib/timeCard.js';
 import { buildAttendanceRows, recordAttendanceRows } from '../lib/attendanceRecorder.js';
 import AttendanceMonthGrid from './AttendanceMonthGrid.jsx';
 import AttendanceBackfillPanel from './AttendanceBackfillPanel.jsx';
+import EmployeeAttendanceDetailPanel from './EmployeeAttendanceDetailPanel.jsx';
 
 // ─── Error Boundary for AttendanceView sections ───────────────────────
 // Without this, a render-time exception anywhere in the tree under
@@ -725,6 +726,12 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // the parsed result rather than the raw text — there's no use case
   // for re-parsing on the fly the way the CSV path was wired.
   const [xlsxFileName, setXlsxFileName] = useState('');
+
+  // Side-panel state — set to an employee object when Bashaier clicks
+  // a name in the Monthly Overview calendar; rendered as a slide-in
+  // drawer with that employee's full Jan-1-to-today attendance + leave
+  // history. null means the drawer is closed.
+  const [detailEmployee, setDetailEmployee] = useState(null);
   const [parsedData, setParsedData]     = useState({ rows: [], dataDate: null, sheetName: null });
   const [parseError, setParseError]     = useState(null);
 
@@ -3479,7 +3486,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           title="Monthly overview"
           body="One row per employee, one column per day. Each chip shows that day's status — present, late, absent, on leave, sick, or off-day. Hover any cell for the full detail. The calendar updates live every time a daily file is uploaded."
         />
-        <AttendanceMonthGrid employees={employees} />
+        <AttendanceMonthGrid employees={employees} onEmployeeClick={setDetailEmployee} />
       </AttendanceErrorBoundary>
 
       {/* ZONE 2 — DAILY ROUTINE
@@ -3839,6 +3846,20 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       <AttendanceErrorBoundary label="Historical backfill">
         <AttendanceBackfillPanel me={me} employees={employees} />
       </AttendanceErrorBoundary>
+
+      {/* Slide-in detail drawer — opens when an employee row in the
+          Monthly Overview calendar is clicked. Rendered at the root
+          of AttendanceView so its fixed-position chrome (backdrop +
+          panel) sits above all other UI. Self-closes on Esc, backdrop
+          click, or its own X button. */}
+      {detailEmployee && (
+        <AttendanceErrorBoundary label="Employee detail">
+          <EmployeeAttendanceDetailPanel
+            employee={detailEmployee}
+            onClose={() => setDetailEmployee(null)}
+          />
+        </AttendanceErrorBoundary>
+      )}
     </div>
   );
 }

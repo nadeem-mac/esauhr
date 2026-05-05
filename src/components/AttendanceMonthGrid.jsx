@@ -86,7 +86,7 @@ function readableStatus(status) {
   })[status] || status;
 }
 
-export default function AttendanceMonthGrid({ employees }) {
+export default function AttendanceMonthGrid({ employees, onEmployeeClick }) {
   const today = useMemo(() => new Date(), []);
   const [year, setYear]   = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
@@ -300,17 +300,34 @@ export default function AttendanceMonthGrid({ employees }) {
               const stats = statsByEmp.get(emp.id) || {};
               return (
                 <React.Fragment key={emp.id}>
-                  <div
+                  <button
+                    type="button"
+                    onClick={onEmployeeClick ? () => onEmployeeClick(emp) : undefined}
+                    disabled={!onEmployeeClick}
+                    title={onEmployeeClick ? `Open ${emp.name || emp.id}'s attendance detail` : (emp.name || emp.id)}
                     style={{
                       background: '#FFFFFF',
                       padding: '6px 8px',
                       borderTop: '1px solid var(--border-soft, #EFEFEF)',
+                      borderRight: 'none', borderLeft: 'none', borderBottom: 'none',
                       display: 'flex',
                       flexDirection: 'column',
                       justifyContent: 'center',
+                      textAlign: 'left',
+                      cursor: onEmployeeClick ? 'pointer' : 'default',
+                      transition: 'background 0.15s ease',
+                      width: '100%',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (onEmployeeClick) e.currentTarget.style.background = '#F8F8F4';
+                    }}
+                    onMouseLeave={(e) => {
+                      if (onEmployeeClick) e.currentTarget.style.background = '#FFFFFF';
                     }}
                   >
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#0A0A0A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: '#0A0A0A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                  textDecoration: onEmployeeClick ? 'underline' : 'none', textDecorationColor: 'rgba(15,76,42,0.25)',
+                                  textUnderlineOffset: 2 }}>
                       {emp.name || emp.id}
                     </div>
                     <div style={{ fontSize: 9, color: '#0A0A0A', opacity: 0.6, marginTop: 1 }}>
@@ -323,7 +340,7 @@ export default function AttendanceMonthGrid({ employees }) {
                       {stats.absent  > 0 && <span style={{ color: '#991B1B' }}>AB{stats.absent}</span>}
                       {stats.leave   > 0 && <span style={{ color: '#115E59' }}>LV{stats.leave}</span>}
                     </div>
-                  </div>
+                  </button>
                   {days.map(d => {
                     const dStr = ymd(d);
                     const dow = d.getDay();

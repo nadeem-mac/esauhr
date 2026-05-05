@@ -1,0 +1,1080 @@
+// =============================================================================
+// EmployeeAttendanceDetailPanel.jsx
+//
+// Right-side slide-in drawer launched when Bashaier clicks an employee
+// row in the Monthly Overview calendar. Shows that employee's full
+// attendance history (Jan 1 of the current year through today) and
+// can switch to a Leave view via the in-panel tab.
+//
+// LAYOUT
+//   Container is fixed to the right edge of the viewport, ~520px on
+//   desktop (full-width on mobile). Spring-bounces in from the right
+//   on mount; backdrop fades in. ESC or backdrop-click closes; close
+//   animates out by reversing the slide.
+//
+// TABS
+//   • Attendance — every recorded attendance_daily row from Jan 1
+//                  to today, grouped by month with summary stats.
+//   • Leave      — every leave_request whose [start, end] overlaps
+//                  the same window, with type, dates, status, reason.
+//
+// EXPORT
+//   Each tab's view exports as a standalone HTML report (opens in a
+//   new tab and immediately presents the print dialog). Reports use
+//   the same visual language as the weekend attendance report so
+//   anything Bashaier sends out looks like it came from the same
+//   system.
+//
+// FETCH
+//   Single fetch on mount per tab — attendance_daily rows + leave
+//   requests. Both queries are date-range bounded so the payload
+//   stays small. The caller passes `employee` so we already have
+//   name/dept/id for headers.
+// =============================================================================
+
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import {
+  X, Download, Loader2, Calendar as CalIcon,
+  CheckCircle2, AlertCircle, Clock, FileSpreadsheet, ChevronRight,
+} from 'lucide-react';
+import { directGet } from '../supabaseClient.js';
+
+// ─── Inline keyframes ────────────────────────────────────────────────
+const ANIM_CSS = `
+@keyframes detail-backdrop-in {
+  0%   { opacity: 0; }
+  100% { opacity: 1; }
+}
+@keyframes detail-panel-in {
+  0%   { transform: translateX(100%); opacity: 0; }
+  60%  { transform: translateX(-1.5%); opacity: 1; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+@keyframes detail-tile-in {
+  0%   { opacity: 0; transform: translateY(8px) scale(0.94); }
+  60%  { opacity: 1; transform: translateY(-2px) scale(1.03); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes detail-row-in {
+  0%   { opacity: 0; transform: translateX(8px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+`;
+
+// ─── Helpers ─────────────────────────────────────────────────────────
+function ymd(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
+
+function trimTime(t) {
+  if (!t) return '';
+  return String(t).slice(0, 5);
+}
+
+const STATUS_META = {
+  present:      { bg: '#ECFDF5', fg: '#0F4C2A', border: '#A7F3D0', label: 'Present',      icon: '✓'  },
+  late:         { bg: '#FEF3C7', fg: '#854F0B', border: '#FCD34D', label: 'Late',         icon: 'LT' },
+  short:        { bg: '#FED7AA', fg: '#7C2D12', border: '#FB923C', label: 'Left early',   icon: 'SH' },
+  absent:       { bg: '#FEE2E2', fg: '#991B1B', border: '#FCA5A5', label: 'Absent',       icon: 'AB' },
+  annual_leave: { bg: '#CCFBF1', fg: '#115E59', border: '#5EEAD4', label: 'Annual leave', icon: 'AL' },
+  sick_leave:   { bg: '#EDE9FE', fg: '#5B21B6', border: '#C4B5FD', label: 'Sick leave',   icon: 'SL' },
+  off_roster:   { bg: '#DBEAFE', fg: '#1E3A8A', border: '#93C5FD', label: 'Off-roster',   icon: 'OR' },
+  off_day:      { bg: '#EEF0FA', fg: '#3B4279', border: '#C7CFE5', label: 'Off-day',      icon: 'OF' },
+};
+
+function statusMeta(s) {
+  return STATUS_META[s] || { bg: '#F5F5F5', fg: '#525252', border: '#D4D4D4', label: s, icon: '?' };
+}
+
+const MONTH_NAMES = [
+  'January','February','March','April','May','June',
+  'July','August','September','October','November','December',
+];
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const [y, m, d] = iso.split('-').map(n => parseInt(n, 10));
+  const dt = new Date(y, m - 1, d);
+  return dt.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+function fmtRangeShort(iso) {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-').map(n => parseInt(n, 10));
+  return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+// HTML escape
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => (
+    c === '&' ? '&amp;' :
+    c === '<' ? '&lt;' :
+    c === '>' ? '&gt;' :
+    c === '"' ? '&quot;' :
+    '&#39;'
+  ));
+}
+
+// =============================================================================
+
+export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
+  const [closing, setClosing] = useState(false);
+  const [tab, setTab] = useState('attendance');
+  const [attRows, setAttRows] = useState(null); // null = loading
+  const [leaveRows, setLeaveRows] = useState(null);
+  const [leaveTypes, setLeaveTypes] = useState([]);
+
+  // Range: Jan 1 of CURRENT YEAR → today (local).
+  const range = useMemo(() => {
+    const today = new Date();
+    const from  = new Date(today.getFullYear(), 0, 1);
+    return { from: ymd(from), to: ymd(today), todayDate: today, fromDate: from };
+  }, []);
+
+  // ─── Close machinery — animate out, then call parent's onClose ──
+  const requestClose = useCallback(() => {
+    if (closing) return;
+    setClosing(true);
+    setTimeout(() => onClose?.(), 220);
+  }, [onClose, closing]);
+
+  // ESC key + backdrop click
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key === 'Escape') requestClose();
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [requestClose]);
+
+  // Lock body scroll while panel open
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
+  // ─── Fetch attendance ──────────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    if (!employee?.id) return;
+    (async () => {
+      try {
+        const data = await directGet(
+          'attendance_daily',
+          `select=attendance_date,status,first_punch,last_punch,punch_count,` +
+          `expected_start,expected_end,late_minutes,early_leave_minutes,notes` +
+          `&employee_id=eq.${encodeURIComponent(employee.id)}` +
+          `&attendance_date=gte.${range.from}&attendance_date=lte.${range.to}` +
+          `&order=attendance_date.asc`,
+          { timeoutMs: 12000 }
+        );
+        if (!cancelled) setAttRows(data || []);
+      } catch (e) {
+        if (!cancelled) setAttRows([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [employee?.id, range.from, range.to]);
+
+  // ─── Fetch leave ──────────────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    if (!employee?.id) return;
+    (async () => {
+      try {
+        // Pull every leave_request that overlaps the window. The
+        // overlap test is "start <= range.to AND end >= range.from"
+        // — covers single-day, multi-day, and ongoing leaves.
+        const leaves = await directGet(
+          'leave_requests',
+          `select=id,start_date,end_date,leave_type_id,status,reason,decided_at` +
+          `&employee_id=eq.${encodeURIComponent(employee.id)}` +
+          `&start_date=lte.${range.to}` +
+          `&end_date=gte.${range.from}` +
+          `&order=start_date.asc`,
+          { timeoutMs: 12000 }
+        );
+        // Pull the leave-types lookup once so we can resolve names.
+        const types = await directGet(
+          'leave_types',
+          `select=id,name,code`,
+          { timeoutMs: 6000 }
+        ).catch(() => []);
+        if (!cancelled) {
+          setLeaveRows(leaves || []);
+          setLeaveTypes(types || []);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setLeaveRows([]);
+          setLeaveTypes([]);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [employee?.id, range.from, range.to]);
+
+  // ─── Derived: monthly groups + summary counts ─────────────────────
+  const monthly = useMemo(() => {
+    if (!Array.isArray(attRows)) return [];
+    const groups = new Map();
+    for (const r of attRows) {
+      const [y, m] = r.attendance_date.split('-').map(n => parseInt(n, 10));
+      const key = `${y}-${String(m).padStart(2, '0')}`;
+      if (!groups.has(key)) groups.set(key, { year: y, month: m - 1, rows: [] });
+      groups.get(key).rows.push(r);
+    }
+    return Array.from(groups.values()).sort((a, b) => {
+      if (a.year !== b.year) return a.year - b.year;
+      return a.month - b.month;
+    });
+  }, [attRows]);
+
+  const summary = useMemo(() => {
+    if (!Array.isArray(attRows)) return null;
+    const counts = {};
+    for (const r of attRows) counts[r.status] = (counts[r.status] || 0) + 1;
+    return counts;
+  }, [attRows]);
+
+  const leaveTypeName = useCallback((id) => {
+    const t = leaveTypes.find(x => x.id === id);
+    return t?.name || 'Leave';
+  }, [leaveTypes]);
+
+  // ─── HTML export ──────────────────────────────────────────────────
+  const exportHtml = useCallback(() => {
+    if (tab === 'attendance') {
+      exportAttendanceHtml(employee, range, monthly, summary || {}, leaveRows || [], leaveTypeName);
+    } else {
+      exportLeaveHtml(employee, range, leaveRows || [], leaveTypeName);
+    }
+  }, [employee, tab, range, monthly, summary, leaveRows, leaveTypeName]);
+
+  if (!employee) return null;
+
+  return (
+    <>
+      <style>{ANIM_CSS}</style>
+
+      {/* Backdrop */}
+      <div
+        onClick={requestClose}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(31, 27, 22, 0.45)',
+          zIndex: 70,
+          animation: closing
+            ? 'detail-backdrop-in 0.18s ease-out reverse'
+            : 'detail-backdrop-in 0.22s ease-out',
+          opacity: closing ? 0 : 1,
+          transition: closing ? 'opacity 0.18s ease-out' : 'none',
+        }}
+      />
+
+      {/* Panel */}
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Attendance detail for ${employee.name || employee.id}`}
+        style={{
+          position: 'fixed',
+          top: 0, right: 0, bottom: 0,
+          width: 'min(560px, 100vw)',
+          background: '#FAFAF6',
+          zIndex: 71,
+          display: 'flex',
+          flexDirection: 'column',
+          boxShadow: '-12px 0 32px rgba(0,0,0,0.18)',
+          animation: closing
+            ? 'detail-panel-in 0.22s cubic-bezier(0.4, 0, 0.6, 1) reverse forwards'
+            : 'detail-panel-in 0.42s cubic-bezier(0.34, 1.56, 0.64, 1)',
+        }}
+      >
+        {/* Header */}
+        <div
+          style={{
+            padding: '18px 20px 14px',
+            background: 'linear-gradient(180deg, #FFFFFF 0%, #FAFAF6 100%)',
+            borderBottom: '1px solid #E5E5E5',
+            position: 'relative',
+          }}
+        >
+          <button
+            onClick={requestClose}
+            aria-label="Close panel"
+            style={{
+              position: 'absolute',
+              top: 12, right: 12,
+              width: 32, height: 32,
+              borderRadius: 999,
+              border: '1px solid #E5E5E5',
+              background: '#FFFFFF',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#0A0A0A',
+              transition: 'all 0.2s',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = '#F5F5F5'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = '#FFFFFF'; }}
+          >
+            <X className="w-4 h-4" />
+          </button>
+
+          <div className="text-[10px]" style={{ color: '#0F4C2A', fontWeight: 700, letterSpacing: '0.25em' }}>
+            STAFF ATTENDANCE DETAIL
+          </div>
+          <h2
+            style={{
+              fontFamily: 'Georgia, serif',
+              fontSize: 24,
+              color: '#1F1B16',
+              marginTop: 2,
+              lineHeight: 1.15,
+              fontWeight: 700,
+              paddingRight: 36,
+            }}
+          >
+            {employee.name || employee.id}
+          </h2>
+          <div className="text-[12px] mt-0.5" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+            {employee.id}
+            {employee.department ? ` · ${employee.department}` : ''}
+            {employee.location ? ` · ${employee.location}` : ''}
+          </div>
+          <div className="text-[11px] mt-1.5 inline-flex items-center gap-1.5"
+            style={{ color: '#0A0A0A', opacity: 0.6 }}>
+            <CalIcon className="w-3 h-3" />
+            {fmtRangeShort(range.from)} &ndash; {fmtRangeShort(range.to)}
+          </div>
+
+          {/* Tabs */}
+          <div className="flex gap-1 mt-3" role="tablist">
+            <TabButton
+              active={tab === 'attendance'}
+              onClick={() => setTab('attendance')}
+              icon={<CheckCircle2 className="w-3.5 h-3.5" />}
+              label="Attendance"
+            />
+            <TabButton
+              active={tab === 'leave'}
+              onClick={() => setTab('leave')}
+              icon={<CalIcon className="w-3.5 h-3.5" />}
+              label="Leave"
+              count={Array.isArray(leaveRows) ? leaveRows.length : null}
+            />
+          </div>
+        </div>
+
+        {/* Body — scrollable */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '14px 20px 20px' }}>
+          {tab === 'attendance' && (
+            <AttendanceTab
+              loading={attRows === null}
+              monthly={monthly}
+              summary={summary}
+            />
+          )}
+          {tab === 'leave' && (
+            <LeaveTab
+              loading={leaveRows === null}
+              rows={leaveRows || []}
+              leaveTypeName={leaveTypeName}
+            />
+          )}
+        </div>
+
+        {/* Footer — actions */}
+        <div
+          style={{
+            padding: '12px 20px',
+            borderTop: '1px solid #E5E5E5',
+            background: '#FFFFFF',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+          }}
+        >
+          <div className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.6 }}>
+            Press <kbd style={{ fontFamily: 'inherit', background: '#F5F5F5', padding: '1px 5px', borderRadius: 3, border: '1px solid #E5E5E5' }}>Esc</kbd> to close
+          </div>
+          <button
+            onClick={exportHtml}
+            disabled={tab === 'attendance' ? attRows === null : leaveRows === null}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[12px]"
+            style={{
+              background: '#0F4C2A',
+              color: '#FFFFFF',
+              border: 'none',
+              fontWeight: 700,
+              cursor: 'pointer',
+              boxShadow: '0 2px 6px rgba(15,76,42,0.18)',
+              transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-1px)';
+              e.currentTarget.style.boxShadow = '0 6px 16px rgba(15,76,42,0.28)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 2px 6px rgba(15,76,42,0.18)';
+            }}
+          >
+            <Download className="w-3.5 h-3.5" />
+            Export HTML
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ─── TabButton ───────────────────────────────────────────────────────
+function TabButton({ active, onClick, icon, label, count }) {
+  return (
+    <button
+      onClick={onClick}
+      role="tab"
+      aria-selected={active}
+      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px]"
+      style={{
+        background: active ? '#1F1B16' : 'transparent',
+        color: active ? '#FFFFFF' : '#1F1B16',
+        border: '1px solid ' + (active ? '#1F1B16' : '#E5E5E5'),
+        fontWeight: active ? 700 : 500,
+        cursor: 'pointer',
+        transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
+      }}
+    >
+      {icon}
+      {label}
+      {count != null && count > 0 && (
+        <span style={{
+          background: active ? 'rgba(255,255,255,0.2)' : '#F5F5F5',
+          color: active ? '#FFFFFF' : '#1F1B16',
+          padding: '0 6px',
+          borderRadius: 999,
+          fontSize: 10,
+          fontWeight: 700,
+        }}>
+          {count}
+        </span>
+      )}
+    </button>
+  );
+}
+
+// ─── AttendanceTab ────────────────────────────────────────────────────
+function AttendanceTab({ loading, monthly, summary }) {
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 py-8 justify-center text-sm" style={{ color: '#0A0A0A', opacity: 0.6 }}>
+        <Loader2 className="w-4 h-4 animate-spin" /> Loading attendance…
+      </div>
+    );
+  }
+
+  const counts = summary || {};
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+
+  return (
+    <div>
+      {/* Summary tiles */}
+      {total > 0 && (
+        <div className="grid grid-cols-4 gap-2 mb-4">
+          {[
+            ['present',      'Present', 0],
+            ['late',         'Late',    50],
+            ['absent',       'Absent',  100],
+            ['annual_leave', 'Leave',   150],
+          ].map(([k, label, delay], i) => {
+            const meta = statusMeta(k);
+            const count = (k === 'annual_leave' ? (counts.annual_leave || 0) + (counts.sick_leave || 0) : (counts[k] || 0));
+            return (
+              <div
+                key={k}
+                style={{
+                  background: '#FFFFFF',
+                  border: `1.5px solid ${meta.border}`,
+                  borderRadius: 12,
+                  padding: '10px 8px',
+                  textAlign: 'center',
+                  animation: `detail-tile-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) ${delay}ms both`,
+                }}
+              >
+                <div
+                  style={{
+                    fontFamily: 'Georgia, serif',
+                    fontSize: 24,
+                    color: meta.fg,
+                    fontWeight: 700,
+                    lineHeight: 1,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {count}
+                </div>
+                <div
+                  className="text-[10px] mt-1"
+                  style={{ color: '#0A0A0A', opacity: 0.7, fontWeight: 600, letterSpacing: '0.08em' }}
+                >
+                  {label.toUpperCase()}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {monthly.length === 0 && (
+        <div
+          className="rounded-xl p-5 text-center"
+          style={{ background: '#FFFFFF', border: '1px dashed #E5E5E5', color: '#0A0A0A', opacity: 0.6 }}
+        >
+          <FileSpreadsheet className="w-6 h-6 mx-auto mb-2" />
+          <div className="text-sm">No attendance records in this range yet.</div>
+          <div className="text-[11px] mt-1">As daily files are uploaded, days populate here.</div>
+        </div>
+      )}
+
+      {/* Monthly groups */}
+      {monthly.map((g, gi) => {
+        const monthCounts = g.rows.reduce((acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc; }, {});
+        return (
+          <div key={`${g.year}-${g.month}`} style={{ marginBottom: 18 }}>
+            <div className="flex items-baseline justify-between mb-2">
+              <div
+                style={{
+                  fontFamily: 'Georgia, serif',
+                  fontSize: 16,
+                  color: '#1F1B16',
+                  fontWeight: 700,
+                }}
+              >
+                {MONTH_NAMES[g.month]} {g.year}
+              </div>
+              <div className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.55 }}>
+                {g.rows.length} {g.rows.length === 1 ? 'record' : 'records'}
+              </div>
+            </div>
+
+            {/* Mini-summary chip strip */}
+            <div className="flex flex-wrap gap-1 mb-2">
+              {Object.entries(monthCounts).map(([k, v]) => {
+                const meta = statusMeta(k);
+                return (
+                  <span
+                    key={k}
+                    style={{
+                      background: meta.bg, color: meta.fg, border: `1px solid ${meta.border}`,
+                      fontSize: 10, padding: '1px 6px', borderRadius: 999, fontWeight: 700,
+                    }}
+                  >
+                    {meta.label}: {v}
+                  </span>
+                );
+              })}
+            </div>
+
+            {/* Rows */}
+            <div
+              style={{
+                background: '#FFFFFF',
+                border: '1px solid #E5E5E5',
+                borderRadius: 10,
+                overflow: 'hidden',
+              }}
+            >
+              {g.rows.map((r, ri) => {
+                const meta = statusMeta(r.status);
+                const detail = r.status === 'late'
+                  ? `${r.late_minutes || 0} min late`
+                  : r.status === 'short'
+                    ? `${r.early_leave_minutes || 0} min early out`
+                    : r.status === 'present' && r.first_punch
+                      ? `${trimTime(r.first_punch)} \u2192 ${trimTime(r.last_punch)}`
+                      : meta.label;
+                return (
+                  <div
+                    key={r.attendance_date}
+                    style={{
+                      padding: '8px 12px',
+                      borderTop: ri === 0 ? 'none' : '1px solid #F0F0F0',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      animation: `detail-row-in 0.32s ease-out ${Math.min(ri * 12, 240)}ms both`,
+                    }}
+                  >
+                    <div
+                      style={{
+                        background: meta.bg,
+                        color: meta.fg,
+                        border: `1px solid ${meta.border}`,
+                        borderRadius: 6,
+                        width: 28,
+                        height: 24,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontWeight: 700,
+                        fontSize: 10,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {meta.icon}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="text-[12px]" style={{ color: '#1F1B16', fontWeight: 600 }}>
+                        {fmtDate(r.attendance_date)}
+                      </div>
+                      <div className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.65 }}>
+                        {detail}
+                        {r.first_punch && r.status !== 'present' && (
+                          <span style={{ marginLeft: 6 }}>
+                            &middot; {trimTime(r.first_punch)} {r.last_punch ? `\u2192 ${trimTime(r.last_punch)}` : ''}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── LeaveTab ────────────────────────────────────────────────────────
+function LeaveTab({ loading, rows, leaveTypeName }) {
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 py-8 justify-center text-sm" style={{ color: '#0A0A0A', opacity: 0.6 }}>
+        <Loader2 className="w-4 h-4 animate-spin" /> Loading leave…
+      </div>
+    );
+  }
+  if (rows.length === 0) {
+    return (
+      <div
+        className="rounded-xl p-5 text-center"
+        style={{ background: '#FFFFFF', border: '1px dashed #E5E5E5', color: '#0A0A0A', opacity: 0.6 }}
+      >
+        <CalIcon className="w-6 h-6 mx-auto mb-2" />
+        <div className="text-sm">No leave records in this range.</div>
+      </div>
+    );
+  }
+
+  // Compute total leave days (sum of inclusive-day counts per row)
+  const totalDays = rows.reduce((sum, r) => {
+    const s = new Date(r.start_date + 'T00:00:00');
+    const e = new Date(r.end_date   + 'T00:00:00');
+    const days = Math.floor((e - s) / 86400000) + 1;
+    return sum + (days > 0 ? days : 1);
+  }, 0);
+
+  return (
+    <div>
+      <div className="grid grid-cols-2 gap-2 mb-4">
+        <div
+          style={{
+            background: '#FFFFFF', border: '1.5px solid #5EEAD4', borderRadius: 12,
+            padding: '10px 8px', textAlign: 'center',
+            animation: 'detail-tile-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0ms both',
+          }}
+        >
+          <div style={{ fontFamily: 'Georgia, serif', fontSize: 24, color: '#115E59', fontWeight: 700, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+            {rows.length}
+          </div>
+          <div className="text-[10px] mt-1" style={{ color: '#0A0A0A', opacity: 0.7, fontWeight: 600, letterSpacing: '0.08em' }}>
+            REQUESTS
+          </div>
+        </div>
+        <div
+          style={{
+            background: '#FFFFFF', border: '1.5px solid #5EEAD4', borderRadius: 12,
+            padding: '10px 8px', textAlign: 'center',
+            animation: 'detail-tile-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 50ms both',
+          }}
+        >
+          <div style={{ fontFamily: 'Georgia, serif', fontSize: 24, color: '#115E59', fontWeight: 700, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+            {totalDays}
+          </div>
+          <div className="text-[10px] mt-1" style={{ color: '#0A0A0A', opacity: 0.7, fontWeight: 600, letterSpacing: '0.08em' }}>
+            TOTAL DAYS
+          </div>
+        </div>
+      </div>
+
+      <div style={{ background: '#FFFFFF', border: '1px solid #E5E5E5', borderRadius: 10, overflow: 'hidden' }}>
+        {rows.map((r, ri) => {
+          const isApproved = r.status === 'approved';
+          const isDeclined = r.status === 'rejected' || r.status === 'declined';
+          const tone = isApproved ? '#0F4C2A' : isDeclined ? '#991B1B' : '#854F0B';
+          const toneBg = isApproved ? '#ECFDF5' : isDeclined ? '#FEF2F2' : '#FEF3C7';
+          return (
+            <div
+              key={r.id}
+              style={{
+                padding: '10px 12px',
+                borderTop: ri === 0 ? 'none' : '1px solid #F0F0F0',
+                animation: `detail-row-in 0.32s ease-out ${Math.min(ri * 30, 240)}ms both`,
+              }}
+            >
+              <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                <div className="text-[12px]" style={{ color: '#1F1B16', fontWeight: 700 }}>
+                  {leaveTypeName(r.leave_type_id)}
+                </div>
+                <span style={{
+                  background: toneBg, color: tone, fontSize: 10,
+                  padding: '1px 8px', borderRadius: 999, fontWeight: 700,
+                  letterSpacing: '0.06em', textTransform: 'uppercase',
+                }}>
+                  {r.status}
+                </span>
+              </div>
+              <div className="text-[11px] mt-0.5" style={{ color: '#0A0A0A', opacity: 0.75 }}>
+                {fmtRangeShort(r.start_date)} {r.start_date !== r.end_date ? `\u2192 ${fmtRangeShort(r.end_date)}` : ''}
+              </div>
+              {r.reason && (
+                <div
+                  className="text-[11px] mt-1"
+                  style={{ color: '#0A0A0A', opacity: 0.7, fontStyle: 'italic' }}
+                >
+                  &ldquo;{r.reason}&rdquo;
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// HTML EXPORT
+// ═══════════════════════════════════════════════════════════════════════
+
+const REPORT_STYLES = `
+:root {
+  --green:      #0F4C2A;
+  --green-soft: #E8F5E9;
+  --green-mid:  #BBDEC0;
+  --cream:      #FAFAF6;
+  --beige:      #E5E5E5;
+  --ink:        #0A0A0A;
+  --ink-mute:   #555555;
+  --rule:       #F0F0F0;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: #FFFFFF;
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 13px; line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+.page { max-width: 980px; margin: 0 auto; padding: 40px 36px 56px; }
+header.report-header {
+  border-bottom: 3px solid var(--green);
+  padding-bottom: 18px;
+  margin-bottom: 28px;
+}
+.kicker {
+  font-size: 11px; letter-spacing: 0.28em;
+  color: var(--green); font-weight: 700;
+  text-transform: uppercase; margin-bottom: 8px;
+}
+h1 {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 30px; line-height: 1.15;
+  margin: 0 0 6px; font-weight: 700; color: var(--ink);
+}
+.sub { color: var(--ink-mute); font-size: 13px; }
+.meta {
+  display: flex; gap: 18px; flex-wrap: wrap;
+  margin-top: 12px; font-size: 12px; color: var(--ink-mute);
+}
+.meta strong { color: var(--ink); }
+.summary {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 12px; margin-bottom: 28px;
+}
+.tile {
+  background: var(--cream); border-radius: 10px; padding: 14px;
+  border: 1px solid var(--rule);
+}
+.tile .v {
+  font-family: Georgia, serif; font-size: 28px; font-weight: 700;
+  color: var(--ink); line-height: 1; font-variant-numeric: tabular-nums;
+}
+.tile .l {
+  font-size: 10px; letter-spacing: 0.16em;
+  color: var(--ink-mute); font-weight: 700;
+  text-transform: uppercase; margin-top: 6px;
+}
+section.month {
+  margin-bottom: 22px;
+  break-inside: avoid;
+}
+section.month h2 {
+  font-family: Georgia, serif; font-size: 18px; font-weight: 700;
+  color: var(--ink); margin: 0 0 8px;
+}
+table {
+  width: 100%; border-collapse: collapse;
+  background: #FFFFFF; border: 1px solid var(--rule);
+  border-radius: 8px; overflow: hidden;
+}
+thead th {
+  background: var(--green-soft); color: var(--green);
+  font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+  text-align: left; padding: 8px 10px; font-weight: 700;
+  border-bottom: 1px solid var(--green-mid);
+}
+tbody td {
+  padding: 7px 10px; font-size: 12px; border-top: 1px solid var(--rule);
+  vertical-align: top;
+}
+tbody tr:first-child td { border-top: none; }
+.chip {
+  display: inline-block;
+  padding: 1px 7px; border-radius: 999px;
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.chip.present      { background: #ECFDF5; color: #0F4C2A; border: 1px solid #A7F3D0; }
+.chip.late         { background: #FEF3C7; color: #854F0B; border: 1px solid #FCD34D; }
+.chip.short        { background: #FED7AA; color: #7C2D12; border: 1px solid #FB923C; }
+.chip.absent       { background: #FEE2E2; color: #991B1B; border: 1px solid #FCA5A5; }
+.chip.annual_leave { background: #CCFBF1; color: #115E59; border: 1px solid #5EEAD4; }
+.chip.sick_leave   { background: #EDE9FE; color: #5B21B6; border: 1px solid #C4B5FD; }
+.chip.off_roster   { background: #DBEAFE; color: #1E3A8A; border: 1px solid #93C5FD; }
+.chip.off_day      { background: #EEF0FA; color: #3B4279; border: 1px solid #C7CFE5; }
+.chip.approved     { background: #ECFDF5; color: #0F4C2A; border: 1px solid #A7F3D0; }
+.chip.pending      { background: #FEF3C7; color: #854F0B; border: 1px solid #FCD34D; }
+.chip.rejected,
+.chip.declined     { background: #FEE2E2; color: #991B1B; border: 1px solid #FCA5A5; }
+footer.report-footer {
+  margin-top: 40px; padding-top: 16px;
+  border-top: 1px solid var(--rule);
+  font-size: 11px; color: var(--ink-mute);
+  display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+}
+@media print {
+  body { background: #FFFFFF; }
+  .page { padding: 16px 0; }
+  .no-print { display: none !important; }
+}
+`;
+
+function statusLabelFor(s) {
+  return statusMeta(s).label;
+}
+
+function exportAttendanceHtml(employee, range, monthly, summary, leaveRows, leaveTypeName) {
+  const counts = summary || {};
+  const totalRecords = Object.values(counts).reduce((a, b) => a + b, 0);
+
+  const monthBlocks = monthly.map(g => {
+    const rowsHtml = g.rows.map(r => {
+      const meta = statusMeta(r.status);
+      const detail = r.status === 'late'
+        ? `${r.late_minutes || 0} min late`
+        : r.status === 'short'
+          ? `${r.early_leave_minutes || 0} min early out`
+          : r.status === 'absent'
+            ? 'No punches recorded'
+            : '—';
+      const punch = (r.first_punch || r.last_punch)
+        ? `${trimTime(r.first_punch) || '—'} → ${trimTime(r.last_punch) || '—'}`
+        : '—';
+      const sched = (r.expected_start || r.expected_end)
+        ? `${trimTime(r.expected_start) || '?'}–${trimTime(r.expected_end) || '?'}`
+        : '—';
+      return `
+        <tr>
+          <td>${esc(fmtDate(r.attendance_date))}</td>
+          <td><span class="chip ${esc(r.status)}">${esc(statusLabelFor(r.status))}</span></td>
+          <td>${esc(punch)}</td>
+          <td>${esc(sched)}</td>
+          <td>${esc(detail)}</td>
+        </tr>
+      `;
+    }).join('');
+    return `
+      <section class="month">
+        <h2>${esc(MONTH_NAMES[g.month])} ${g.year} <span style="font-weight:400;font-size:12px;color:var(--ink-mute);margin-left:8px;">${g.rows.length} record${g.rows.length === 1 ? '' : 's'}</span></h2>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:24%">Date</th>
+              <th style="width:14%">Status</th>
+              <th style="width:18%">Punches</th>
+              <th style="width:18%">Schedule</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </section>
+    `;
+  }).join('');
+
+  const tile = (count, label) => `
+    <div class="tile">
+      <div class="v">${count}</div>
+      <div class="l">${esc(label)}</div>
+    </div>
+  `;
+
+  const totalLeave = (counts.annual_leave || 0) + (counts.sick_leave || 0);
+  const summaryTiles = `
+    <div class="summary">
+      ${tile(counts.present || 0, 'Present')}
+      ${tile(counts.late || 0, 'Late')}
+      ${tile(counts.absent || 0, 'Absent')}
+      ${tile(totalLeave, 'On leave')}
+    </div>
+  `;
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Attendance Report — ${esc(employee.name || employee.id)}</title>
+<style>${REPORT_STYLES}</style>
+</head>
+<body>
+  <div class="page">
+    <header class="report-header">
+      <div class="kicker">Staff attendance report</div>
+      <h1>${esc(employee.name || employee.id)}</h1>
+      <div class="sub">${esc(employee.id)}${employee.department ? ' · ' + esc(employee.department) : ''}${employee.location ? ' · ' + esc(employee.location) : ''}</div>
+      <div class="meta">
+        <span><strong>Range:</strong> ${esc(fmtRangeShort(range.from))} – ${esc(fmtRangeShort(range.to))}</span>
+        <span><strong>Records:</strong> ${totalRecords}</span>
+        <span><strong>Generated:</strong> ${esc(new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
+      </div>
+    </header>
+
+    ${summaryTiles}
+
+    ${monthBlocks || '<p style="color:var(--ink-mute);">No attendance records in this range.</p>'}
+
+    <footer class="report-footer">
+      <span>Generated by ESAU HR Portal</span>
+      <span>Confidential — for internal use</span>
+    </footer>
+  </div>
+  <script>setTimeout(() => window.print(), 600);</script>
+</body>
+</html>`;
+
+  openHtml(html, `attendance_${(employee.id || 'staff').toLowerCase()}.html`);
+}
+
+function exportLeaveHtml(employee, range, leaveRows, leaveTypeName) {
+  const totalDays = leaveRows.reduce((sum, r) => {
+    const s = new Date(r.start_date + 'T00:00:00');
+    const e = new Date(r.end_date   + 'T00:00:00');
+    const days = Math.floor((e - s) / 86400000) + 1;
+    return sum + (days > 0 ? days : 1);
+  }, 0);
+
+  const rowsHtml = leaveRows.map(r => `
+    <tr>
+      <td>${esc(leaveTypeName(r.leave_type_id))}</td>
+      <td>${esc(fmtRangeShort(r.start_date))}${r.start_date !== r.end_date ? ' → ' + esc(fmtRangeShort(r.end_date)) : ''}</td>
+      <td><span class="chip ${esc(r.status)}">${esc(r.status)}</span></td>
+      <td>${esc(r.reason || '—')}</td>
+    </tr>
+  `).join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Leave Report — ${esc(employee.name || employee.id)}</title>
+<style>${REPORT_STYLES}</style>
+</head>
+<body>
+  <div class="page">
+    <header class="report-header">
+      <div class="kicker">Staff leave report</div>
+      <h1>${esc(employee.name || employee.id)}</h1>
+      <div class="sub">${esc(employee.id)}${employee.department ? ' · ' + esc(employee.department) : ''}</div>
+      <div class="meta">
+        <span><strong>Range:</strong> ${esc(fmtRangeShort(range.from))} – ${esc(fmtRangeShort(range.to))}</span>
+        <span><strong>Requests:</strong> ${leaveRows.length}</span>
+        <span><strong>Total days:</strong> ${totalDays}</span>
+        <span><strong>Generated:</strong> ${esc(new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
+      </div>
+    </header>
+
+    ${leaveRows.length === 0 ? '<p style="color:var(--ink-mute);">No leave records in this range.</p>' : `
+      <table>
+        <thead>
+          <tr>
+            <th style="width:22%">Type</th>
+            <th style="width:30%">Period</th>
+            <th style="width:14%">Status</th>
+            <th>Reason</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    `}
+
+    <footer class="report-footer">
+      <span>Generated by ESAU HR Portal</span>
+      <span>Confidential — for internal use</span>
+    </footer>
+  </div>
+  <script>setTimeout(() => window.print(), 600);</script>
+</body>
+</html>`;
+
+  openHtml(html, `leave_${(employee.id || 'staff').toLowerCase()}.html`);
+}
+
+function openHtml(html, filename) {
+  // Open in a new tab. Older Safari blocks popups when triggered from
+  // an async callback, but since this function is called in the same
+  // tick as the click handler it should be fine in our case.
+  try {
+    const w = window.open('', '_blank');
+    if (w) {
+      w.document.open();
+      w.document.write(html);
+      w.document.close();
+      try { w.document.title = filename.replace(/\.html$/, ''); } catch {}
+      return;
+    }
+  } catch {}
+  // Fallback — Blob download
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 0);
+}
