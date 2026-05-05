@@ -60,7 +60,7 @@ const COMPANY = {
   fax:         '(013) 8341182',
   email:       'esau@evergreen-shipping.com.sa',
   hrDeptEn:    'HR Department · Dammam',
-  hrDeptAr:    'قسم الموارد البشرية · الدمام',
+  hrDeptAr:    'إدارة الموارد البشرية · الدمام',
 };
 
 // ─── PDF: HTML → canvas → A4 PDF ──────────────────────────────────
@@ -590,15 +590,16 @@ function buildLetterHtml(offer, signatory) {
           <p>We are pleased to extend you a formal offer of employment to join ${e(COMPANY.nameFullEn)} on the terms and conditions set out below. Acceptance is subject to your agreement to these Terms and successful onboarding through the SOL system.</p>
         </div>
         <div class="ar">
-          <p><strong>السيد/ة ${e(offer.candidateName || '')} المحترم/ة،</strong></p>
-          <p>يسرنا أن نقدم لكم عرض عمل رسمي للانضمام إلى ${e(COMPANY.nameFullAr)} وفقاً للشروط والأحكام المحددة أدناه. يخضع القبول لموافقتكم على هذه الشروط وإتمام إجراءات الالتحاق عبر نظام SOL.</p>
+          <p><strong>السيد/ة الفاضل/ة ${e(offer.candidateName || '')}،</strong></p>
+          <p>تحية طيبة وبعد،</p>
+          <p>يسرنا أن نتقدم إليكم بعرض عمل رسمي للانضمام إلى ${e(COMPANY.nameFullAr)}، وذلك وفقاً للشروط والأحكام المبينة أدناه. يخضع هذا العرض لقبولكم بهذه الشروط ولاستيفاء إجراءات الالتحاق عبر نظام SOL.</p>
         </div>
       </div>
 
       <!-- POSITION & COMPENSATION BAND -->
       <div class="band">
         <span>POSITION &amp; COMPENSATION DETAILS</span>
-        <span class="ar">تفاصيل الوظيفة والراتب</span>
+        <span class="ar">بيانات الوظيفة والأجر</span>
       </div>
 
       <!-- POSITION + SALARY (side by side) -->
@@ -646,13 +647,13 @@ function buildLetterHtml(offer, signatory) {
       </div>
 
       <ul class="terms-list">
-        ${termRow('Probation: 90 days from joining (Article 53)', 'فترة التجربة: 90 يوماً من تاريخ المباشرة (م. 53)')}
-        ${termRow('Notice period: 60 days written (Article 75)', 'فترة الإشعار: 60 يوماً إشعار خطي (م. 75)')}
-        ${termRow('Annual leave: 21 days (yr 1–5), 30 days from yr 6', 'الإجازة السنوية: 21 يوماً (1-5)، 30 يوماً من السنة 6')}
-        ${termRow('Sick leave: 30 full + 60 at 75% + 30 unpaid (Art. 117)', 'الإجازة المرضية: 30 + 60 (75%) + 30 بدون أجر (م. 117)')}
-        ${termRow('End-of-service gratuity per Articles 84–88', 'مكافأة نهاية الخدمة وفقاً للمواد 84-88')}
-        ${termRow('GOSI registration + medical insurance from joining', 'التأمينات الاجتماعية + تأمين صحي من المباشرة')}
-        ${termRow('Confidentiality of Company info during &amp; after work', 'السرية التامة لمعلومات الشركة أثناء وبعد العمل')}
+        ${termRow('Probation: 90 days from joining (Article 53)', 'فترة التجربة: تسعون يوماً من تاريخ المباشرة (المادة 53)')}
+        ${termRow('Notice period: 60 days written (Article 75)', 'مهلة الإخطار: ستون يوماً بإشعار خطي (المادة 75)')}
+        ${termRow('Annual leave: 21 days (yr 1–5), 30 days from yr 6', 'الإجازة السنوية: 21 يوماً (السنوات 1-5)، 30 يوماً اعتباراً من السنة السادسة')}
+        ${termRow('Sick leave: 30 full + 60 at 75% + 30 unpaid (Art. 117)', 'الإجازة المرضية: 30 يوماً بأجر كامل + 60 يوماً بثلاثة أرباع الأجر + 30 يوماً بدون أجر (المادة 117)')}
+        ${termRow('End-of-service gratuity per Articles 84–88', 'مكافأة نهاية الخدمة وفقاً لأحكام المواد 84-88')}
+        ${termRow('GOSI registration + medical insurance from joining', 'التسجيل لدى التأمينات الاجتماعية والتأمين الصحي من تاريخ المباشرة')}
+        ${termRow('Confidentiality of Company info during &amp; after work', 'الالتزام بسرية معلومات الشركة أثناء العمل وبعد انتهائه')}
       </ul>
 
       <!-- 14-DAY VALIDITY CALLOUT (prominent, red accent) -->
@@ -663,8 +664,8 @@ function buildLetterHtml(offer, signatory) {
             <div class="deadline">Please accept by <strong>${e(expiryEN)}</strong>. After this date the offer expires automatically.</div>
           </div>
           <div class="ar">
-            <div class="head ar">⏱  هذا العرض صالح لمدة 14 يوماً فقط</div>
-            <div class="deadline ar">يرجى القبول قبل <strong>${e(expiryAR)}</strong>. بعد هذا التاريخ ينتهي العرض تلقائياً.</div>
+            <div class="head ar">⏱  هذا العرض ساري المفعول لمدة 14 يوماً فقط</div>
+            <div class="deadline ar">يُرجى القبول قبل تاريخ <strong>${e(expiryAR)}</strong>. وفي حال انقضاء هذه المدة دون قبول، يُعدّ العرض لاغياً تلقائياً.</div>
           </div>
         </div>
       </div>
@@ -672,7 +673,7 @@ function buildLetterHtml(offer, signatory) {
       <!-- ACCEPTANCE INSTRUCTION -->
       <div class="accept-note">
         <div>To accept, please use the secure acceptance link sent in the covering email. After acceptance, HR will register you in SOL and issue your Personal Service Number (PSN).</div>
-        <div class="ar">للقبول، يرجى استخدام رابط القبول الآمن المرسل في الإيميل المرفق. بعد القبول، تقوم الموارد البشرية بتسجيلكم في SOL وإصدار رقم الخدمة الشخصي.</div>
+        <div class="ar">للقبول، يُرجى استخدام رابط القبول الآمن المرسل في خطاب البريد الإلكتروني المرفق. بعد القبول، تتولى إدارة الموارد البشرية تسجيلكم في نظام SOL وإصدار رقم الخدمة الشخصي الخاص بكم.</div>
       </div>
 
       <!-- SPACER pushing signatures to bottom -->
@@ -682,7 +683,7 @@ function buildLetterHtml(offer, signatory) {
       <div class="signatures">
         <!-- LEFT: Company side, full corporate signature -->
         <div class="sig-company">
-          <div class="sig-label">For and on behalf of · عن الشركة</div>
+          <div class="sig-label">For and on behalf of · بالنيابة عن الشركة</div>
           <div class="sig-line"></div>
           <div class="sig-name">${e((signatory?.name || '—').toUpperCase())}</div>
           <div class="sig-title">${e(signatory?.title || '—')}</div>
@@ -704,18 +705,18 @@ function buildLetterHtml(offer, signatory) {
 
         <!-- RIGHT: Candidate signature -->
         <div class="sig-candidate">
-          <div class="sig-label">Candidate Acceptance · قبول المرشح</div>
+          <div class="sig-label">Candidate Acceptance · موافقة المرشح</div>
           <div class="sig-line"></div>
           <div class="sig-name">${e((offer.candidateName || '—').toUpperCase())}</div>
           <div class="sig-title">Signature &amp; Date · التوقيع والتاريخ</div>
-          <div class="candidate-confirm">By signing, I accept the offer above and the Terms set out in this letter.<br><span class="ar" style="display:block;margin-top:3px;">بالتوقيع أعلاه، أقبل العرض والشروط الواردة في هذا الخطاب.</span></div>
+          <div class="candidate-confirm">By signing, I accept the offer above and the Terms set out in this letter.<br><span class="ar" style="display:block;margin-top:3px;">أُقرّ بقبولي العرض المذكور أعلاه والشروط الواردة في هذا الخطاب.</span></div>
         </div>
       </div>
 
       <!-- CONFIDENTIALITY FOOTER -->
       <div class="foot">
         <span>Confidential · addressed solely to the named candidate.</span>
-        <span class="ar">سري · مخصص للمرشح المسمى أعلاه فقط.</span>
+        <span class="ar">وثيقة سرية · موجهة إلى المرشح المسمى حصراً.</span>
       </div>
     </div>
   `;
