@@ -231,9 +231,14 @@ export async function openOfferLetterPrintWindow(offer, signatory) {
   </div>
 
   <div class="print-tip">
-    <strong>Next step:</strong> Click <strong>Print / Save as PDF</strong> above (or press Ctrl+P / Cmd+P).
-    In the print dialog, choose <strong>"Save as PDF"</strong> as the destination, then click Save.
-    The PDF will save to your Downloads folder. After saving, return to the Hiring tab — your Outlook draft (.eml) has been downloaded separately for you to attach the PDF.
+    <strong>To save as PDF:</strong>
+    <ol style="margin: 6px 0 0 18px; padding: 0;">
+      <li>Click <strong>Print / Save as PDF</strong> above (or press Ctrl+P / Cmd+P).</li>
+      <li>Set <strong>Destination → Save as PDF</strong>.</li>
+      <li>Set <strong>Paper size → A4</strong> and <strong>Margins → None</strong> (under "More settings"). This keeps the letter on a single page.</li>
+      <li>Click <strong>Save</strong>. The PDF lands in your Downloads.</li>
+    </ol>
+    After saving, return to the Hiring tab — your Outlook draft (.eml) has already been downloaded for you to attach the PDF.
   </div>
 
   <div class="letter-host">
@@ -640,31 +645,23 @@ function buildLetterHtml(offer, signatory) {
         gap: 16px;
       }
 
-      /* ─── SPACER — pushes signatures toward the bottom of the
-         page so the letter doesn't end abruptly mid-page. flex:1
-         takes whatever vertical space is left after fixed-height
-         content above and below. The .offer-letter container is
-         locked to A4 height (1123px), so the spacer can't grow
-         past the page boundary — content always stays on one
-         page.
+      /* ─── SPACER — pushes signatures all the way to the bottom
+         of the A4 page. flex:1 takes whatever vertical space is
+         left after the fixed-height content above (header +
+         intro + tables + terms + callout + acceptance) and the
+         fixed-height content below (signatures + footer). The
+         .offer-letter container is locked to A4 height (1123px)
+         and overflow:hidden, so the spacer can't grow past the
+         page boundary — content always stays on one page.
 
-         max-height tuning notes:
-           • Too low (40px): signatures float in the middle of
-             the page, lots of awkward whitespace below.
-           • Too high (no cap): on slower-rendering machines the
-             content can spill onto page 2 because pixel rounding
-             pushes total height past 1123px.
-           • 90px is the sweet spot: on a fully-tightened layout
-             it lets signatures sit comfortably in the lower
-             third without hitting page boundary.
-
-         The page-break-inside: avoid rule (in @media print
-         below) provides a backstop — if total content rounds up
-         past A4, Chromium will shrink-to-fit rather than split. */
+         No max-height cap: the user wants signatures pushed to
+         the very end of the page to make full use of A4. The
+         page-break-inside: avoid rule (in @media print) is the
+         safety net — if rendering rounds up by a pixel or two,
+         Chromium will shrink-to-fit rather than split. */
       .offer-letter .spacer {
         flex: 1 1 auto;
         min-height: 0;
-        max-height: 90px;
       }
 
       /* ─── SIGNATURES ─── */
