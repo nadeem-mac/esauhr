@@ -20,7 +20,7 @@
 // banner on the card so the admin sees confirmation immediately.
 // =============================================================================
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { Loader2, Play, RotateCw, CheckCircle2, AlertTriangle, Database, ChevronDown, ChevronRight, Copy } from 'lucide-react';
 import { Card } from './Dashboard.jsx';
 import { listMigrationsWithStatus, runMigration, sqlByteSize } from '../lib/migrationRunner.js';
@@ -81,6 +81,37 @@ export default function MigrationsPanel({ me, onChanged }) {
 
   const summary = countByStatus(items);
 
+  // Sort the rows so the most relevant ones surface at the top:
+  //
+  //   1. Action-needed first (never_run, failed, changed). These
+  //      are what the admin needs to handle next, so they go up
+  //      top regardless of when they were last touched. Within
+  //      this group, ordered by file name DESCENDING so the most
+  //      recently-added bundled migrations sit first (file names
+  //      added later in the project tend to be lexically later).
+  //
+  //   2. Already-successful below, sorted by last-run timestamp
+  //      DESCENDING so the most recently applied are visible
+  //      first and older history scrolls down.
+  //
+  // Net effect: 'latest first' end-to-end — pending work at the
+  // top, then a reverse-chronological history of completed runs.
+  const sortedItems = useMemo(() => {
+    const STATUS_RANK = { never_run: 0, failed: 1, changed: 2, success: 3 };
+    return [...items].sort((a, b) => {
+      const ra = STATUS_RANK[a.status] ?? 99;
+      const rb = STATUS_RANK[b.status] ?? 99;
+      if (ra !== rb) return ra - rb;
+      // Within action-needed: newest file name first (lex desc).
+      if (ra < 3) return b.name.localeCompare(a.name);
+      // Within success: most recently run first.
+      const ta = a.lastRun ? new Date(a.lastRun).getTime() : 0;
+      const tb = b.lastRun ? new Date(b.lastRun).getTime() : 0;
+      if (tb !== ta) return tb - ta;
+      return b.name.localeCompare(a.name);
+    });
+  }, [items]);
+
   return (
     <Card
       title={<span className="inline-flex items-center gap-2"><Database className="w-4 h-4 opacity-70"/> Schema migrations</span>}
@@ -135,7 +166,7 @@ export default function MigrationsPanel({ me, onChanged }) {
         </div>
       ) : (
         <ul className="space-y-2">
-          {items.map((m) => (
+          {sortedItems.map((m) => (
             <MigrationRow
               key={m.name}
               item={m}
