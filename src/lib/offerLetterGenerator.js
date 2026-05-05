@@ -173,7 +173,7 @@ function buildLetterHtml(offer, signatory) {
         font-family: 'Helvetica Neue', 'Arial', sans-serif;
         color: #0F172A;
         line-height: 1.4;
-        padding: 26px 34px 18px;
+        padding: 22px 30px 14px;
         font-size: 10.5px;
         width: ${A4_W_PX}px;
         height: ${A4_H_PX}px;
@@ -181,6 +181,7 @@ function buildLetterHtml(offer, signatory) {
         position: relative;
         display: flex;
         flex-direction: column;
+        overflow: hidden;
       }
       .offer-letter .ar {
         font-family: 'Tahoma', 'Geeza Pro', 'Arial Unicode MS', 'Segoe UI', sans-serif;
@@ -378,17 +379,23 @@ function buildLetterHtml(offer, signatory) {
         background: #0F4C2A;
         color: #FFFFFF;
         font-weight: 700;
-        font-size: 12px;
-        padding: 8px;
+        padding: 6px 8px;
+        vertical-align: middle;
       }
-      .offer-letter .sal-table tfoot td.total-label-stack {
-        display: table-cell;
+      .offer-letter .sal-table tfoot .total-en {
+        font-size: 11px;
+        line-height: 1.25;
       }
-      .offer-letter .sal-table tfoot .total-en { font-size: 12px; }
-      .offer-letter .sal-table tfoot .total-ar { font-size: 11px; opacity: 0.95; }
+      .offer-letter .sal-table tfoot .total-ar {
+        font-size: 10px;
+        line-height: 1.25;
+        opacity: 0.95;
+      }
       .offer-letter .sal-table tfoot td.amount {
         text-align: right;
         font-size: 13px;
+        white-space: nowrap;
+        vertical-align: middle;
       }
 
       /* ─── KEY TERMS ─── */
@@ -399,22 +406,29 @@ function buildLetterHtml(offer, signatory) {
         flex-shrink: 0;
       }
       .offer-letter .terms-list li {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 16px;
-        padding: 3.5px 0;
-        font-size: 9.5px;
+        padding: 3px 0;
         border-bottom: 1px dotted #F0F0F0;
+        white-space: nowrap;
       }
       .offer-letter .terms-list li:last-child { border-bottom: none; }
-      .offer-letter .terms-list .en::before {
+      .offer-letter .terms-list .term-en,
+      .offer-letter .terms-list .term-ar {
+        display: block;
+        font-size: 9.5px;
+        line-height: 1.4;
+      }
+      .offer-letter .terms-list .term-en::before {
         content: '◆ ';
         color: #0F4C2A;
         font-weight: 700;
         font-size: 8px;
       }
-      .offer-letter .terms-list .ar::before {
-        content: ' ◆';
+      .offer-letter .terms-list .term-ar {
+        font-size: 9.5px;
+        margin-top: 1px;
+      }
+      .offer-letter .terms-list .term-ar::before {
+        content: '◆ ';
         color: #0F4C2A;
         font-weight: 700;
         font-size: 8px;
@@ -764,8 +778,8 @@ function termRow(en, ar) {
   const e = escapeHtml;
   return `
     <li>
-      <span class="en">${e(en)}</span>
-      <span class="ar">${e(ar)}</span>
+      <div class="term-en">${e(en)}</div>
+      <div class="term-ar ar">${e(ar)}</div>
     </li>
   `;
 }
