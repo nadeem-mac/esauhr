@@ -24,8 +24,9 @@ import {
 import { directGet, directPatch, supabase } from '../supabaseClient.js';
 import NewOfferModal from './NewOfferModal.jsx';
 import IssuePsnModal from './IssuePsnModal.jsx';
+import LetterPreviewModal from './LetterPreviewModal.jsx';
 import SuccessToast from './SuccessToast.jsx';
-import { buildLetterHtml, buildOfferEmailBody } from '../lib/offerLetterGenerator.js';
+import { buildOfferEmailBody } from '../lib/offerLetterGenerator.js';
 
 // ─── Status presentation ──────────────────────────────────────────
 // One source of truth for how each offer status renders. label is
@@ -410,7 +411,11 @@ function OfferRow({ offer, employees, onChanged, onIssuePsn, me, readOnly = fals
   const presentation = STATUS_PRESENTATION[offer.status] || STATUS_PRESENTATION.draft;
   const [actingOn, setActingOn] = useState(null); // 'withdraw' | 'copy'
   const [copyToast, setCopyToast] = useState(false);
-  const [loadingLetter, setLoadingLetter] = useState(false);
+  // letterPreview: holds the offer object when the in-page Contract
+  // modal is open, null when closed. Hosted on the row (not the
+  // parent card) because each row's button click opens a modal for
+  // that specific row's offer; only one is ever open at a time.
+  const [letterPreview, setLetterPreview] = useState(null);
 
   // Compute days remaining until expiry (for offer_sent only)
   const daysRemaining = useMemo(() => {
@@ -431,140 +436,20 @@ function OfferRow({ offer, employees, onChanged, onIssuePsn, me, readOnly = fals
     }
   }
 
-  // View letter — opens a new tab showing the same bilingual offer
-  // letter that was sent to the candidate. Both Bashaier and read-only
-  // viewers (Badria, Fahad SUP, Jaffar) can use this. The letter is
-  // rendered live from buildLetterHtml() — same source the PDF was
-  // generated from — so what they see is exactly what the candidate
-  // received.
+  // View contract — opens an in-page modal showing the same
+  // bilingual offer letter the candidate sees on the public
+  // acceptance page. State-driven (setLetterPreview) rather than
+  // window.open() so the preview lives inside the portal and
+  // doesn't depend on browser popup permissions.
   //
-  // Behavior differs by access level:
-  //   • Full-access (Bashaier / admin): shows the print toolbar +
-  //     auto-prints, so she can re-save as PDF if needed.
-  //   • Read-only (SUP team): NO print toolbar, NO auto-print, plus
-  //     a CSS rule that blanks the page when printed. We can't fully
-  //     prevent Ctrl+P (no web tech can), but we make it inconvenient
-  //     and signal clearly that download isn't intended.
-  async function viewLetter() {
-    setLoadingLetter(true);
-    try {
-      // Fetch the signatory the offer used so the letter renders
-      // with the right name/title in the signature block.
-      let signatory = null;
-      if (offer.signatory_id) {
-        try {
-          const sigs = await directGet(
-            'signatories',
-            `select=name,title&id=eq.${encodeURIComponent(offer.signatory_id)}&limit=1`,
-            { timeoutMs: 6000 }
-          );
-          signatory = Array.isArray(sigs) ? sigs[0] : null;
-        } catch {
-          /* fall through with null signatory */
-        }
-      }
-
-      // Open the new tab synchronously (must be inside the click
-      // gesture or it gets pop-up-blocked).
-      const win = window.open('', '_blank');
-      if (!win) {
-        alert('The viewer window was blocked. Please allow pop-ups for this site and try again.');
-        return;
-      }
-
-      const safeName = (offer.candidate_name || 'Candidate')
-        .replace(/[^\w\s-]/g, '')
-        .replace(/\s+/g, '_');
-
-      const letterHtml = buildLetterHtml(
-        {
-          candidateName:    offer.candidate_name,
-          positionTitle:    offer.position_title,
-          department:       offer.department,
-          location:         offer.location || '',
-          proposedJoinDate: offer.proposed_join_date,
-          salaryBasic:      offer.salary_basic || 0,
-          salaryHousing:    offer.salary_housing || 0,
-          salaryTransport:  offer.salary_transportation || 0,
-          salaryOther:      offer.salary_other || 0,
-          salaryTotal:      offer.salary_amount || 0,
-          offerToken:       offer.offer_token,
-        },
-        signatory || { name: '—', title: '—' }
-      );
-
-      // For read-only viewers we suppress the print toolbar AND add
-      // a print-blocking CSS rule. For Bashaier we keep the existing
-      // print-window experience (toolbar + auto-print).
-      const printBlockedCss = readOnly
-        ? `
-          @media print {
-            body * { visibility: hidden !important; }
-            body::after {
-              content: "Printing this view is restricted. Please contact HR for an official copy.";
-              visibility: visible;
-              position: fixed;
-              top: 50%;
-              left: 50%;
-              transform: translate(-50%, -50%);
-              font-family: Arial, sans-serif;
-              font-size: 16px;
-              color: #525252;
-              text-align: center;
-              max-width: 300px;
-            }
-          }
-          /* Disable common keyboard shortcuts for save/print at the
-             event level. Won't stop a determined user with browser
-             menu, but signals intent. */
-        `
-        : '';
-
-      const toolbar = readOnly
-        ? `<div style="background:#3B4279;color:#fff;padding:14px 20px;display:flex;align-items:center;gap:12px;font-family:Arial,sans-serif;">
-             <strong style="font-size:13px;">READ-ONLY VIEW</strong>
-             <span style="font-size:12px;opacity:0.85;">Contract preview · ${escapeHtml(offer.candidate_name || '')} · ${escapeHtml(offer.position_title || '')}</span>
-           </div>`
-        : `<div class="print-toolbar" style="position:sticky;top:0;background:#0F4C2A;color:#fff;padding:14px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;z-index:10;box-shadow:0 2px 6px rgba(0,0,0,0.15);font-family:Arial,sans-serif;">
-             <div>
-               <div style="font-size:14px;font-weight:500;">Offer Letter — ${escapeHtml(offer.candidate_name || '')}</div>
-               <div style="font-size:12px;opacity:0.85;margin-top:2px;">Use Print → Save as PDF to download a copy.</div>
-             </div>
-             <button onclick="window.print()" style="background:#fff;color:#0F4C2A;border:none;padding:8px 16px;font-size:13px;font-weight:500;cursor:pointer;border-radius:4px;">Print / Save as PDF</button>
-           </div>`;
-
-      const html = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>${escapeHtml(safeName)} — Offer Letter</title>
-  <style>
-    @page { size: A4 portrait; margin: 0; }
-    @media print {
-      body { margin: 0; }
-      .print-toolbar { display: none !important; }
-    }
-    html, body { margin: 0; padding: 0; background: #f5f5f5; }
-    .letter-host { max-width: 794px; margin: 16px auto 32px; background: #fff; box-shadow: 0 4px 24px rgba(0,0,0,0.12); }
-    @media print { .letter-host { margin: 0; box-shadow: none; max-width: none; } }
-    ${printBlockedCss}
-  </style>
-</head>
-<body>
-  ${toolbar}
-  <div class="letter-host">${letterHtml}</div>
-</body>
-</html>`;
-
-      win.document.open();
-      win.document.write(html);
-      win.document.close();
-    } catch (e) {
-      console.error('View letter failed:', e);
-      alert('Could not load the offer letter. Please try again.');
-    } finally {
-      setLoadingLetter(false);
-    }
+  // Behavior differs by access level (see LetterPreviewModal):
+  //   • Full-access (Bashaier / admin): includes a Print / Save
+  //     as PDF button in the modal toolbar.
+  //   • Read-only (SUP team): no print button, plus a print-
+  //     blocking CSS rule. Best-effort, not bulletproof — see
+  //     LetterPreviewModal for the full caveat.
+  function viewLetter() {
+    setLetterPreview(offer);
   }
 
   // Compose the offer email — opens a new Outlook draft pre-filled
@@ -737,30 +622,24 @@ function OfferRow({ offer, employees, onChanged, onIssuePsn, me, readOnly = fals
 
         {/* Actions */}
         <div className="flex flex-col items-end gap-1.5 shrink-0">
-          {/* View letter — visible for ALL users on EVERY status. This
-              is how Bashaier and the SUP team open the bilingual
-              contract that was sent to the candidate. The new tab's
-              behavior depends on access level (see viewLetter() above). */}
           {/* Contract — visible to ALL users on EVERY status. Opens
-              the bilingual offer letter in a new tab. Read-only
-              viewers see a navy banner + print-blocking CSS;
-              full-access users see a green print toolbar. */}
+              an in-page modal showing the bilingual offer letter
+              with the same green-bordered card styling the candidate
+              sees. Read-only viewers (Badria, Fahad SUP, Jaffar) get
+              the modal without the Print button + with a print-
+              blocking CSS rule. */}
           <button
             onClick={viewLetter}
-            disabled={loadingLetter}
             className="text-[11px] px-2.5 py-1 rounded-full inline-flex items-center gap-1.5"
             style={{
               background: 'transparent',
               color: '#0F4C2A',
               border: '1px solid #A7D8B7',
               fontWeight: 500,
-              cursor: loadingLetter ? 'wait' : 'pointer',
-              opacity: loadingLetter ? 0.6 : 1,
+              cursor: 'pointer',
             }}
           >
-            {loadingLetter
-              ? <Loader2 className="w-3 h-3 animate-spin" />
-              : (readOnly ? <Eye className="w-3 h-3" /> : <FileText className="w-3 h-3" />)}
+            {readOnly ? <Eye className="w-3 h-3" /> : <FileText className="w-3 h-3" />}
             Contract
           </button>
 
@@ -823,6 +702,16 @@ function OfferRow({ offer, employees, onChanged, onIssuePsn, me, readOnly = fals
           )}
         </div>
       </div>
+
+      {/* In-page contract preview modal — same green-bordered card
+          the candidate sees on the public acceptance page. */}
+      {letterPreview && (
+        <LetterPreviewModal
+          offer={letterPreview}
+          onClose={() => setLetterPreview(null)}
+          readOnly={readOnly}
+        />
+      )}
     </div>
   );
 }
@@ -852,16 +741,4 @@ function fmtDate(yyyymmdd) {
   if (!y) return yyyymmdd;
   const dt = new Date(y, m - 1, d);
   return dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-}
-
-// HTML escape for inline document writes in the View Letter popup.
-// We can't import the one from offerLetterGenerator (it's not
-// exported and module-internal) so a tiny duplicate lives here.
-function escapeHtml(s) {
-  return String(s ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
