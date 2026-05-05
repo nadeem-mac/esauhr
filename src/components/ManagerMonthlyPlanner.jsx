@@ -267,6 +267,28 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
   const [dayPopover, setDayPopover] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
 
+  // ─── Weekly off-day pattern ────────────────────────────────────────
+  // Per-employee, per-month set of weekday numbers (0=Sun, 6=Sat)
+  // that the manager has explicitly marked as off-days. Distinct
+  // from "no shift planned" — these are deliberate off-days that
+  // get a visible OFF label in the calendar grid.
+  //
+  // Persisted alongside the working-shift plan in the
+  // monthly_shift_plans tracker (off_weekdays column). Cloned
+  // forward when the manager opens a fresh next-month plan.
+  //
+  // Working shifts WIN: if a date has both a working shift and
+  // matches the off-pattern, the working shift renders. Pattern
+  // is conceptually "default off, but assigned shifts override."
+  const [offWeekdays, setOffWeekdays] = useState([]);
+  const offWeekdaysSet = useMemo(() => new Set(offWeekdays), [offWeekdays]);
+
+  function toggleOffWeekday(dow) {
+    setOffWeekdays(prev =>
+      prev.includes(dow) ? prev.filter(d => d !== dow) : [...prev, dow].sort()
+    );
+  }
+
   // ─── Edit-cap state ────────────────────────────────────────────────
   // The save flow is: first save commits the plan, button greys out
   // and an Edit button appears next to it. Manager hits Edit to
@@ -329,6 +351,7 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
     setEditCount(0);
     setEditMode('editing');
     setPlan({});
+    setOffWeekdays([]);
     try {
       const fromKey = ymd(startOfMonth(monthSel.year, monthSel.monthIdx));
       const toKey   = ymd(endOfMonth(monthSel.year, monthSel.monthIdx));
@@ -413,6 +436,27 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
               [derivedStart, derivedEnd] = topKey.split('|');
             }
           }
+          // Also clone the off-weekday pattern from last month.
+          // Best-effort — if the prior tracker row doesn't exist
+          // we just open with no off-pattern.
+          try {
+            const prevPlanKey = ymd(startOfMonth(prev.getFullYear(), prev.getMonth()));
+            const prevTrackerRows = await directGet(
+              'monthly_shift_plans',
+              `select=off_weekdays` +
+              `&manager_id=eq.${encodeURIComponent(me.id)}` +
+              `&employee_id=eq.${encodeURIComponent(employeeId)}` +
+              `&plan_month=eq.${prevPlanKey}` +
+              `&limit=1`,
+              { timeoutMs: 5000 }
+            );
+            const prevR = Array.isArray(prevTrackerRows) ? prevTrackerRows[0] : null;
+            if (Array.isArray(prevR?.off_weekdays) && prevR.off_weekdays.length > 0) {
+              setOffWeekdays(prevR.off_weekdays.slice());
+            }
+          } catch {
+            // Non-fatal — open without off-pattern
+          }
         } catch (e) {
           // Clone failure is non-fatal — manager just gets a blank
           // calendar to plan from scratch.
@@ -452,7 +496,7 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
         // on monthly_shift_plans.
         const planRows = await directGet(
           'monthly_shift_plans',
-          `select=last_committed_at,shifts_count,edit_count` +
+          `select=last_committed_at,shifts_count,edit_count,off_weekdays` +
           `&manager_id=eq.${encodeURIComponent(me.id)}` +
           `&employee_id=eq.${encodeURIComponent(employeeId)}` +
           `&plan_month=eq.${planKey}` +
@@ -468,10 +512,14 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
         // Edit to make changes. If never saved before, open in
         // 'editing' so the first save works without an extra click.
         setEditMode(r?.last_committed_at ? 'locked' : 'editing');
+        // Restore the off-day pattern. PG returns int[] as a JS
+        // array; if absent/null, fall back to empty.
+        setOffWeekdays(Array.isArray(r?.off_weekdays) ? r.off_weekdays.slice() : []);
       } catch {
         setLastCommittedAt(null);
         setEditCount(0);
         setEditMode('editing');
+        setOffWeekdays([]);
       }
     } catch (e) {
       console.warn('Plan load failed:', e);
@@ -880,6 +928,7 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
           last_committed_at: new Date().toISOString(),
           last_committed_by: me.id,
           edit_count:        newEditCount,
+          off_weekdays:      offWeekdays,
         }],
         {
           upsert: true,
@@ -1087,6 +1136,48 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
         </div>
       )}
 
+      {/* Weekly off-day picker. The manager toggles which weekdays
+          are explicitly off for this employee — e.g. FAHAD has
+          Sunday + Friday off. Toggled days render gray with an
+          "OFF" label in the calendar. Working shifts override the
+          off-pattern (a date with a working shift always shows as
+          working, even if its weekday is in the off-pattern). */}
+      <div className="mb-3">
+        <span className="text-[11px] tracking-wider" style={{ color: '#0A0A0A', fontWeight: 600 }}>
+          WEEKLY OFF-DAYS <span className="ml-1" style={{ opacity: 0.6, letterSpacing: 'normal', textTransform: 'none' }}>(optional)</span>
+        </span>
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          {DOW_LONG.map((label, dow) => {
+            const isOff = offWeekdaysSet.has(dow);
+            return (
+              <button
+                key={label}
+                onClick={() => toggleOffWeekday(dow)}
+                className="text-[11px] px-3 py-1.5 rounded-full inline-flex items-center gap-1"
+                style={{
+                  background: isOff ? '#F5F5F5'   : 'var(--paper-2)',
+                  color:      isOff ? '#525252'   : '#0A0A0A',
+                  border:     '1px solid ' + (isOff ? '#A3A3A3' : 'var(--border)'),
+                  fontWeight: isOff ? 600 : 500,
+                  cursor: 'pointer',
+                }}
+                aria-pressed={isOff}
+                title={isOff
+                  ? `Click to remove ${label} from the off-day pattern`
+                  : `Click to mark every ${label} as off-day`
+                }
+              >
+                {isOff && <span style={{ fontSize: 10, opacity: 0.7 }}>OFF</span>}
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="text-[10px] mt-1.5" style={{ color: '#0A0A0A', opacity: 0.6, maxWidth: 360 }}>
+          Days marked OFF appear gray in the calendar. Working shifts override the pattern, so you can still assign a one-off shift on an off-day if needed.
+        </div>
+      </div>
+
       {/* Calendar grid */}
       {planLoading ? (
         <div className="flex items-center gap-2 text-sm py-6 justify-center" style={{ color: '#0A0A0A', opacity: 0.6 }}>
@@ -1096,6 +1187,7 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
         <CalendarGrid
           monthDays={monthDays}
           plan={plan}
+          offWeekdaysSet={offWeekdaysSet}
           onToggle={toggleDay}
         />
       )}
@@ -1214,11 +1306,12 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
 }
 
 // ─── Calendar grid ────────────────────────────────────────────────────
-function CalendarGrid({ monthDays, plan, onToggle }) {
+function CalendarGrid({ monthDays, plan, offWeekdaysSet, onToggle }) {
   if (!monthDays.length) return null;
   // Padding cells before day 1 (so day 1 sits in the right column)
   const firstDow = monthDays[0].dow;
   const todayK = todayKey();
+  const offSet = offWeekdaysSet || new Set();
 
   return (
     <div>
@@ -1251,6 +1344,11 @@ function CalendarGrid({ monthDays, plan, onToggle }) {
           const isPast = d.key < todayK;
           const isToday = d.key === todayK;
           const isWeekend = d.dow === 5 || d.dow === 6;
+          // Off-day pattern: this weekday is in the off-set AND no
+          // working shift is assigned. Working shifts always win
+          // visually — manager assigning a Friday cover for FAHAD
+          // shows green even though Fridays are normally OFF.
+          const isOffPattern = offSet.has(d.dow) && !cell.selected;
           return (
             <button
               key={d.key}
@@ -1262,18 +1360,24 @@ function CalendarGrid({ monthDays, plan, onToggle }) {
                   ? '#F5F5F5'
                   : cell.selected
                     ? 'var(--evergreen-600)'
-                    : isWeekend ? '#FAF5EE' : 'var(--paper)',
+                    : isOffPattern
+                      ? '#EAEAE6'
+                      : isWeekend ? '#FAF5EE' : 'var(--paper)',
                 color: isPast
                   ? '#A3A3A3'
                   : cell.selected
                     ? '#FFFFFF'
-                    : '#0A0A0A',
+                    : isOffPattern
+                      ? '#525252'
+                      : '#0A0A0A',
                 border: '1px solid ' + (
                   isPast
                     ? '#E5E5E5'
                     : cell.selected
                       ? 'var(--evergreen-600)'
-                      : isToday ? '#0F4C2A' : 'var(--border)'
+                      : isOffPattern
+                        ? '#A3A3A3'
+                        : isToday ? '#0F4C2A' : 'var(--border)'
                 ),
                 cursor: isPast ? 'not-allowed' : 'pointer',
                 fontSize: 13,
@@ -1287,7 +1391,9 @@ function CalendarGrid({ monthDays, plan, onToggle }) {
                     ? (cell.customized
                         ? 'Custom time set for this day — tap to edit'
                         : 'Tap to edit time, reset, or remove')
-                    : 'Tap to add'
+                    : isOffPattern
+                      ? 'Marked as off per the weekly pattern — tap to assign a shift anyway'
+                      : 'Tap to add'
               }
             >
               <div>{d.date}</div>
@@ -1303,6 +1409,17 @@ function CalendarGrid({ monthDays, plan, onToggle }) {
                       light + green (selected) backgrounds. */}
                   {cell.customized ? '• ' : ''}
                   {cell.start}–{cell.end}
+                </div>
+              )}
+              {/* Off-pattern label — small subtle "OFF" text under
+                  the date number so the manager can confirm the
+                  pattern at a glance without needing the legend. */}
+              {!cell.selected && isOffPattern && !isPast && (
+                <div
+                  className="text-[8.5px] mt-0.5 tracking-wider"
+                  style={{ opacity: 0.7, fontWeight: 700, letterSpacing: '0.1em' }}
+                >
+                  OFF
                 </div>
               )}
               {isPast && (
