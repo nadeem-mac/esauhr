@@ -87,7 +87,29 @@ export default function AcceptOfferPage({ token }) {
         }
         setOffer(row);
 
-        // If already responded, show the locked summary
+        // Load the signatory regardless of the next stage — both
+        // 'verify→decide' and the 'responded' revisit case need to
+        // render the (stamped) letter, and that needs the signatory's
+        // name + title in the company-side block.
+        let loadedSignatory = null;
+        if (row.signatory_id) {
+          try {
+            const sigRows = await directGet(
+              'signatories',
+              `select=name,title&id=eq.${encodeURIComponent(row.signatory_id)}&limit=1`,
+              { timeoutMs: 6000 }
+            );
+            if (!cancelled && sigRows?.[0]) {
+              loadedSignatory = sigRows[0];
+              setSignatory(loadedSignatory);
+            }
+          } catch {
+            // Non-fatal; the letter just shows '—' for signatory
+          }
+        }
+
+        // If already responded, show the locked summary (with
+        // stamped contract + email-back instructions for accepted).
         if (row.status === 'offer_accepted' || row.status === 'offer_declined') {
           setStage('responded');
           return;
@@ -98,22 +120,6 @@ export default function AcceptOfferPage({ token }) {
           setStage('error');
           setErrorMessage('This offer has expired. The acceptance window was 7 days from issue. Please contact HR if you would like to discuss next steps.');
           return;
-        }
-
-        // Load the signatory in parallel for the letter view
-        if (row.signatory_id) {
-          try {
-            const sigRows = await directGet(
-              'signatories',
-              `select=name,title&id=eq.${encodeURIComponent(row.signatory_id)}&limit=1`,
-              { timeoutMs: 6000 }
-            );
-            if (!cancelled && sigRows?.[0]) {
-              setSignatory(sigRows[0]);
-            }
-          } catch {
-            // Non-fatal; the letter just shows '—' for signatory
-          }
         }
 
         setStage('verify');
@@ -213,7 +219,7 @@ export default function AcceptOfferPage({ token }) {
         )}
 
         {stage === 'responded' && offer && (
-          <RespondedState offer={offer} />
+          <RespondedState offer={offer} signatory={signatory} />
         )}
 
         {stage === 'verify' && offer && (
@@ -244,7 +250,7 @@ export default function AcceptOfferPage({ token }) {
         )}
 
         {stage === 'done' && offer && (
-          <DoneState offer={offer} decision={finalDecision} />
+          <DoneState offer={offer} decision={finalDecision} signatory={signatory} />
         )}
 
         <Footer />
@@ -327,40 +333,15 @@ function ErrorState({ message }) {
 
 // ─── Already-responded state ───────────────────────────────────────
 
-function RespondedState({ offer }) {
+// ─── Decision recorded — shared component for both fresh submissions
+// and revisits. Renders the stamped contract + email-back
+// instructions when accepted; a simpler confirmation when declined.
+function RespondedState({ offer, signatory }) {
   const isAccepted = offer.status === 'offer_accepted';
-  const respondedDate = offer.responded_at
-    ? new Date(offer.responded_at).toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short' })
-    : '—';
-
-  return (
-    <CenteredCard>
-      <div style={{ textAlign: 'center' }}>
-        <div style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 56, height: 56,
-          borderRadius: '50%',
-          background: isAccepted ? '#ECFDF3' : '#FEF6E2',
-          color: isAccepted ? '#0F4C2A' : '#854F0B',
-          marginBottom: 16,
-          fontSize: 28, fontWeight: 700,
-        }}>
-          {isAccepted ? '✓' : '✕'}
-        </div>
-        <h1 style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', margin: '0 0 8px' }}>
-          You have already responded to this offer
-        </h1>
-        <p style={{ fontSize: 14, color: '#525252', lineHeight: 1.6, maxWidth: 480, margin: '0 auto 12px' }}>
-          You {isAccepted ? <strong>accepted</strong> : <strong>declined</strong>} this offer on {respondedDate}.
-        </p>
-        <p style={{ fontSize: 13, color: '#737373', maxWidth: 480, margin: '0 auto', lineHeight: 1.6 }}>
-          If you believe this was recorded in error, please contact HR. The acceptance link cannot be reused.
-        </p>
-      </div>
-    </CenteredCard>
-  );
+  if (!isAccepted) {
+    return <DeclineRecordedCard offer={offer} />;
+  }
+  return <AcceptanceRecordedView offer={offer} signatory={signatory} />;
 }
 
 // ─── Verify form ───────────────────────────────────────────────────
@@ -679,8 +660,318 @@ function DecideView({ offer, signatory, submitting, showingDeclineForm, setShowi
 
 // ─── Done state ───────────────────────────────────────────────────
 
-function DoneState({ offer, decision }) {
-  const isAccepted = decision === 'accepted';
+// ─── Done — shown immediately after the candidate submits their
+// decision. Routes to the same recorded-state components used by
+// revisits (RespondedState), so a candidate who accepts and stays
+// on the page sees the same screen they'd see if they came back to
+// the link tomorrow.
+function DoneState({ offer, decision, signatory }) {
+  if (decision === 'accepted' || offer.status === 'offer_accepted') {
+    return <AcceptanceRecordedView offer={offer} signatory={signatory} />;
+  }
+  return <DeclineRecordedCard offer={offer} />;
+}
+
+// ─── Acceptance recorded — main view after Accept ──────────────────
+//
+// Shows three things, top to bottom:
+//   1. A success header confirming the acceptance is on file
+//   2. The "Next steps" panel — Download contract + email-back
+//      instructions with a pre-filled mailto: button
+//   3. The contract preview WITH the digital acceptance stamp baked
+//      in, so the candidate can see what their downloaded copy will
+//      contain
+//
+// The same view is used both immediately after submission and on
+// revisits to the link, so a candidate who accepts at midnight and
+// reopens the link the next morning sees exactly the same thing.
+//
+// Sized to match DecideView's layout (794px max-width centered, green
+// rounded border around the contract).
+function AcceptanceRecordedView({ offer, signatory }) {
+  const respondedAt = offer.responded_at
+    ? new Date(offer.responded_at)
+    : new Date();
+
+  const ref = `ESAU/HR/${respondedAt.getFullYear()}/${(offer.offer_token || '').slice(0, 6).toUpperCase()}`;
+
+  // Build the letter HTML WITH the acceptance mark — drives both the
+  // on-page preview and the printable version that opens when the
+  // candidate clicks Download.
+  const letterHtml = useMemo(() => {
+    return buildLetterHtml(
+      {
+        candidateName:    offer.candidate_name,
+        positionTitle:    offer.position_title,
+        department:       offer.department,
+        location:         offer.location_label || offer.location || '',
+        proposedJoinDate: offer.proposed_join_date,
+        salaryBasic:      offer.salary_basic || 0,
+        salaryHousing:    offer.salary_housing || 0,
+        salaryTransport:  offer.salary_transportation || 0,
+        salaryOther:      offer.salary_other || 0,
+        salaryTotal:      offer.salary_amount || 0,
+        offerToken:       offer.offer_token,
+      },
+      signatory || { name: '—', title: '—' },
+      {
+        acceptedAt: respondedAt.toISOString(),
+        candidateName: offer.candidate_name,
+        ref,
+      }
+    );
+  }, [offer, signatory, respondedAt, ref]);
+
+  // Download / Save-as-PDF — opens a popup containing JUST the
+  // stamped letter HTML, then triggers print after images load.
+  // Same proven pattern used by the LetterPreviewModal print
+  // button on the HR side. The print dialog lets the candidate
+  // choose Save as PDF (default on most modern browsers), giving
+  // them a permanent stamped copy to attach to their reply email.
+  function downloadStamped() {
+    const win = window.open('', '_blank', 'width=900,height=1100');
+    if (!win) {
+      alert('Your browser blocked the download window. Please allow pop-ups for this site and try again.');
+      return;
+    }
+    const safeName = (offer.candidate_name || 'Candidate')
+      .replace(/[^\w\s-]/g, '')
+      .replace(/\s+/g, '_');
+    const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Offer_Letter_Accepted_${safeName}</title>
+  <style>
+    @page { size: A4 portrait; margin: 0; }
+    @media print { body { margin: 0; } }
+    html, body { margin: 0; padding: 0; background: #fff; }
+  </style>
+</head>
+<body>
+  ${letterHtml}
+  <script>
+    (function(){
+      var imgs = Array.prototype.slice.call(document.querySelectorAll('img'));
+      var pending = imgs.filter(function(i){ return !i.complete; }).length;
+      var triggered = false;
+      function go(){
+        if (triggered) return;
+        triggered = true;
+        setTimeout(function(){ window.print(); }, 250);
+      }
+      if (pending === 0) { go(); }
+      else {
+        imgs.forEach(function(i){
+          if (i.complete) return;
+          var done = function(){ pending--; if (pending <= 0) go(); };
+          i.addEventListener('load', done);
+          i.addEventListener('error', done);
+        });
+        setTimeout(go, 3500);
+      }
+    })();
+  </script>
+</body>
+</html>`;
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+  }
+
+  // Pre-filled email-back. Opens the candidate's default mail
+  // handler with HR's address as the recipient and a body that
+  // names the position, reference, and asks them to attach the
+  // downloaded PDF. mailto: doesn't support attachments — the
+  // candidate has to drag the saved file in manually — but the
+  // body explicitly tells them to do that.
+  function emailBack() {
+    const to = 'bashaier.alsubaie@evergreen-shipping.com.sa';
+    const subject = `Accepted offer — ${(offer.candidate_name || 'Candidate')} — ${(offer.position_title || 'Evergreen Shipping')}`;
+    const body = [
+      `Dear HR,`,
+      ``,
+      `Please find attached the signed acceptance of the offer letter for the ${offer.position_title || 'role'} position.`,
+      ``,
+      `Reference: ${ref}`,
+      `Acceptance recorded: ${respondedAt.toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Asia/Riyadh' })} (Asia/Riyadh)`,
+      ``,
+      `* Please attach the offer letter PDF you saved from the acceptance page before sending. *`,
+      ``,
+      `Best regards,`,
+      `${(offer.candidate_name || '').replace(/\b\w/g, c => c.toUpperCase())}`,
+    ].join('\r\n');
+
+    // mailto: requires %20 for spaces, not + (which is form-encoding).
+    const qs = [
+      `subject=${encodeURIComponent(subject)}`,
+      `body=${encodeURIComponent(body)}`,
+    ].join('&');
+    window.location.assign(`mailto:${encodeURIComponent(to)}?${qs}`);
+  }
+
+  return (
+    <>
+      {/* Success header — confirms the acceptance is on file BEFORE
+          the candidate scrolls down. Sized to match the contract's
+          794px width below it. */}
+      <div style={{
+        maxWidth: 794,
+        margin: '0 auto 14px',
+        background: '#FFFFFF',
+        borderRadius: 12,
+        border: '2px solid #0F4C2A',
+        padding: '20px 24px',
+        textAlign: 'center',
+        boxShadow: '0 4px 16px rgba(15, 76, 42, 0.12)',
+      }}>
+        <div style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 56, height: 56,
+          borderRadius: '50%',
+          background: '#0F4C2A',
+          color: '#FFFFFF',
+          marginBottom: 12,
+          fontSize: 28, fontWeight: 700,
+        }}>
+          ✓
+        </div>
+        <h1 style={{ fontSize: 20, fontWeight: 700, color: '#0F4C2A', margin: '0 0 6px' }}>
+          Your acceptance has been recorded
+        </h1>
+        <p style={{ fontSize: 13, color: '#525252', lineHeight: 1.6, margin: '0 auto', maxWidth: 580 }}>
+          Reference {ref} — recorded on {respondedAt.toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Asia/Riyadh' })} (Asia/Riyadh).
+          A copy of the contract below shows your digital acceptance stamp.
+        </p>
+      </div>
+
+      {/* Next steps — primary action panel. Telling the candidate
+          BEFORE they see the contract that they need to (a) save it
+          and (b) email it back means they read the contract knowing
+          what they need to do next. */}
+      <div style={{
+        maxWidth: 794,
+        margin: '0 auto 20px',
+        background: '#FEF6E2',
+        borderRadius: 12,
+        border: '1px solid #E8C896',
+        padding: '18px 22px',
+      }}>
+        <div style={{
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: '0.18em',
+          color: '#854F0B',
+          marginBottom: 6,
+        }}>
+          NEXT STEPS — PLEASE COMPLETE
+        </div>
+        <h2 style={{
+          fontSize: 16,
+          fontWeight: 700,
+          color: '#0F172A',
+          margin: '0 0 10px',
+        }}>
+          Save the contract and email it to HR
+        </h2>
+        <ol style={{
+          fontSize: 13,
+          color: '#525252',
+          lineHeight: 1.7,
+          margin: '0 0 16px 18px',
+          padding: 0,
+        }}>
+          <li><strong>Download</strong> the contract below — your acceptance is stamped on it.</li>
+          <li><strong>Email</strong> the saved PDF to HR using the button below to confirm receipt and complete your file.</li>
+        </ol>
+
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button
+            onClick={downloadStamped}
+            style={{
+              background: '#0F4C2A',
+              color: '#FFFFFF',
+              border: 'none',
+              padding: '11px 20px',
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: 'pointer',
+              borderRadius: 8,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+            }}
+          >
+            ⬇ Download contract (PDF)
+          </button>
+          <button
+            onClick={emailBack}
+            style={{
+              background: '#FFFFFF',
+              color: '#0F4C2A',
+              border: '1.5px solid #0F4C2A',
+              padding: '11px 20px',
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: 'pointer',
+              borderRadius: 8,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+            }}
+          >
+            ✉ Open email to HR
+          </button>
+        </div>
+        <div style={{
+          fontSize: 11,
+          color: '#854F0B',
+          marginTop: 10,
+          fontStyle: 'italic',
+        }}>
+          The email opens with HR's address, subject, and message pre-filled — please attach the PDF you saved before sending.
+        </div>
+      </div>
+
+      {/* Stamped contract — same green-bordered card style as
+          DecideView so the candidate sees it occupy the same space
+          they reviewed before, just now with the acceptance mark. */}
+      <div style={{
+        maxWidth: 794,
+        margin: '0 auto',
+        background: '#FFFFFF',
+        borderRadius: 16,
+        border: '2px solid #0F4C2A',
+        boxShadow: '0 6px 28px rgba(15, 76, 42, 0.15)',
+        overflow: 'hidden',
+        marginBottom: 24,
+      }}>
+        <style>{`
+          /* The .offer-letter container has height:1123px + overflow:
+             hidden baked in for the print path. Override here so the
+             stamped contract grows naturally on screen — same trick
+             the LetterPreviewModal uses. */
+          .acceptance-recorded .offer-letter {
+            height: auto !important;
+            min-height: 1123px;
+            overflow: visible !important;
+          }
+        `}</style>
+        <div className="acceptance-recorded" dangerouslySetInnerHTML={{ __html: letterHtml }} />
+      </div>
+    </>
+  );
+}
+
+// ─── Decline recorded — simpler card, no contract download ─────────
+function DeclineRecordedCard({ offer }) {
+  const respondedAt = offer.responded_at
+    ? new Date(offer.responded_at)
+    : new Date();
+  const ref = `ESAU/HR/${respondedAt.getFullYear()}/${(offer.offer_token || '').slice(0, 6).toUpperCase()}`;
+
   return (
     <CenteredCard>
       <div style={{ textAlign: 'center' }}>
@@ -688,27 +979,25 @@ function DoneState({ offer, decision }) {
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
-          width: 64, height: 64,
+          width: 56, height: 56,
           borderRadius: '50%',
-          background: isAccepted ? '#ECFDF3' : '#FEF6E2',
-          color: isAccepted ? '#0F4C2A' : '#854F0B',
+          background: '#FEF6E2',
+          color: '#854F0B',
           marginBottom: 16,
-          fontSize: 32, fontWeight: 700,
+          fontSize: 28, fontWeight: 700,
         }}>
-          {isAccepted ? '✓' : '✕'}
+          ✕
         </div>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: '#0F172A', margin: '0 0 8px' }}>
-          {isAccepted ? 'Thank you for accepting!' : 'Your decline has been recorded'}
+        <h1 style={{ fontSize: 20, fontWeight: 700, color: '#0F172A', margin: '0 0 8px' }}>
+          Your decline has been recorded
         </h1>
-        <p style={{ fontSize: 14, color: '#525252', lineHeight: 1.7, maxWidth: 520, margin: '0 auto 16px' }}>
-          {isAccepted
-            ? 'We are delighted to welcome you to the Evergreen team. HR will be in touch with you shortly to begin onboarding through the SOL system and issue your Personal Service Number (PSN).'
-            : 'Thank you for letting us know. HR has been notified of your decision. We wish you the very best in your future endeavours.'}
+        <p style={{ fontSize: 14, color: '#525252', lineHeight: 1.7, maxWidth: 480, margin: '0 auto 14px' }}>
+          Thank you for letting us know. HR has been notified. We wish you the very best in your future endeavours.
         </p>
         <p style={{ fontSize: 12, color: '#9E9E9E', maxWidth: 480, margin: '0 auto', lineHeight: 1.6 }}>
-          Reference: ESAU/HR/{new Date().getFullYear()}/{(offer.offer_token || '').slice(0, 6).toUpperCase()}
+          Reference: {ref}
           <br />
-          Recorded on {new Date(offer.responded_at || Date.now()).toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short' })}
+          Recorded on {respondedAt.toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Asia/Riyadh' })} (Asia/Riyadh)
         </p>
       </div>
     </CenteredCard>

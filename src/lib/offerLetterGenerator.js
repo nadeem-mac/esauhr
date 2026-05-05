@@ -289,7 +289,15 @@ export async function openOfferLetterPrintWindow(offer, signatory) {
 // Builds the bilingual offer letter HTML (string). Exported so the
 // public acceptance page can render the same letter the candidate
 // received via PDF — they see exactly what they're agreeing to.
-export function buildLetterHtml(offer, signatory) {
+//
+// `acceptanceMark` (optional) — when present, overlays a "Digitally
+// Accepted" block over the candidate-signature area. Used after the
+// candidate clicks Accept on the public page so the contract they
+// download visibly shows their acceptance was recorded. Shape:
+//   { acceptedAt: ISO string, candidateName: string, ref: string }
+// All fields are optional; sensible fallbacks render if any are
+// missing. Pass null/undefined for the pre-acceptance contract.
+export function buildLetterHtml(offer, signatory, acceptanceMark = null) {
   const dateEN = new Date().toLocaleDateString('en-GB', {
     day: 'numeric', month: 'long', year: 'numeric',
   });
@@ -318,6 +326,39 @@ export function buildLetterHtml(offer, signatory) {
 
   const sar = (v) => `SAR ${Number(v || 0).toLocaleString('en-GB')}`;
   const e = escapeHtml;
+
+  // Pre-compute the acceptance stamp HTML once. If acceptanceMark is
+  // null (pre-acceptance contract), this is empty string. Otherwise
+  // it's a rendered <div class="digital-stamp"> ready to insert into
+  // the candidate signature column.
+  const stampHtml = (() => {
+    if (!acceptanceMark) return '';
+    const acceptedAt = acceptanceMark.acceptedAt
+      ? new Date(acceptanceMark.acceptedAt)
+      : new Date();
+    const stampedDateEN = acceptedAt.toLocaleString('en-GB', {
+      dateStyle: 'long', timeStyle: 'short',
+      timeZone: 'Asia/Riyadh',
+    });
+    // Use the acceptanceMark.candidateName if provided, else fall back
+    // to the offer's. The candidate name on a generated stamp came
+    // from the verified DB row at acceptance time, so it's the
+    // canonical "what they used to verify identity" value.
+    const stampedName = (acceptanceMark.candidateName || offer.candidateName || '—')
+      .toUpperCase();
+    const stampedRef = acceptanceMark.ref || ref;
+    return `
+      <div class="digital-stamp">
+        <div class="stamp-check">✓</div>
+        <div class="stamp-tag">DIGITALLY ACCEPTED · مقبول رقمياً</div>
+        <div class="stamp-name">${e(stampedName)}</div>
+        <div class="stamp-meta">
+          ${e(stampedDateEN)} (Asia/Riyadh)<br>
+          Reference: ${e(stampedRef)}
+        </div>
+      </div>
+    `;
+  })();
 
   return `
     <style>
@@ -773,6 +814,63 @@ export function buildLetterHtml(offer, signatory) {
         font-style: italic;
       }
 
+      /* ─── DIGITAL ACCEPTANCE STAMP ───
+         Replaces the candidate signature line + name when the offer
+         has been accepted via the public acceptance page. The stamp
+         is a visible, auditable mark — green border, monospace font,
+         clearly labelled "DIGITALLY ACCEPTED" with the candidate's
+         verified name and the acceptance timestamp. Sized to fit
+         within the existing sig-candidate cell so the surrounding
+         layout doesn't shift. */
+      .offer-letter .digital-stamp {
+        margin-top: 4px;
+        padding: 6px 8px;
+        border: 1.5px solid #0F4C2A;
+        border-radius: 4px;
+        background: #ECFDF3;
+        position: relative;
+      }
+      .offer-letter .digital-stamp .stamp-tag {
+        font-size: 7px;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+        color: #0F4C2A;
+        text-align: center;
+        margin-bottom: 3px;
+      }
+      .offer-letter .digital-stamp .stamp-name {
+        font-family: 'Courier New', 'Courier', monospace;
+        font-size: 11px;
+        font-weight: 700;
+        color: #0F4C2A;
+        text-align: center;
+        line-height: 1.2;
+      }
+      .offer-letter .digital-stamp .stamp-meta {
+        font-size: 6.5px;
+        color: #0F4C2A;
+        text-align: center;
+        margin-top: 3px;
+        line-height: 1.4;
+      }
+      .offer-letter .digital-stamp .stamp-check {
+        position: absolute;
+        top: -7px;
+        right: -7px;
+        width: 18px;
+        height: 18px;
+        background: #0F4C2A;
+        color: #FFFFFF;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        font-weight: 700;
+        border: 2px solid #FFFFFF;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+      }
+
       /* ─── CONFIDENTIALITY FOOTER ─── */
       .offer-letter .foot {
         margin-top: 6px;
@@ -940,13 +1038,15 @@ export function buildLetterHtml(offer, signatory) {
           <img class="seal-img" src="/company-seal.png" alt="Company Seal · ختم الشركة" />
         </div>
 
-        <!-- RIGHT: Candidate signature -->
+        <!-- RIGHT: Candidate signature OR digital acceptance stamp -->
         <div class="sig-candidate">
           <div class="sig-label">Candidate Acceptance · موافقة المرشح</div>
+          ${acceptanceMark ? stampHtml : `
           <div class="sig-line"></div>
           <div class="sig-name">${e((offer.candidateName || '—').toUpperCase())}</div>
           <div class="sig-title">Signature &amp; Date · التوقيع والتاريخ</div>
           <div class="candidate-confirm">By signing, I accept the offer above and the Terms set out in this letter.<br><span class="ar" style="display:block;margin-top:3px;">أُقرّ بقبولي العرض المذكور أعلاه والشروط الواردة في هذا الخطاب.</span></div>
+          `}
         </div>
       </div>
 

@@ -86,8 +86,21 @@ export default function LetterPreviewModal({ offer, onClose, readOnly = false })
   // Build the letter HTML once per offer/signatory change. Same call
   // shape AcceptOfferPage uses, so the candidate and Bashaier both
   // see identical content rendered from the same source.
+  //
+  // Accepted offers get the digital acceptance stamp baked in — same
+  // as the candidate sees on the public acceptance page after they
+  // click Accept — so HR's preview matches the artefact the candidate
+  // would have downloaded. The stamp shows the verified candidate
+  // name, the timestamp, and the offer reference.
   const letterHtml = useMemo(() => {
     if (!offer || !signatory) return '';
+    const acceptanceMark = (offer.status === 'offer_accepted' && offer.responded_at)
+      ? {
+          acceptedAt:    offer.responded_at,
+          candidateName: offer.candidate_name,
+          ref:           `ESAU/HR/${new Date(offer.responded_at).getFullYear()}/${(offer.offer_token || '').slice(0, 6).toUpperCase()}`,
+        }
+      : null;
     return buildLetterHtml(
       {
         candidateName:    offer.candidate_name,
@@ -102,7 +115,8 @@ export default function LetterPreviewModal({ offer, onClose, readOnly = false })
         salaryTotal:      offer.salary_amount || 0,
         offerToken:       offer.offer_token,
       },
-      signatory
+      signatory,
+      acceptanceMark
     );
   }, [offer, signatory]);
 
