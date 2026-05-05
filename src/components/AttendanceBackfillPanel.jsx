@@ -39,7 +39,7 @@
 import React, { useCallback, useState } from 'react';
 import {
   Upload, ChevronDown, AlertTriangle, CheckCircle2, Loader2,
-  FileSpreadsheet, Calendar, Users, Layers,
+  FileSpreadsheet, Calendar, Users, Layers, RefreshCw, Sparkles,
 } from 'lucide-react';
 import {
   parseBackfillXlsx,
@@ -47,6 +47,7 @@ import {
   previewOverwrites,
   recordBackfillRows,
   fetchShiftEmployeeIds,
+  reevaluateBackfillRows,
 } from '../lib/attendanceBackfill.js';
 import { TimeCardParseError } from '../lib/timeCard.js';
 
@@ -101,6 +102,14 @@ export default function AttendanceBackfillPanel({ me, employees }) {
   const [done, setDone]             = useState(null);
   const [overrideWarn, setOverride] = useState(false);
 
+  // Re-evaluation flow — separate state so it doesn't conflict with
+  // the file-import flow. The user can run this without uploading
+  // anything to re-classify rows that were imported before the
+  // late/short evaluation logic existed.
+  const [reevaluating, setReevaluating] = useState(false);
+  const [reevalProgress, setReevalProgress] = useState({ phase: '', processed: 0, total: 0 });
+  const [reevalDone, setReevalDone] = useState(null);
+
   const reset = useCallback(() => {
     setParseErr(null);
     setPreview(null);
@@ -109,6 +118,23 @@ export default function AttendanceBackfillPanel({ me, employees }) {
     setProgress({ written: 0, total: 0 });
     setDone(null);
     setOverride(false);
+    setReevaluating(false);
+    setReevalProgress({ phase: '', processed: 0, total: 0 });
+    setReevalDone(null);
+  }, []);
+
+  const handleReevaluate = useCallback(async () => {
+    setReevaluating(true);
+    setReevalDone(null);
+    setReevalProgress({ phase: 'starting', processed: 0, total: 0 });
+    try {
+      const result = await reevaluateBackfillRows((p) => setReevalProgress(p));
+      setReevalDone(result);
+    } catch (e) {
+      setParseErr(`Re-evaluation failed: ${e?.message || e}`);
+    } finally {
+      setReevaluating(false);
+    }
   }, []);
 
   const handleFile = useCallback(async (file) => {
@@ -165,12 +191,14 @@ export default function AttendanceBackfillPanel({ me, employees }) {
 
   // Determine which sub-state to render so each one can have its
   // own `key` for animation replay. Order matters: error > done >
-  // importing > preview > parsing > empty.
-  const subState = parseErr ? 'error'
-                : done       ? 'done'
-                : importing  ? 'importing'
-                : preview    ? 'preview'
-                : parsing    ? 'parsing'
+  // importing > preview > parsing > re-evaluating > re-eval done > empty.
+  const subState = parseErr      ? 'error'
+                : done           ? 'done'
+                : importing      ? 'importing'
+                : preview        ? 'preview'
+                : parsing        ? 'parsing'
+                : reevaluating   ? 'reevaluating'
+                : reevalDone     ? 'reeval-done'
                 : 'empty';
 
   return (
@@ -265,7 +293,7 @@ export default function AttendanceBackfillPanel({ me, employees }) {
             animation: 'backfill-pop-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)',
           }}
         >
-          {/* ── EMPTY STATE — File picker ───────────────────────────── */}
+          {/* ── EMPTY STATE — File picker + re-evaluate action ────── */}
           {subState === 'empty' && (
             <div
               key="empty"
@@ -279,11 +307,134 @@ export default function AttendanceBackfillPanel({ me, employees }) {
                 className="text-[11px] mt-3"
                 style={{ color: '#0A0A0A', opacity: 0.7, maxWidth: 600, lineHeight: 1.55 }}
               >
-                Same Time Card xlsx format as the daily upload, but covering a longer date range. The importer writes one{' '}
-                <code style={{ background: '#FFFFFF', padding: '0 5px', borderRadius: 3, color: '#854F0B', fontWeight: 600 }}>
-                  present
-                </code>{' '}
-                row per (employee, date) with punches. Late/short/absent evaluation isn't possible for historical dates without shift data — the daily flow continues to evaluate properly going forward.
+                Same Time Card xlsx format as the daily upload, but covering a longer date range.
+                Office staff are evaluated against standard 08:00&ndash;17:00 office hours
+                (15-min grace). Shift workers (with saved schedules) and KSA weekend punches
+                are recorded as &lsquo;present&rsquo; without late/short evaluation since their
+                historical schedules aren&rsquo;t recoverable.
+              </div>
+
+              {/* Divider with label */}
+              <div className="flex items-center gap-3 my-4">
+                <div style={{ flex: 1, height: 1, background: 'rgba(252,211,77,0.5)' }} />
+                <span className="text-[10px]" style={{ color: '#854F0B', fontWeight: 700, letterSpacing: '0.22em' }}>
+                  OR
+                </span>
+                <div style={{ flex: 1, height: 1, background: 'rgba(252,211,77,0.5)' }} />
+              </div>
+
+              {/* Re-evaluate card — secondary action for already-imported rows.
+                  This is the "I've already imported, just re-classify" path —
+                  no file required, no overwrite warning, just runs the eval
+                  against existing source='backfill' rows in-place. */}
+              <ReevaluateCard onClick={handleReevaluate} />
+            </div>
+          )}
+
+          {/* ── RE-EVALUATING STATE ─────────────────────────────────── */}
+          {subState === 'reevaluating' && (
+            <div
+              key="reevaluating"
+              className="space-y-3 py-2"
+              style={{ animation: 'backfill-pop-in 0.4s ease-out' }}
+            >
+              <div className="inline-flex items-center gap-2" style={{ color: '#854F0B' }}>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span style={{ fontSize: 13, fontWeight: 700 }}>
+                  {reevalProgress.phase === 'shifts'   ? 'Identifying shift workers\u2026' :
+                   reevalProgress.phase === 'fetching' ? 'Loading existing rows\u2026' :
+                   reevalProgress.phase === 'writing'  ? 'Updating classifications\u2026' :
+                   'Working\u2026'}
+                </span>
+              </div>
+              {reevalProgress.phase === 'writing' && reevalProgress.total > 0 && (
+                <>
+                  <div className="relative h-2.5 rounded-full overflow-hidden" style={{ background: 'rgba(133, 79, 11, 0.12)' }}>
+                    <div
+                      className="absolute left-0 top-0 h-full rounded-full"
+                      style={{
+                        background: 'linear-gradient(90deg, #FCD34D 0%, #F59E0B 100%)',
+                        width: `${Math.round((reevalProgress.processed / reevalProgress.total) * 100)}%`,
+                        transition: 'width 0.3s cubic-bezier(0.4, 0.0, 0.2, 1)',
+                      }}
+                    />
+                    <div
+                      aria-hidden
+                      className="absolute top-0 left-0 h-full"
+                      style={{
+                        width: '40%',
+                        background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.5) 50%, transparent 100%)',
+                        animation: 'backfill-shimmer 1.6s linear infinite',
+                      }}
+                    />
+                  </div>
+                  <div className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+                    {reevalProgress.processed.toLocaleString()} of {reevalProgress.total.toLocaleString()} rows
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── RE-EVAL DONE STATE ─────────────────────────────────── */}
+          {subState === 'reeval-done' && (
+            <div
+              key="reeval-done"
+              className="rounded-xl p-4"
+              style={{
+                background: '#FFFFFF',
+                border: '1.5px solid #10B981',
+                animation: 'backfill-burst 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)',
+              }}
+            >
+              <div className="flex items-start gap-3">
+                <div
+                  className="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0"
+                  style={{ background: '#10B981', color: '#FFFFFF' }}
+                >
+                  <CheckCircle2 className="w-7 h-7" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div
+                    style={{
+                      fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
+                      fontSize: 19, color: '#065F46', lineHeight: 1.15, fontWeight: 700,
+                    }}
+                  >
+                    Re-evaluation complete
+                  </div>
+                  <div className="text-[12px] mt-1" style={{ color: '#065F46', lineHeight: 1.55 }}>
+                    Scanned <strong>{reevalDone.scanned.toLocaleString()}</strong> backfilled row{reevalDone.scanned === 1 ? '' : 's'}.{' '}
+                    {reevalDone.changed > 0 ? (
+                      <>Updated <strong>{reevalDone.changed.toLocaleString()}</strong> row{reevalDone.changed === 1 ? '' : 's'} with new classifications.</>
+                    ) : (
+                      <>No rows changed &mdash; everything already matches the current rules.</>
+                    )}
+                  </div>
+                  {/* Breakdown chips — gives Bashaier the late count
+                      she's been waiting to see */}
+                  <div className="flex flex-wrap gap-2 mt-2.5">
+                    <EvalChip bg="#ECFDF5" fg="#0F4C2A" border="#A7F3D0" label="Present" count={reevalDone.presentCount} />
+                    {reevalDone.lateCount > 0 && (
+                      <EvalChip bg="#FEF3C7" fg="#854F0B" border="#FCD34D" label="Late" count={reevalDone.lateCount} />
+                    )}
+                    {reevalDone.shortCount > 0 && (
+                      <EvalChip bg="#FED7AA" fg="#7C2D12" border="#FB923C" label="Left early" count={reevalDone.shortCount} />
+                    )}
+                  </div>
+                  <button
+                    onClick={reset}
+                    className="text-[11px] mt-3 px-3 py-1.5 rounded-full transition-all"
+                    style={{
+                      background: '#FFFFFF', color: '#065F46',
+                      border: '1.5px solid #10B981', fontWeight: 700, cursor: 'pointer',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = '#ECFDF5'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = '#FFFFFF'; }}
+                  >
+                    Done
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -742,5 +893,62 @@ function EvalChip({ bg, fg, border, label, count }) {
     >
       {label}: <span style={{ fontVariantNumeric: 'tabular-nums' }}>{count.toLocaleString()}</span>
     </span>
+  );
+}
+
+// ─── ReevaluateCard ───────────────────────────────────────────────────
+// Secondary action shown in the empty state. Re-runs the late/short
+// evaluation against existing source='backfill' rows in attendance_daily
+// without requiring a re-upload. Useful when the eval rules changed
+// after the initial import (which is exactly what happened here).
+function ReevaluateCard({ onClick }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      className="w-full text-left rounded-xl flex items-start gap-3 cursor-pointer"
+      style={{
+        background: hover ? '#FFFFFF' : 'rgba(255,255,255,0.7)',
+        border: '1px solid ' + (hover ? '#F59E0B' : 'rgba(252,211,77,0.6)'),
+        padding: '14px 16px',
+        transform: hover ? 'translateY(-1px)' : 'translateY(0)',
+        boxShadow: hover ? '0 6px 18px rgba(133,79,11,0.15)' : 'none',
+        transition: 'all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)',
+      }}
+    >
+      <div
+        className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+        style={{
+          background: '#FEF3C7',
+          color: '#854F0B',
+          transform: hover ? 'rotate(-30deg)' : 'rotate(0deg)',
+          transition: 'transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
+        }}
+      >
+        <RefreshCw className="w-5 h-5" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div
+          className="inline-flex items-center gap-1.5"
+          style={{
+            fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
+            fontSize: 15,
+            color: '#1F1B16',
+            fontWeight: 700,
+            lineHeight: 1.2,
+          }}
+        >
+          Re-evaluate already-imported rows
+          <Sparkles className="w-3.5 h-3.5" style={{ color: '#F59E0B' }} />
+        </div>
+        <div className="text-[12px] mt-1" style={{ color: '#0A0A0A', opacity: 0.7, lineHeight: 1.5 }}>
+          Apply the late/short rules to backfill rows that were imported before the evaluation
+          logic existed. Scans <code style={{ background: '#FFFBEB', padding: '0 4px', borderRadius: 3, color: '#854F0B' }}>source=&lsquo;backfill&rsquo;</code> rows and
+          updates classifications in place &mdash; no re-upload needed.
+        </div>
+      </div>
+    </button>
   );
 }

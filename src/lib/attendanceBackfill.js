@@ -370,5 +370,138 @@ export async function recordBackfillRows(rows, onProgress) {
   return { written };
 }
 
+/**
+ * Re-evaluate attendance_daily rows that were imported via backfill.
+ *
+ * USE CASE
+ *   The first wave of historical backfill imports happened before
+ *   the late/short evaluation logic existed — every row landed as
+ *   status='present'. Rather than asking the user to re-upload the
+ *   xlsx, this helper scans rows where source='backfill', applies
+ *   the standard 08:00-17:00 + 15-min grace policy in-memory, and
+ *   upserts the rows whose classification actually changed.
+ *
+ * SCOPE
+ *   • Only touches rows with source='backfill' so daily-flow rows
+ *     (which were evaluated against real shift schedules) are left
+ *     alone.
+ *   • Skips employees who appear in monthly_shift_plans — same as
+ *     the original backfill builder. We can't fairly classify their
+ *     historical punches without their actual schedules.
+ *   • Skips KSA weekend dates (Fri/Sat) — same as the builder.
+ *   • Only writes rows where status / late_minutes / early_leave_minutes
+ *     actually changed, so the upsert footprint stays small.
+ *
+ * @param {function} [onProgress] — called with { phase, processed, total }
+ * @returns {Promise<{ scanned, changed, lateCount, shortCount, presentCount }>}
+ */
+export async function reevaluateBackfillRows(onProgress) {
+  // Phase 1 — load shift-worker IDs
+  if (onProgress) try { onProgress({ phase: 'shifts', processed: 0, total: 0 }); } catch {}
+  const shiftSet = await fetchShiftEmployeeIds();
+
+  // Phase 2 — fetch all backfill rows. Project only the columns
+  // we need to evaluate; status + minutes + id is enough.
+  if (onProgress) try { onProgress({ phase: 'fetching', processed: 0, total: 0 }); } catch {}
+  const existing = await directGet(
+    'attendance_daily',
+    'select=id,employee_id,attendance_date,first_punch,last_punch,status,' +
+    'late_minutes,early_leave_minutes,expected_start,expected_end,punch_count,' +
+    'leave_request_id,recorded_by' +
+    '&source=eq.backfill' +
+    '&order=attendance_date.asc',
+    { timeoutMs: 30000 }
+  ) || [];
+
+  // Phase 3 — compute proposed updates in-memory
+  const toUpsert = [];
+  let lateCount = 0;
+  let shortCount = 0;
+  let presentCount = 0;
+
+  for (const r of existing) {
+    const empId = r.employee_id;
+    const dt = new Date(r.attendance_date + 'T00:00:00');
+    const isWeekend = isKsaWeekendDow(dt.getDay());
+    const isShiftWorker = shiftSet.has(empId);
+
+    let newStatus, newLate, newEarly, newExpStart, newExpEnd, newNote;
+    if (isShiftWorker || isWeekend) {
+      // Force back to a clean 'present' baseline — no eval applies.
+      newStatus    = 'present';
+      newLate      = 0;
+      newEarly     = 0;
+      newExpStart  = null;
+      newExpEnd    = null;
+      newNote = isShiftWorker
+        ? 'Backfill — shift worker, schedule unknown (re-evaluated)'
+        : 'Backfill — KSA weekend punch (re-evaluated)';
+    } else {
+      const ev = evaluateOffice(r.first_punch, r.last_punch);
+      newStatus   = ev.status;
+      newLate     = ev.lateMin;
+      newEarly    = ev.earlyMin;
+      newExpStart = STD_START_TIME;
+      newExpEnd   = STD_END_TIME;
+      newNote = 'Backfill — re-evaluated against standard 08:00-17:00 with 15-min grace';
+    }
+
+    // Tally for the summary regardless of whether we actually write
+    if (newStatus === 'late')        lateCount++;
+    else if (newStatus === 'short')  shortCount++;
+    else                              presentCount++;
+
+    // Only push to upsert if anything actually changed — avoids
+    // unnecessary writes when most rows are already correct.
+    const changed =
+      newStatus !== r.status ||
+      (newLate || 0) !== (r.late_minutes || 0) ||
+      (newEarly || 0) !== (r.early_leave_minutes || 0) ||
+      (newExpStart || null) !== (r.expected_start || null) ||
+      (newExpEnd   || null) !== (r.expected_end   || null);
+    if (!changed) continue;
+
+    toUpsert.push({
+      employee_id:        empId,
+      attendance_date:    r.attendance_date,
+      status:             newStatus,
+      first_punch:        r.first_punch,
+      last_punch:         r.last_punch,
+      punch_count:        r.punch_count || 0,
+      expected_start:     newExpStart,
+      expected_end:       newExpEnd,
+      late_minutes:       newLate,
+      early_leave_minutes:newEarly,
+      leave_request_id:   r.leave_request_id || null,
+      notes:              newNote,
+      recorded_at:        new Date().toISOString(),
+      recorded_by:        r.recorded_by || null,
+      source:             'backfill',
+    });
+  }
+
+  // Phase 4 — upsert changed rows in batches
+  const CHUNK = 100;
+  for (let i = 0; i < toUpsert.length; i += CHUNK) {
+    const slice = toUpsert.slice(i, i + CHUNK);
+    await directPost('attendance_daily', slice, {
+      upsert: true,
+      onConflict: 'employee_id,attendance_date',
+      timeoutMs: 15000,
+    });
+    if (onProgress) {
+      try { onProgress({ phase: 'writing', processed: Math.min(i + CHUNK, toUpsert.length), total: toUpsert.length }); } catch {}
+    }
+  }
+
+  return {
+    scanned: existing.length,
+    changed: toUpsert.length,
+    lateCount,
+    shortCount,
+    presentCount,
+  };
+}
+
 // Re-export so consumers can format dates consistently.
 export const __utils = { ymd, toTime, isoDate };
