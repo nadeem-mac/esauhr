@@ -105,9 +105,9 @@ const SECTIONS = [
     label: 'Migrations',
     icon: Database,
     desc: 'Apply pending schema changes',
-    body: ({ me }) => (
+    body: ({ me, onMigrationsChanged }) => (
       <ErrorBoundary>
-        <MigrationsPanel me={me} />
+        <MigrationsPanel me={me} onChanged={onMigrationsChanged} />
       </ErrorBoundary>
     ),
   },
@@ -146,7 +146,7 @@ const SECTIONS = [
   },
 ];
 
-export default function SettingsView({ leaveTypes, onUpdateType, employees, requests, holidays, me }) {
+export default function SettingsView({ leaveTypes, onUpdateType, employees, requests, holidays, me, pendingMigrationCount = null, onMigrationsChanged }) {
   const isAdmin = Boolean(me?.is_admin);
   const [activeId, setActiveId] = useState(SECTIONS[0].id);
 
@@ -166,7 +166,7 @@ export default function SettingsView({ leaveTypes, onUpdateType, employees, requ
     );
   }
 
-  const ctx = { leaveTypes, onUpdateType, employees, requests, holidays, me };
+  const ctx = { leaveTypes, onUpdateType, employees, requests, holidays, me, onMigrationsChanged };
 
   return (
     <div className="space-y-4">
@@ -204,6 +204,20 @@ export default function SettingsView({ leaveTypes, onUpdateType, employees, requ
                 >
                   <Icon className="w-3 h-3" />
                   {s.label}
+                  {s.id === 'migrations' && pendingMigrationCount > 0 && (
+                    <span
+                      className="text-[9px] px-1 rounded-full font-bold"
+                      style={{
+                        background: isActive ? '#FFFFFF' : '#DC2626',
+                        color: isActive ? '#DC2626' : '#FFFFFF',
+                        minWidth: 14,
+                        lineHeight: 1.4,
+                        textAlign: 'center',
+                      }}
+                    >
+                      {pendingMigrationCount}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -238,15 +252,36 @@ export default function SettingsView({ leaveTypes, onUpdateType, employees, requ
                     <Icon className="w-3.5 h-3.5" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-[12px] leading-tight"
+                    <div className="text-[12px] leading-tight flex items-center gap-1.5"
                       style={{
                         color: isActive ? 'var(--evergreen-800, #0F2818)' : '#0A0A0A',
                         fontWeight: isActive ? 600 : 500,
                       }}>
-                      {s.label}
+                      <span>{s.label}</span>
+                      {s.id === 'migrations' && pendingMigrationCount > 0 && (
+                        // Red badge — matches the urgent-attention
+                        // style used on the Settings tab badge so
+                        // Nadeem sees the same visual cue as he drills
+                        // down from the top nav.
+                        <span
+                          className="text-[9px] px-1.5 py-0.5 rounded-full font-bold inline-flex items-center justify-center"
+                          style={{
+                            background: '#DC2626',
+                            color: '#FFFFFF',
+                            minWidth: 16,
+                            lineHeight: 1,
+                            letterSpacing: '0.02em',
+                          }}
+                          title={`${pendingMigrationCount} pending`}
+                        >
+                          {pendingMigrationCount}
+                        </span>
+                      )}
                     </div>
                     <div className="text-[10px] opacity-55 leading-tight mt-0.5">
-                      {s.desc}
+                      {s.id === 'migrations' && pendingMigrationCount > 0
+                        ? `${pendingMigrationCount} pending — apply now`
+                        : s.desc}
                     </div>
                   </div>
                   {isActive && (

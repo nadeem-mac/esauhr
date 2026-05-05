@@ -25,7 +25,7 @@ import { Loader2, Play, RotateCw, CheckCircle2, AlertTriangle, Database, Chevron
 import { Card } from './Dashboard.jsx';
 import { listMigrationsWithStatus, runMigration, sqlByteSize } from '../lib/migrationRunner.js';
 
-export default function MigrationsPanel({ me }) {
+export default function MigrationsPanel({ me, onChanged }) {
   const [items, setItems]               = useState([]);
   const [installed, setInstalled]       = useState(true);
   const [loading, setLoading]           = useState(true);
@@ -41,12 +41,16 @@ export default function MigrationsPanel({ me }) {
       const { items, installed } = await listMigrationsWithStatus();
       setItems(items);
       setInstalled(installed);
+      // Notify the parent so the Settings tab badge + sidebar badge
+      // update without a page reload. Wrapped in try so a parent
+      // that hasn't passed a handler doesn't error.
+      try { onChanged?.(); } catch { /* ignore */ }
     } catch (err) {
       setLoadError(err?.message || String(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [onChanged]);
 
   useEffect(() => { refresh(); }, [refresh]);
 

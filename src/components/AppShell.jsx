@@ -170,6 +170,17 @@ export default function AppShell({ session, me, onRefreshMe }) {
   // tapping that card flips this flag to open the modal.
   const [shiftAckOpen, setShiftAckOpen] = useState(false);
 
+  // Pending migration count — number of bundled SQL migrations that
+  // haven't been applied to this database yet (status: never_run) plus
+  // ones whose bundled SQL has changed since the last run (status:
+  // changed). Surfaced as a badge on the Settings tab + the Migrations
+  // sidebar item so Nadeem (admin) sees at a glance when a new
+  // migration was added by a deploy.
+  //
+  // null = not yet loaded; we don't show a 0 badge in that case to
+  // avoid flickering. number = actual count (0 means "all up to date").
+  const [pendingMigrationCount, setPendingMigrationCount] = useState(null);
+
   // Derived flags — must be AFTER all useState() so employees is in scope.
   const isAdmin    = Boolean(me?.is_admin);
   const isReviewer = Boolean(me?.can_review_leave || me?.can_review_permissions);
@@ -284,6 +295,47 @@ export default function AppShell({ session, me, onRefreshMe }) {
       .subscribe();
     return () => { mounted = false; supabase.removeChannel(ch); };
   }, [isAdmin]);
+
+  // Pending schema migrations badge (admin only).
+  //
+  // A bundled migration is "pending" if its status is 'never_run' or
+  // 'changed' — i.e. either has never been applied to this DB, or was
+  // applied previously but the SQL has been edited since (so re-running
+  // would reveal a delta). Both cases warrant attention.
+  //
+  // We only fetch once per Settings-tab visit + on the initial admin
+  // session — no realtime subscription needed because migrations are
+  // ALWAYS applied via Bashaier/Nadeem clicking Run, not by an
+  // out-of-band process. The MigrationsPanel's own Refresh button +
+  // post-run reload cover the cases where the count changes.
+  //
+  // refreshMigrationCount is exposed via callback so MigrationsPanel
+  // can trigger a recount after a successful run (drops the badge
+  // back to 0 without forcing a page reload).
+  const refreshMigrationCount = useCallback(async () => {
+    if (!isAdmin) { setPendingMigrationCount(null); return; }
+    try {
+      // Lazy import — keeps the migrationRunner code out of the main
+      // bundle for non-admins.
+      const { listMigrationsWithStatus } = await import('../lib/migrationRunner.js');
+      const { items, installed } = await listMigrationsWithStatus();
+      // If the runner table doesn't exist yet, every bundled migration
+      // is effectively pending. We surface the same count as if they
+      // were all 'never_run'; the panel itself will tell Nadeem to run
+      // the bootstrap SQL first.
+      if (!installed) { setPendingMigrationCount(items.length); return; }
+      const pending = items.filter(m => m.status === 'never_run' || m.status === 'changed').length;
+      setPendingMigrationCount(pending);
+    } catch (err) {
+      console.warn('Migration count load failed:', err?.message || err);
+      // On error, hide the badge entirely rather than show a wrong
+      // number. Nadeem will see the actual state when he opens the
+      // Migrations panel.
+      setPendingMigrationCount(null);
+    }
+  }, [isAdmin]);
+
+  useEffect(() => { refreshMigrationCount(); }, [refreshMigrationCount]);
 
   // Pending shift acknowledgments — every signed-in user fetches any rows
   // in employee_shifts where employee_id = me.id AND status = 'pending'.
@@ -719,6 +771,18 @@ export default function AppShell({ session, me, onRefreshMe }) {
                   {calendarTodayCount}
                 </span>
               )}
+              {/* Settings — pending schema migrations badge. Red dot
+                  matches the 'action needed' style used on Reviews so
+                  Nadeem reads it as "you need to do something" rather
+                  than informational. Hidden when count is 0 or null
+                  (null = not yet loaded). */}
+              {t.id === 'settings' && pendingMigrationCount > 0 && (
+                <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full font-bold"
+                  style={{ background: '#DC2626', color: '#FFFFFF', minWidth: '18px', textAlign: 'center' }}
+                  title={`${pendingMigrationCount} schema migration${pendingMigrationCount === 1 ? '' : 's'} pending — open Settings → Migrations to apply`}>
+                  {pendingMigrationCount}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -860,6 +924,8 @@ export default function AppShell({ session, me, onRefreshMe }) {
             onUpdateType={updateLeaveType}
             employees={employees} requests={requests} holidays={holidays}
             me={me}
+            pendingMigrationCount={pendingMigrationCount}
+            onMigrationsChanged={refreshMigrationCount}
           />
         )}
         {tab === 'insights' && (isAdmin || isHrReviewer) && (
