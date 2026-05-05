@@ -436,39 +436,59 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
 
       // Upsert — on conflict do update via PostgREST's resolution=
       // merge-duplicates header, scoped to (employee_id, shift_date).
+      // 30s timeout because a 30-day month with 6 reports could
+      // brush against the default on a slow connection — the upsert
+      // itself is one round trip but PostgREST's MERGE path is
+      // slower than a plain INSERT.
       if (rows.length > 0) {
         await directPost(
           'employee_shifts?on_conflict=employee_id,shift_date',
           rows,
           {
             headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
-            timeoutMs: 12000,
+            timeoutMs: 30000,
           }
         );
       }
 
       // Delete rows for days that are NOT selected (manager unchecked
-      // a previously-saved day). Scoped to this employee + this month
-      // + future-or-today only (past rows are preserved as history).
+      // a previously-saved day). One bulk DELETE-by-filter call instead
+      // of fetching-then-deleting-each-row. PostgREST accepts
+      // `shift_date=in.(d1,d2,...)` for set-membership filters.
       const keepKeys = new Set(rows.map(r => r.shift_date));
-      // Find existing rows in the window we should delete.
+      // Find existing rows in the window so we know what to remove.
       const existing = await directGet(
         'employee_shifts',
-        `select=id,shift_date` +
+        `select=shift_date` +
         `&employee_id=eq.${encodeURIComponent(employeeId)}` +
         `&shift_date=gte.${todayK > fromKey ? todayK : fromKey}` +
         `&shift_date=lte.${toKey}`,
-        { timeoutMs: 8000 }
+        { timeoutMs: 12000 }
       );
-      const toDelete = (existing || []).filter(r => !keepKeys.has(r.shift_date));
-      // Delete in parallel (one HTTP call per row — small N, fine).
-      // Per-row catch so one failed delete doesn't kill the whole save.
-      await Promise.all(
-        toDelete.map(r =>
-          directDelete('employee_shifts', 'id', r.id, { timeoutMs: 6000 })
-            .catch(e => console.warn('shift delete failed (non-fatal):', e?.message || e))
-        )
-      );
+      const datesToDelete = (existing || [])
+        .map(r => r.shift_date)
+        .filter(d => !keepKeys.has(d));
+
+      if (datesToDelete.length > 0) {
+        // Single bulk delete — PostgREST's `in.(...)` filter takes a
+        // comma-separated list and deletes everything matching it
+        // plus the employee_id scope, in one round trip. Way faster
+        // than the previous one-call-per-row approach and avoids
+        // the malformed-URL bug that hung on a wrong directDelete
+        // signature.
+        const inList = datesToDelete.map(d => encodeURIComponent(d)).join(',');
+        const filter =
+          `employee_id=eq.${encodeURIComponent(employeeId)}` +
+          `&shift_date=in.(${inList})`;
+        try {
+          await directDelete('employee_shifts', filter, { timeoutMs: 12000 });
+        } catch (e) {
+          // Non-fatal — surface to console but don't block the save.
+          // Worst case: the unchecked-but-not-deleted rows linger;
+          // the manager re-saves and they get cleaned up next time.
+          console.warn('shift bulk delete failed (non-fatal):', e?.message || e);
+        }
+      }
 
       // Upsert the monthly_shift_plans tracker row so the reminder
       // system knows this month is done. Same on-conflict pattern.
