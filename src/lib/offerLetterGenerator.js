@@ -317,8 +317,8 @@ function buildLetterHtml(offer, signatory) {
       .offer-letter {
         font-family: 'Helvetica Neue', 'Arial', sans-serif;
         color: #0F172A;
-        line-height: 1.4;
-        padding: 22px 30px 14px;
+        line-height: 1.35;
+        padding: 18px 28px 12px;
         font-size: 10.5px;
         width: ${A4_W_PX}px;
         height: ${A4_H_PX}px;
@@ -327,6 +327,21 @@ function buildLetterHtml(offer, signatory) {
         display: flex;
         flex-direction: column;
         overflow: hidden;
+      }
+      /* Print rule: when the user hits Print → Save as PDF, the
+         browser's print engine ignores overflow:hidden and would
+         otherwise spill content to page 2. Force the page-break
+         policy so everything stays on the single page. */
+      @media print {
+        .offer-letter {
+          height: auto;
+          page-break-inside: avoid;
+          break-inside: avoid;
+        }
+        .offer-letter * {
+          page-break-inside: avoid;
+          break-inside: avoid;
+        }
       }
       .offer-letter .ar {
         font-family: 'Tahoma', 'Geeza Pro', 'Arial Unicode MS', 'Segoe UI', sans-serif !important;
@@ -587,8 +602,8 @@ function buildLetterHtml(offer, signatory) {
         border: 1.5px solid #DC2626;
         border-left: 5px solid #DC2626;
         border-radius: 4px;
-        padding: 7px 12px;
-        margin: 6px 0 4px;
+        padding: 5px 10px;
+        margin: 4px 0 3px;
         flex-shrink: 0;
       }
       .offer-letter .validity-callout .row {
@@ -625,16 +640,24 @@ function buildLetterHtml(offer, signatory) {
         gap: 16px;
       }
 
-      /* ─── SPACER PUSHING SIGNATURES TO BOTTOM ─── */
-      .offer-letter .spacer { flex: 1 1 auto; min-height: 8px; }
+      /* ─── No spacer needed — signatures sit directly under the
+         acceptance instruction. Removing the flex spacer + reducing
+         signature column padding keeps the entire letter on a single
+         A4 page. */
+      .offer-letter .spacer { display: none; }
 
       /* ─── SIGNATURES ─── */
       .offer-letter .signatures {
         display: grid;
-        grid-template-columns: 1fr 110px 1fr;
-        gap: 18px;
-        margin-top: 6px;
-        align-items: stretch;
+        grid-template-columns: 1fr 130px 1fr;
+        gap: 14px;
+        margin-top: 8px;
+        /* Center each column's content vertically so the seal sits
+           in the middle of the row rather than the top. The company
+           column (which has the longest content — name, title,
+           corporate footer) defines the row height; without
+           align-items:center the seal would stick to the top edge. */
+        align-items: center;
         flex-shrink: 0;
       }
       .offer-letter .sig-company,
@@ -642,18 +665,22 @@ function buildLetterHtml(offer, signatory) {
         display: flex;
         flex-direction: column;
         font-size: 9.5px;
+        /* Stretch to fill the row so the signature LINE sits at the
+           same vertical position on both sides — the line is
+           anchored by its position in the column, not by alignment. */
+        align-self: stretch;
       }
       .offer-letter .sig-label {
         font-size: 8px;
         color: #525252;
         text-transform: uppercase;
         letter-spacing: 0.5px;
-        margin-bottom: 10px;
+        margin-bottom: 6px;
         font-weight: 600;
       }
       .offer-letter .sig-line {
         border-top: 1px solid #525252;
-        margin-bottom: 5px;
+        margin-bottom: 4px;
         height: 0;
       }
       .offer-letter .sig-name {
@@ -666,38 +693,41 @@ function buildLetterHtml(offer, signatory) {
         font-size: 9.5px;
         color: #525252;
         margin-top: 1px;
-        margin-bottom: 5px;
+        margin-bottom: 4px;
       }
       .offer-letter .corp-block {
-        margin-top: 3px;
-        padding-top: 4px;
+        margin-top: 2px;
+        padding-top: 3px;
         border-top: 1px dashed #D5D5D5;
-        font-size: 8px;
-        line-height: 1.5;
+        font-size: 7.5px;
+        line-height: 1.4;
         color: #0F172A;
       }
       .offer-letter .corp-block .corp-line { color: #525252; }
       .offer-letter .corp-block .corp-name {
         font-weight: 700;
         color: #0F4C2A;
-        font-size: 9px;
+        font-size: 8.5px;
         letter-spacing: 0.2px;
       }
 
       /* Real company seal — applied as a slightly rotated PNG with
          authentic blue-stamp transparency. The slight rotation
-         (-4deg) and reduced opacity (0.85) mimic ink-on-paper:
+         (-4deg) and reduced opacity (0.88) mimic ink-on-paper:
          a hand-applied stamp is never perfectly axis-aligned and
          the ink density varies across the impression. */
       .offer-letter .seal {
         width: 130px;
         height: 130px;
-        align-self: center;
+        /* Center inside the signatures grid cell. With the parent
+           grid using align-items:center, this self-centers both
+           horizontally (margin auto) and vertically (the parent
+           takes care of vertical alignment). */
         margin: 0 auto;
         display: flex;
         align-items: center;
         justify-content: center;
-        position: relative;
+        flex-shrink: 0;
       }
       .offer-letter .seal img.seal-img {
         width: 100%;
@@ -706,26 +736,25 @@ function buildLetterHtml(offer, signatory) {
         opacity: 0.88;
         transform: rotate(-4deg);
         /* The seal renders transparent-bg on white so it doesn't
-           need a backdrop. The mix-blend-mode preserves the ink
-           feel when the seal sits over light grid lines or the
-           bottom border of a dashed area. */
+           need a backdrop. mix-blend-mode preserves the ink feel
+           when the seal sits over light grid lines. */
         mix-blend-mode: multiply;
       }
 
       .offer-letter .candidate-confirm {
-        margin-top: 4px;
-        font-size: 8px;
+        margin-top: 3px;
+        font-size: 7.5px;
         color: #525252;
-        line-height: 1.4;
+        line-height: 1.35;
         font-style: italic;
       }
 
       /* ─── CONFIDENTIALITY FOOTER ─── */
       .offer-letter .foot {
-        margin-top: 10px;
-        padding-top: 6px;
+        margin-top: 6px;
+        padding-top: 4px;
         border-top: 1px solid #E5E5E5;
-        font-size: 7.5px;
+        font-size: 7px;
         color: #999;
         display: flex;
         justify-content: space-between;
