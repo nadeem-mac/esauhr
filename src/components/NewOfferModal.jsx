@@ -111,6 +111,7 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
   const [candidateName, setCandidateName] = useState('');
   const [candidateEmail, setCandidateEmail] = useState('');
   const [candidatePhone, setCandidatePhone] = useState('');
+  const [candidateIqama, setCandidateIqama] = useState('');
   const [positionTitle, setPositionTitle] = useState('');
   const [positionCustom, setPositionCustom] = useState(''); // free-text fallback
   const [department, setDepartment] = useState('');
@@ -141,6 +142,7 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
     setCandidateName('');
     setCandidateEmail('');
     setCandidatePhone('');
+    setCandidateIqama('');
     setPositionTitle('');
     setPositionCustom('');
     setDepartment('');
@@ -282,6 +284,11 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
     if (!candidateName.trim()) list.push('Candidate name is required');
     if (!candidateEmail.trim()) list.push('Personal email is required');
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidateEmail.trim())) list.push('Personal email format looks invalid');
+    // Iqama / National ID is required because the candidate uses it as
+    // the second identity factor on the public acceptance page. Without
+    // it, the candidate literally cannot accept the offer.
+    if (!candidateIqama.trim()) list.push('Iqama / National ID is required');
+    else if (!/^\d{10}$/.test(candidateIqama.trim())) list.push('Iqama / National ID must be exactly 10 digits');
     if (!department) list.push('Department is required');
     if (!finalPositionTitle) list.push('Position title is required');
     if (!location) list.push('Location is required');
@@ -291,7 +298,7 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
     if (salaryTotal <= 0) list.push('Total salary must be greater than zero');
     if (!signatoryId) list.push('Signatory is required (add one below if the list is empty)');
     return list;
-  }, [candidateName, candidateEmail, finalPositionTitle, department, location, proposedJoinDate, salaryBasic, salaryTotal, signatoryId]);
+  }, [candidateName, candidateEmail, candidateIqama, finalPositionTitle, department, location, proposedJoinDate, salaryBasic, salaryTotal, signatoryId]);
 
   const canSubmit = !submitting && errors.length === 0;
 
@@ -340,6 +347,7 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
         candidate_name:        candidateName.trim(),
         candidate_email:       candidateEmail.trim().toLowerCase(),
         candidate_phone:       candidatePhone.trim() || null,
+        candidate_iqama:       candidateIqama.trim(),
         position_title:        finalPositionTitle,
         department:            department,
         proposed_join_date:    proposedJoinDate,
@@ -504,6 +512,17 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
               />
             </Field>
           </div>
+          <Field label="Iqama / National ID *" required>
+            <Input
+              value={candidateIqama}
+              onChange={(v) => setCandidateIqama(v.replace(/\D/g, '').slice(0, 10))}
+              placeholder="10-digit Iqama or National ID"
+              inputMode="numeric"
+            />
+            <div className="text-[11px] mt-1 opacity-70" style={{ color: '#0A0A0A' }}>
+              The candidate enters this on the acceptance page to prove their identity. They cannot accept the offer without it.
+            </div>
+          </Field>
         </FormSection>
 
         {/* Offer details */}

@@ -286,7 +286,10 @@ export async function openOfferLetterPrintWindow(offer, signatory) {
 
 // ─── HTML BUILDER ──────────────────────────────────────────────────
 
-function buildLetterHtml(offer, signatory) {
+// Builds the bilingual offer letter HTML (string). Exported so the
+// public acceptance page can render the same letter the candidate
+// received via PDF — they see exactly what they're agreeing to.
+export function buildLetterHtml(offer, signatory) {
   const dateEN = new Date().toLocaleDateString('en-GB', {
     day: 'numeric', month: 'long', year: 'numeric',
   });

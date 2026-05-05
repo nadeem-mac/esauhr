@@ -7,6 +7,7 @@ import AppShell from './components/AppShell.jsx';
 import ConfigMissing from './components/ConfigMissing.jsx';
 import EvergreenLogo from './components/EvergreenLogo.jsx';
 import VerifyPage from './components/VerifyPage.jsx';
+import AcceptOfferPage from './components/AcceptOfferPage.jsx';
 
 export default function App() {
   const [session, setSession] = useState(null);
@@ -129,6 +130,19 @@ export default function App() {
     : null;
   if (verifyRejoinMatch) {
     return <VerifyPage requestId={verifyRejoinMatch[1]} mode="rejoin" />;
+  }
+
+  // Public offer-acceptance route. The candidate clicks the link in
+  // Bashaier's covering email and lands here — no portal login. The
+  // token is in the query string (24 random bytes, unguessable). The
+  // AcceptOfferPage handles all four UI states (loading / error /
+  // already-responded / verify+decide) entirely on its own.
+  const acceptOfferMatch = typeof window !== 'undefined'
+    && window.location.pathname.match(/^\/accept-offer\/?$/);
+  if (acceptOfferMatch) {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token') || '';
+    return <AcceptOfferPage token={token} />;
   }
 
   if (!ready) return <SplashLoader />;

@@ -447,6 +447,33 @@ function OfferRow({ offer, onChanged, onIssuePsn, me }) {
           <div className="text-[11px] mt-1" style={{ color: '#0A0A0A', opacity: 0.6, fontStyle: 'italic' }}>
             {presentation.description}
           </div>
+
+          {/* Response details — shown for accepted/declined offers.
+              Bashaier sees when the candidate responded and (for
+              declines) the reason they gave. */}
+          {(offer.status === 'offer_accepted' || offer.status === 'offer_declined') && offer.responded_at && (
+            <div
+              className="mt-2 p-2 rounded-md text-[11px]"
+              style={{
+                background: offer.status === 'offer_accepted' ? '#ECFDF3' : '#FCEFEF',
+                border: `1px solid ${offer.status === 'offer_accepted' ? '#A7D8B7' : '#E8B5B0'}`,
+                color: offer.status === 'offer_accepted' ? '#0F4C2A' : '#791F1F',
+                lineHeight: 1.5,
+              }}
+            >
+              <div style={{ fontWeight: 700, letterSpacing: '0.04em' }}>
+                {offer.status === 'offer_accepted' ? 'CANDIDATE ACCEPTED' : 'CANDIDATE DECLINED'}
+                <span style={{ fontWeight: 400, marginLeft: 6 }}>
+                  on {new Date(offer.responded_at).toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short' })}
+                </span>
+              </div>
+              {offer.status === 'offer_declined' && offer.decline_reason && (
+                <div style={{ marginTop: 4, opacity: 0.9 }}>
+                  Reason: <span style={{ fontStyle: 'italic' }}>{offer.decline_reason}</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Actions */}
