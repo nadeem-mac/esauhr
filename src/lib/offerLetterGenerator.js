@@ -294,7 +294,7 @@ function buildLetterHtml(offer, signatory) {
         flex-shrink: 0;
       }
 
-      /* Position table — Arabic stacked under English in BLACK */
+      /* Position table — English labels only (left side stays EN-only) */
       .offer-letter .pos-table {
         width: 100%;
       }
@@ -307,20 +307,10 @@ function buildLetterHtml(offer, signatory) {
         align-items: center;
       }
       .offer-letter .pos-table .row:last-child { border-bottom: none; }
-      .offer-letter .pos-table .label-stack {
-        display: flex;
-        flex-direction: column;
-        gap: 1px;
-      }
-      .offer-letter .pos-table .label-en {
+      .offer-letter .pos-table .label {
         color: #0F172A;
         font-weight: 600;
-        font-size: 10px;
-      }
-      .offer-letter .pos-table .label-ar {
-        color: #0F172A;
-        font-size: 10px;
-        font-weight: 500;
+        font-size: 10.5px;
       }
       .offer-letter .pos-table .value {
         color: #0F172A;
@@ -330,7 +320,7 @@ function buildLetterHtml(offer, signatory) {
         white-space: nowrap;
       }
 
-      /* Salary table — same Arabic-below-English treatment in black */
+      /* Salary table — English labels only */
       .offer-letter .sal-table {
         width: 100%;
         border-collapse: collapse;
@@ -354,19 +344,10 @@ function buildLetterHtml(offer, signatory) {
         padding: 6px 8px;
         vertical-align: middle;
       }
-      .offer-letter .sal-table tbody .label-stack {
-        display: flex;
-        flex-direction: column;
-        gap: 1px;
-      }
-      .offer-letter .sal-table tbody .label-en {
+      .offer-letter .sal-table tbody .label {
         color: #0F172A;
         font-weight: 600;
-        font-size: 10px;
-      }
-      .offer-letter .sal-table tbody .label-ar {
-        color: #0F172A;
-        font-size: 10px;
+        font-size: 10.5px;
       }
       .offer-letter .sal-table tbody .amount {
         text-align: right;
@@ -383,13 +364,9 @@ function buildLetterHtml(offer, signatory) {
         vertical-align: middle;
       }
       .offer-letter .sal-table tfoot .total-en {
-        font-size: 11px;
+        font-size: 12px;
         line-height: 1.25;
-      }
-      .offer-letter .sal-table tfoot .total-ar {
-        font-size: 10px;
-        line-height: 1.25;
-        opacity: 0.95;
+        letter-spacing: 0.3px;
       }
       .offer-letter .sal-table tfoot td.amount {
         text-align: right;
@@ -626,36 +603,35 @@ function buildLetterHtml(offer, signatory) {
 
       <!-- POSITION + SALARY (side by side) -->
       <div class="pos-comp">
-        <!-- Position table — Arabic stacked under English in BLACK -->
+        <!-- Position table — English labels only -->
         <div class="pos-table">
-          ${posRow('Position', 'الوظيفة', offer.positionTitle)}
-          ${posRow('Department', 'الإدارة', offer.department)}
-          ${posRow('Office', 'المكتب', offer.location)}
-          ${posRow('Joining Date', 'تاريخ المباشرة', formatDateLong(offer.proposedJoinDate))}
-          ${posRow('Probation Period', 'فترة التجربة', '90 days · 90 يوماً')}
-          ${posRow('Working Hours', 'ساعات العمل', '40 hr/week · Sun-Thu')}
-          ${posRow('Contract Type', 'نوع العقد', 'Indefinite · غير محدد')}
+          ${posRow('Position', offer.positionTitle)}
+          ${posRow('Department', offer.department)}
+          ${posRow('Office', offer.location)}
+          ${posRow('Joining Date', formatDateLong(offer.proposedJoinDate))}
+          ${posRow('Probation Period', '90 days')}
+          ${posRow('Working Hours', '40 hr/week · Sun-Thu')}
+          ${posRow('Contract Type', 'Indefinite-term')}
         </div>
 
-        <!-- Salary table — Arabic below English in BLACK -->
+        <!-- Salary table — English labels only -->
         <table class="sal-table">
           <thead>
             <tr>
-              <th>SALARY BREAKDOWN<br><span style="font-weight:500;font-size:9px;direction:rtl;display:inline-block;">تفاصيل الراتب</span></th>
-              <th class="amount-col">Amount<br><span style="font-weight:500;font-size:9px;direction:rtl;display:inline-block;">المبلغ</span></th>
+              <th>SALARY BREAKDOWN</th>
+              <th class="amount-col">Amount</th>
             </tr>
           </thead>
           <tbody>
-            ${salRow('Basic Salary', 'الراتب الأساسي', sar(offer.salaryBasic))}
-            ${salRow('Housing Allowance', 'بدل السكن', sar(offer.salaryHousing))}
-            ${salRow('Transportation Allowance', 'بدل النقل', sar(offer.salaryTransport))}
-            ${salRow('Other Allowance', 'بدل آخر', sar(offer.salaryOther))}
+            ${salRow('Basic Salary', sar(offer.salaryBasic))}
+            ${salRow('Housing Allowance', sar(offer.salaryHousing))}
+            ${salRow('Transportation Allowance', sar(offer.salaryTransport))}
+            ${salRow('Other Allowance', sar(offer.salaryOther))}
           </tbody>
           <tfoot>
             <tr>
               <td>
                 <div class="total-en">TOTAL MONTHLY SALARY</div>
-                <div class="total-ar ar">إجمالي الراتب الشهري</div>
               </td>
               <td class="amount">${sar(offer.salaryTotal)}</td>
             </tr>
@@ -747,29 +723,21 @@ function buildLetterHtml(offer, signatory) {
 
 // ─── HTML helper templates ─────────────────────────────────────────
 
-function posRow(en, ar, value) {
+function posRow(label, value) {
   const e = escapeHtml;
   return `
     <div class="row">
-      <div class="label-stack">
-        <div class="label-en">${e(en)}</div>
-        <div class="label-ar ar">${e(ar)}</div>
-      </div>
+      <div class="label">${e(label)}</div>
       <div class="value">${e(value || '—')}</div>
     </div>
   `;
 }
 
-function salRow(en, ar, amount) {
+function salRow(label, amount) {
   const e = escapeHtml;
   return `
     <tr>
-      <td>
-        <div class="label-stack">
-          <div class="label-en">${e(en)}</div>
-          <div class="label-ar ar">${e(ar)}</div>
-        </div>
-      </td>
+      <td class="label">${e(label)}</td>
       <td class="amount">${e(amount)}</td>
     </tr>
   `;
