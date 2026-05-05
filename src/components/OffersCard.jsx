@@ -500,7 +500,14 @@ function OfferRow({ offer, employees, onChanged, onIssuePsn, me, readOnly = fals
     const uniqueCc = Array.from(new Set(ccList.map(e => e.toLowerCase())));
 
     const acceptanceUrl = `${window.location.origin}/accept-offer?token=${offer.offer_token}`;
-    const subject = `Offer of employment — ${offer.position_title || 'Evergreen Shipping'} — Evergreen Shipping`;
+    // Subject format: "Offer of employment — [Candidate Name] — [Position] — Evergreen Shipping"
+    // Candidate name is title-cased (the form auto-uppercases for
+    // data entry, but in subject lines a Title Case rendering reads
+    // more naturally to the recipient than ALL CAPS).
+    const candidateForSubject = (offer.candidate_name || 'Candidate')
+      .toLowerCase()
+      .replace(/\b\w/g, c => c.toUpperCase());
+    const subject = `Offer of employment — ${candidateForSubject} — ${offer.position_title || 'Evergreen Shipping'} — Evergreen Shipping`;
     const body = buildOfferEmailBody(
       { candidateName: offer.candidate_name, positionTitle: offer.position_title },
       acceptanceUrl,
