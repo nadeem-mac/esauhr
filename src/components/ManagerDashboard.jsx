@@ -9,6 +9,7 @@ import { PERMISSION_TYPES } from '../lib/permissionLogic.js';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
 import PendingReturnsCard from './PendingReturnsCard.jsx';
 import MyApplicationsCard from './MyApplicationsCard.jsx';
+import ShiftPlanReminder from './ShiftPlanReminder.jsx';
 
 // ────────────────────────────────────────────────────────────────────────────
 // ManagerDashboard
@@ -242,6 +243,18 @@ export default function ManagerDashboard({
 
   return (
     <div className="fade-in space-y-6">
+      {/* End-of-month shift planning nudge. Active 25th-31st (for next
+          month) and 1st-3rd (grace window for now-current month).
+          Hides itself outside those windows, when there are no direct
+          reports, when every report has a saved plan, or when the
+          manager dismissed it earlier today. Clicking "Open Planner"
+          jumps to the Shifts tab via onGoToShifts. */}
+      <ShiftPlanReminder
+        me={me}
+        directReports={directReports}
+        onOpenPlanner={onGoToShifts}
+      />
+
       {/* Substitution requests — surfaced for managers in case a staff
           member picks them as a substitute. Card hides itself when
           there's nothing to act on. */}
