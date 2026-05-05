@@ -284,6 +284,12 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
     if (!candidateName.trim()) list.push('Candidate name is required');
     if (!candidateEmail.trim()) list.push('Personal email is required');
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidateEmail.trim())) list.push('Personal email format looks invalid');
+    // Phone is now required and capped at 10 digits — Bashaier needs
+    // a reliable way to reach the candidate during onboarding, and a
+    // half-filled or skipped number was leaving HR without follow-up
+    // contact info.
+    if (!candidatePhone.trim()) list.push('Phone number is required');
+    else if (!/^\d{10}$/.test(candidatePhone.trim())) list.push('Phone number must be exactly 10 digits');
     // Iqama / National ID is required because the candidate uses it as
     // the second identity factor on the public acceptance page. Without
     // it, the candidate literally cannot accept the offer.
@@ -298,7 +304,7 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
     if (salaryTotal <= 0) list.push('Total salary must be greater than zero');
     if (!signatoryId) list.push('Signatory is required (add one below if the list is empty)');
     return list;
-  }, [candidateName, candidateEmail, candidateIqama, finalPositionTitle, department, location, proposedJoinDate, salaryBasic, salaryTotal, signatoryId]);
+  }, [candidateName, candidateEmail, candidatePhone, candidateIqama, finalPositionTitle, department, location, proposedJoinDate, salaryBasic, salaryTotal, signatoryId]);
 
   const canSubmit = !submitting && errors.length === 0;
 
@@ -354,7 +360,7 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
       const row = {
         candidate_name:        candidateName.trim(),
         candidate_email:       candidateEmail.trim().toLowerCase(),
-        candidate_phone:       candidatePhone.trim() || null,
+        candidate_phone:       candidatePhone.trim(),
         candidate_iqama:       candidateIqama.trim(),
         position_title:        finalPositionTitle,
         department:            department,
@@ -465,11 +471,11 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
                 type="email"
               />
             </Field>
-            <Field label="Phone (optional)">
+            <Field label="Phone *" required>
               <Input
                 value={candidatePhone}
-                onChange={(v) => setCandidatePhone(v.replace(/\D/g, ''))}
-                placeholder="9665XXXXXXXX"
+                onChange={(v) => setCandidatePhone(v.replace(/\D/g, '').slice(0, 10))}
+                placeholder="10-digit mobile number"
                 inputMode="numeric"
               />
             </Field>
