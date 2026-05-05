@@ -107,21 +107,55 @@ function monthLabel(year, monthIdx) {
 }
 
 // Build the list of "selectable months" for the segmented control.
-// Always: current month (manager might still be planning current
-// month early in the period), next month (the default), and month-
-// after-next (early planners). Three buttons total.
+// Always: current, next, month-after-next. But each is flagged
+// `locked` if it's not yet within its planning window — the rule
+// matches the end-of-month reminder cadence: a month "unlocks" on
+// the 25th of the month before it. So:
+//
+//   • Current month  — always unlocked (managers can always edit
+//     the current month even mid-month for late hires, schedule
+//     changes, etc.)
+//   • Next month     — unlocked from the 25th of the current month
+//   • Month-after-next — unlocked from the 25th of the next month
+//
+// Locked tabs are shown but disabled, with a tooltip explaining
+// when they'll unlock. This keeps a manager opening on May 5 from
+// accidentally planning June while thinking they're planning May.
+const UNLOCK_DAY_OF_MONTH = 25;
+
 function buildMonthChoices() {
   const now = new Date();
   return [0, 1, 2].map(offset => {
     const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    // Unlock date: 25th of the month BEFORE the planned month.
+    const unlockDate = new Date(d.getFullYear(), d.getMonth() - 1, UNLOCK_DAY_OF_MONTH);
+    const locked = offset > 0 && now < unlockDate;
     return {
       year: d.getFullYear(),
       monthIdx: d.getMonth(),
       label: d.toLocaleDateString(SAR_LOCALE, { month: 'short', year: 'numeric' }),
       isCurrent: offset === 0,
       isNext: offset === 1,
+      locked,
+      unlockDate,
+      unlockLabel: unlockDate.toLocaleDateString(SAR_LOCALE, { day: 'numeric', month: 'long' }),
     };
   });
+}
+
+// Pick the right default month for the segmented control. Rules:
+//   1. If the current month is the only unlocked option, pick it.
+//   2. If next month is unlocked AND the current month already has
+//      a saved plan, pick next (the manager has already done this
+//      month's work and is here to do next).
+//   3. Otherwise pick current.
+//
+// `currentPlanCommitted` is the boolean from the
+// monthly_shift_plans tracker — null means we don't know yet.
+function chooseDefaultMonth(choices, currentPlanCommitted) {
+  const [cur, nxt] = choices;
+  if (nxt && !nxt.locked && currentPlanCommitted) return nxt;
+  return cur;
 }
 
 // ─── Component ────────────────────────────────────────────────────────
@@ -136,8 +170,18 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
   // ─── Selection state ───────────────────────────────────────────────
   const [employeeId, setEmployeeId] = useState(null);
   const monthChoices = useMemo(buildMonthChoices, []);
-  // Default to NEXT month — the most common case for planning ahead.
-  const [monthSel, setMonthSel] = useState(monthChoices[1]);
+  // Default to the CURRENT month for safety — locking a manager
+  // out of planning the rest of the current month would be wrong,
+  // and pre-selecting next month risks them planning June while
+  // believing they're planning May. We refine this once we know
+  // whether the current month is already committed (see effect
+  // further down — flips to next month if current is already
+  // saved AND next is unlocked).
+  const [monthSel, setMonthSel] = useState(monthChoices[0]);
+  // Has the manager already committed the CURRENT month's plan?
+  // null = unknown (still loading), true/false once the
+  // monthly_shift_plans tracker has been checked.
+  const [currentMonthCommitted, setCurrentMonthCommitted] = useState(null);
 
   // Auto-pick first report on mount. If reports change (rare — admin
   // re-assignment) and the picked one is gone, fall back to the first.
@@ -150,6 +194,48 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
       setEmployeeId(myReports[0].id);
     }
   }, [myReports, employeeId]);
+
+  // Once on mount, check whether THIS manager has already committed
+  // the current month's plan. If yes, AND next month is unlocked,
+  // flip the default selection from current to next so the manager
+  // lands on the more relevant tab. We only flip ONCE — if the
+  // manager later clicks the current tab manually we don't bounce
+  // them back.
+  useEffect(() => {
+    if (!me?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const cur = monthChoices[0];
+        const planKey = ymd(startOfMonth(cur.year, cur.monthIdx));
+        const rows = await directGet(
+          'monthly_shift_plans',
+          `select=last_committed_at` +
+          `&manager_id=eq.${encodeURIComponent(me.id)}` +
+          `&plan_month=eq.${planKey}` +
+          `&limit=1`,
+          { timeoutMs: 6000 }
+        );
+        if (cancelled) return;
+        const committed = Boolean(rows?.[0]?.last_committed_at);
+        setCurrentMonthCommitted(committed);
+        // Refine the default: only flip to next if current is
+        // committed AND next is unlocked AND we're still showing
+        // the initial default (haven't navigated yet).
+        const nxt = monthChoices[1];
+        if (committed && nxt && !nxt.locked) {
+          setMonthSel(prev => (prev?.monthIdx === cur.monthIdx ? nxt : prev));
+        }
+      } catch {
+        if (!cancelled) setCurrentMonthCommitted(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // monthChoices is a stable useMemo result; me.id is the only
+    // real dependency. We don't include monthChoices to avoid re-
+    // running on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.id]);
 
   // ─── Plan state ────────────────────────────────────────────────────
   // Map of date-key (YYYY-MM-DD) → { selected: bool, start, end }.
@@ -497,6 +583,13 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
   // ─── Save ──────────────────────────────────────────────────────────
   async function save() {
     if (!employeeId || !monthSel || saving) return;
+    // Defense-in-depth: even if the segmented control somehow let
+    // a locked month through, refuse the save here. The dropdown
+    // is the primary gate; this is the belt-and-braces backup.
+    if (monthSel.locked) {
+      setErrorMsg(`That month doesn't unlock until ${monthSel.unlockLabel}. Please plan the current month first.`);
+      return;
+    }
     setSaving(true);
     setErrorMsg('');
     try {
@@ -660,19 +753,36 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
               return (
                 <button
                   key={m.label}
-                  onClick={() => setMonthSel(m)}
-                  className="px-3 py-2 text-xs"
+                  onClick={() => { if (!m.locked) setMonthSel(m); }}
+                  disabled={m.locked}
+                  className="px-3 py-2 text-xs inline-flex items-center gap-1.5"
                   style={{
                     background: isActive ? 'var(--evergreen-600)' : 'transparent',
-                    color: isActive ? '#FFFFFF' : '#0A0A0A',
+                    color: m.locked
+                      ? '#A3A3A3'
+                      : isActive ? '#FFFFFF' : '#0A0A0A',
                     fontWeight: isActive ? 600 : 500,
+                    cursor: m.locked ? 'not-allowed' : 'pointer',
+                    opacity: m.locked ? 0.6 : 1,
                   }}
+                  title={m.locked
+                    ? `Unlocks on ${m.unlockLabel}. Plan the current month first.`
+                    : (m.isCurrent ? 'Current month' : (m.isNext ? 'Next month' : ''))
+                  }
                 >
+                  {m.locked && <Lock className="w-3 h-3" />}
                   {m.label}
                 </button>
               );
             })}
           </div>
+          {/* Helper line — only show when at least one tab is locked,
+              so it doesn't add chrome when both are unlocked. */}
+          {monthChoices.some(m => m.locked) && (
+            <div className="text-[10px] mt-1" style={{ color: '#0A0A0A', opacity: 0.6, maxWidth: 320 }}>
+              Future months unlock on the 25th of the month before, so you finish the current month first.
+            </div>
+          )}
         </div>
       </div>
 
