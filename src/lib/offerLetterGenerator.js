@@ -751,12 +751,15 @@ function buildLetterHtml(offer, signatory) {
         width: 100%;
         height: 100%;
         object-fit: contain;
-        opacity: 0.88;
+        /* Slight rotation only — looks like a hand-applied stamp.
+           NO opacity / mix-blend-mode / filter properties: those
+           force Chromium's print engine to rasterize the entire
+           page (text becomes pixels instead of vectors), so the
+           saved PDF loses sharpness. The seal PNG is already
+           transparent-background and pre-shaded the right blue
+           tone, so it lays on white paper cleanly without needing
+           any blend tricks. */
         transform: rotate(-4deg);
-        /* The seal renders transparent-bg on white so it doesn't
-           need a backdrop. mix-blend-mode preserves the ink feel
-           when the seal sits over light grid lines. */
-        mix-blend-mode: multiply;
       }
 
       .offer-letter .candidate-confirm {
