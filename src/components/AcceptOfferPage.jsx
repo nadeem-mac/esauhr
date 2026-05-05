@@ -258,12 +258,15 @@ export default function AcceptOfferPage({ token }) {
 function PageHeader() {
   return (
     <div style={{ textAlign: 'center', marginBottom: 24 }}>
-      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 12 }}>
-        <EvergreenLogo size={48} />
-        <div style={{ textAlign: 'left' }}>
-          <div style={{ fontSize: 18, fontWeight: 700, color: '#0F4C2A', letterSpacing: '0.5px' }}>EVERGREEN LINE</div>
-          <div style={{ fontSize: 11, color: '#737373' }}>Evergreen Shipping Agency Saudi Co. (LLC)</div>
-        </div>
+      {/* Same logo + sizing the dashboard uses: full Evergreen
+          wordmark image, medium size. Centered above the content
+          rather than next to it so the candidate sees a familiar
+          corporate header on first load. */}
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 6 }}>
+        <EvergreenLogo variant="full" size="md" />
+      </div>
+      <div style={{ fontSize: 11, color: '#737373' }}>
+        Evergreen Shipping Agency Saudi Co. (LLC)
       </div>
     </div>
   );
