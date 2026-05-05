@@ -8,6 +8,7 @@ import { directGet, directPost } from '../supabaseClient.js';
 import { parseTimeCardXlsx, TimeCardParseError } from '../lib/timeCard.js';
 import { buildAttendanceRows, recordAttendanceRows } from '../lib/attendanceRecorder.js';
 import AttendanceMonthGrid from './AttendanceMonthGrid.jsx';
+import AttendanceBackfillPanel from './AttendanceBackfillPanel.jsx';
 
 // ─── Error Boundary for AttendanceView sections ───────────────────────
 // Without this, a render-time exception anywhere in the tree under
@@ -3404,6 +3405,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           who've never been uploaded for stay hidden. */}
       <AttendanceErrorBoundary label="Monthly attendance calendar">
         <AttendanceMonthGrid employees={employees} />
+      </AttendanceErrorBoundary>
+
+      <AttendanceErrorBoundary label="Historical backfill">
+        <AttendanceBackfillPanel me={me} employees={employees} />
       </AttendanceErrorBoundary>
 
       {/* ─── Pending end-of-day review banner ───────────────────────────
