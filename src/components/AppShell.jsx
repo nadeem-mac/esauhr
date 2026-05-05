@@ -7,7 +7,7 @@ import { supabase, directGet, directPatch } from '../supabaseClient.js';
 import { loadTemplates as loadEmailTemplates } from '../lib/emailTemplates.js';
 import Dashboard from './Dashboard.jsx';
 import Requests from './Requests.jsx';
-import ManagerShiftCard from './ManagerShiftCard.jsx';
+import ManagerMonthlyPlanner from './ManagerMonthlyPlanner.jsx';
 import ManagerShiftStatusCard from './ManagerShiftStatusCard.jsx';
 import TeamShiftMonthCard from './TeamShiftMonthCard.jsx';
 import Employees from './Employees.jsx';
@@ -893,7 +893,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
           // a forced ?tab=shifts URL from a non-manager renders nothing.
           <div className="space-y-6">
             <TeamShiftMonthCard me={me} employees={employees} />
-            <ManagerShiftCard me={me} employees={employees} />
+            <ManagerMonthlyPlanner me={me} employees={employees} />
             <ManagerShiftStatusCard me={me} employees={employees} />
           </div>
         )}
