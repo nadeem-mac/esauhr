@@ -46,6 +46,7 @@ import {
   buildBackfillRows,
   previewOverwrites,
   recordBackfillRows,
+  fetchShiftEmployeeIds,
 } from '../lib/attendanceBackfill.js';
 import { TimeCardParseError } from '../lib/timeCard.js';
 
@@ -116,10 +117,16 @@ export default function AttendanceBackfillPanel({ me, employees }) {
     setParsing(true);
     try {
       const parsedFile = await parseBackfillXlsx(file);
+      // Fetch shift-worker IDs in parallel with parsing — quick query
+      // (one column from a small table). Used by buildBackfillRows
+      // to leave shift-worker rows as 'present' since their
+      // historical schedules aren't recoverable.
+      const shiftEmployeeIds = await fetchShiftEmployeeIds();
       const built = buildBackfillRows({
         parsedRows: parsedFile.rows,
         employees,
         recordedBy: me?.id || null,
+        shiftEmployeeIds,
       });
       const overwrites = await previewOverwrites(built.rows);
       setPreview({ rows: built.rows, summary: built.summary, overwrites, fileName: file.name });
@@ -338,14 +345,51 @@ export default function AttendanceBackfillPanel({ me, employees }) {
                 />
               </div>
 
+              {/* Evaluation breakdown — shows the late/short/present
+                  split before commit so the user knows what to expect
+                  in the calendar. Mirrors the daily flow's evaluation
+                  rules so backfilled office staff get classified the
+                  same way they would by a daily upload of the same
+                  schedule. */}
+              {(preview.summary.lateCount > 0 || preview.summary.shortCount > 0 || preview.summary.presentCount > 0) && (
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {preview.summary.presentCount > 0 && (
+                    <EvalChip
+                      bg="#ECFDF5" fg="#0F4C2A" border="#A7F3D0"
+                      label="Present"
+                      count={preview.summary.presentCount}
+                    />
+                  )}
+                  {preview.summary.lateCount > 0 && (
+                    <EvalChip
+                      bg="#FEF3C7" fg="#854F0B" border="#FCD34D"
+                      label="Late"
+                      count={preview.summary.lateCount}
+                    />
+                  )}
+                  {preview.summary.shortCount > 0 && (
+                    <EvalChip
+                      bg="#FED7AA" fg="#7C2D12" border="#FB923C"
+                      label="Left early"
+                      count={preview.summary.shortCount}
+                    />
+                  )}
+                </div>
+              )}
+
               {/* Skipped + unmatched secondary numbers */}
-              {(preview.summary.skipped > 0 || preview.summary.unmatched > 0) && (
+              {(preview.summary.skipped > 0 || preview.summary.unmatched > 0 || preview.summary.shiftWorkerSkipped > 0) && (
                 <div className="flex flex-wrap gap-3 text-[11px]" style={{ color: '#0A0A0A', opacity: 0.65 }}>
                   {preview.summary.skipped > 0 && (
                     <span>{preview.summary.skipped} row{preview.summary.skipped === 1 ? '' : 's'} skipped (no punches)</span>
                   )}
                   {preview.summary.unmatched > 0 && (
                     <span>{preview.summary.unmatched} unmatched PSN{preview.summary.unmatched === 1 ? '' : 's'} (recorded as-is)</span>
+                  )}
+                  {preview.summary.shiftWorkerSkipped > 0 && (
+                    <span title="Shift workers' historical schedules aren't available — left as 'present' without late/short evaluation">
+                      {preview.summary.shiftWorkerSkipped} shift-worker row{preview.summary.shiftWorkerSkipped === 1 ? '' : 's'} not evaluated
+                    </span>
                   )}
                 </div>
               )}
@@ -672,5 +716,31 @@ function ImportButton({ disabled, onClick, count }) {
       <Upload className="w-4 h-4" />
       Import <span style={{ fontVariantNumeric: 'tabular-nums' }}>{count.toLocaleString()}</span> row{count === 1 ? '' : 's'}
     </button>
+  );
+}
+
+// ─── EvalChip ────────────────────────────────────────────────────────
+// Small status-colored pill used in the preview to show the late/
+// short/present breakdown before commit. Same palette as the
+// AttendanceMonthGrid chips so the visual language stays consistent.
+function EvalChip({ bg, fg, border, label, count }) {
+  return (
+    <span
+      style={{
+        background: bg,
+        color: fg,
+        border: `1px solid ${border}`,
+        fontSize: 11,
+        padding: '3px 9px',
+        borderRadius: 999,
+        fontWeight: 700,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 5,
+        animation: 'backfill-tile-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both',
+      }}
+    >
+      {label}: <span style={{ fontVariantNumeric: 'tabular-nums' }}>{count.toLocaleString()}</span>
+    </span>
   );
 }

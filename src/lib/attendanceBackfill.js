@@ -57,6 +57,53 @@ function isoDate(ddmmyyyy) {
   return `${m[3]}-${String(m[2]).padStart(2, '0')}-${String(m[1]).padStart(2, '0')}`;
 }
 
+// ─── Standard office-hours policy for historical evaluation ─────────
+// Used when the employee is NOT a shift worker (i.e. has no record in
+// monthly_shift_plans). Mirrors the daily flow's defaults so the
+// historical view classifies office staff the same way the daily
+// recorder does for the same shift. Shift workers can't be evaluated
+// retroactively because we don't know what their schedule was on
+// historical dates.
+const STD_START_TIME      = '08:00:00';
+const STD_END_TIME        = '17:00:00';
+const STD_LATE_CUTOFF     = '08:15:00';  // 15-min grace
+const STD_EARLY_CUTOFF    = '16:45:00';  // 15-min grace before close
+
+function timeToMinutes(t) {
+  if (!t) return null;
+  const m = /^(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(t);
+  if (!m) return null;
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10) + (parseInt(m[3] || '0', 10) / 60);
+}
+
+// Evaluate a non-shift-worker punch pair against standard office hours.
+// Returns { status, lateMin, earlyMin } where status ∈ {present,late,short}.
+function evaluateOffice(firstPunch, lastPunch) {
+  const fp = toTime(firstPunch);
+  const lp = toTime(lastPunch);
+  const lateMin  = (fp && fp > STD_LATE_CUTOFF)
+    ? Math.max(0, Math.round(timeToMinutes(fp) - timeToMinutes(STD_START_TIME)))
+    : 0;
+  const earlyMin = (lp && lp < STD_EARLY_CUTOFF)
+    ? Math.max(0, Math.round(timeToMinutes(STD_END_TIME) - timeToMinutes(lp)))
+    : 0;
+  // Late dominates short if both apply on the same day — late is the
+  // more actionable signal for HR follow-up. We still record the
+  // early-leave minutes in the row for the tooltip / report detail.
+  const status = lateMin > 0 ? 'late'
+               : earlyMin > 0 ? 'short'
+               : 'present';
+  return { status, lateMin, earlyMin };
+}
+
+// KSA weekend = Friday + Saturday. Office-hours policy doesn't apply
+// to weekend work (most office staff are off then; weekend punches
+// are typically OT or special coverage). We leave those as 'present'
+// without late/short evaluation.
+function isKsaWeekendDow(dow) {
+  return dow === 5 || dow === 6;
+}
+
 /**
  * Parse the file. Reuses the daily parser since the file format is
  * identical — just a longer date range.
@@ -66,6 +113,30 @@ function isoDate(ddmmyyyy) {
  */
 export async function parseBackfillXlsx(file) {
   return parseTimeCardXlsx(file);
+}
+
+/**
+ * Fetch the set of employee IDs that appear in monthly_shift_plans
+ * (any month, any manager). These are "shift workers" — staff with
+ * a non-standard schedule that we can't fairly evaluate against
+ * standard office hours retroactively. Backfill leaves their rows
+ * as 'present' rather than guessing late/short status.
+ *
+ * @returns {Promise<Set<string>>}
+ */
+export async function fetchShiftEmployeeIds() {
+  try {
+    const rows = await directGet(
+      'monthly_shift_plans',
+      'select=employee_id&shifts_count=gt.0',
+      { timeoutMs: 9000 }
+    );
+    const out = new Set();
+    (rows || []).forEach(r => { if (r?.employee_id) out.add(r.employee_id); });
+    return out;
+  } catch {
+    return new Set();
+  }
 }
 
 /**
@@ -87,7 +158,7 @@ export async function parseBackfillXlsx(file) {
  *    maxDate:    latest YYYY-MM-DD
  *  }
  */
-export function buildBackfillRows({ parsedRows, employees, recordedBy }) {
+export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmployeeIds }) {
   // Index the directory once. Two indexes — one for full PSN match
   // (e.g. "H94499"), one for the digits-only fallback ("94499") since
   // some xlsx exports drop the H prefix.
@@ -100,11 +171,22 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy }) {
     if (m && m[1]) empByDigits.set(m[1], e);
   });
 
+  // Normalize the shift-worker set so .has() works regardless of how
+  // the caller passed it in (Set, Array, null).
+  const shiftSet = (shiftEmployeeIds instanceof Set)
+    ? shiftEmployeeIds
+    : new Set(shiftEmployeeIds || []);
+
   const rows = [];
   const touchedEmployees = new Set();
   let parsed = 0;
   let skipped = 0;
   let unmatched = 0;
+  let lateCount = 0;
+  let shortCount = 0;
+  let presentCount = 0;
+  let shiftWorkerSkipped = 0;  // count of rows we left as 'present'
+                                // because the employee is a shift worker
   let minDate = null;
   let maxDate = null;
   const now = new Date().toISOString();
@@ -134,19 +216,55 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy }) {
     const lastPunch  = r.lastPunch || r.firstPunch;
     if (!firstPunch && !lastPunch) { skipped++; continue; }
 
+    // ─── Evaluation ──────────────────────────────────────────────
+    // Apply standard 08:00-17:00 office-hours evaluation when we
+    // can. Skip employees who appear in monthly_shift_plans (we
+    // don't know their historical shifts so we can't fairly
+    // classify their punches as late/short). Skip KSA weekend
+    // dates (Fri/Sat) — office staff working those are doing OT,
+    // not bound by the office-hours window.
+    const isShiftWorker = shiftSet.has(empId);
+    const dt = new Date(dateIso + 'T00:00:00');
+    const isWeekend = isKsaWeekendDow(dt.getDay());
+
+    let status, lateMin, earlyMin, expectedStart, expectedEnd;
+    if (isShiftWorker || isWeekend) {
+      status        = 'present';
+      lateMin       = 0;
+      earlyMin      = 0;
+      expectedStart = null;
+      expectedEnd   = null;
+      if (isShiftWorker) shiftWorkerSkipped++;
+    } else {
+      const evalRes = evaluateOffice(firstPunch, lastPunch);
+      status        = evalRes.status;
+      lateMin       = evalRes.lateMin;
+      earlyMin      = evalRes.earlyMin;
+      expectedStart = STD_START_TIME;
+      expectedEnd   = STD_END_TIME;
+    }
+
+    if (status === 'late') lateCount++;
+    else if (status === 'short') shortCount++;
+    else presentCount++;
+
     rows.push({
       employee_id:        empId,
       attendance_date:    dateIso,
-      status:             'present',
+      status,
       first_punch:        toTime(firstPunch),
       last_punch:         toTime(lastPunch),
       punch_count:        r.uniqueCount || 0,
-      expected_start:     null,  // unknown for historical dates
-      expected_end:       null,
-      late_minutes:       0,
-      early_leave_minutes:0,
+      expected_start:     expectedStart,
+      expected_end:       expectedEnd,
+      late_minutes:       lateMin,
+      early_leave_minutes:earlyMin,
       leave_request_id:   null,
-      notes:              'Imported via historical backfill',
+      notes: isShiftWorker
+        ? 'Backfill — shift worker, schedule unknown'
+        : isWeekend
+          ? 'Backfill — KSA weekend punch'
+          : 'Backfill — evaluated against standard 08:00-17:00 with 15-min grace',
       recorded_at:        now,
       recorded_by:        recordedBy || null,
       source:             'backfill',
@@ -167,6 +285,14 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy }) {
       employees: touchedEmployees,
       minDate,
       maxDate,
+      // Evaluation breakdown — surfaced in the preview UI so the
+      // user sees what the imported rows will look like before
+      // committing. Late + short are bucketed against the standard
+      // 08:00-17:00 office-hours policy with 15-min grace.
+      lateCount,
+      shortCount,
+      presentCount,
+      shiftWorkerSkipped,
     },
   };
 }
