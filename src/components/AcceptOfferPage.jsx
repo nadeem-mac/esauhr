@@ -509,19 +509,30 @@ function DecideView({ offer, signatory, submitting, showingDeclineForm, setShowi
 
   return (
     <>
-      {/* Letter — rendered exactly as the PDF version */}
+      {/* Letter — rendered exactly as the PDF version. Wrapper is
+          sized to the letter's natural 794px width and centered so
+          the candidate sees no dead space to either side on wider
+          screens. The green rounded border highlights this as the
+          official contract document — distinct from the decision
+          panel below it. overflow:hidden clips the letter HTML's
+          internal corners against the rounded border. */}
       <div style={{
+        maxWidth: 794,
+        margin: '0 auto 20px',
         background: '#FFFFFF',
-        borderRadius: 8,
-        boxShadow: '0 4px 24px rgba(0,0,0,0.10)',
+        borderRadius: 16,
+        border: '2px solid #0F4C2A',
+        boxShadow: '0 6px 28px rgba(15, 76, 42, 0.15)',
         overflow: 'hidden',
-        marginBottom: 20,
       }}>
         <div dangerouslySetInnerHTML={{ __html: letterHtml }} />
       </div>
 
-      {/* Decision panel */}
+      {/* Decision panel — sized to match the letter width so the
+          page reads as one coherent column on desktop. */}
       <div style={{
+        maxWidth: 794,
+        margin: '0 auto',
         background: '#FFFFFF',
         borderRadius: 12,
         padding: '24px 28px',
