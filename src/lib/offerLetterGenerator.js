@@ -184,16 +184,20 @@ function buildLetterHtml(offer, signatory) {
         overflow: hidden;
       }
       .offer-letter .ar {
-        font-family: 'Tahoma', 'Geeza Pro', 'Arial Unicode MS', 'Segoe UI', sans-serif;
-        direction: rtl;
+        font-family: 'Tahoma', 'Geeza Pro', 'Arial Unicode MS', 'Segoe UI', sans-serif !important;
+        direction: rtl !important;
         text-align: right;
+        /* CRITICAL: letter-spacing breaks Arabic letter joining.
+           Even 0.5px between glyphs prevents the cursive
+           ligatures Arabic requires (letters appear as
+           disconnected stand-alone glyphs instead of joined
+           words). Force 0 to override any parent rule
+           (e.g. .band has letter-spacing:0.5px). */
+        letter-spacing: 0 !important;
         /* isolate is the modern correct value — treats this
            element as a self-contained bidi region, preventing
            neutral characters (parens, hyphens, numbers) at the
-           boundary from being pulled by surrounding LTR context.
-           'embed' (the older value) was leaking and causing
-           parentheses to render flipped and Arabic to overlap
-           the English column. */
+           boundary from being pulled by surrounding LTR context. */
         unicode-bidi: isolate;
       }
       /* Top brand band */
