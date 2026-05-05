@@ -187,7 +187,14 @@ function buildLetterHtml(offer, signatory) {
         font-family: 'Tahoma', 'Geeza Pro', 'Arial Unicode MS', 'Segoe UI', sans-serif;
         direction: rtl;
         text-align: right;
-        unicode-bidi: embed;
+        /* isolate is the modern correct value — treats this
+           element as a self-contained bidi region, preventing
+           neutral characters (parens, hyphens, numbers) at the
+           boundary from being pulled by surrounding LTR context.
+           'embed' (the older value) was leaking and causing
+           parentheses to render flipped and Arabic to overlap
+           the English column. */
+        unicode-bidi: isolate;
       }
       /* Top brand band */
       .offer-letter .brand-band {
@@ -264,7 +271,7 @@ function buildLetterHtml(offer, signatory) {
       .offer-letter h2.title .title-ar {
         font-family: 'Tahoma', 'Geeza Pro', 'Arial Unicode MS', 'Segoe UI', sans-serif;
         direction: rtl;
-        unicode-bidi: embed;
+        unicode-bidi: isolate;
         font-size: 19px;
         letter-spacing: 0;
         font-weight: 700;
