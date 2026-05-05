@@ -161,6 +161,11 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
   const [saving, setSaving] = useState(false);
   const [savedToast, setSavedToast] = useState(null);
   const [lastCommittedAt, setLastCommittedAt] = useState(null);
+  // dayPopover: { dateKey, draftStart, draftEnd } when a selected day
+  // is being edited. null when nothing's open. Tapping a selected day
+  // opens this; tapping an unselected day just adds it with the bulk
+  // time (no popover, faster workflow for the common case).
+  const [dayPopover, setDayPopover] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
 
   // ─── Build the empty calendar for the selected month ───────────────
@@ -277,6 +282,21 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
         }
       }
 
+      // Once we know the bulk time, mark each selected day as
+      // 'customized' if its own start/end differs from the bulk.
+      // This drives the visual treatment (italic + bullet) and the
+      // exclusion from bulk-time / pattern-preset overrides — a
+      // manager who manually set Tuesday to 06:00 doesn't want a
+      // "Tuesdays only" preset click to wipe it.
+      if (derivedStart && derivedEnd) {
+        for (const k of Object.keys(next)) {
+          const c = next[k];
+          if (c?.selected && (c.start !== derivedStart || c.end !== derivedEnd)) {
+            next[k] = { ...c, customized: true };
+          }
+        }
+      }
+
       setPlan(next);
       setStart(derivedStart || DEFAULT_START);
       setEnd(derivedEnd || DEFAULT_END);
@@ -347,15 +367,28 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
       const todayK = todayKey();
       for (const d of monthDays) {
         if (d.key < todayK) continue; // never touch past days
+        const cur = next[d.key] || {};
         const wantSelected = matchesPattern(name, d);
         if (name === 'clear') {
-          next[d.key] = { ...next[d.key], selected: false };
+          // 'Clear all' wipes everything including customizations —
+          // the manager is starting fresh. customized flag goes too.
+          next[d.key] = { ...cur, selected: false, customized: false };
         } else {
-          next[d.key] = {
-            ...next[d.key],
-            selected: wantSelected ? true : next[d.key]?.selected || false,
-            start, end,
-          };
+          // Preserve individually-customized day times. The pattern
+          // controls SELECTION; if a day was already customized and
+          // is in the pattern, it stays selected with its custom
+          // time. If it's NOT in the pattern, it stays as-is (the
+          // pattern doesn't deselect, only selects — same as before).
+          if (cur.customized && cur.selected) {
+            // Customized + selected → leave its times alone whether
+            // or not the pattern matches. Manager can still untoggle
+            // via the popover if they want.
+            next[d.key] = { ...cur };
+          } else if (wantSelected) {
+            next[d.key] = { ...cur, selected: true, start, end, customized: false };
+          } else {
+            next[d.key] = { ...cur, selected: cur.selected || false };
+          }
         }
       }
       return next;
@@ -376,29 +409,83 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
     }
   }
 
+  // Tapping a day cell:
+  //   • Past dates → ignore (locked)
+  //   • Unselected → add it with the bulk time (no popover; fast)
+  //   • Selected → open the per-day editor popover so the manager
+  //     can change just THIS day's time, snap it back to the bulk
+  //     time, or remove it. Without this, changing the bulk time
+  //     would override every selected day — there was no way to
+  //     give one staff member a different time on a single date.
   function toggleDay(dateKey) {
-    if (dateKey < todayKey()) return; // locked
-    setPlan(prev => {
-      const cur = prev[dateKey] || { selected: false, start, end };
-      return {
-        ...prev,
-        [dateKey]: { ...cur, selected: !cur.selected, start, end },
-      };
-    });
+    if (dateKey < todayKey()) return;
+    const cur = plan[dateKey];
+    if (cur?.selected) {
+      setDayPopover({
+        dateKey,
+        draftStart: cur.start || start,
+        draftEnd:   cur.end   || end,
+      });
+      return;
+    }
+    setPlan(prev => ({
+      ...prev,
+      [dateKey]: { selected: true, start, end, customized: false },
+    }));
+  }
+
+  // Save a per-day time override. The day stays selected and is
+  // flagged customized so subsequent bulk-time changes and pattern
+  // preset clicks won't blow it away.
+  function setDayTimes(dateKey, newStart, newEnd) {
+    setPlan(prev => ({
+      ...prev,
+      [dateKey]: {
+        ...prev[dateKey],
+        selected: true,
+        start: newStart,
+        end:   newEnd,
+        customized: !(newStart === start && newEnd === end),
+      },
+    }));
+    setDayPopover(null);
+  }
+
+  // Snap a customized day back to the current bulk time. After this
+  // the day tracks future bulk-time changes again.
+  function resetDayToBulk(dateKey) {
+    setPlan(prev => ({
+      ...prev,
+      [dateKey]: { ...prev[dateKey], start, end, customized: false },
+    }));
+    setDayPopover(null);
+  }
+
+  // Remove a previously-selected day from the plan. Same outcome the
+  // old toggle had — the day becomes unchecked and won't be saved.
+  function removeDay(dateKey) {
+    setPlan(prev => ({
+      ...prev,
+      [dateKey]: { ...prev[dateKey], selected: false, customized: false },
+    }));
+    setDayPopover(null);
   }
 
   // When the bulk start/end changes, retroactively apply to all
-  // currently-selected days so the "one time, all days" mental model
-  // holds. Days that were given a per-day override stay where they
-  // were if we ever support that — for now they all track the bulk.
+  // currently-selected days that aren't individually customized.
+  // Days the manager explicitly tweaked via the per-day popover
+  // (cell.customized === true) are LEFT ALONE — that's the whole
+  // point of customization. They snap back to the bulk only if
+  // the manager hits "Reset to bulk" in the popover.
   useEffect(() => {
     setPlan(prev => {
       const next = { ...prev };
       let changed = false;
       for (const k of Object.keys(next)) {
-        if (next[k]?.selected) {
-          if (next[k].start !== start || next[k].end !== end) {
-            next[k] = { ...next[k], start, end };
+        const c = next[k];
+        if (c?.selected && !c.customized) {
+          if (c.start !== start || c.end !== end) {
+            next[k] = { ...c, start, end };
             changed = true;
           }
         }
@@ -713,6 +800,26 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
       {savedToast && (
         <SaveConfirmation toast={savedToast} onDismiss={() => setSavedToast(null)} />
       )}
+
+      {/* Per-day editor popover — opens when the manager taps an
+          already-selected day. Lets them change just that day's
+          time, reset to the bulk time, or remove the day from the
+          plan. Does NOT touch any other day. */}
+      {dayPopover && (
+        <DayEditPopover
+          dateKey={dayPopover.dateKey}
+          draftStart={dayPopover.draftStart}
+          draftEnd={dayPopover.draftEnd}
+          bulkStart={start}
+          bulkEnd={end}
+          isCustomized={Boolean(plan[dayPopover.dateKey]?.customized)}
+          onChangeDraft={(s, e) => setDayPopover({ ...dayPopover, draftStart: s, draftEnd: e })}
+          onSave={(s, e) => setDayTimes(dayPopover.dateKey, s, e)}
+          onResetToBulk={() => resetDayToBulk(dayPopover.dateKey)}
+          onRemove={() => removeDay(dayPopover.dateKey)}
+          onClose={() => setDayPopover(null)}
+        />
+      )}
     </Card>
   );
 }
@@ -784,11 +891,28 @@ function CalendarGrid({ monthDays, plan, onToggle }) {
                 fontWeight: cell.selected ? 600 : 500,
                 minHeight: 48,
               }}
-              title={isPast ? 'Past date — locked' : (cell.selected ? 'Tap to remove' : 'Tap to add')}
+              title={
+                isPast
+                  ? 'Past date — locked'
+                  : cell.selected
+                    ? (cell.customized
+                        ? 'Custom time set for this day — tap to edit'
+                        : 'Tap to edit time, reset, or remove')
+                    : 'Tap to add'
+              }
             >
               <div>{d.date}</div>
               {cell.selected && (
-                <div className="text-[9px] mt-0.5" style={{ opacity: 0.85 }}>
+                <div
+                  className="text-[9px] mt-0.5"
+                  style={{
+                    opacity: 0.85,
+                    fontStyle: cell.customized ? 'italic' : 'normal',
+                  }}
+                >
+                  {/* Bullet prefix on customized days. Visible on both
+                      light + green (selected) backgrounds. */}
+                  {cell.customized ? '• ' : ''}
                   {cell.start}–{cell.end}
                 </div>
               )}
@@ -858,6 +982,198 @@ function SaveConfirmation({ toast, onDismiss }) {
       >
         <X className="w-4 h-4" />
       </button>
+    </div>
+  );
+}
+
+// ─── Day edit popover ─────────────────────────────────────────────────
+// Modal overlay that appears when a manager taps an already-selected
+// day. Three actions:
+//   • Save (with edited start/end) — saves a per-day override
+//   • Reset to bulk time          — clears any custom time, day
+//                                    re-tracks the bulk dropdowns
+//   • Remove from plan            — unchecks the day entirely
+//
+// Closes on Escape, click outside, or X button.
+function DayEditPopover({
+  dateKey, draftStart, draftEnd, bulkStart, bulkEnd, isCustomized,
+  onChangeDraft, onSave, onResetToBulk, onRemove, onClose,
+}) {
+  // Lock body scroll while open + Escape-to-close.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    function onKey(e) { if (e.key === 'Escape') onClose?.(); }
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  const dt = (() => {
+    const [y, m, d] = dateKey.split('-').map(n => parseInt(n, 10));
+    return new Date(y, m - 1, d);
+  })();
+  const dayLabel = dt.toLocaleDateString(SAR_LOCALE, {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
+
+  // Detect "no real change" so the Save button can read "Save changes"
+  // vs grey out / no-op when the manager hasn't edited.
+  const isNoChange = draftStart === bulkStart && draftEnd === bulkEnd && !isCustomized;
+  const draftIsOvernight = parseInt(draftEnd.slice(0, 2), 10) <= parseInt(draftStart.slice(0, 2), 10);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Edit shift for ${dayLabel}`}
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 60,
+        background: 'rgba(15, 23, 42, 0.55)',
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'center',
+        padding: '40px 16px',
+        overflowY: 'auto',
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: '100%',
+          maxWidth: 420,
+          background: '#FFFFFF',
+          borderRadius: 12,
+          padding: '20px 22px',
+          boxShadow: '0 12px 40px rgba(0,0,0,0.20)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 4 }}>
+          <div style={{ fontSize: 11, letterSpacing: '0.18em', fontWeight: 700, color: '#0F4C2A' }}>
+            EDIT SHIFT FOR THIS DAY
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              background: 'transparent',
+              color: '#0A0A0A',
+              border: '1px solid var(--border)',
+              padding: 6,
+              cursor: 'pointer',
+              borderRadius: 6,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        <div style={{ fontSize: 16, fontWeight: 600, color: '#0A0A0A', marginBottom: 4 }}>
+          {dayLabel}
+        </div>
+        <div style={{ fontSize: 12, color: '#0A0A0A', opacity: 0.7, marginBottom: 14 }}>
+          Bulk time is currently {bulkStart}–{bulkEnd}.
+          {isCustomized && ' This day has a custom time set.'}
+        </div>
+
+        {/* Per-day time editors */}
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <label className="block">
+            <span className="text-[11px] tracking-wider" style={{ color: '#0A0A0A', fontWeight: 600 }}>
+              START
+            </span>
+            <select
+              value={draftStart}
+              onChange={e => onChangeDraft(e.target.value, draftEnd)}
+              className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+              style={{ borderColor: 'var(--border)', background: 'var(--paper)', color: '#0A0A0A' }}
+            >
+              {HOUR_OPTIONS.map(h => <option key={h} value={h}>{h}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-[11px] tracking-wider" style={{ color: '#0A0A0A', fontWeight: 600 }}>
+              END
+            </span>
+            <select
+              value={draftEnd}
+              onChange={e => onChangeDraft(draftStart, e.target.value)}
+              className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+              style={{ borderColor: 'var(--border)', background: 'var(--paper)', color: '#0A0A0A' }}
+            >
+              {HOUR_OPTIONS.map(h => <option key={h} value={h}>{h}</option>)}
+            </select>
+          </label>
+        </div>
+
+        {draftIsOvernight && (
+          <div className="rounded-lg p-2 mb-3 inline-flex items-center gap-2" style={{ background: '#EEF0FA', color: '#3B4279', fontSize: 11 }}>
+            <Moon className="w-3 h-3" />
+            Overnight — ends at {draftEnd} the next morning
+          </div>
+        )}
+
+        {/* Action row — primary save on the right, destructive remove
+            on the left. Reset-to-bulk only shown when relevant. */}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+          <button
+            onClick={onRemove}
+            className="text-xs px-3 py-2 rounded-lg inline-flex items-center gap-1.5"
+            style={{
+              background: 'transparent',
+              color: '#991B1B',
+              border: '1px solid #FCA5A5',
+              fontWeight: 500,
+              cursor: 'pointer',
+            }}
+            title="Remove this day from the plan"
+          >
+            <X className="w-3 h-3" />
+            Remove day
+          </button>
+          {isCustomized && (
+            <button
+              onClick={onResetToBulk}
+              className="text-xs px-3 py-2 rounded-lg inline-flex items-center gap-1.5"
+              style={{
+                background: 'transparent',
+                color: '#0A0A0A',
+                border: '1px solid var(--border)',
+                fontWeight: 500,
+                cursor: 'pointer',
+              }}
+              title="Snap this day back to the bulk time"
+            >
+              Reset to bulk
+            </button>
+          )}
+          <button
+            onClick={() => onSave(draftStart, draftEnd)}
+            disabled={isNoChange}
+            className="text-xs px-3 py-2 rounded-lg inline-flex items-center gap-1.5 ml-auto"
+            style={{
+              background: 'var(--evergreen-600)',
+              color: '#FFFFFF',
+              border: '1px solid var(--evergreen-600)',
+              fontWeight: 600,
+              cursor: isNoChange ? 'not-allowed' : 'pointer',
+              opacity: isNoChange ? 0.5 : 1,
+            }}
+            title={isNoChange ? 'No changes to save' : 'Save this day\'s time'}
+          >
+            <Save className="w-3 h-3" />
+            Save changes
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
