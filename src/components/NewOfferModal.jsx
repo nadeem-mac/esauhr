@@ -341,7 +341,7 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
     try {
       const offerToken = generateOfferToken();
       const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + 14);
+      expiresAt.setDate(expiresAt.getDate() + 7);
 
       const row = {
         candidate_name:        candidateName.trim(),
@@ -759,7 +759,7 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
         </div>
 
         <div className="text-[11px] mt-3 leading-relaxed" style={{ color: '#0A0A0A', opacity: 0.6 }}>
-          On generate: offer is recorded with a 14-day acceptance window. The Outlook draft (.eml) downloads, and the offer letter opens in a new tab for you to save as PDF (use "Save as PDF" in the print dialog). Attach the saved PDF to the Outlook draft before sending.
+          On generate: offer is recorded with a 7-day acceptance window. The Outlook draft (.eml) downloads, and the offer letter opens in a new tab for you to save as PDF (use "Save as PDF" in the print dialog). Attach the saved PDF to the Outlook draft before sending.
         </div>
       </div>
     </div>

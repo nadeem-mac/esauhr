@@ -20,7 +20,7 @@
 //   │  Salary breakdown table (same EN/AR stacking, amounts)  │
 //   ├─ KEY TERMS · أهم البنود (band) ─────────────────────────┤
 //   │  7 KSA-Labor-Law clauses, EN ‖ AR side-by-side          │
-//   ├─ ⚠ 14-DAY VALIDITY CALLOUT (red accent, prominent) ─────┤
+//   ├─ ⚠ 7-DAY VALIDITY CALLOUT (red accent, prominent) ─────┤
 //   ├─ Acceptance instruction ────────────────────────────────┤
 //   │                                                         │
 //   │              (flex spacer — pushes ↓ down)              │
@@ -297,11 +297,11 @@ export function buildLetterHtml(offer, signatory) {
     day: 'numeric', month: 'long', year: 'numeric',
   });
 
-  // Compute the offer-expiry date (today + 14 days). Used to make
+  // Compute the offer-expiry date (today + 7 days). Used to make
   // the validity callout concrete with a real deadline rather than
-  // just saying "14 days".
+  // just saying "7 days".
   const expiry = new Date();
-  expiry.setDate(expiry.getDate() + 14);
+  expiry.setDate(expiry.getDate() + 7);
   const expiryEN = expiry.toLocaleDateString('en-GB', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   });
@@ -604,7 +604,7 @@ export function buildLetterHtml(offer, signatory) {
         font-size: 7.5px;
       }
 
-      /* ─── 14-DAY VALIDITY CALLOUT (prominent) ─── */
+      /* ─── 7-DAY VALIDITY CALLOUT (prominent) ─── */
       .offer-letter .validity-callout {
         background: linear-gradient(to right, #FEF2F2 0%, #FEF6E2 100%);
         border: 1.5px solid #DC2626;
@@ -895,15 +895,15 @@ export function buildLetterHtml(offer, signatory) {
         ${termRow('Confidentiality of Company info during &amp; after work', 'الالتزام بسرية معلومات الشركة أثناء العمل وبعد انتهائه')}
       </ul>
 
-      <!-- 14-DAY VALIDITY CALLOUT (prominent, red accent) -->
+      <!-- 7-DAY VALIDITY CALLOUT (prominent, red accent) -->
       <div class="validity-callout">
         <div class="row">
           <div>
-            <div class="head">⏱  THIS OFFER IS VALID FOR 14 DAYS ONLY</div>
+            <div class="head">⏱  THIS OFFER IS VALID FOR 7 DAYS ONLY</div>
             <div class="deadline">Please accept by <strong>${e(expiryEN)}</strong>. After this date the offer expires automatically.</div>
           </div>
           <div class="ar">
-            <div class="head ar">⏱  هذا العرض ساري المفعول لمدة 14 يوماً فقط</div>
+            <div class="head ar">⏱  هذا العرض ساري المفعول لمدة 7 أيام فقط</div>
             <div class="deadline ar">يُرجى القبول قبل تاريخ <strong>${e(expiryAR)}</strong>. وفي حال انقضاء هذه المدة دون قبول، يُعدّ العرض لاغياً تلقائياً.</div>
           </div>
         </div>
@@ -1032,7 +1032,7 @@ export function buildOfferEmailBody(offer, acceptanceUrl, sender) {
     ``,
     `  ${acceptanceUrl}`,
     ``,
-    `IMPORTANT: This offer is valid for 14 days only. Please accept within this period or the offer will expire automatically.`,
+    `IMPORTANT: This offer is valid for 7 days only. Please accept within this period or the offer will expire automatically.`,
     ``,
     `After accepting, we will proceed with onboarding through the SOL system and issue your Personal Service Number (PSN).`,
     ``,

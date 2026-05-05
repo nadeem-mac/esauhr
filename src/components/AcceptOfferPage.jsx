@@ -96,7 +96,7 @@ export default function AcceptOfferPage({ token }) {
         // Check expiry
         if (row.expires_at && new Date(row.expires_at) < new Date()) {
           setStage('error');
-          setErrorMessage('This offer has expired. The acceptance window was 14 days from issue. Please contact HR if you would like to discuss next steps.');
+          setErrorMessage('This offer has expired. The acceptance window was 7 days from issue. Please contact HR if you would like to discuss next steps.');
           return;
         }
 
@@ -448,7 +448,7 @@ function VerifyForm({ offer, email, setEmail, iqama, setIqama, error, onSubmit }
       </form>
 
       <p style={{ fontSize: 11, color: '#9E9E9E', marginTop: 14, textAlign: 'center', lineHeight: 1.6 }}>
-        Both fields must match what HR has on file. The acceptance link expires 14 days after issue.
+        Both fields must match what HR has on file. The acceptance link expires 7 days after issue.
       </p>
     </div>
   );

@@ -34,7 +34,7 @@ import RefreshOverlay from './RefreshOverlay.jsx';
 import { logAction } from '../lib/audit.js';
 import { fmtDate } from '../lib/leaveLogic.js';
 
-function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, me }) {
+function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, isHiringViewer, me }) {
   // Tab visibility rules:
   //   Regular staff   → Dashboard, Requests, Calendar (no Employees, Settings, Diagnostics)
   //   Reviewer/Manager → adds Reviews + Attendance, hides Diagnostics
@@ -53,11 +53,12 @@ function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, me }) {
     base.push({ id: 'employees', label: 'Employees', icon: Users });
   }
 
-  // Hiring tab — admin and HR-reviewer only. Surfaces the candidate
-  // offer pipeline (offer creation, acceptance tracking, PSN issuance).
-  // Promoted from the Dashboard "Candidate offers" card to its own
-  // tab so it has room to grow as the joiner/leaver flow expands.
-  if (isAdmin || isHrReviewer) {
+  // Hiring tab — admin and HR-reviewer have full edit rights;
+  // hiring-viewer roles (Badria, Fahad SUP, Jaffar) get read-only
+  // access to the same pipeline view. Read-only enforcement happens
+  // inside HiringView/OffersCard via the readOnly prop, not here —
+  // this gate just opens the door.
+  if (isAdmin || isHrReviewer || isHiringViewer) {
     base.push({ id: 'hiring', label: 'Hiring', icon: UserPlus });
   }
 
@@ -177,9 +178,28 @@ export default function AppShell({ session, me, onRefreshMe }) {
     () => (employees || []).some(e => e.manager_id === me?.id),
     [employees, me?.id]
   );
+
+  // Read-only Hiring viewers — Badria, Fahad Sulaiman (SUP), Jaffar.
+  // They see the offer pipeline (status, history, contract preview) but
+  // cannot create, withdraw, edit, or download anything. Identified by
+  // PSN; matching is exact. Nadeem (admin) and Bashaier (HR reviewer)
+  // continue to have full edit rights via the isAdmin / isHrReviewer
+  // flags above — this allowlist is purely additive for read-only.
+  const HIRING_VIEWER_PSNS = ['H94712']; // Fahad Sulaiman
+  const HIRING_VIEWER_EMAILS = [
+    'badria.alhassan@evergreen-shipping.com.sa',
+    'jaffar.aldarweash@evergreen-shipping.com.sa',
+  ];
+  const isHiringViewer = Boolean(
+    me && (
+      HIRING_VIEWER_PSNS.includes(me.id) ||
+      HIRING_VIEWER_EMAILS.includes((me.email || '').toLowerCase())
+    )
+  );
+
   const TABS = useMemo(
-    () => buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, me }),
-    [isAdmin, isReviewer, isManager, isHrReviewer, me?.id, me?.psn]
+    () => buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, isHiringViewer, me }),
+    [isAdmin, isReviewer, isManager, isHrReviewer, isHiringViewer, me?.id, me?.psn]
   );
 
   const loadAll = useCallback(async ({ silent = false } = {}) => {
@@ -820,8 +840,12 @@ export default function AppShell({ session, me, onRefreshMe }) {
             onSelect={setSelectedEmployee}
           />
         )}
-        {tab === 'hiring' && (isAdmin || isHrReviewer) && (
-          <HiringView me={me} employees={employees} />
+        {tab === 'hiring' && (isAdmin || isHrReviewer || isHiringViewer) && (
+          <HiringView
+            me={me}
+            employees={employees}
+            readOnly={!isAdmin && !isHrReviewer}
+          />
         )}
         {tab === 'calendar' && (
           <CalendarView
