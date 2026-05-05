@@ -1027,6 +1027,32 @@ export default function AttendanceView({ me, employees }) {
     return s;
   }, [acceptedShifts]);
 
+  // Per-employee monthly shift list — used by the off-roster
+  // diagnostic to show, for each employee in the off-roster
+  // bucket, the FULL set of dates the manager has planned for
+  // them this month plus each shift's status. Lets Bashaier
+  // (and Nadeem) immediately spot whether a gap is a missing
+  // plan, a declined shift, or a partial save.
+  //
+  // Map shape: empKey → Array<{ date, startStr, endStr, status }>
+  // sorted ascending by date.
+  const monthlyShiftsByEmp = useMemo(() => {
+    const m = {};
+    (acceptedShifts || []).forEach(row => {
+      if (!row?.employee_id) return;
+      const k = String(row.employee_id).toUpperCase();
+      if (!m[k]) m[k] = [];
+      m[k].push({
+        date:     row.shift_date,
+        startStr: String(row.start_time || '').slice(0, 5),
+        endStr:   String(row.end_time || '').slice(0, 5),
+        status:   row.status || 'pending',
+      });
+    });
+    Object.values(m).forEach(arr => arr.sort((a, b) => a.date.localeCompare(b.date)));
+    return m;
+  }, [acceptedShifts]);
+
   // ── Night-shift bridge ────────────────────────────────────────────
   // Maps the END day of a night shift back to its START day. Keyed
   // by `${employee}|${endDate}` where endDate = startDate + 1 day,
@@ -3328,6 +3354,7 @@ export default function AttendanceView({ me, employees }) {
           onToggleActions={() => setActionsEnabled(v => !v)}
           isDuplicate={!!existingUpload}
           onReset={reset}
+          monthlyShiftsByEmp={monthlyShiftsByEmp}
         />
       )}
 
@@ -3676,6 +3703,7 @@ function FileSummary({
   counts, dates, windowAvail, detection, progressByKind,
   drillKind, setDrillKind, actionPanels,
   actionsEnabled, onToggleActions, isDuplicate, onReset,
+  monthlyShiftsByEmp,
 }) {
   // drillKind is now controlled by the parent (AttendanceView) so the
   // action UI for each kind can be constructed alongside the email
@@ -3877,6 +3905,7 @@ function FileSummary({
               kind={drillKind}
               detection={detection}
               onClose={() => setDrillKind(null)}
+              monthlyShiftsByEmp={monthlyShiftsByEmp}
             />
           )}
 
@@ -3983,7 +4012,7 @@ function CountPill({ icon, label, count, color, tint, subtext, isOpen, onClick, 
 // the page. This panel exists purely as an "expand to see the list"
 // drill-down, especially useful for ON-TIME and ON-LEAVE which don't
 // have dedicated action sections.
-function BreakdownPanel({ kind, detection, onClose }) {
+function BreakdownPanel({ kind, detection, onClose, monthlyShiftsByEmp }) {
   const config = {
     onTime:    { title: 'On time',         accent: '#047857', tint: '#ECFDF5', icon: '✓',  empty: 'No on-time entries.' },
     late:      { title: 'Late arrival',    accent: '#BE123C', tint: '#FFF1F2', icon: '⚠',  empty: 'Nobody arrived late — well done team.' },
@@ -4139,11 +4168,134 @@ function BreakdownPanel({ kind, detection, onClose }) {
               <div className="text-xs mt-0.5" style={{ color: '#0A0A0A', opacity: 0.85 }}>
                 {detailFor(e)}
               </div>
+
+              {/* Roster diagnostic — only for off-roster rows.
+                  Shows the FULL set of dates this employee has
+                  planned in the month plus each shift's status,
+                  so the discrepancy ("plan looks right but May 4
+                  is missing") becomes immediately visible. Without
+                  this, Bashaier and Nadeem have to either query
+                  the DB directly or trust the system's word that
+                  there's no shift — neither is satisfying. */}
+              {kind === 'shiftOffDay' && monthlyShiftsByEmp && (
+                <RosterDiagnostic
+                  empKey={String(e.employee?.id || '').toUpperCase()}
+                  flaggedDate={e.dateLabel}
+                  monthShifts={monthlyShiftsByEmp[String(e.employee?.id || '').toUpperCase()] || []}
+                />
+              )}
             </li>
           ))}
         </ul>
         </>
       )}
+    </div>
+  );
+}
+
+// ─── RosterDiagnostic ─────────────────────────────────────────────────
+// Renders a compact summary of an employee's full monthly shift plan
+// inside the off-roster breakdown row. Lets Bashaier (and Nadeem)
+// instantly verify whether the manager's plan actually covers the
+// flagged date, or whether there's a real gap.
+//
+// What it shows:
+//   • Total shifts planned this month
+//   • Per-status breakdown (pending / accepted / declined)
+//   • Compact list of dates with weekday-letter headers, the
+//     flagged date highlighted in red so the gap is obvious
+//
+// Three signal patterns to look for:
+//   1. Plan looks complete but the flagged date is missing
+//      → manager forgot a date; ask them to update
+//   2. All shifts say 'declined'
+//      → staff declined; off-day flag is correct
+//   3. Plan has fewer dates than expected
+//      → manager save was incomplete
+function RosterDiagnostic({ empKey, flaggedDate, monthShifts }) {
+  if (!monthShifts || monthShifts.length === 0) {
+    return (
+      <div
+        className="mt-1.5 rounded text-[11px] px-2 py-1.5"
+        style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#7F1D1D' }}
+      >
+        <strong>No shifts on file</strong> for this employee in the month — this row should
+        have been evaluated against the standard schedule, not flagged as off-roster.
+        Refresh the page; if the gap persists, the data fetch may have hit a transient error.
+      </div>
+    );
+  }
+
+  // Status counts.
+  const counts = monthShifts.reduce((acc, s) => {
+    acc[s.status] = (acc[s.status] || 0) + 1;
+    return acc;
+  }, {});
+  const statusBits = [];
+  if (counts.pending)  statusBits.push(`${counts.pending} pending`);
+  if (counts.accepted) statusBits.push(`${counts.accepted} accepted`);
+  if (counts.declined) statusBits.push(`${counts.declined} declined`);
+  const monthLabel = (() => {
+    const d = monthShifts[0]?.date;
+    if (!d) return '';
+    const [y, m] = d.split('-').map(n => parseInt(n, 10));
+    return new Date(y, m - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+  })();
+
+  return (
+    <div
+      className="mt-1.5 rounded px-2 py-2"
+      style={{ background: '#F8FAFC', border: '1px solid #CBD5E1', fontSize: 11, lineHeight: 1.45 }}
+    >
+      <div style={{ color: '#1E293B', fontWeight: 600, marginBottom: 4 }}>
+        Roster: {monthShifts.length} {monthShifts.length === 1 ? 'shift' : 'shifts'} planned in {monthLabel}
+        {statusBits.length > 0 && (
+          <span style={{ fontWeight: 400, opacity: 0.75 }}> · {statusBits.join(' · ')}</span>
+        )}
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+        {monthShifts.map(s => {
+          const isFlagged = s.date === flaggedDate;
+          const [y, m, d] = s.date.split('-').map(n => parseInt(n, 10));
+          const dt = new Date(y, m - 1, d);
+          const dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dt.getDay()];
+          // Status colour: pending=amber, accepted=green, declined=red.
+          const statusColor = s.status === 'declined' ? '#991B1B'
+                            : s.status === 'accepted' ? '#0F4C2A'
+                            : '#854F0B';
+          const statusBg = s.status === 'declined' ? '#FEF2F2'
+                         : s.status === 'accepted' ? '#ECFDF3'
+                         : '#FEF6E2';
+          return (
+            <span
+              key={s.date}
+              title={`${dow} ${d} · ${s.startStr}–${s.endStr} · ${s.status}`}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 3,
+                padding: '2px 6px',
+                borderRadius: 4,
+                background: isFlagged ? '#FFFFFF' : statusBg,
+                color: isFlagged ? '#BE123C' : statusColor,
+                border: isFlagged ? '1.5px solid #BE123C' : `1px solid ${statusColor}40`,
+                fontWeight: isFlagged ? 700 : 500,
+                fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                fontSize: 10.5,
+              }}
+            >
+              <span style={{ fontSize: 9, opacity: 0.7 }}>{dow.slice(0, 1)}</span>
+              {d}
+            </span>
+          );
+        })}
+      </div>
+      <div style={{ marginTop: 6, fontSize: 10.5, color: '#64748B' }}>
+        Flagged date <strong style={{ color: '#BE123C' }}>{flaggedDate}</strong> is not in the planned dates above.
+        {counts.declined === monthShifts.length && (
+          <> All planned shifts are <strong>declined</strong> — that's why no schedule applied.</>
+        )}
+      </div>
     </div>
   );
 }
