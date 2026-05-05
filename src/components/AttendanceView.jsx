@@ -6,6 +6,8 @@ import {
 } from 'lucide-react';
 import { directGet, directPost } from '../supabaseClient.js';
 import { parseTimeCardXlsx, TimeCardParseError } from '../lib/timeCard.js';
+import { buildAttendanceRows, recordAttendanceRows } from '../lib/attendanceRecorder.js';
+import AttendanceMonthGrid from './AttendanceMonthGrid.jsx';
 
 /* ────────────────────────────────────────────────────────────────────────
    Daily attendance check — driven by Time Card xlsx upload.
@@ -587,7 +589,7 @@ function buildMailto({ to, cc, subject, body }) {
 // ────────────────────────────────────────────────────────────────────────
 // MAIN COMPONENT
 // ────────────────────────────────────────────────────────────────────────
-export default function AttendanceView({ me, employees }) {
+export default function AttendanceView({ me, employees, leaveTypes = [] }) {
   // The xlsx ingestion replaces the legacy CSV path entirely. We hold
   // the parsed result rather than the raw text — there's no use case
   // for re-parsing on the fly the way the CSV path was wired.
@@ -794,7 +796,7 @@ export default function AttendanceView({ me, employees }) {
     (async () => {
       try {
         const data = await directGet(
-          'leave_requests?select=employee_id,start_date,end_date,status&status=eq.approved&start_date=lte.' + csvDate + '&end_date=gte.' + windowStart
+          'leave_requests?select=id,employee_id,start_date,end_date,status,leave_type_id&status=eq.approved&start_date=lte.' + csvDate + '&end_date=gte.' + windowStart
         );
         if (!cancelled) setApprovedLeaves(data || []);
       } catch (e) {
@@ -1621,6 +1623,133 @@ export default function AttendanceView({ me, employees }) {
 
     return out;
   }, [parsed.rows, parsed.weekendRows, csvDate, yesterdayDate, empById, empByDigits, onLeaveOnDate, shiftOverrideById, shiftStaffThisMonth, nightShiftBridge, permIndex]);
+
+  // ─── Persist daily attendance to attendance_daily ──────────────────
+  // Every successful parse triggers a write of one row per
+  // (employee, date) to attendance_daily. Re-uploads upsert on the
+  // (employee_id, attendance_date) unique key, so fixing a mistake
+  // just means re-uploading the corrected file.
+  //
+  // Powers the AttendanceMonthGrid calendar — Bashaier sees a
+  // rolling month-view of who was present / late / absent / on leave
+  // accumulating as she processes each day's file.
+  //
+  // Per-leave-type lookup: the recorder needs to know whether an
+  // approved leave is annual vs sick to set the right status.
+  const leaveTypesById = useMemo(() => {
+    const m = new Map();
+    (leaveTypes || []).forEach(t => { if (t?.id) m.set(t.id, t); });
+    return m;
+  }, [leaveTypes]);
+
+  // empId|date → { type, requestId } — only for dates inside the
+  // upload window. Used by buildAttendanceRows to set annual_leave
+  // vs sick_leave correctly.
+  const leaveByEmpDateMap = useMemo(() => {
+    const m = new Map();
+    (approvedLeaves || []).forEach(l => {
+      const t = leaveTypesById.get(l.leave_type_id);
+      const typeName = t?.name || '';
+      // Walk every date in the leave's [start, end] range so a
+      // multi-day leave can be looked up per-date without runtime
+      // iteration. Capped at 60 days to defend against bad data.
+      const start = new Date(l.start_date + 'T00:00:00');
+      const end   = new Date(l.end_date   + 'T00:00:00');
+      for (let i = 0; i < 60; i++) {
+        const d = new Date(start);
+        d.setDate(start.getDate() + i);
+        if (d > end) break;
+        const k = `${l.employee_id}|${d.toISOString().slice(0, 10)}`;
+        m.set(k, { type: typeName, requestId: l.id });
+      }
+    });
+    return m;
+  }, [approvedLeaves, leaveTypesById]);
+
+  // Last-recorded fingerprint, so the same parse doesn't re-record
+  // on every render. Re-record only fires when csvDate changes or
+  // the bucket counts shift (i.e. a new file was uploaded).
+  const lastRecordedRef = useRef('');
+  useEffect(() => {
+    if (!csvDate || !parsed.rows?.length) return;
+    const fingerprint = [
+      csvDate, yesterdayDate || '',
+      detection.late.length, detection.early.length, detection.onTime.length,
+      detection.onLeave.length, detection.shiftOffDay.length,
+      detection.missedIn.length, detection.missedOut.length,
+      parsed.rows.length,
+    ].join(':');
+    if (lastRecordedRef.current === fingerprint) return;
+    lastRecordedRef.current = fingerprint;
+
+    // Build per-date sets of employees who appeared in the file +
+    // employees who had a shift, so the recorder can detect pure
+    // absences (had shift, no row in file, not on leave).
+    const fileEmpIdsByDate = new Map(); // date → Set<empId>
+    parsed.rows.forEach(r => {
+      const dateK = r['Date'];
+      if (!dateK) return;
+      const psn = String(r['Employee ID'] || '').toUpperCase();
+      if (!psn) return;
+      // Resolve to canonical PSN via empByDigits (handles 5-digit
+      // exports without the H prefix)
+      const emp = empById.get(psn) || empByDigits.get(psn);
+      const empId = emp?.id || psn;
+      if (!fileEmpIdsByDate.has(dateK)) fileEmpIdsByDate.set(dateK, new Set());
+      fileEmpIdsByDate.get(dateK).add(empId);
+    });
+
+    // empId|date → { start, end } for shift lookup in the recorder
+    const shiftMapForRecorder = new Map();
+    Object.entries(shiftOverrideById).forEach(([k, v]) => {
+      const [empId, date] = k.split('|');
+      shiftMapForRecorder.set(`${empId}|${date}`, { start: v.startStr, end: v.endStr });
+    });
+
+    // Collect dates to record — typically today + yesterday
+    const dates = [csvDate, yesterdayDate].filter(Boolean);
+
+    (async () => {
+      try {
+        const allRows = [];
+        for (const date of dates) {
+          // Wrap shiftMapForRecorder to be a date-scoped lookup
+          const shiftByEmp = new Map();
+          for (const [k, v] of shiftMapForRecorder) {
+            const [eid, d] = k.split('|');
+            if (d === date) shiftByEmp.set(eid, v);
+          }
+          // Wrap leave map to be date-scoped
+          const leaveByEmp = new Map();
+          for (const [k, v] of leaveByEmpDateMap) {
+            const [eid, d] = k.split('|');
+            if (d === date) leaveByEmp.set(eid, v);
+          }
+          // Shift-staff list for absence detection
+          const shiftEmpsForDate = (employees || []).filter(emp =>
+            shiftByEmp.has(emp.id)
+          );
+          const fileEmpIds = fileEmpIdsByDate.get(date) || new Set();
+
+          const rows = buildAttendanceRows({
+            date,
+            buckets: detection,
+            shiftByEmpDate: shiftByEmp,
+            leaveByEmpDate: leaveByEmp,
+            fileEmpIds,
+            shiftEmployees: shiftEmpsForDate,
+            recordedBy: me?.id || null,
+          });
+          allRows.push(...rows);
+        }
+        if (allRows.length > 0) {
+          await recordAttendanceRows(allRows);
+        }
+      } catch (e) {
+        console.warn('attendance_daily recording failed (non-fatal):', e);
+      }
+    })();
+  }, [csvDate, yesterdayDate, detection, parsed.rows, employees, empById, empByDigits, shiftOverrideById, leaveByEmpDateMap, me?.id]);
 
   // File handling
   const handleFile = useCallback(async (file) => {
@@ -3178,6 +3307,19 @@ export default function AttendanceView({ me, employees }) {
           </div>
         )}
       </div>
+
+      {/* Monthly attendance calendar — persistent record built from
+          every file Bashaier uploads. Sits above the daily workflow
+          so the month-at-a-glance is visible before she dives into
+          today's import. Each cell shows status (present, late,
+          absent, leave, etc.) for that employee × that date. Hover
+          for punch times, schedule, and computed metrics.
+
+          Self-fetches from attendance_daily, subscribes to realtime,
+          updates live as new rows land. Filters to employees who
+          have at least one record this month — directory members
+          who've never been uploaded for stay hidden. */}
+      <AttendanceMonthGrid employees={employees} />
 
       {/* ─── Pending end-of-day review banner ───────────────────────────
           Surfaces dates where the morning pass was completed but the

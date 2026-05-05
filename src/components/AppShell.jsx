@@ -860,7 +860,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
           // who always has access regardless of which feature flags happen
           // to be set on his employee record.
           if (!me?.can_view_attendance && !me?.is_admin) return null;
-          return <AttendanceView me={me} employees={employees} />;
+          return <AttendanceView me={me} employees={employees} leaveTypes={leaveTypes} />;
         })()}
         {tab === 'requests' && (
           <Requests
