@@ -198,39 +198,41 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
     );
   }, [employees]);
 
-  // Managers: anyone with at least one direct report (i.e. someone
-  // else has manager_id = their.id) PLUS any admin or HR reviewer.
-  // Previously this filtered on a non-existent is_manager column,
-  // which gave Bashaier an empty list.
-  // Managers are filtered by the OFFICE the offer is for. A manager
-  // in Dammam can't be assigned as the reporting line for a Jeddah
-  // hire — supervision happens at the location. Per Nadeem the
-  // expected lists are:
-  //   • Dammam (DMM):  Fahad, Haider, Sadakath, Sharique
-  //   • Riyadh (RYD):  Zaher
-  //   • Jeddah (JED):  James, Sonnie, Naoman
-  // We don't hardcode names — the filter is purely
-  //   manager.location === offer.location AND has direct reports
-  // so the lists self-update if a manager moves office.
+  // Managers are filtered by the OFFICE the offer is for. Per
+  // Nadeem the authoritative reporting-line lists are:
+  //
+  //   Dammam (DMM):  Fahad (SUP), Sadakath, Sharique, Haider
+  //   Riyadh (RYD):  Zaher, Sadakath
+  //   Jeddah (JED):  James, Sonnie, Naoman
+  //
+  // We match against these allowlists by first-name substring
+  // (case-insensitive) so the dropdown always shows the right
+  // people regardless of how their full name is stored in the
+  // employees table (e.g. "Sadakathullah" matches "Sadakath",
+  // "MOHAMMED FAHAD" matches "Fahad"). Filtering also requires
+  // the manager's record to be at the same office.
   //
   // The dropdown stays disabled until BOTH Department and
   // Location are set, matching the dependent-field pattern we
   // already use for Position.
+  const MANAGER_ALLOWLIST_BY_LOCATION = {
+    DMM: ['fahad', 'sadakath', 'sharique', 'haider'],
+    RYD: ['zaher', 'sadakath'],
+    JED: ['james', 'sonnie', 'naoman'],
+  };
+
   const managers = useMemo(() => {
     if (!employees) return [];
     if (!location) return [];
 
-    const managerIds = new Set();
-    employees.forEach(e => {
-      if (e.manager_id) managerIds.add(e.manager_id);
-    });
+    const allowlist = MANAGER_ALLOWLIST_BY_LOCATION[location] || [];
+    if (allowlist.length === 0) return [];
+
     return employees
       .filter(e => {
-        // Must be a manager (has direct reports), admin, or HR reviewer
-        const isManagerRole = managerIds.has(e.id) || e.is_admin || e.is_hr_reviewer;
-        if (!isManagerRole) return false;
-        // Must be at the same office as the offer
-        return e.location === location;
+        // Must match one of the allowlisted first names for this office
+        const nameLower = (e.name || '').toLowerCase();
+        return allowlist.some(needle => nameLower.includes(needle));
       })
       .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   }, [employees, location]);
@@ -472,19 +474,28 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
         {/* Candidate section */}
         <FormSection title="Candidate" icon={<Sparkles className="w-3 h-3" />}>
           <Field label="Full name *" required>
-            <Input value={candidateName} onChange={setCandidateName} placeholder="e.g. Sami Al-Mansour" />
+            <Input
+              value={candidateName}
+              onChange={(v) => setCandidateName(v.toUpperCase())}
+              placeholder="E.G. SAMI AL-MANSOUR"
+            />
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Personal email *" required>
               <Input
                 value={candidateEmail}
-                onChange={(v) => setCandidateEmail(v)}
+                onChange={(v) => setCandidateEmail(v.toLowerCase())}
                 placeholder="name@example.com"
                 type="email"
               />
             </Field>
             <Field label="Phone (optional)">
-              <Input value={candidatePhone} onChange={setCandidatePhone} placeholder="+966 5X XXX XXXX" />
+              <Input
+                value={candidatePhone}
+                onChange={(v) => setCandidatePhone(v.replace(/\D/g, ''))}
+                placeholder="9665XXXXXXXX"
+                inputMode="numeric"
+              />
             </Field>
           </div>
         </FormSection>
@@ -526,8 +537,8 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
               <div className="mt-2">
                 <Input
                   value={positionCustom}
-                  onChange={setPositionCustom}
-                  placeholder="Type the exact position title for the offer letter"
+                  onChange={(v) => setPositionCustom(v.toUpperCase())}
+                  placeholder="TYPE THE EXACT POSITION TITLE"
                 />
               </div>
             )}
@@ -752,7 +763,7 @@ function Field({ label, children }) {
   );
 }
 
-function Input({ value, onChange, placeholder, type = 'text', min, step }) {
+function Input({ value, onChange, placeholder, type = 'text', min, step, inputMode }) {
   return (
     <input
       type={type}
@@ -761,6 +772,7 @@ function Input({ value, onChange, placeholder, type = 'text', min, step }) {
       placeholder={placeholder}
       min={min}
       step={step}
+      inputMode={inputMode}
       className="w-full text-sm rounded-lg px-3 py-2"
       style={{
         background: '#FFFFFF',

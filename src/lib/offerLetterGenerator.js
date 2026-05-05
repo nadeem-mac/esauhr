@@ -51,7 +51,7 @@ const COMPANY = {
   nameFullEn:  'Evergreen Shipping Agency Saudi Co. (LLC)',
   nameFullAr:  'شركة إيفرغرين للملاحة المحدودة',
   brandEn:     'EVERGREEN LINE',
-  brandAr:     'إيفرغرين لاين',
+  brandAr:     'خط إيفرغرين',
   branchEn:    'Branch Office: P.O. Box 1008, Dammam 31431, KSA',
   branchAr:    'فرع المكتب: ص.ب 1008، الدمام 31431، المملكة العربية السعودية',
   cr:          'C.R. 2050145335',
@@ -621,7 +621,7 @@ function buildLetterHtml(offer, signatory) {
       <!-- POSITION & COMPENSATION BAND -->
       <div class="band">
         <span>POSITION &amp; COMPENSATION DETAILS</span>
-        <span class="ar">بيانات الوظيفة والأجر</span>
+        <span class="ar">تفاصيل الوظيفة والراتب</span>
       </div>
 
       <!-- POSITION + SALARY (side by side) -->
@@ -632,9 +632,8 @@ function buildLetterHtml(offer, signatory) {
           ${posRow('Department', offer.department)}
           ${posRow('Office', offer.location)}
           ${posRow('Joining Date', formatDateLong(offer.proposedJoinDate))}
-          ${posRow('Probation Period', '90 days')}
           ${posRow('Working Hours', '40 hr/week · Sun-Thu')}
-          ${posRow('Contract Type', 'Indefinite-term')}
+          ${posRow('PROBATION PERIOD', '90 days')}
         </div>
 
         <!-- Salary table — English labels only -->
@@ -665,7 +664,7 @@ function buildLetterHtml(offer, signatory) {
       <!-- KEY TERMS BAND -->
       <div class="band">
         <span>KEY TERMS — Per KSA Labor Law</span>
-        <span class="ar">أهم البنود — وفقاً لنظام العمل السعودي</span>
+        <span class="ar">الشروط الأساسية — وفقاً لنظام العمل السعودي</span>
       </div>
 
       <ul class="terms-list">
