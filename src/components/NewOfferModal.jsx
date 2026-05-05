@@ -22,7 +22,7 @@ import { X, Loader2, Mail, FileText, AlertCircle, Sparkles, Plus } from 'lucide-
 import { directGet, directPost } from '../supabaseClient.js';
 import { LOCATION_LABELS } from '../lib/leaveLogic.js';
 import {
-  generateOfferLetterPDF,
+  openOfferLetterPrintWindow,
   buildOfferEmailBody,
   buildEmlMessage,
   downloadBlob,
@@ -365,7 +365,39 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
 
       const signatory = signatories.find(s => s.id === signatoryId);
       const manager = managers.find(m => m.id === managerId);
-      const pdfBlob = await generateOfferLetterPDF(
+
+      // ─── Build the email body + .eml first (so it downloads
+      // BEFORE the print window steals focus). The .eml is body-
+      // only; Bashaier attaches the saved PDF in Outlook before
+      // sending. ───────────────────────────────────────────────
+      const acceptanceUrl = `${window.location.origin}/accept-offer?token=${offerToken}`;
+      const subject = `Offer of employment — ${finalPositionTitle} — Evergreen Shipping`;
+      const body = buildOfferEmailBody(
+        { candidateName: candidateName.trim(), positionTitle: finalPositionTitle },
+        acceptanceUrl,
+        { name: me?.name || 'BASHAIER ALSUBAIE', email: me?.email || 'bashaier.alsubaie@evergreen-shipping.com.sa' }
+      );
+
+      const safeNameForFile = candidateName.trim().replace(/[^\w\s-]/g, '').replace(/\s+/g, '_');
+
+      const eml = await buildEmlMessage({
+        fromName:   me?.name || 'BASHAIER ALSUBAIE',
+        fromEmail:  me?.email || 'bashaier.alsubaie@evergreen-shipping.com.sa',
+        toEmail:    candidateEmail.trim(),
+        toName:     candidateName.trim(),
+        subject,
+        body,
+        pdfBlob:    null,   // body-only; Bashaier attaches PDF in Outlook
+        pdfFilename: null,
+      });
+
+      downloadBlob(eml, `Offer_${safeNameForFile}.eml`);
+
+      // ─── Now open the print window for the offer letter PDF.
+      // The browser's native print pipeline guarantees correct
+      // Arabic letter joining (which html2canvas was breaking).
+      // ────────────────────────────────────────────────────────
+      await openOfferLetterPrintWindow(
         {
           candidateName:    candidateName.trim(),
           positionTitle:    finalPositionTitle,
@@ -382,31 +414,6 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
         },
         signatory
       );
-
-      const acceptanceUrl = `${window.location.origin}/accept-offer?token=${offerToken}`;
-      const subject = `Offer of employment — ${finalPositionTitle} — Evergreen Shipping`;
-      const body = buildOfferEmailBody(
-        { candidateName: candidateName.trim(), positionTitle: finalPositionTitle },
-        acceptanceUrl,
-        { name: me?.name || 'BASHAIER ALSUBAIE', email: me?.email || 'bashaier.alsubaie@evergreen-shipping.com.sa' }
-      );
-
-      const safeNameForFile = candidateName.trim().replace(/[^\w\s-]/g, '').replace(/\s+/g, '_');
-      const pdfFilename = `Offer_Letter_${safeNameForFile}.pdf`;
-
-      const eml = await buildEmlMessage({
-        fromName:   me?.name || 'BASHAIER ALSUBAIE',
-        fromEmail:  me?.email || 'bashaier.alsubaie@evergreen-shipping.com.sa',
-        toEmail:    candidateEmail.trim(),
-        toName:     candidateName.trim(),
-        subject,
-        body,
-        pdfBlob,
-        pdfFilename,
-      });
-
-      downloadBlob(eml, `Offer_${safeNameForFile}.eml`);
-      setTimeout(() => downloadBlob(pdfBlob, pdfFilename), 600);
 
       if (onCreated) onCreated(created);
       onClose();
@@ -457,7 +464,7 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
               Issue offer letter
             </div>
             <div className="text-xs mt-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>
-              Generates the letter as a PDF and an Outlook draft (.eml). Open the .eml to review and send.
+              Opens the offer letter for printing as PDF, and downloads an Outlook draft (.eml). Save the PDF, then attach it in Outlook before sending.
             </div>
           </div>
           <button
@@ -733,7 +740,7 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
         </div>
 
         <div className="text-[11px] mt-3 leading-relaxed" style={{ color: '#0A0A0A', opacity: 0.6 }}>
-          On generate: offer is recorded with a 14-day acceptance window. PDF and Outlook draft (.eml) download — open the .eml to review and send.
+          On generate: offer is recorded with a 14-day acceptance window. The Outlook draft (.eml) downloads, and the offer letter opens in a new tab for you to save as PDF (use "Save as PDF" in the print dialog). Attach the saved PDF to the Outlook draft before sending.
         </div>
       </div>
     </div>

@@ -65,73 +65,208 @@ const COMPANY = {
 
 // ─── PDF: HTML → canvas → A4 PDF ──────────────────────────────────
 
-export async function generateOfferLetterPDF(offer, signatory) {
-  const container = document.createElement('div');
-  container.id = 'offer-letter-render-host';
-  container.innerHTML = buildLetterHtml(offer, signatory);
+// ─── PRINT-TO-PDF: opens a new window with the offer letter HTML
+//                  and auto-triggers the browser's print dialog.
+//                  User saves as PDF via 'Save as PDF' destination.
+//
+// Why this approach:
+//   The previous approach used html2canvas-pro to rasterize the
+//   DOM into a canvas, then jsPDF to wrap that canvas as A4.
+//   That broke Arabic letter joining because html2canvas
+//   reimplements text rendering in JS and doesn't run the
+//   browser's HarfBuzz text shaper — every Arabic letter rendered
+//   as standalone glyphs instead of cursive ligatures.
+//
+//   Print-to-PDF uses the BROWSER'S NATIVE PRINT PIPELINE which is
+//   guaranteed to render Arabic correctly (it's the same renderer
+//   you see on screen). Trade-off: user clicks Print in the browser
+//   dialog and chooses 'Save as PDF' destination. One extra step
+//   per offer in exchange for guaranteed correct Arabic forever.
+//
+// Flow from NewOfferModal:
+//   1. Form validates → offer_letters row inserted
+//   2. openOfferLetterPrintWindow() is called → new tab opens with
+//      letter HTML + auto-print
+//   3. Bashaier picks 'Save as PDF' from the print dialog → file
+//      saves to her downloads
+//   4. Separately the .eml downloads with the email body and
+//      acceptance link (no PDF attachment because we don't have
+//      the saved file). She attaches the saved PDF manually in
+//      Outlook before sending.
+// ─────────────────────────────────────────────────────────────────
 
-  Object.assign(container.style, {
-    position: 'fixed',
-    top: '0px',
-    left: '-100000px',
-    width: `${A4_W_PX}px`,
-    height: `${A4_H_PX}px`,
-    background: '#FFFFFF',
-    pointerEvents: 'none',
-    zIndex: '-1',
-  });
-
-  document.body.appendChild(container);
-
-  try {
-    if (document.fonts && typeof document.fonts.ready?.then === 'function') {
-      await document.fonts.ready;
-    }
-
-    const img = container.querySelector('img.evg-logo');
-    if (img && !img.complete) {
-      await new Promise(resolve => {
-        const done = () => resolve();
-        img.addEventListener('load', done, { once: true });
-        img.addEventListener('error', done, { once: true });
-        setTimeout(done, 3000);
-      });
-    }
-
-    await new Promise(r => setTimeout(r, 100));
-
-    const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
-      import('html2canvas-pro'),
-      import('jspdf'),
-    ]);
-
-    const canvas = await html2canvas(container, {
-      scale: RENDER_SCALE,
-      backgroundColor: '#FFFFFF',
-      logging: false,
-      useCORS: true,
-      width: A4_W_PX,
-      height: A4_H_PX,
-      windowWidth: A4_W_PX,
-      windowHeight: A4_H_PX,
-    });
-
-    const pdf = new jsPDF({
-      orientation: 'portrait',
-      unit: 'mm',
-      format: 'a4',
-      compress: true,
-    });
-
-    const imgData = canvas.toDataURL('image/jpeg', 0.92);
-    pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297);
-
-    return pdf.output('blob');
-  } finally {
-    if (container.parentNode) {
-      container.parentNode.removeChild(container);
-    }
+/**
+ * Open a new browser window/tab containing the offer letter
+ * formatted for A4 printing, then trigger the browser's print
+ * dialog. The user picks 'Save as PDF' from the destination
+ * dropdown to save a perfect-quality PDF.
+ *
+ * @param {Object} offer
+ * @param {Object} signatory
+ * @returns {Promise<void>} Resolves once the print dialog has
+ *                          been opened. Doesn't wait for the user
+ *                          to actually save — there's no API for that.
+ */
+export async function openOfferLetterPrintWindow(offer, signatory) {
+  // Open the new tab early. Most browsers block window.open if it's
+  // called too long after the user's click event — opening synchronously
+  // here means it's still tied to the same gesture that triggered the
+  // form submit.
+  const win = window.open('', '_blank');
+  if (!win) {
+    throw new Error('The print window was blocked. Please allow pop-ups for esauhr.netlify.app and try again.');
   }
+
+  const safeName = (offer.candidateName || 'Candidate')
+    .replace(/[^\w\s-]/g, '')
+    .replace(/\s+/g, '_');
+  const filename = `Offer_Letter_${safeName}`;
+
+  // Build the document HTML. We embed the letter HTML, plus a small
+  // print-toolbar at the very top that disappears when printing.
+  // @page rule sets A4 paper size and zero margins so the letter
+  // fills the page edge-to-edge.
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(filename)}</title>
+  <style>
+    /* Print rules — paper size + zero margins so the letter
+       layout (which already has its own internal padding)
+       sits flush with the page edge. */
+    @page {
+      size: A4 portrait;
+      margin: 0;
+    }
+    @media print {
+      body { margin: 0; }
+      .print-toolbar { display: none !important; }
+      .print-tip { display: none !important; }
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #f5f5f5;
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+    }
+
+    /* On-screen toolbar — only visible before printing */
+    .print-toolbar {
+      position: sticky;
+      top: 0;
+      background: #0F4C2A;
+      color: #fff;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      z-index: 10;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    }
+    .print-toolbar .title {
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .print-toolbar .filename {
+      font-size: 12px;
+      opacity: 0.85;
+      margin-top: 2px;
+    }
+    .print-toolbar button {
+      background: #fff;
+      color: #0F4C2A;
+      border: none;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border-radius: 4px;
+      letter-spacing: 0.3px;
+    }
+    .print-toolbar button:hover {
+      background: #ECFDF3;
+    }
+
+    .print-tip {
+      max-width: 794px;
+      margin: 16px auto 0;
+      padding: 12px 16px;
+      background: #FEF6E2;
+      border: 1px solid #E8C896;
+      border-radius: 4px;
+      font-size: 13px;
+      color: #854F0B;
+      line-height: 1.5;
+    }
+    .print-tip strong { color: #663D08; }
+
+    /* Letter container — A4 dimensions, centered on screen */
+    .letter-host {
+      max-width: 794px;
+      margin: 16px auto 32px;
+      background: #fff;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+    }
+    @media print {
+      .letter-host {
+        margin: 0;
+        box-shadow: none;
+        max-width: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="print-toolbar">
+    <div>
+      <div class="title">Offer Letter — ready to save as PDF</div>
+      <div class="filename">${escapeHtml(filename)}.pdf</div>
+    </div>
+    <button onclick="window.print()">Print / Save as PDF</button>
+  </div>
+
+  <div class="print-tip">
+    <strong>Next step:</strong> Click <strong>Print / Save as PDF</strong> above (or press Ctrl+P / Cmd+P).
+    In the print dialog, choose <strong>"Save as PDF"</strong> as the destination, then click Save.
+    The PDF will save to your Downloads folder. After saving, return to the Hiring tab — your Outlook draft (.eml) has been downloaded separately for you to attach the PDF.
+  </div>
+
+  <div class="letter-host">
+    ${buildLetterHtml(offer, signatory)}
+  </div>
+
+  <script>
+    // Auto-trigger print once the logo image has loaded. If the
+    // logo fails or takes too long, we still open the dialog so
+    // the user isn't stuck.
+    (function() {
+      var img = document.querySelector('img.evg-logo');
+      var triggered = false;
+      function go() {
+        if (triggered) return;
+        triggered = true;
+        // Small delay so layout fully settles before the dialog
+        // captures it.
+        setTimeout(function() { window.print(); }, 250);
+      }
+      if (!img || img.complete) {
+        go();
+      } else {
+        img.addEventListener('load', go);
+        img.addEventListener('error', go);
+        setTimeout(go, 3000); // safety fallback
+      }
+    })();
+  </script>
+</body>
+</html>`;
+
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
 }
 
 // ─── HTML BUILDER ──────────────────────────────────────────────────
@@ -843,13 +978,38 @@ export async function buildEmlMessage(args) {
     subject, body, pdfBlob, pdfFilename,
   } = args;
 
+  const dateHeader = new Date().toUTCString().replace('GMT', '+0000');
+  const fromHeader = `${escapeHeader(fromName)} <${fromEmail}>`;
+  const toHeader   = toName ? `${escapeHeader(toName)} <${toEmail}>` : toEmail;
+
+  // ─── Body-only mode ────────────────────────────────────────────
+  // When pdfBlob is null/undefined we emit a simple plain-text
+  // email with no multipart MIME structure. Used by the new
+  // print-to-PDF flow where Bashaier saves the PDF separately
+  // and attaches it to the Outlook draft manually before sending.
+  if (!pdfBlob) {
+    const lines = [
+      `From: ${fromHeader}`,
+      `To: ${toHeader}`,
+      `Subject: ${escapeHeader(subject)}`,
+      `Date: ${dateHeader}`,
+      `MIME-Version: 1.0`,
+      `Content-Type: text/plain; charset=UTF-8`,
+      `Content-Transfer-Encoding: quoted-printable`,
+      ``,
+      quotedPrintableEncode(body),
+      ``,
+    ];
+    const eml = lines.join('\r\n');
+    return new Blob([eml], { type: 'message/rfc822' });
+  }
+
+  // ─── Multipart with PDF attachment (legacy path, kept for
+  // future use if we revisit auto-attach) ─────────────────────────
   const pdfBase64 = await blobToBase64(pdfBlob);
   const wrappedBase64 = wrapLine(pdfBase64, 76);
 
   const boundary = 'evergreen-offer-' + Math.random().toString(36).slice(2, 10);
-  const dateHeader = new Date().toUTCString().replace('GMT', '+0000');
-  const fromHeader = `${escapeHeader(fromName)} <${fromEmail}>`;
-  const toHeader   = toName ? `${escapeHeader(toName)} <${toEmail}>` : toEmail;
 
   const lines = [
     `From: ${fromHeader}`,
