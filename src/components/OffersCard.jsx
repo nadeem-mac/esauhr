@@ -27,6 +27,7 @@ import NewOfferModal from './NewOfferModal.jsx';
 import IssuePsnModal from './IssuePsnModal.jsx';
 import LetterPreviewModal from './LetterPreviewModal.jsx';
 import SuccessToast from './SuccessToast.jsx';
+import RecentAcceptancesBanner from './RecentAcceptancesBanner.jsx';
 import { buildOfferEmailBody } from '../lib/offerLetterGenerator.js';
 
 // ─── Status presentation ──────────────────────────────────────────
@@ -328,10 +329,16 @@ export default function OffersCard({ me, employees, readOnly = false }) {
   }
 
   return (
-    <section
-      className="rounded-2xl border bg-white p-5"
-      style={{ borderColor: 'var(--border-soft)' }}
-    >
+    <>
+      {/* Recent acceptances banner — stays for 15 days per acceptance,
+          per-user dismissible. Reads from the same offers list the
+          card uses, so the same realtime sub drives it. Hidden when
+          there are no qualifying acceptances (component returns null). */}
+      <RecentAcceptancesBanner offers={offers} me={me} />
+      <section
+        className="rounded-2xl border bg-white p-5"
+        style={{ borderColor: 'var(--border-soft)' }}
+      >
       {/* Header */}
       <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
         <div>
@@ -520,6 +527,7 @@ export default function OffersCard({ me, employees, readOnly = false }) {
         />
       )}
     </section>
+    </>
   );
 }
 
