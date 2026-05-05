@@ -480,8 +480,8 @@ function buildLetterHtml(offer, signatory) {
       /* ─── SIGNATURES ─── */
       .offer-letter .signatures {
         display: grid;
-        grid-template-columns: 1.4fr 90px 1fr;
-        gap: 14px;
+        grid-template-columns: 1fr 110px 1fr;
+        gap: 18px;
         margin-top: 6px;
         align-items: stretch;
         flex-shrink: 0;
@@ -534,8 +534,8 @@ function buildLetterHtml(offer, signatory) {
       }
 
       .offer-letter .seal {
-        width: 90px;
-        height: 90px;
+        width: 110px;
+        height: 110px;
         border: 2px dashed #B5B5B5;
         border-radius: 50%;
         display: flex;
@@ -548,8 +548,8 @@ function buildLetterHtml(offer, signatory) {
         line-height: 1.4;
         font-weight: 600;
         letter-spacing: 0.3px;
-        align-self: flex-start;
-        margin: 14px auto 0;
+        align-self: center;
+        margin: 0 auto;
       }
 
       .offer-letter .candidate-confirm {
