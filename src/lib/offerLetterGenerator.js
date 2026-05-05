@@ -248,12 +248,26 @@ function buildLetterHtml(offer, signatory) {
       /* ─── TITLE ─── */
       .offer-letter h2.title {
         text-align: center;
-        font-size: 16px;
+        font-size: 18px;
         color: #0F4C2A;
         font-weight: 700;
-        margin: 4px 0 6px;
+        margin: 6px 0 8px;
         letter-spacing: 1.5px;
         flex-shrink: 0;
+      }
+      .offer-letter h2.title .title-sep {
+        margin: 0 12px;
+        color: #0F4C2A;
+        font-weight: 400;
+        opacity: 0.5;
+      }
+      .offer-letter h2.title .title-ar {
+        font-family: 'Tahoma', 'Geeza Pro', 'Arial Unicode MS', 'Segoe UI', sans-serif;
+        direction: rtl;
+        unicode-bidi: embed;
+        font-size: 19px;
+        letter-spacing: 0;
+        font-weight: 700;
       }
 
       /* ─── INTRO ─── */
@@ -386,13 +400,17 @@ function buildLetterHtml(offer, signatory) {
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 14px;
-        padding: 2px 0;
+        padding: 6px 0;
         white-space: nowrap;
+        border-bottom: 1px solid #F4F4F4;
+      }
+      .offer-letter .terms-list li:last-child {
+        border-bottom: none;
       }
       .offer-letter .terms-list .term-en,
       .offer-letter .terms-list .term-ar {
-        font-size: 9px;
-        line-height: 1.3;
+        font-size: 9.5px;
+        line-height: 1.4;
       }
       .offer-letter .terms-list .term-en::before {
         content: '◆ ';
@@ -581,7 +599,11 @@ function buildLetterHtml(offer, signatory) {
       </div>
 
       <!-- TITLE -->
-      <h2 class="title">LETTER OF OFFER  ·  عرض عمل</h2>
+      <h2 class="title">
+        LETTER OF OFFER
+        <span class="title-sep">·</span>
+        <span class="title-ar">خطاب عرض عمل</span>
+      </h2>
 
       <!-- INTRO -->
       <div class="intro">
