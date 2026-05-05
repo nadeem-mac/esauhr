@@ -328,13 +328,13 @@ function buildLetterHtml(offer, signatory) {
         flex-direction: column;
         overflow: hidden;
       }
-      /* Print rule: when the user hits Print → Save as PDF, the
-         browser's print engine ignores overflow:hidden and would
-         otherwise spill content to page 2. Force the page-break
-         policy so everything stays on the single page. */
+      /* Print rule: keep the A4 height locked during print so the
+         flex spacer can correctly push signatures to the bottom.
+         page-break-inside: avoid prevents Chromium from splitting
+         the letter across two pages even if rendering rounds up
+         the height by a pixel or two. */
       @media print {
         .offer-letter {
-          height: auto;
           page-break-inside: avoid;
           break-inside: avoid;
         }
@@ -640,11 +640,17 @@ function buildLetterHtml(offer, signatory) {
         gap: 16px;
       }
 
-      /* ─── No spacer needed — signatures sit directly under the
-         acceptance instruction. Removing the flex spacer + reducing
-         signature column padding keeps the entire letter on a single
-         A4 page. */
-      .offer-letter .spacer { display: none; }
+      /* ─── SPACER — pushes signatures toward the bottom of the
+         page so the letter doesn't end abruptly mid-page. flex:1
+         takes whatever vertical space is left after fixed-height
+         content above and below. The .offer-letter container is
+         locked to A4 height (1123px), so the spacer can't grow
+         past the page boundary — content always stays on one
+         page. */
+      .offer-letter .spacer {
+        flex: 1 1 auto;
+        min-height: 0;
+      }
 
       /* ─── SIGNATURES ─── */
       .offer-letter .signatures {
