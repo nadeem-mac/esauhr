@@ -202,20 +202,38 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
   // else has manager_id = their.id) PLUS any admin or HR reviewer.
   // Previously this filtered on a non-existent is_manager column,
   // which gave Bashaier an empty list.
+  // Managers are filtered by the OFFICE the offer is for. A manager
+  // in Dammam can't be assigned as the reporting line for a Jeddah
+  // hire — supervision happens at the location. Per Nadeem the
+  // expected lists are:
+  //   • Dammam (DMM):  Fahad, Haider, Sadakath, Sharique
+  //   • Riyadh (RYD):  Zaher
+  //   • Jeddah (JED):  James, Sonnie, Naoman
+  // We don't hardcode names — the filter is purely
+  //   manager.location === offer.location AND has direct reports
+  // so the lists self-update if a manager moves office.
+  //
+  // The dropdown stays disabled until BOTH Department and
+  // Location are set, matching the dependent-field pattern we
+  // already use for Position.
   const managers = useMemo(() => {
     if (!employees) return [];
+    if (!location) return [];
+
     const managerIds = new Set();
     employees.forEach(e => {
       if (e.manager_id) managerIds.add(e.manager_id);
     });
     return employees
-      .filter(e =>
-        managerIds.has(e.id) ||
-        e.is_admin ||
-        e.is_hr_reviewer
-      )
+      .filter(e => {
+        // Must be a manager (has direct reports), admin, or HR reviewer
+        const isManagerRole = managerIds.has(e.id) || e.is_admin || e.is_hr_reviewer;
+        if (!isManagerRole) return false;
+        // Must be at the same office as the offer
+        return e.location === location;
+      })
       .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  }, [employees]);
+  }, [employees, location]);
 
   // Available positions for the chosen department. Falls back to
   // ALL_POSITIONS when the dept isn't in the catalogue, and stays
@@ -231,6 +249,13 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
     setPositionTitle('');
     setPositionCustom('');
   }, [department]);
+
+  // When the location changes, clear the manager — a manager in
+  // Dammam isn't valid for a Jeddah offer. Forces the user to
+  // re-pick from the location-filtered list.
+  useEffect(() => {
+    setManagerId('');
+  }, [location]);
 
   // ─── Validation ─────────────────────────────────────────────────
   const finalPositionTitle = positionTitle === '__CUSTOM__'
@@ -509,17 +534,27 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
           </Field>
 
           <Field label="Reporting to (manager) *" required>
-            <Select value={managerId} onChange={setManagerId}>
-              <option value="">— select manager —</option>
+            <Select
+              value={managerId}
+              onChange={setManagerId}
+              disabled={!department || !location}
+            >
+              <option value="">
+                {(!department || !location)
+                  ? 'Pick department and location first'
+                  : managers.length === 0
+                    ? 'No managers at this office'
+                    : `— select manager (${LOCATION_LABELS[location] || location}) —`}
+              </option>
               {managers.map(m => (
                 <option key={m.id} value={m.id}>
                   {m.name} — {m.id} · {m.department || '—'}
                 </option>
               ))}
             </Select>
-            {managers.length === 0 && (
+            {department && location && managers.length === 0 && (
               <div className="text-[11px] mt-1 opacity-70" style={{ color: '#854F0B' }}>
-                No managers found. The list pulls from anyone who has direct reports, plus admin/HR reviewer roles.
+                No managers configured at the {LOCATION_LABELS[location] || location} office. Either pick a different location or assign a manager flag in Settings → Manager Assignments first.
               </div>
             )}
           </Field>
