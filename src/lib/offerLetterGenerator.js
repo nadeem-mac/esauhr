@@ -1,65 +1,71 @@
 // =============================================================================
 // offerLetterGenerator.js
 //
-// Generates the offer letter PDF by:
-//   1. Building the letter as HTML/CSS (A4-sized, full bilingual)
-//   2. Letting the browser render it (so Arabic uses the OS's
-//      Arabic-capable fonts with proper RTL letter shaping)
-//   3. html2canvas-pro captures the rendered DOM to a canvas
-//   4. jsPDF wraps the canvas as a single-page A4 PDF
+// Generates a corporate-style bilingual offer letter as a single A4
+// page PDF. Rendered as HTML in the browser, captured with
+// html2canvas-pro, wrapped as A4 by jsPDF — so Arabic uses the OS's
+// native Arabic-capable font with proper RTL bidi and letter
+// joining (Helvetica embedded in jsPDF can't shape Arabic).
 //
-// Also exports the .eml builder, token generator, and download
-// helper (unchanged from previous version).
+// Document structure (top to bottom):
 //
-// Why HTML instead of jsPDF.text():
-//   jsPDF's built-in text() only supports Latin scripts. Arabic
-//   strings render as garbled Latin1 codepoints because the
-//   default Helvetica has no Arabic glyphs. Our previous version
-//   produced unreadable Arabic on the offer letter.
+//   ┌─ LETTERHEAD ────────────────────────────────────────────┐
+//   │  Logo │ Company EN + corporate details │ Company AR     │
+//   │       │ Branch · CR · Tel · Email      │ (mirrored RTL) │
+//   ├─ Reference & date row ──────────────────────────────────┤
+//   ├─ TITLE: LETTER OF OFFER · عرض عمل ──────────────────────┤
+//   ├─ Intro paragraph (EN left ‖ AR right) ──────────────────┤
+//   ├─ POSITION & COMPENSATION (band) ────────────────────────┤
+//   │  Position table (EN label, AR below in black, value)    │
+//   │  Salary breakdown table (same EN/AR stacking, amounts)  │
+//   ├─ KEY TERMS · أهم البنود (band) ─────────────────────────┤
+//   │  7 KSA-Labor-Law clauses, EN ‖ AR side-by-side          │
+//   ├─ ⚠ 14-DAY VALIDITY CALLOUT (red accent, prominent) ─────┤
+//   ├─ Acceptance instruction ────────────────────────────────┤
+//   │                                                         │
+//   │              (flex spacer — pushes ↓ down)              │
+//   │                                                         │
+//   ├─ SIGNATURES (bottom of page) ───────────────────────────┤
+//   │  ┌─ For Evergreen ──┐  ┌─ Seal ─┐  ┌─ Candidate ─┐      │
+//   │  │ Sig line         │  │  ⊕     │  │ Sig line    │      │
+//   │  │ JOHN HO          │  └────────┘  │ [Name]      │      │
+//   │  │ Country Head     │              │ Date        │      │
+//   │  │ Company name     │                                   │
+//   │  │ Branch Office    │                                   │
+//   │  │ CR # · Tel · Email                                   │
+//   ├─ Confidentiality footer ───────────────────────────────┤
 //
-//   HTML rendered in the browser uses whatever Arabic-capable
-//   font the OS provides (Tahoma on Windows, Geeza Pro on macOS,
-//   DejaVu Sans on Linux) which handles RTL bidirectional layout,
-//   letter joining (ligatures), and contextual shaping natively.
-//
-// Why html2canvas-pro instead of html2canvas:
-//   Pro is the actively-maintained fork that handles modern CSS
-//   features (oklch colors, container queries, etc.) without
-//   throwing warnings. The original html2canvas hasn't been
-//   updated in 2+ years and trips on common CSS we use.
-//
-// A4 dimensions:
-//   210mm × 297mm = 794px × 1123px at 96dpi (the browser default).
-//   Container is locked to those exact pixel dimensions so the
-//   captured canvas matches A4 perfectly when scaled to mm in
-//   jsPDF.
+// Per Nadeem's review of an earlier version: the "Reporting to"
+// row was removed from the letter (manager_id is still saved on
+// the offer record for internal tracking, just not displayed).
 // =============================================================================
 
 const A4_W_PX = 794;
 const A4_H_PX = 1123;
-const RENDER_SCALE = 2;  // 2x for crisp print output (~190dpi effective)
+const RENDER_SCALE = 2;
+
+// Company contact details — single source of truth for the
+// letterhead and the corporate signature block. If any of these
+// change (new branch office, phone number, etc.) update them here.
+const COMPANY = {
+  nameFullEn:  'Evergreen Shipping Agency Saudi Co. (LLC)',
+  nameFullAr:  'شركة إيفرغرين للملاحة المحدودة',
+  brandEn:     'EVERGREEN LINE',
+  brandAr:     'إيفرغرين لاين',
+  branchEn:    'Branch Office: P.O. Box 1008, Dammam 31431, KSA',
+  branchAr:    'فرع المكتب: ص.ب 1008، الدمام 31431، المملكة العربية السعودية',
+  cr:          'C.R. 2050145335',
+  computerNo:  'Computer No. 7023475051',
+  tel:         '(013) 8333566',
+  fax:         '(013) 8341182',
+  email:       'esau@evergreen-shipping.com.sa',
+  hrDeptEn:    'HR Department · Dammam',
+  hrDeptAr:    'قسم الموارد البشرية · الدمام',
+};
 
 // ─── PDF: HTML → canvas → A4 PDF ──────────────────────────────────
 
-/**
- * Generate the offer letter PDF as a Blob.
- *
- * @param {Object} offer
- * @param {string} offer.candidateName
- * @param {string} offer.positionTitle
- * @param {string} offer.department
- * @param {string} offer.location
- * @param {string} offer.proposedJoinDate     YYYY-MM-DD
- * @param {number} offer.salaryBasic
- * @param {number} offer.salaryHousing
- * @param {number} offer.salaryTransport
- * @param {number} offer.salaryOther
- * @param {number} offer.salaryTotal
- * @param {string} [offer.managerName]
- * @param {Object} signatory                  { name, title }
- */
 export async function generateOfferLetterPDF(offer, signatory) {
-  // Build off-screen DOM container with the letter HTML
   const container = document.createElement('div');
   container.id = 'offer-letter-render-host';
   container.innerHTML = buildLetterHtml(offer, signatory);
@@ -67,7 +73,7 @@ export async function generateOfferLetterPDF(offer, signatory) {
   Object.assign(container.style, {
     position: 'fixed',
     top: '0px',
-    left: '-100000px',  // off-screen; html2canvas still captures it
+    left: '-100000px',
     width: `${A4_W_PX}px`,
     height: `${A4_H_PX}px`,
     background: '#FFFFFF',
@@ -78,35 +84,22 @@ export async function generateOfferLetterPDF(offer, signatory) {
   document.body.appendChild(container);
 
   try {
-    // Wait for fonts to fully load before capture — otherwise
-    // html2canvas captures placeholder glyphs.
     if (document.fonts && typeof document.fonts.ready?.then === 'function') {
       await document.fonts.ready;
     }
 
-    // Wait for the logo image to load (or fail). Without this,
-    // the capture happens before the logo is decoded and the PDF
-    // shows a broken-image placeholder.
     const img = container.querySelector('img.evg-logo');
     if (img && !img.complete) {
       await new Promise(resolve => {
         const done = () => resolve();
         img.addEventListener('load', done, { once: true });
         img.addEventListener('error', done, { once: true });
-        // Safety timeout — if the logo can't load, render without
-        // it rather than blocking forever.
         setTimeout(done, 3000);
       });
     }
 
-    // Small additional delay so any layout shifts settle. Modern
-    // browsers paint asynchronously and html2canvas can fire too
-    // early on fast machines.
     await new Promise(r => setTimeout(r, 100));
 
-    // Lazy-load both libraries (only on offer creation, never on
-    // app start) so the bundle stays light for the 99% of users
-    // who never trigger this codepath.
     const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
       import('html2canvas-pro'),
       import('jspdf'),
@@ -123,7 +116,6 @@ export async function generateOfferLetterPDF(offer, signatory) {
       windowHeight: A4_H_PX,
     });
 
-    // Wrap the canvas as a single A4 page.
     const pdf = new jsPDF({
       orientation: 'portrait',
       unit: 'mm',
@@ -131,16 +123,11 @@ export async function generateOfferLetterPDF(offer, signatory) {
       compress: true,
     });
 
-    // jpeg compression keeps the file size reasonable; the offer
-    // letter is graphical so PNG would be 4-8x larger for no
-    // visible quality gain.
     const imgData = canvas.toDataURL('image/jpeg', 0.92);
     pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297);
 
     return pdf.output('blob');
   } finally {
-    // Always clean up — leaving the off-screen div in the DOM
-    // would slowly grow memory after repeated offer generation.
     if (container.parentNode) {
       container.parentNode.removeChild(container);
     }
@@ -153,11 +140,28 @@ function buildLetterHtml(offer, signatory) {
   const dateEN = new Date().toLocaleDateString('en-GB', {
     day: 'numeric', month: 'long', year: 'numeric',
   });
-  // Arabic locale gives us Hijri-aware month names where the OS
-  // supports it; falls back to Gregorian otherwise.
   const dateAR = new Date().toLocaleDateString('ar-SA', {
     day: 'numeric', month: 'long', year: 'numeric',
   });
+
+  // Compute the offer-expiry date (today + 14 days). Used to make
+  // the validity callout concrete with a real deadline rather than
+  // just saying "14 days".
+  const expiry = new Date();
+  expiry.setDate(expiry.getDate() + 14);
+  const expiryEN = expiry.toLocaleDateString('en-GB', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
+  const expiryAR = expiry.toLocaleDateString('ar-SA', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
+
+  // Reference number — short, human-readable. First 6 chars of the
+  // offer token make a workable identifier (collision-free in
+  // practice for HR's volume).
+  const refToken = (offer.offerToken || '').slice(0, 6).toUpperCase();
+  const yearShort = new Date().getFullYear();
+  const ref = `ESAU/HR/${yearShort}/${refToken || 'XXXXXX'}`;
 
   const sar = (v) => `SAR ${Number(v || 0).toLocaleString('en-GB')}`;
   const e = escapeHtml;
@@ -169,12 +173,14 @@ function buildLetterHtml(offer, signatory) {
         font-family: 'Helvetica Neue', 'Arial', sans-serif;
         color: #0F172A;
         line-height: 1.4;
-        padding: 26px 36px 22px;
-        font-size: 11px;
+        padding: 26px 34px 18px;
+        font-size: 10.5px;
         width: ${A4_W_PX}px;
         height: ${A4_H_PX}px;
         background: #FFFFFF;
         position: relative;
+        display: flex;
+        flex-direction: column;
       }
       .offer-letter .ar {
         font-family: 'Tahoma', 'Geeza Pro', 'Arial Unicode MS', 'Segoe UI', sans-serif;
@@ -182,65 +188,89 @@ function buildLetterHtml(offer, signatory) {
         text-align: right;
         unicode-bidi: embed;
       }
+      /* Top brand band */
       .offer-letter .brand-band {
         position: absolute;
         top: 0; left: 0; right: 0;
         height: 5px;
         background: #0F4C2A;
       }
-      .offer-letter .header {
+
+      /* ─── LETTERHEAD ─── */
+      .offer-letter .letterhead {
         display: grid;
         grid-template-columns: 80px 1fr 1fr;
         gap: 14px;
         align-items: center;
-        margin-top: 8px;
+        margin-top: 6px;
+        flex-shrink: 0;
       }
-      .offer-letter .header img.evg-logo {
+      .offer-letter .letterhead img.evg-logo {
         width: 70px;
         height: 70px;
         object-fit: contain;
       }
-      .offer-letter .header .h1-en, .offer-letter .header .h1-ar {
-        font-size: 14px;
+      .offer-letter .letterhead .h1 {
+        font-size: 15px;
         color: #0F4C2A;
         font-weight: 700;
         margin: 0 0 3px;
+        letter-spacing: 0.3px;
       }
-      .offer-letter .header .sub {
-        font-size: 9px;
-        color: #737373;
+      .offer-letter .letterhead .company-name {
+        font-size: 10px;
+        color: #0F172A;
+        font-weight: 600;
         line-height: 1.35;
       }
-      .offer-letter .date-row {
-        display: flex;
-        justify-content: space-between;
-        font-size: 9px;
+      .offer-letter .letterhead .corp-detail {
+        font-size: 8.5px;
         color: #525252;
-        margin: 8px 0 10px;
-        padding-top: 6px;
-        border-top: 1px solid #E5E5E5;
-      }
-      .offer-letter h2.title {
-        text-align: center;
-        font-size: 17px;
-        color: #0F4C2A;
-        font-weight: 700;
-        margin: 6px 0 12px;
-        letter-spacing: 1.5px;
-      }
-      .offer-letter .two-col-intro {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 18px;
-        margin-bottom: 12px;
-      }
-      .offer-letter .two-col-intro p {
-        margin: 0 0 5px;
         line-height: 1.45;
       }
-      .offer-letter .two-col-intro strong {
+
+      /* ─── REFERENCE & DATE ROW ─── */
+      .offer-letter .ref-date {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 9.5px;
         color: #0F172A;
+        margin: 8px 0 6px;
+        padding: 5px 0;
+        border-top: 1px solid #E5E5E5;
+        border-bottom: 1px solid #E5E5E5;
+        flex-shrink: 0;
       }
+      .offer-letter .ref-date strong { color: #0F4C2A; }
+
+      /* ─── TITLE ─── */
+      .offer-letter h2.title {
+        text-align: center;
+        font-size: 18px;
+        color: #0F4C2A;
+        font-weight: 700;
+        margin: 8px 0 10px;
+        letter-spacing: 1.5px;
+        flex-shrink: 0;
+      }
+
+      /* ─── INTRO ─── */
+      .offer-letter .intro {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin-bottom: 10px;
+        flex-shrink: 0;
+      }
+      .offer-letter .intro p {
+        margin: 0 0 4px;
+        line-height: 1.45;
+        font-size: 10.5px;
+      }
+      .offer-letter .intro strong { color: #0F172A; font-weight: 700; }
+
+      /* ─── SECTION BANDS ─── */
       .offer-letter .band {
         background: #D4E8DC;
         padding: 6px 10px;
@@ -249,295 +279,452 @@ function buildLetterHtml(offer, signatory) {
         font-size: 11px;
         display: flex;
         justify-content: space-between;
-        margin: 6px 0 8px;
+        margin: 6px 0 6px;
         letter-spacing: 0.5px;
+        flex-shrink: 0;
       }
-      .offer-letter .details-grid {
+
+      /* ─── POSITION & COMPENSATION ─── */
+      .offer-letter .pos-comp {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 18px;
-        margin-bottom: 10px;
+        gap: 14px;
+        margin-bottom: 6px;
+        flex-shrink: 0;
       }
-      .offer-letter .position-table .row {
+
+      /* Position table — Arabic stacked under English in BLACK */
+      .offer-letter .pos-table {
+        width: 100%;
+      }
+      .offer-letter .pos-table .row {
         display: grid;
         grid-template-columns: 1fr auto;
+        gap: 8px;
         padding: 5px 0;
-        border-bottom: 1px solid #F0F0F0;
-        font-size: 10px;
+        border-bottom: 1px solid #EAEAEA;
         align-items: center;
       }
-      .offer-letter .position-table .label {
-        color: #525252;
+      .offer-letter .pos-table .row:last-child { border-bottom: none; }
+      .offer-letter .pos-table .label-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
       }
-      .offer-letter .position-table .label-ar {
-        font-size: 9px;
-        color: #999;
-        margin-top: 1px;
+      .offer-letter .pos-table .label-en {
+        color: #0F172A;
+        font-weight: 600;
+        font-size: 10px;
       }
-      .offer-letter .position-table .value {
+      .offer-letter .pos-table .label-ar {
+        color: #0F172A;
+        font-size: 10px;
+        font-weight: 500;
+      }
+      .offer-letter .pos-table .value {
         color: #0F172A;
         font-weight: 700;
         font-size: 11px;
         text-align: right;
+        white-space: nowrap;
       }
-      .offer-letter .salary-table {
+
+      /* Salary table — same Arabic-below-English treatment in black */
+      .offer-letter .sal-table {
         width: 100%;
         border-collapse: collapse;
-        font-size: 10px;
       }
-      .offer-letter .salary-table th, .offer-letter .salary-table td {
-        padding: 5px 8px;
-      }
-      .offer-letter .salary-table thead th {
+      .offer-letter .sal-table thead th {
         background: #0F4C2A;
         color: #FFFFFF;
         font-size: 10px;
-        text-align: left;
         font-weight: 700;
+        padding: 6px 8px;
+        text-align: left;
         letter-spacing: 0.4px;
       }
-      .offer-letter .salary-table thead th.ar {
+      .offer-letter .sal-table thead th.amount-col {
         text-align: right;
       }
-      .offer-letter .salary-table tbody tr:nth-child(even) {
+      .offer-letter .sal-table tbody tr:nth-child(even) {
         background: #F8FAF8;
       }
-      .offer-letter .salary-table tbody td.label-en {
-        color: #525252;
+      .offer-letter .sal-table tbody td {
+        padding: 6px 8px;
+        vertical-align: middle;
       }
-      .offer-letter .salary-table tbody td.label-ar {
-        font-size: 9.5px;
-        color: #737373;
+      .offer-letter .sal-table tbody .label-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
       }
-      .offer-letter .salary-table tbody td.amount {
+      .offer-letter .sal-table tbody .label-en {
+        color: #0F172A;
+        font-weight: 600;
+        font-size: 10px;
+      }
+      .offer-letter .sal-table tbody .label-ar {
+        color: #0F172A;
+        font-size: 10px;
+      }
+      .offer-letter .sal-table tbody .amount {
         text-align: right;
         font-weight: 700;
         color: #0F172A;
-        font-size: 11px;
+        font-size: 11.5px;
         white-space: nowrap;
       }
-      .offer-letter .salary-table tfoot td {
+      .offer-letter .sal-table tfoot td {
         background: #0F4C2A;
         color: #FFFFFF;
         font-weight: 700;
         font-size: 12px;
-        padding: 7px 8px;
+        padding: 8px;
       }
-      .offer-letter .salary-table tfoot td.amount {
+      .offer-letter .sal-table tfoot td.total-label-stack {
+        display: table-cell;
+      }
+      .offer-letter .sal-table tfoot .total-en { font-size: 12px; }
+      .offer-letter .sal-table tfoot .total-ar { font-size: 11px; opacity: 0.95; }
+      .offer-letter .sal-table tfoot td.amount {
         text-align: right;
+        font-size: 13px;
       }
+
+      /* ─── KEY TERMS ─── */
       .offer-letter .terms-list {
         list-style: none;
         padding: 0;
-        margin: 0 0 8px;
+        margin: 0 0 6px;
+        flex-shrink: 0;
       }
       .offer-letter .terms-list li {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 18px;
-        padding: 4px 0;
-        font-size: 10px;
+        gap: 16px;
+        padding: 3.5px 0;
+        font-size: 9.5px;
         border-bottom: 1px dotted #F0F0F0;
       }
+      .offer-letter .terms-list li:last-child { border-bottom: none; }
       .offer-letter .terms-list .en::before {
-        content: '• ';
+        content: '◆ ';
         color: #0F4C2A;
         font-weight: 700;
+        font-size: 8px;
       }
       .offer-letter .terms-list .ar::before {
-        content: ' •';
+        content: ' ◆';
         color: #0F4C2A;
         font-weight: 700;
+        font-size: 8px;
       }
-      .offer-letter .accept-box {
-        background: #FEF6E2;
-        border: 1px solid #E8C896;
+
+      /* ─── 14-DAY VALIDITY CALLOUT (prominent) ─── */
+      .offer-letter .validity-callout {
+        background: linear-gradient(to right, #FEF2F2 0%, #FEF6E2 100%);
+        border: 1.5px solid #DC2626;
+        border-left: 5px solid #DC2626;
         border-radius: 4px;
-        padding: 8px 12px;
+        padding: 10px 14px;
         margin: 8px 0;
-        font-size: 10px;
-        color: #854F0B;
+        flex-shrink: 0;
       }
-      .offer-letter .accept-box .row {
+      .offer-letter .validity-callout .row {
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 18px;
-        line-height: 1.45;
+        align-items: center;
       }
+      .offer-letter .validity-callout .head {
+        font-size: 11px;
+        font-weight: 700;
+        color: #991B1B;
+        margin-bottom: 2px;
+        letter-spacing: 0.3px;
+      }
+      .offer-letter .validity-callout .head.ar { font-size: 11.5px; }
+      .offer-letter .validity-callout .deadline {
+        font-size: 10px;
+        color: #0F172A;
+        font-weight: 600;
+      }
+      .offer-letter .validity-callout .deadline strong { color: #991B1B; }
+
+      /* ─── ACCEPTANCE NOTE ─── */
+      .offer-letter .accept-note {
+        font-size: 9.5px;
+        color: #525252;
+        margin: 4px 0;
+        padding: 0 2px;
+        line-height: 1.5;
+        flex-shrink: 0;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+
+      /* ─── SPACER PUSHING SIGNATURES TO BOTTOM ─── */
+      .offer-letter .spacer { flex: 1 1 auto; }
+
+      /* ─── SIGNATURES ─── */
       .offer-letter .signatures {
         display: grid;
-        grid-template-columns: 1fr 130px 1fr;
-        gap: 18px;
-        margin-top: 26px;
-        align-items: end;
+        grid-template-columns: 1.4fr 100px 1fr;
+        gap: 14px;
+        margin-top: 14px;
+        align-items: stretch;
+        flex-shrink: 0;
       }
-      .offer-letter .sig-col {
-        font-size: 10px;
+      .offer-letter .sig-company,
+      .offer-letter .sig-candidate {
+        display: flex;
+        flex-direction: column;
+        font-size: 9.5px;
       }
-      .offer-letter .sig-col .line {
-        border-top: 1px solid #737373;
-        margin-bottom: 7px;
+      .offer-letter .sig-label {
+        font-size: 8.5px;
+        color: #525252;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 14px;
+        font-weight: 600;
+      }
+      .offer-letter .sig-line {
+        border-top: 1px solid #525252;
+        margin-bottom: 6px;
         height: 0;
       }
-      .offer-letter .sig-col strong {
+      .offer-letter .sig-name {
         font-size: 11.5px;
         color: #0F172A;
         font-weight: 700;
+        letter-spacing: 0.3px;
       }
-      .offer-letter .sig-col .meta {
-        color: #737373;
-        margin-top: 2px;
-        line-height: 1.4;
+      .offer-letter .sig-title {
+        font-size: 10px;
+        color: #525252;
+        margin-top: 1px;
+        margin-bottom: 8px;
       }
+      .offer-letter .corp-block {
+        margin-top: 4px;
+        padding-top: 6px;
+        border-top: 1px dashed #D5D5D5;
+        font-size: 8.5px;
+        line-height: 1.55;
+        color: #0F172A;
+      }
+      .offer-letter .corp-block .corp-line { color: #525252; }
+      .offer-letter .corp-block .corp-name { font-weight: 700; color: #0F4C2A; }
+
       .offer-letter .seal {
-        width: 110px;
-        height: 110px;
+        width: 100px;
+        height: 100px;
         border: 2px dashed #B5B5B5;
         border-radius: 50%;
         display: flex;
         flex-direction: column;
         justify-content: center;
         align-items: center;
-        font-size: 8.5px;
+        font-size: 8px;
         color: #999;
         text-align: center;
         line-height: 1.4;
-        margin: 0 auto;
         font-weight: 600;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.3px;
+        align-self: center;
+        margin: 0 auto;
       }
+
+      .offer-letter .candidate-confirm {
+        margin-top: 6px;
+        font-size: 8.5px;
+        color: #525252;
+        line-height: 1.4;
+        font-style: italic;
+      }
+
+      /* ─── CONFIDENTIALITY FOOTER ─── */
       .offer-letter .foot {
-        position: absolute;
-        bottom: 18px;
-        left: 36px;
-        right: 36px;
+        margin-top: 10px;
         padding-top: 6px;
         border-top: 1px solid #E5E5E5;
-        font-size: 8px;
+        font-size: 7.5px;
         color: #999;
         display: flex;
         justify-content: space-between;
+        flex-shrink: 0;
       }
     </style>
 
     <div class="offer-letter">
       <div class="brand-band"></div>
 
-      <div class="header">
+      <!-- LETTERHEAD with full corporate contact details -->
+      <div class="letterhead">
         <div><img class="evg-logo" src="/evergreen-logo.jpg" alt="" /></div>
         <div>
-          <div class="h1-en">EVERGREEN LINE</div>
-          <div class="sub">Evergreen Shipping Agency Saudi Co. (LLC)</div>
-          <div class="sub">HR Department · Dammam, KSA</div>
+          <div class="h1">${e(COMPANY.brandEn)}</div>
+          <div class="company-name">${e(COMPANY.nameFullEn)}</div>
+          <div class="corp-detail">${e(COMPANY.branchEn)}</div>
+          <div class="corp-detail">${e(COMPANY.cr)} · ${e(COMPANY.computerNo)}</div>
+          <div class="corp-detail">Tel: ${e(COMPANY.tel)} · Fax: ${e(COMPANY.fax)}</div>
+          <div class="corp-detail">Email: ${e(COMPANY.email)}</div>
         </div>
         <div class="ar">
-          <div class="h1-ar ar">إيفرغرين لاين</div>
-          <div class="sub ar">شركة إيفرغرين للملاحة المحدودة</div>
-          <div class="sub ar">قسم الموارد البشرية · الدمام، المملكة العربية السعودية</div>
+          <div class="h1">${e(COMPANY.brandAr)}</div>
+          <div class="company-name">${e(COMPANY.nameFullAr)}</div>
+          <div class="corp-detail">${e(COMPANY.branchAr)}</div>
+          <div class="corp-detail">${e(COMPANY.cr)} · ${e(COMPANY.computerNo)}</div>
+          <div class="corp-detail">هاتف: ${e(COMPANY.tel)} · فاكس: ${e(COMPANY.fax)}</div>
+          <div class="corp-detail">البريد الإلكتروني: ${e(COMPANY.email)}</div>
         </div>
       </div>
 
-      <div class="date-row">
-        <span>Date: ${e(dateEN)}</span>
-        <span class="ar">التاريخ: ${e(dateAR)}</span>
+      <!-- REFERENCE & DATE -->
+      <div class="ref-date">
+        <span><strong>Ref:</strong> ${e(ref)}</span>
+        <span><strong>Date · التاريخ:</strong> ${e(dateEN)} · ${e(dateAR)}</span>
       </div>
 
+      <!-- TITLE -->
       <h2 class="title">LETTER OF OFFER  ·  عرض عمل</h2>
 
-      <div class="two-col-intro">
+      <!-- INTRO -->
+      <div class="intro">
         <div>
           <p><strong>Dear ${e(offer.candidateName || '')},</strong></p>
-          <p>We are pleased to offer you the position detailed below at Evergreen Shipping Agency Saudi Co. (LLC). Acceptance is subject to the Terms set out herein and successful onboarding through SOL.</p>
+          <p>We are pleased to extend you a formal offer of employment to join ${e(COMPANY.nameFullEn)} on the terms and conditions set out below. Acceptance is subject to your agreement to these Terms and successful onboarding through the SOL system.</p>
         </div>
         <div class="ar">
           <p><strong>السيد/ة ${e(offer.candidateName || '')} المحترم/ة،</strong></p>
-          <p>يسرنا أن نعرض عليكم الانضمام إلى شركة إيفرغرين للملاحة المحدودة في الوظيفة الموضحة أدناه. يخضع القبول للشروط الواردة هنا وإتمام التسجيل عبر نظام SOL.</p>
+          <p>يسرنا أن نقدم لكم عرض عمل رسمي للانضمام إلى ${e(COMPANY.nameFullAr)} وفقاً للشروط والأحكام المحددة أدناه. يخضع القبول لموافقتكم على هذه الشروط وإتمام إجراءات الالتحاق عبر نظام SOL.</p>
         </div>
       </div>
 
+      <!-- POSITION & COMPENSATION BAND -->
       <div class="band">
-        <span>POSITION DETAILS</span>
-        <span class="ar">تفاصيل الوظيفة</span>
+        <span>POSITION &amp; COMPENSATION DETAILS</span>
+        <span class="ar">تفاصيل الوظيفة والراتب</span>
       </div>
 
-      <div class="details-grid">
-        <div class="position-table">
+      <!-- POSITION + SALARY (side by side) -->
+      <div class="pos-comp">
+        <!-- Position table — Arabic stacked under English in BLACK -->
+        <div class="pos-table">
           ${posRow('Position', 'الوظيفة', offer.positionTitle)}
           ${posRow('Department', 'الإدارة', offer.department)}
           ${posRow('Office', 'المكتب', offer.location)}
-          ${posRow('Reporting to', 'الرئيس المباشر', offer.managerName)}
-          ${posRow('Joining date', 'تاريخ المباشرة', formatDateLong(offer.proposedJoinDate))}
-          ${posRow('Probation', 'فترة التجربة', '90 days')}
-          ${posRow('Working hours', 'ساعات العمل', '40 hr/week, Sun-Thu')}
+          ${posRow('Joining Date', 'تاريخ المباشرة', formatDateLong(offer.proposedJoinDate))}
+          ${posRow('Probation Period', 'فترة التجربة', '90 days · 90 يوماً')}
+          ${posRow('Working Hours', 'ساعات العمل', '40 hr/week · Sun-Thu')}
+          ${posRow('Contract Type', 'نوع العقد', 'Indefinite · غير محدد')}
         </div>
 
-        <table class="salary-table">
+        <!-- Salary table — Arabic below English in BLACK -->
+        <table class="sal-table">
           <thead>
             <tr>
-              <th colspan="2">SALARY BREAKDOWN</th>
-              <th class="ar">تفاصيل الراتب</th>
+              <th>SALARY BREAKDOWN<br><span style="font-weight:500;font-size:9px;direction:rtl;display:inline-block;">تفاصيل الراتب</span></th>
+              <th class="amount-col">Amount<br><span style="font-weight:500;font-size:9px;direction:rtl;display:inline-block;">المبلغ</span></th>
             </tr>
           </thead>
           <tbody>
             ${salRow('Basic Salary', 'الراتب الأساسي', sar(offer.salaryBasic))}
             ${salRow('Housing Allowance', 'بدل السكن', sar(offer.salaryHousing))}
-            ${salRow('Transportation', 'بدل النقل', sar(offer.salaryTransport))}
+            ${salRow('Transportation Allowance', 'بدل النقل', sar(offer.salaryTransport))}
             ${salRow('Other Allowance', 'بدل آخر', sar(offer.salaryOther))}
           </tbody>
           <tfoot>
             <tr>
-              <td>TOTAL</td>
-              <td class="ar">الإجمالي</td>
+              <td>
+                <div class="total-en">TOTAL MONTHLY SALARY</div>
+                <div class="total-ar ar">إجمالي الراتب الشهري</div>
+              </td>
               <td class="amount">${sar(offer.salaryTotal)}</td>
             </tr>
           </tfoot>
         </table>
       </div>
 
+      <!-- KEY TERMS BAND -->
       <div class="band">
-        <span>KEY TERMS · Per KSA Labor Law</span>
-        <span class="ar">أهم البنود · وفقاً لنظام العمل السعودي</span>
+        <span>KEY TERMS — Per KSA Labor Law</span>
+        <span class="ar">أهم البنود — وفقاً لنظام العمل السعودي</span>
       </div>
 
       <ul class="terms-list">
-        ${termRow('Probation: 90 days (Article 53)', 'فترة التجربة: 90 يوماً (المادة 53)')}
-        ${termRow('Notice period: 60 days (Article 75)', 'فترة الإشعار: 60 يوماً (المادة 75)')}
-        ${termRow('Annual leave: 21 days (1-5 yr), 30 days from yr 6', 'الإجازة السنوية: 21 يوماً (السنوات 1-5)، 30 يوماً من السنة 6')}
-        ${termRow('Sick leave: 30d full + 60d 75% + 30d unpaid (Art. 117)', 'الإجازة المرضية: 30 يوم بأجر كامل + 60 يوم بثلاثة أرباع الأجر + 30 يوم بدون أجر (المادة 117)')}
-        ${termRow('End-of-service gratuity (Articles 84-88)', 'مكافأة نهاية الخدمة (المواد 84-88)')}
-        ${termRow('GOSI registered + medical insurance per KSA law', 'مسجل في التأمينات الاجتماعية + تأمين صحي وفقاً لأنظمة المملكة')}
-        ${termRow('Confidentiality of Company info during & after employment', 'السرية التامة لمعلومات الشركة أثناء وبعد العمل')}
+        ${termRow('Probation: 90 days from joining date (Article 53)', 'فترة التجربة: 90 يوماً من تاريخ المباشرة (المادة 53)')}
+        ${termRow('Notice period: 60 days written notice (Article 75)', 'فترة الإشعار: 60 يوماً إشعار خطي (المادة 75)')}
+        ${termRow('Annual leave: 21 days (years 1–5), 30 days from year 6 (Art. 109)', 'الإجازة السنوية: 21 يوماً (السنوات 1-5)، 30 يوماً من السنة 6 (المادة 109)')}
+        ${termRow('Sick leave: 30 days full + 60 days at 75% + 30 days unpaid (Art. 117)', 'الإجازة المرضية: 30 يوم بأجر كامل + 60 يوم بثلاثة أرباع الأجر + 30 يوم بدون أجر (المادة 117)')}
+        ${termRow('End-of-service gratuity per Articles 84–88', 'مكافأة نهاية الخدمة وفقاً للمواد 84-88')}
+        ${termRow('GOSI registration + medical insurance from joining date', 'التسجيل في التأمينات الاجتماعية + تأمين صحي من تاريخ المباشرة')}
+        ${termRow('Confidentiality of Company information during &amp; after employment', 'السرية التامة لمعلومات الشركة أثناء العمل وبعده')}
       </ul>
 
-      <div class="accept-box">
+      <!-- 14-DAY VALIDITY CALLOUT (prominent, red accent) -->
+      <div class="validity-callout">
         <div class="row">
-          <div>To accept: use the secure link sent in the covering email (valid 14 days). On acceptance, HR will register you in SOL and issue your PSN.</div>
-          <div class="ar">للقبول: استخدم الرابط الآمن في الإيميل المرفق (صالح لمدة 14 يوماً). بعد القبول، تقوم الموارد البشرية بتسجيلك في SOL وإصدار رقم خدمة الموظف.</div>
+          <div>
+            <div class="head">⏱  THIS OFFER IS VALID FOR 14 DAYS ONLY</div>
+            <div class="deadline">Please accept by <strong>${e(expiryEN)}</strong>. After this date the offer expires automatically.</div>
+          </div>
+          <div class="ar">
+            <div class="head ar">⏱  هذا العرض صالح لمدة 14 يوماً فقط</div>
+            <div class="deadline ar">يرجى القبول قبل <strong>${e(expiryAR)}</strong>. بعد هذا التاريخ ينتهي العرض تلقائياً.</div>
+          </div>
         </div>
       </div>
 
+      <!-- ACCEPTANCE INSTRUCTION -->
+      <div class="accept-note">
+        <div>To accept, please use the secure acceptance link sent in the covering email. After acceptance, HR will register you in SOL and issue your Personal Service Number (PSN).</div>
+        <div class="ar">للقبول، يرجى استخدام رابط القبول الآمن المرسل في الإيميل المرفق. بعد القبول، تقوم الموارد البشرية بتسجيلكم في SOL وإصدار رقم الخدمة الشخصي.</div>
+      </div>
+
+      <!-- SPACER pushing signatures to bottom -->
+      <div class="spacer"></div>
+
+      <!-- SIGNATURES at bottom of page -->
       <div class="signatures">
-        <div class="sig-col">
-          <div class="line"></div>
-          <strong>${e(signatory?.name || '—')}</strong>
-          <div class="meta">${e(signatory?.title || '—')}</div>
-          <div class="meta">For the Company · عن الشركة</div>
+        <!-- LEFT: Company side, full corporate signature -->
+        <div class="sig-company">
+          <div class="sig-label">For and on behalf of · عن الشركة</div>
+          <div class="sig-line"></div>
+          <div class="sig-name">${e((signatory?.name || '—').toUpperCase())}</div>
+          <div class="sig-title">${e(signatory?.title || '—')}</div>
+          <div class="corp-block">
+            <div class="corp-name">${e(COMPANY.nameFullEn)}</div>
+            <div class="corp-line">${e(COMPANY.branchEn)}</div>
+            <div class="corp-line">${e(COMPANY.cr)}</div>
+            <div class="corp-line">Tel: ${e(COMPANY.tel)} · Fax: ${e(COMPANY.fax)}</div>
+            <div class="corp-line">${e(COMPANY.email)}</div>
+          </div>
         </div>
+
+        <!-- MIDDLE: Company seal placeholder -->
         <div class="seal">
-          <div>COMPANY SEAL</div>
-          <div class="ar" style="margin-top:4px;">ختم الشركة</div>
+          <div>COMPANY</div>
+          <div>SEAL</div>
+          <div class="ar" style="margin-top:5px;">ختم الشركة</div>
         </div>
-        <div class="sig-col">
-          <div class="line"></div>
-          <strong>${e(offer.candidateName || '—')}</strong>
-          <div class="meta">Candidate · المرشح</div>
-          <div class="meta">Signature & date · التوقيع والتاريخ</div>
+
+        <!-- RIGHT: Candidate signature -->
+        <div class="sig-candidate">
+          <div class="sig-label">Candidate Acceptance · قبول المرشح</div>
+          <div class="sig-line"></div>
+          <div class="sig-name">${e((offer.candidateName || '—').toUpperCase())}</div>
+          <div class="sig-title">Signature &amp; Date · التوقيع والتاريخ</div>
+          <div class="candidate-confirm">By signing, I accept the offer above and the Terms set out in this letter.<br><span class="ar" style="display:block;margin-top:3px;">بالتوقيع أعلاه، أقبل العرض والشروط الواردة في هذا الخطاب.</span></div>
         </div>
       </div>
 
+      <!-- CONFIDENTIALITY FOOTER -->
       <div class="foot">
-        <span>This document is confidential and addressed solely to the named candidate.</span>
-        <span class="ar">هذا المستند سري ومخصص للمرشح المسمى أعلاه فقط.</span>
+        <span>Confidential · addressed solely to the named candidate.</span>
+        <span class="ar">سري · مخصص للمرشح المسمى أعلاه فقط.</span>
       </div>
     </div>
   `;
@@ -549,8 +736,8 @@ function posRow(en, ar, value) {
   const e = escapeHtml;
   return `
     <div class="row">
-      <div>
-        <div class="label">${e(en)}</div>
+      <div class="label-stack">
+        <div class="label-en">${e(en)}</div>
         <div class="label-ar ar">${e(ar)}</div>
       </div>
       <div class="value">${e(value || '—')}</div>
@@ -562,8 +749,12 @@ function salRow(en, ar, amount) {
   const e = escapeHtml;
   return `
     <tr>
-      <td class="label-en">${e(en)}</td>
-      <td class="label-ar ar">${e(ar)}</td>
+      <td>
+        <div class="label-stack">
+          <div class="label-en">${e(en)}</div>
+          <div class="label-ar ar">${e(ar)}</div>
+        </div>
+      </td>
       <td class="amount">${e(amount)}</td>
     </tr>
   `;
@@ -615,7 +806,9 @@ export function buildOfferEmailBody(offer, acceptanceUrl, sender) {
     ``,
     `  ${acceptanceUrl}`,
     ``,
-    `The link is valid for 14 days. After accepting, we will proceed with onboarding through the SOL system and issue your Personal Service Number (PSN).`,
+    `IMPORTANT: This offer is valid for 14 days only. Please accept within this period or the offer will expire automatically.`,
+    ``,
+    `After accepting, we will proceed with onboarding through the SOL system and issue your Personal Service Number (PSN).`,
     ``,
     `If you have any questions or wish to discuss any of the terms, please reply to this email — I will be happy to help.`,
     ``,

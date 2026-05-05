@@ -352,6 +352,7 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
           salaryOther:      Number(salaryOther) || 0,
           salaryTotal:      salaryTotal,
           managerName:      manager?.name || null,
+          offerToken:       offerToken,
         },
         signatory
       );
