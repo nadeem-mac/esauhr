@@ -567,9 +567,16 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
   function applyPattern(name) {
     setPlan(prev => {
       const next = { ...prev };
-      const todayK = todayKey();
+      // Patterns now operate on every day of the month — including
+      // dates before today. Retroactive planning is necessary when:
+      //   • The system is rolled out mid-month and the manager needs
+      //     to capture what the schedule WAS for early-month days
+      //   • A new employee starts mid-month; their first few days
+      //     of attendance still need to be evaluated
+      // Past dates save with status='accepted' (historical fact)
+      // rather than 'pending', so they don't appear in the staff
+      // acknowledgment queue.
       for (const d of monthDays) {
-        if (d.key < todayK) continue; // never touch past days
         const cur = next[d.key] || {};
         const wantSelected = matchesPattern(name, d);
         if (name === 'clear') {
@@ -613,15 +620,15 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
   }
 
   // Tapping a day cell:
-  //   • Past dates → ignore (locked)
   //   • Unselected → add it with the bulk time (no popover; fast)
   //   • Selected → open the per-day editor popover so the manager
   //     can change just THIS day's time, snap it back to the bulk
-  //     time, or remove it. Without this, changing the bulk time
-  //     would override every selected day — there was no way to
-  //     give one staff member a different time on a single date.
+  //     time, or remove it.
+  // Past dates are now allowed for retroactive planning (e.g. a
+  // mid-month rollout where the manager needs to capture early-
+  // month schedules so attendance evaluates correctly). Save
+  // logic flips them to status='accepted' since they're historical.
   function toggleDay(dateKey) {
-    if (dateKey < todayKey()) return;
     const cur = plan[dateKey];
     if (cur?.selected) {
       setDayPopover({
@@ -747,31 +754,37 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
       const toKey   = ymd(endOfMonth(monthSel.year, monthSel.monthIdx));
       const todayK = todayKey();
 
-      // Build the upsert payload — only future-and-today selected days.
+      // Build the upsert payload. Past dates are saved as 'accepted'
+      // (historical fact — staff don't need to acknowledge a shift
+      // that already happened). Today and future dates save as
+      // 'pending' as before, going through the normal acknowledgment
+      // flow on the staff's next sign-in.
       const rows = [];
       for (const d of monthDays) {
-        if (d.key < todayK) continue;
         const cell = plan[d.key];
         if (cell?.selected) {
+          const isHistorical = d.key < todayK;
           rows.push({
             employee_id: employeeId,
             shift_date:  d.key,
             start_time:  cell.start || start,
             end_time:    cell.end   || end,
             set_by:      me.id,
-            status:      'pending',
+            status:      isHistorical ? 'accepted' : 'pending',
           });
         }
       }
 
       // Pre-flight: pull existing rows in the window WITH their
-      // acceptance state so we can flag impacted ones.
-      const fromForExisting = todayK > fromKey ? todayK : fromKey;
+      // acceptance state so we can flag impacted ones. Window is
+      // the FULL month — including past dates — so retroactive
+      // un-selections (manager removed a historical day) properly
+      // get deleted from the DB rather than orphaned.
       const existing = await directGet(
         'employee_shifts',
         `select=shift_date,start_time,end_time,status,accepted_at` +
         `&employee_id=eq.${encodeURIComponent(employeeId)}` +
-        `&shift_date=gte.${fromForExisting}&shift_date=lte.${toKey}`,
+        `&shift_date=gte.${fromKey}&shift_date=lte.${toKey}`,
         { timeoutMs: 12000 }
       );
 
@@ -844,10 +857,14 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
   async function executeSave({ rows, datesToDelete, impactedAccepted, fromKey }) {
     setSaving(true);
     setErrorMsg('');
+    const todayK = todayKey();
     try {
-      // 1. Upsert. Sending status='pending' on every row means
-      //    impacted accepted rows automatically lose their accepted
-      //    status — staff will be re-prompted on their next sign-in.
+      // 1. Upsert. Status comes from the row payload — past dates
+      //    save as 'accepted' (historical fact, no re-acknowledgment
+      //    needed), today/future as 'pending' for the normal staff
+      //    acknowledgment flow. Impacted accepted rows that get
+      //    overwritten with 'pending' automatically lose their
+      //    acceptance — staff re-prompted on next sign-in.
       //
       // IMPORTANT: directPost only sends `Prefer: resolution=merge-
       // duplicates` when options.upsert is true. Passing it via
@@ -944,13 +961,22 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
         : (editsLeft > 0
             ? `${editsLeft} ${editsLeft === 1 ? 'edit' : 'edits'} remaining for this month.`
             : `You've used all ${MAX_EDITS} allowed edits for this month. Further changes need HR.`);
+      // Split rows into historical (past) vs future for messaging.
+      // Past rows save with status='accepted' — no staff confirm needed.
+      const historicalCount = rows.filter(r => r.shift_date < todayK).length;
+      const futureCount     = rows.length - historicalCount;
       const acknowledgmentLine = impactedAccepted.length > 0
         ? ` ${impactedAccepted.length} previously-accepted ${impactedAccepted.length === 1 ? 'shift was' : 'shifts were'} reset and will need re-confirmation.`
-        : ' Staff will be asked to acknowledge each shift on their next sign-in.';
+        : (futureCount > 0
+            ? ` Staff will be asked to acknowledge ${futureCount === rows.length ? 'each shift' : 'the upcoming ' + futureCount + ' ' + (futureCount === 1 ? 'shift' : 'shifts')} on their next sign-in.`
+            : '');
+      const historicalLine = historicalCount > 0
+        ? ` ${historicalCount} historical ${historicalCount === 1 ? 'date was' : 'dates were'} recorded as accepted (no staff confirmation needed).`
+        : '';
 
       setSavedToast({
         title: isFirstSave ? 'Shift plan saved' : 'Shift plan updated',
-        body: `${rows.length} ${rows.length === 1 ? 'shift' : 'shifts'} saved for ${empName} for ${monthLabel(monthSel.year, monthSel.monthIdx)}.${acknowledgmentLine} ${editsLine}`,
+        body: `${rows.length} ${rows.length === 1 ? 'shift' : 'shifts'} saved for ${empName} for ${monthLabel(monthSel.year, monthSel.monthIdx)}.${historicalLine}${acknowledgmentLine} ${editsLine}`,
       });
       setLastCommittedAt(new Date().toISOString());
       setEditCount(newEditCount);
@@ -1353,46 +1379,48 @@ function CalendarGrid({ monthDays, plan, offWeekdaysSet, onToggle }) {
             <button
               key={d.key}
               onClick={() => onToggle(d.key)}
-              disabled={isPast}
               className="relative rounded-md p-2 text-center transition-all"
               style={{
-                background: isPast
-                  ? '#F5F5F5'
-                  : cell.selected
-                    ? 'var(--evergreen-600)'
-                    : isOffPattern
-                      ? '#EEF0FA'
+                background: cell.selected
+                  ? 'var(--evergreen-600)'
+                  : isOffPattern
+                    ? '#EEF0FA'
+                    : isPast
+                      ? '#FAFAFA'
                       : isWeekend ? '#FAF5EE' : 'var(--paper)',
-                color: isPast
-                  ? '#A3A3A3'
-                  : cell.selected
-                    ? '#FFFFFF'
-                    : isOffPattern
-                      ? '#3B4279'
+                color: cell.selected
+                  ? '#FFFFFF'
+                  : isOffPattern
+                    ? '#3B4279'
+                    : isPast
+                      ? '#737373'
                       : '#0A0A0A',
                 border: '1px solid ' + (
-                  isPast
-                    ? '#E5E5E5'
-                    : cell.selected
-                      ? 'var(--evergreen-600)'
-                      : isOffPattern
-                        ? '#3B4279'
-                        : isToday ? '#0F4C2A' : 'var(--border)'
+                  cell.selected
+                    ? 'var(--evergreen-600)'
+                    : isOffPattern
+                      ? '#3B4279'
+                      : isToday ? '#0F4C2A' : 'var(--border)'
                 ),
-                cursor: isPast ? 'not-allowed' : 'pointer',
+                cursor: 'pointer',
                 fontSize: 13,
                 fontWeight: cell.selected ? 600 : 500,
                 minHeight: 48,
+                // Subtle dotted-underline on past dates to signal
+                // "historical — saves as accepted" without locking
+                // the cell. Lets the manager retroactively plan
+                // early-month days when rolling out mid-month.
+                opacity: isPast && !cell.selected && !isOffPattern ? 0.78 : 1,
               }}
               title={
-                isPast
-                  ? 'Past date — locked'
-                  : cell.selected
-                    ? (cell.customized
-                        ? 'Custom time set for this day — tap to edit'
-                        : 'Tap to edit time, reset, or remove')
-                    : isOffPattern
-                      ? 'Marked as off per the weekly pattern — tap to assign a shift anyway'
+                cell.selected
+                  ? (cell.customized
+                      ? 'Custom time set for this day — tap to edit'
+                      : 'Tap to edit time, reset, or remove')
+                  : isOffPattern
+                    ? 'Marked as off per the weekly pattern — tap to assign a shift anyway'
+                    : isPast
+                      ? 'Past date — tap to record retroactively (saves as accepted)'
                       : 'Tap to add'
               }
             >
@@ -1414,16 +1442,16 @@ function CalendarGrid({ monthDays, plan, offWeekdaysSet, onToggle }) {
               {/* Off-pattern label — small subtle "OFF" text under
                   the date number so the manager can confirm the
                   pattern at a glance without needing the legend. */}
-              {!cell.selected && isOffPattern && !isPast && (
+              {/* OFF label — shows on any non-shift day matching the
+                  weekly off-pattern, including past dates so the
+                  visual story stays consistent across the month. */}
+              {!cell.selected && isOffPattern && (
                 <div
                   className="text-[8.5px] mt-0.5 tracking-wider"
                   style={{ opacity: 0.7, fontWeight: 700, letterSpacing: '0.1em' }}
                 >
                   OFF
                 </div>
-              )}
-              {isPast && (
-                <Lock className="w-2.5 h-2.5 absolute top-1 right-1 opacity-60" />
               )}
             </button>
           );

@@ -4258,7 +4258,12 @@ function RosterDiagnostic({ empKey, flaggedDate, monthShifts }) {
           const isFlagged = s.date === flaggedDate;
           const [y, m, d] = s.date.split('-').map(n => parseInt(n, 10));
           const dt = new Date(y, m - 1, d);
-          const dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dt.getDay()];
+          // 2-letter codes so the weekdays are unambiguous. Single-
+          // letter codes were ambiguous (T = Tue or Thu? S = Sun or
+          // Sat?) which made the chip strip impossible to decode at
+          // a glance.
+          const dowFull  = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dt.getDay()];
+          const dowShort = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'][dt.getDay()];
           // Status colour: pending=amber, accepted=green, declined=red.
           const statusColor = s.status === 'declined' ? '#991B1B'
                             : s.status === 'accepted' ? '#0F4C2A'
@@ -4269,7 +4274,7 @@ function RosterDiagnostic({ empKey, flaggedDate, monthShifts }) {
           return (
             <span
               key={s.date}
-              title={`${dow} ${d} · ${s.startStr}–${s.endStr} · ${s.status}`}
+              title={`${dowFull} ${d} · ${s.startStr}–${s.endStr} · ${s.status}`}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -4284,7 +4289,7 @@ function RosterDiagnostic({ empKey, flaggedDate, monthShifts }) {
                 fontSize: 10.5,
               }}
             >
-              <span style={{ fontSize: 9, opacity: 0.7 }}>{dow.slice(0, 1)}</span>
+              <span style={{ fontSize: 9, opacity: 0.7 }}>{dowShort}</span>
               {d}
             </span>
           );
