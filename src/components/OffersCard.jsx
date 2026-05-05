@@ -24,7 +24,8 @@ import {
 import { directGet, directPatch, supabase } from '../supabaseClient.js';
 import NewOfferModal from './NewOfferModal.jsx';
 import IssuePsnModal from './IssuePsnModal.jsx';
-import { buildLetterHtml } from '../lib/offerLetterGenerator.js';
+import SuccessToast from './SuccessToast.jsx';
+import { buildLetterHtml, buildOfferEmailBody } from '../lib/offerLetterGenerator.js';
 
 // ─── Status presentation ──────────────────────────────────────────
 // One source of truth for how each offer status renders. label is
@@ -86,6 +87,12 @@ export default function OffersCard({ me, employees, readOnly = false }) {
   const [showArchived, setShowArchived] = useState(false);
   const [issuePsnFor, setIssuePsnFor] = useState(null);
 
+  // Toast surfaced after a successful offer creation. Shows the new
+  // offer's reference number (ESAU/HR/YYYY/XXXXXX) so Bashaier
+  // confirms the system recorded the offer before she emails the
+  // candidate. Auto-dismisses via SuccessToast's internal timer.
+  const [createdToast, setCreatedToast] = useState(null);
+
   // ─── Load ───────────────────────────────────────────────────────
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -107,6 +114,22 @@ export default function OffersCard({ me, employees, readOnly = false }) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Combined onCreated handler — refreshes the pipeline AND raises
+  // the success toast with the new offer's reference number. The
+  // ref# (ESAU/HR/YYYY/XXXXXX) matches the format used inside the
+  // letter PDF so Bashaier sees the same identifier in both places.
+  const handleOfferCreated = useCallback((created) => {
+    load(true);
+    if (created?.offer_token) {
+      const year = new Date(created.created_at || Date.now()).getFullYear();
+      const shortRef = String(created.offer_token).slice(0, 6).toUpperCase();
+      setCreatedToast({
+        title: 'Offer created',
+        body: `Reference ESAU/HR/${year}/${shortRef}. The offer is now in the pipeline below — click Email to send it to the candidate, or Contract to view the bilingual PDF.`,
+      });
+    }
+  }, [load]);
 
   // ─── Realtime — refetch on any offer_letters change ─────────────
   useEffect(() => {
@@ -194,7 +217,7 @@ export default function OffersCard({ me, employees, readOnly = false }) {
           <NewOfferModal
             open={newOfferOpen}
             onClose={() => setNewOfferOpen(false)}
-            onCreated={() => load(true)}
+            onCreated={handleOfferCreated}
             employees={employees}
             me={me}
           />
@@ -284,6 +307,7 @@ export default function OffersCard({ me, employees, readOnly = false }) {
                 <OfferRow
                   key={o.id}
                   offer={o}
+                  employees={employees}
                   onChanged={() => load(true)}
                   onIssuePsn={() => setIssuePsnFor(o)}
                   me={me}
@@ -319,7 +343,8 @@ export default function OffersCard({ me, employees, readOnly = false }) {
                     <OfferRow
                       key={o.id}
                       offer={o}
-                      onChanged={() => load(true)}
+                      employees={employees}
+                  onChanged={() => load(true)}
                       onIssuePsn={() => setIssuePsnFor(o)}
                       me={me}
                       readOnly={readOnly}
@@ -346,7 +371,7 @@ export default function OffersCard({ me, employees, readOnly = false }) {
         <NewOfferModal
           open={newOfferOpen}
           onClose={() => setNewOfferOpen(false)}
-          onCreated={() => load(true)}
+          onCreated={handleOfferCreated}
           employees={employees}
           me={me}
         />
@@ -364,13 +389,24 @@ export default function OffersCard({ me, employees, readOnly = false }) {
           me={me}
         />
       )}
+
+      {/* Success toast — surfaces after handleOfferCreated fires.
+          Auto-dismisses internally; we just need to clear our local
+          state when it does so a second creation can re-arm it. */}
+      {createdToast && (
+        <SuccessToast
+          title={createdToast.title}
+          body={createdToast.body}
+          onDismiss={() => setCreatedToast(null)}
+        />
+      )}
     </section>
   );
 }
 
 // ─── Per-offer row ─────────────────────────────────────────────────
 
-function OfferRow({ offer, onChanged, onIssuePsn, me, readOnly = false }) {
+function OfferRow({ offer, employees, onChanged, onIssuePsn, me, readOnly = false }) {
   const presentation = STATUS_PRESENTATION[offer.status] || STATUS_PRESENTATION.draft;
   const [actingOn, setActingOn] = useState(null); // 'withdraw' | 'copy'
   const [copyToast, setCopyToast] = useState(false);
@@ -531,6 +567,77 @@ function OfferRow({ offer, onChanged, onIssuePsn, me, readOnly = false }) {
     }
   }
 
+  // Compose the offer email — opens a new Outlook draft pre-filled
+  // with To, Cc, subject, and body (including the acceptance link).
+  // Uses mailto: rather than .eml because Bashaier wanted "the email
+  // window opens up" rather than a download she has to re-open.
+  // mailto: handles To/Cc/body cleanly; the trade-off is that the
+  // PDF can't be auto-attached (mailto: doesn't support attachments).
+  // Bashaier opens the contract via the separate Contract button and
+  // attaches it manually.
+  //
+  // CC list (deduplicated, lowercased):
+  //   • Always: John Ho, James Liu (Country Heads), Badria, Jaffar
+  //     (SUP team), Fahad Hussain (SUP manager)
+  //   • Plus the manager assigned to this offer (if they have an
+  //     email on file) — derived from offer.manager_id by looking
+  //     them up in the employees prop.
+  function composeEmail() {
+    const candidateEmail = (offer.candidate_email || '').trim();
+    if (!candidateEmail) {
+      alert('No candidate email on this offer. Cannot compose.');
+      return;
+    }
+
+    // Always-Cc per company policy. This list mirrors the FIXED_CC
+    // used in AttendanceView and EvaluationReviewModal — same
+    // recipients across all HR-driven candidate communications.
+    const FIXED_CC = [
+      'johnho@evergreen-shipping.com.sa',
+      'jamesliu@evergreen-shipping.com.sa',
+      'badria.alhassan@evergreen-shipping.com.sa',
+      'jaffar.aldarweash@evergreen-shipping.com.sa',
+      'fahad.alhussain@evergreen-shipping.com.sa',
+    ];
+
+    // Add the offer's reporting manager if they have an email on file.
+    // (employees prop is the same array used elsewhere in the portal —
+    // includes is_admin / manager_id flags. We just need the email.)
+    const ccList = [...FIXED_CC];
+    if (offer.manager_id && Array.isArray(employees)) {
+      const mgr = employees.find(e => e.id === offer.manager_id);
+      if (mgr?.email) {
+        ccList.push(mgr.email.toLowerCase());
+      }
+    }
+    // Dedupe (case-insensitive). Outlook handles case but seeing
+    // duplicates in the To/Cc field looks careless.
+    const uniqueCc = Array.from(new Set(ccList.map(e => e.toLowerCase())));
+
+    const acceptanceUrl = `${window.location.origin}/accept-offer?token=${offer.offer_token}`;
+    const subject = `Offer of employment — ${offer.position_title || 'Evergreen Shipping'} — Evergreen Shipping`;
+    const body = buildOfferEmailBody(
+      { candidateName: offer.candidate_name, positionTitle: offer.position_title },
+      acceptanceUrl,
+      { name: me?.name || 'BASHAIER ALSUBAIE', email: me?.email || 'bashaier.alsubaie@evergreen-shipping.com.sa' }
+    );
+
+    // mailto: encoding — to / cc / subject / body all need percent-
+    // encoding. cc is comma-separated. Body's newlines must be %0D%0A.
+    // Outlook is permissive about long mailto: URLs (Chrome cap is
+    // ~32K bytes which is more than enough for the offer body).
+    const params = new URLSearchParams();
+    params.set('cc', uniqueCc.join(','));
+    params.set('subject', subject);
+    params.set('body', body);
+    const mailto = `mailto:${encodeURIComponent(candidateEmail)}?${params.toString()}`;
+
+    // window.location.assign() opens the user's default mail handler
+    // (Outlook on Bashaier's machine). Doesn't navigate the portal
+    // away because mailto: is a registered protocol.
+    window.location.assign(mailto);
+  }
+
   async function withdrawOffer() {
     if (readOnly) return;
     if (!confirm(`Withdraw offer to ${offer.candidate_name}? This cannot be undone.`)) return;
@@ -634,6 +741,10 @@ function OfferRow({ offer, onChanged, onIssuePsn, me, readOnly = false }) {
               is how Bashaier and the SUP team open the bilingual
               contract that was sent to the candidate. The new tab's
               behavior depends on access level (see viewLetter() above). */}
+          {/* Contract — visible to ALL users on EVERY status. Opens
+              the bilingual offer letter in a new tab. Read-only
+              viewers see a navy banner + print-blocking CSS;
+              full-access users see a green print toolbar. */}
           <button
             onClick={viewLetter}
             disabled={loadingLetter}
@@ -650,45 +761,50 @@ function OfferRow({ offer, onChanged, onIssuePsn, me, readOnly = false }) {
             {loadingLetter
               ? <Loader2 className="w-3 h-3 animate-spin" />
               : (readOnly ? <Eye className="w-3 h-3" /> : <FileText className="w-3 h-3" />)}
-            {readOnly ? 'View contract' : 'View letter'}
+            Contract
           </button>
 
-          {/* Write actions — hidden in read-only mode */}
+          {/* Email — opens an Outlook draft with To/Cc/body/link
+              prefilled. Hidden in read-only mode (viewers preview
+              the contract but don't send communications). Available
+              on every status so Bashaier can re-send if needed. */}
+          {!readOnly && (
+            <button
+              onClick={composeEmail}
+              className="text-[11px] px-2.5 py-1 rounded-full inline-flex items-center gap-1.5"
+              style={{
+                background: 'var(--evergreen-600)',
+                color: '#FFFFFF',
+                border: '1px solid var(--evergreen-600)',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              <Mail className="w-3 h-3" /> Email
+            </button>
+          )}
+
+          {/* Withdraw — only on offer_sent (still pending response).
+              Hidden in read-only mode. */}
           {!readOnly && offer.status === 'offer_sent' && (
-            <>
-              <button
-                onClick={copyLink}
-                className="text-[11px] px-2.5 py-1 rounded-full inline-flex items-center gap-1.5"
-                style={{
-                  background: copyToast ? '#0F4C2A' : 'transparent',
-                  color: copyToast ? '#FFFFFF' : '#0A0A0A',
-                  border: '1px solid ' + (copyToast ? '#0F4C2A' : 'var(--border)'),
-                  fontWeight: 500,
-                  cursor: 'pointer',
-                }}
-              >
-                <Copy className="w-3 h-3" />
-                {copyToast ? 'Copied!' : 'Copy link'}
-              </button>
-              <button
-                onClick={withdrawOffer}
-                disabled={actingOn === 'withdraw'}
-                className="text-[11px] px-2.5 py-1 rounded-full inline-flex items-center gap-1.5"
-                style={{
-                  background: 'transparent',
-                  color: '#991B1B',
-                  border: '1px solid #FCA5A5',
-                  fontWeight: 500,
-                  cursor: actingOn === 'withdraw' ? 'not-allowed' : 'pointer',
-                  opacity: actingOn === 'withdraw' ? 0.5 : 1,
-                }}
-              >
-                {actingOn === 'withdraw'
-                  ? <Loader2 className="w-3 h-3 animate-spin" />
-                  : <X className="w-3 h-3" />}
-                Withdraw
-              </button>
-            </>
+            <button
+              onClick={withdrawOffer}
+              disabled={actingOn === 'withdraw'}
+              className="text-[11px] px-2.5 py-1 rounded-full inline-flex items-center gap-1.5"
+              style={{
+                background: 'transparent',
+                color: '#991B1B',
+                border: '1px solid #FCA5A5',
+                fontWeight: 500,
+                cursor: actingOn === 'withdraw' ? 'not-allowed' : 'pointer',
+                opacity: actingOn === 'withdraw' ? 0.5 : 1,
+              }}
+            >
+              {actingOn === 'withdraw'
+                ? <Loader2 className="w-3 h-3 animate-spin" />
+                : <X className="w-3 h-3" />}
+              Withdraw
+            </button>
           )}
           {!readOnly && offer.status === 'offer_accepted' && (
             <button

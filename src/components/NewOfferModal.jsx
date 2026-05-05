@@ -333,6 +333,14 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
   }
 
   // ─── Submit ─────────────────────────────────────────────────────
+  // Per Nadeem's revised flow: clicking Generate ONLY creates the
+  // offer record in the database. No print window, no .eml download
+  // here. The success path closes the modal and surfaces a toast in
+  // OffersCard with the reference number. Bashaier then uses the
+  // per-row "Email" and "Contract" buttons in the pipeline whenever
+  // she's ready to actually send / re-print — they're decoupled from
+  // creation so she can review the offer before any communication
+  // goes out.
   async function handleGenerate() {
     if (!canSubmit) return;
     setSubmitting(true);
@@ -350,6 +358,7 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
         candidate_iqama:       candidateIqama.trim(),
         position_title:        finalPositionTitle,
         department:            department,
+        location:              location,                  // ← also persist
         proposed_join_date:    proposedJoinDate,
         salary_amount:         salaryTotal,
         salary_basic:          Number(salaryBasic) || 0,
@@ -371,58 +380,11 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
         throw new Error('Insert returned no row');
       }
 
-      const signatory = signatories.find(s => s.id === signatoryId);
-      const manager = managers.find(m => m.id === managerId);
-
-      // ─── Build the email body + .eml first (so it downloads
-      // BEFORE the print window steals focus). The .eml is body-
-      // only; Bashaier attaches the saved PDF in Outlook before
-      // sending. ───────────────────────────────────────────────
-      const acceptanceUrl = `${window.location.origin}/accept-offer?token=${offerToken}`;
-      const subject = `Offer of employment — ${finalPositionTitle} — Evergreen Shipping`;
-      const body = buildOfferEmailBody(
-        { candidateName: candidateName.trim(), positionTitle: finalPositionTitle },
-        acceptanceUrl,
-        { name: me?.name || 'BASHAIER ALSUBAIE', email: me?.email || 'bashaier.alsubaie@evergreen-shipping.com.sa' }
-      );
-
-      const safeNameForFile = candidateName.trim().replace(/[^\w\s-]/g, '').replace(/\s+/g, '_');
-
-      const eml = await buildEmlMessage({
-        fromName:   me?.name || 'BASHAIER ALSUBAIE',
-        fromEmail:  me?.email || 'bashaier.alsubaie@evergreen-shipping.com.sa',
-        toEmail:    candidateEmail.trim(),
-        toName:     candidateName.trim(),
-        subject,
-        body,
-        pdfBlob:    null,   // body-only; Bashaier attaches PDF in Outlook
-        pdfFilename: null,
-      });
-
-      downloadBlob(eml, `Offer_${safeNameForFile}.eml`);
-
-      // ─── Now open the print window for the offer letter PDF.
-      // The browser's native print pipeline guarantees correct
-      // Arabic letter joining (which html2canvas was breaking).
-      // ────────────────────────────────────────────────────────
-      await openOfferLetterPrintWindow(
-        {
-          candidateName:    candidateName.trim(),
-          positionTitle:    finalPositionTitle,
-          department:       department,
-          location:         LOCATION_LABELS[location] || location,
-          proposedJoinDate: proposedJoinDate,
-          salaryBasic:      Number(salaryBasic) || 0,
-          salaryHousing:    Number(salaryHousing) || 0,
-          salaryTransport:  Number(salaryTransport) || 0,
-          salaryOther:      Number(salaryOther) || 0,
-          salaryTotal:      salaryTotal,
-          managerName:      manager?.name || null,
-          offerToken:       offerToken,
-        },
-        signatory
-      );
-
+      // Hand the created row up to OffersCard so it can show the
+      // "Offer #ESAU/HR/2026/XXXXXX created" toast after the modal
+      // unmounts. The reference number is derived from offer_token
+      // (first 6 chars uppercased) — same convention used inside
+      // the letter PDF.
       if (onCreated) onCreated(created);
       onClose();
     } catch (e) {
@@ -472,7 +434,7 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
               Issue offer letter
             </div>
             <div className="text-xs mt-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>
-              Opens the offer letter for printing as PDF, and downloads an Outlook draft (.eml). Save the PDF, then attach it in Outlook before sending.
+              Records the candidate offer in the system. Once created, you can open the email draft and contract from the Hiring pipeline.
             </div>
           </div>
           <button
@@ -759,7 +721,7 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
         </div>
 
         <div className="text-[11px] mt-3 leading-relaxed" style={{ color: '#0A0A0A', opacity: 0.6 }}>
-          On generate: offer is recorded with a 7-day acceptance window. The Outlook draft (.eml) downloads, and the offer letter opens in a new tab for you to save as PDF (use "Save as PDF" in the print dialog). Attach the saved PDF to the Outlook draft before sending.
+          On generate: the offer is recorded with a 7-day acceptance window and a reference number. From the Hiring pipeline, click <strong>Email</strong> to open an Outlook draft pre-filled with To, Cc, body and acceptance link, or click <strong>Contract</strong> to open the bilingual PDF for printing or saving.
         </div>
       </div>
     </div>
