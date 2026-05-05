@@ -771,12 +771,20 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
       // 1. Upsert. Sending status='pending' on every row means
       //    impacted accepted rows automatically lose their accepted
       //    status — staff will be re-prompted on their next sign-in.
+      //
+      // IMPORTANT: directPost only sends `Prefer: resolution=merge-
+      // duplicates` when options.upsert is true. Passing it via
+      // `headers` is silently ignored — the helper builds its own
+      // Prefer header. Using the proper { upsert, onConflict } flags
+      // is what actually triggers the upsert path; without them the
+      // POST falls back to plain INSERT and conflicts fail with 23505.
       if (rows.length > 0) {
         await directPost(
-          'employee_shifts?on_conflict=employee_id,shift_date',
+          'employee_shifts',
           rows,
           {
-            headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+            upsert: true,
+            onConflict: 'employee_id,shift_date',
             timeoutMs: 30000,
           }
         );
@@ -824,10 +832,12 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
 
       // 4. Upsert tracker. Bump edit_count on subsequent saves; the
       //    first save (when no last_committed_at yet) keeps it at 0.
+      //    Same upsert API fix as above — must pass upsert:true +
+      //    onConflict, not raw headers.
       const isFirstSave = !lastCommittedAt;
       const newEditCount = isFirstSave ? 0 : Math.min(editCount + 1, MAX_EDITS);
       await directPost(
-        'monthly_shift_plans?on_conflict=manager_id,plan_month',
+        'monthly_shift_plans',
         [{
           manager_id:        me.id,
           plan_month:        fromKey,
@@ -837,7 +847,8 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
           edit_count:        newEditCount,
         }],
         {
-          headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+          upsert: true,
+          onConflict: 'manager_id,plan_month',
           timeoutMs: 8000,
         }
       );
