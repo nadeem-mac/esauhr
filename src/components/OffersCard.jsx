@@ -20,8 +20,9 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   UserPlus, Plus, Copy, X, Loader2, RefreshCw, Mail, FileCheck2,
   AlertTriangle, Calendar, Clock, ChevronDown, ChevronRight, FileText, Eye,
+  Send, Trash2,
 } from 'lucide-react';
-import { directGet, directPatch, supabase } from '../supabaseClient.js';
+import { directGet, directPatch, directPatchQuery, supabase } from '../supabaseClient.js';
 import NewOfferModal from './NewOfferModal.jsx';
 import IssuePsnModal from './IssuePsnModal.jsx';
 import LetterPreviewModal from './LetterPreviewModal.jsx';
@@ -56,7 +57,7 @@ const STATUS_PRESENTATION = {
   expired: {
     label: 'Expired',
     bg: '#F5F5F5', fg: '#525252', border: '#D4D4D4',
-    description: '7-day acceptance window passed.',
+    description: 'Link expired without a response. Re-send to extend by 7 days, or Discard to remove from view.',
   },
   withdrawn: {
     label: 'Withdrawn',
@@ -75,9 +76,49 @@ const STATUS_PRESENTATION = {
   },
 };
 
-// Statuses the user might want to act on, displayed first
-const ACTIVE_STATUSES = ['offer_sent', 'offer_accepted'];
-const ARCHIVED_STATUSES = ['offer_declined', 'expired', 'withdrawn', 'psn_issued', 'cancelled'];
+// Statuses the user might want to act on, displayed first.
+// 'expired' is here (not archived) because Nadeem wants Bashaier to
+// see expired offers alongside active ones — faded but visible — so
+// she can quickly Re-send (extend by 7 days) or Discard them. Without
+// that visibility expired offers got lost in the Archived collapse.
+const ACTIVE_STATUSES = ['offer_sent', 'offer_accepted', 'expired'];
+const ARCHIVED_STATUSES = ['offer_declined', 'withdrawn', 'psn_issued', 'cancelled'];
+
+// Auto-discard threshold — offers that expired more than this many
+// days ago without a response are treated as abandoned and silently
+// flipped to status='cancelled' on next pipeline load. Keeps the
+// active section from accumulating stale rows over time.
+const AUTO_DISCARD_AFTER_DAYS = 30;
+
+// Compute the "effective" status of an offer — handles the case
+// where the DB still has status='offer_sent' but the expires_at
+// timestamp has passed. The DB-side sync (in OffersCard.load) will
+// flip it to 'expired' on next fetch, but until then the UI should
+// already display the expired state so Bashaier never sees a stale
+// status pill.
+function effectiveStatus(offer) {
+  if (offer?.status === 'offer_sent' && offer.expires_at) {
+    if (new Date(offer.expires_at).getTime() <= Date.now()) {
+      return 'expired';
+    }
+  }
+  return offer?.status || 'draft';
+}
+
+// Returns the urgency level for a still-active offer_sent row,
+// used to colour the days-remaining chip:
+//   'urgent'  — 0 or 1 days left  (red — must act today)
+//   'warning' — 2 or 3 days left  (amber)
+//   'ok'      — more days left    (green/neutral)
+//   null      — not applicable (already expired or never had expiry)
+function expiryUrgency(offer) {
+  if (effectiveStatus(offer) !== 'offer_sent' || !offer.expires_at) return null;
+  const ms = new Date(offer.expires_at).getTime() - Date.now();
+  const days = Math.floor(ms / (24 * 60 * 60 * 1000));
+  if (days <= 1) return 'urgent';
+  if (days <= 3) return 'warning';
+  return 'ok';
+}
 
 export default function OffersCard({ me, employees, readOnly = false }) {
   const [offers, setOffers] = useState([]);
@@ -95,9 +136,61 @@ export default function OffersCard({ me, employees, readOnly = false }) {
   const [createdToast, setCreatedToast] = useState(null);
 
   // ─── Load ───────────────────────────────────────────────────────
+  // On every fetch we also reconcile two server-side states that the
+  // DB has no cron to handle:
+  //
+  //   1. Auto-flip offer_sent → expired
+  //      Any row still marked offer_sent whose expires_at has passed
+  //      is updated to status='expired'. The candidate-side acceptance
+  //      page also catches this on view, but the HR pipeline needs to
+  //      reflect the truth too so Bashaier doesn't see a stale
+  //      "Awaiting acceptance" pill on something that's actually dead.
+  //
+  //   2. Auto-discard expired → cancelled (after AUTO_DISCARD_AFTER_DAYS)
+  //      Expired offers that haven't been responded to OR re-sent for
+  //      30+ days are flipped to status='cancelled' so they fall out
+  //      of the active section. Anyone resurrecting a dropped lead
+  //      after a month should create a fresh offer rather than reuse
+  //      a half-year-old token.
+  //
+  // Both are best-effort — failure to sync doesn't block the load, it
+  // just means the next fetch will retry. Both run as single
+  // PostgREST PATCH-by-filter calls, so each is one round trip
+  // regardless of how many rows match.
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
+      const nowIso = new Date().toISOString();
+      const cutoffIso = new Date(
+        Date.now() - AUTO_DISCARD_AFTER_DAYS * 24 * 60 * 60 * 1000
+      ).toISOString();
+
+      // 1. Flip expired offers (silent — failure isn't fatal)
+      try {
+        await directPatchQuery(
+          'offer_letters',
+          `status=eq.offer_sent&expires_at=lt.${encodeURIComponent(nowIso)}`,
+          { status: 'expired' },
+          { timeoutMs: 6000 }
+        );
+      } catch (e) {
+        console.warn('Auto-expire sync failed (non-fatal):', e?.message || e);
+      }
+
+      // 2. Auto-discard long-expired offers (silent)
+      try {
+        await directPatchQuery(
+          'offer_letters',
+          // Match: status=expired, no response on file, expired more than
+          // AUTO_DISCARD_AFTER_DAYS ago.
+          `status=eq.expired&responded_at=is.null&expires_at=lt.${encodeURIComponent(cutoffIso)}`,
+          { status: 'cancelled' },
+          { timeoutMs: 6000 }
+        );
+      } catch (e) {
+        console.warn('Auto-discard sync failed (non-fatal):', e?.message || e);
+      }
+
       const data = await directGet(
         'offer_letters',
         'select=*&order=created_at.desc',
@@ -152,11 +245,15 @@ export default function OffersCard({ me, employees, readOnly = false }) {
   }, [load]);
 
   // ─── Group + sort ───────────────────────────────────────────────
+  // Uses effectiveStatus (not raw o.status) so client-derived
+  // 'expired' rows land in the active section even before the
+  // server-side flip catches up.
   const grouped = useMemo(() => {
     const active = [];
     const archived = [];
     offers.forEach(o => {
-      if (ACTIVE_STATUSES.includes(o.status)) active.push(o);
+      const eff = effectiveStatus(o);
+      if (ACTIVE_STATUSES.includes(eff)) active.push(o);
       else archived.push(o);
     });
     return { active, archived };
@@ -166,18 +263,21 @@ export default function OffersCard({ me, employees, readOnly = false }) {
   const stats = useMemo(() => {
     const now = Date.now();
     const expiringSoonMs = 3 * 24 * 60 * 60 * 1000; // 3 days
-    let awaiting = 0, acceptedPendingPsn = 0, expiringSoon = 0;
+    let awaiting = 0, acceptedPendingPsn = 0, expiringSoon = 0, expiredNeedsAction = 0;
     offers.forEach(o => {
-      if (o.status === 'offer_sent') {
+      const eff = effectiveStatus(o);
+      if (eff === 'offer_sent') {
         awaiting++;
         if (o.expires_at && new Date(o.expires_at).getTime() - now < expiringSoonMs) {
           expiringSoon++;
         }
-      } else if (o.status === 'offer_accepted') {
+      } else if (eff === 'offer_accepted') {
         acceptedPendingPsn++;
+      } else if (eff === 'expired') {
+        expiredNeedsAction++;
       }
     });
-    return { awaiting, acceptedPendingPsn, expiringSoon };
+    return { awaiting, acceptedPendingPsn, expiringSoon, expiredNeedsAction };
   }, [offers]);
 
   // ─── Auto-hide if nothing meaningful ────────────────────────────
@@ -268,9 +368,18 @@ export default function OffersCard({ me, employees, readOnly = false }) {
         </div>
       </div>
 
-      {/* Stat tiles */}
+      {/* Stat tiles. Layout switches from 3 to 4 columns when there
+          are expired offers that need attention — the extra tile
+          surfaces them without crowding the grid when there's nothing
+          to show. */}
       {!loading && offers.length > 0 && (
-        <div className="grid grid-cols-3 gap-2 mb-4">
+        <div
+          className={
+            stats.expiredNeedsAction > 0
+              ? 'grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4'
+              : 'grid grid-cols-3 gap-2 mb-4'
+          }
+        >
           <StatTile
             label="Awaiting acceptance"
             count={stats.awaiting}
@@ -292,6 +401,15 @@ export default function OffersCard({ me, employees, readOnly = false }) {
             color={stats.expiringSoon > 0 ? '#854F0B' : '#737373'}
             bg={stats.expiringSoon > 0 ? '#FEF6E2' : '#F5F5F5'}
           />
+          {stats.expiredNeedsAction > 0 && (
+            <StatTile
+              label="Expired — needs action"
+              count={stats.expiredNeedsAction}
+              icon={<Clock className="w-3.5 h-3.5" />}
+              color="#991B1B"
+              bg="#FEF2F2"
+            />
+          )}
         </div>
       )}
 
@@ -408,8 +526,16 @@ export default function OffersCard({ me, employees, readOnly = false }) {
 // ─── Per-offer row ─────────────────────────────────────────────────
 
 function OfferRow({ offer, employees, onChanged, onIssuePsn, me, readOnly = false }) {
-  const presentation = STATUS_PRESENTATION[offer.status] || STATUS_PRESENTATION.draft;
-  const [actingOn, setActingOn] = useState(null); // 'withdraw' | 'copy'
+  // Effective status accounts for client-side expiry — a row whose
+  // expires_at has passed is rendered as 'expired' even before the
+  // server-side flip lands (the auto-flip in OffersCard.load runs on
+  // each fetch, but a long-open page should still display the
+  // truth without waiting for the next refresh).
+  const effStatus = effectiveStatus(offer);
+  const presentation = STATUS_PRESENTATION[effStatus] || STATUS_PRESENTATION.draft;
+  const urgency = expiryUrgency(offer);
+
+  const [actingOn, setActingOn] = useState(null); // 'withdraw' | 'resend' | 'discard'
   const [copyToast, setCopyToast] = useState(false);
   // letterPreview: holds the offer object when the in-page Contract
   // modal is open, null when closed. Hosted on the row (not the
@@ -417,12 +543,13 @@ function OfferRow({ offer, employees, onChanged, onIssuePsn, me, readOnly = fals
   // that specific row's offer; only one is ever open at a time.
   const [letterPreview, setLetterPreview] = useState(null);
 
-  // Compute days remaining until expiry (for offer_sent only)
+  // Compute days remaining until expiry (for still-active offer_sent
+  // rows only — uses effStatus so already-expired rows return null).
   const daysRemaining = useMemo(() => {
-    if (offer.status !== 'offer_sent' || !offer.expires_at) return null;
+    if (effStatus !== 'offer_sent' || !offer.expires_at) return null;
     const ms = new Date(offer.expires_at).getTime() - Date.now();
     return Math.max(0, Math.floor(ms / (24 * 60 * 60 * 1000)));
-  }, [offer]);
+  }, [offer, effStatus]);
 
   const acceptanceUrl = `${window.location.origin}/accept-offer?token=${offer.offer_token}`;
 
@@ -550,10 +677,72 @@ function OfferRow({ offer, employees, onChanged, onIssuePsn, me, readOnly = fals
     }
   }
 
+  // Re-send an expired offer: bumps expires_at to +7 days from now
+  // and flips status back to offer_sent. Per Nadeem's choice the
+  // SAME token is kept — the original email's link becomes valid
+  // again, no need to compose a brand-new email. Bashaier still
+  // needs to ping the candidate (Email button or a manual
+  // WhatsApp) to let them know the link is alive again, since
+  // we don't auto-send anything here.
+  async function resendOffer() {
+    if (readOnly) return;
+    if (!confirm(
+      `Re-send offer to ${offer.candidate_name}?\n\n` +
+      `The acceptance link will be valid for another 7 days.\n` +
+      `The same link works — you'll need to ping the candidate to let them know.`
+    )) return;
+    setActingOn('resend');
+    try {
+      const newExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      await directPatch('offer_letters', 'id', offer.id, {
+        status: 'offer_sent',
+        expires_at: newExpiry,
+        updated_at: new Date().toISOString(),
+      });
+      onChanged?.();
+    } catch (e) {
+      alert(e?.message || 'Could not re-send offer.');
+    } finally {
+      setActingOn(null);
+    }
+  }
+
+  // Discard an expired offer she doesn't want to revive — flips to
+  // status='cancelled' so it falls out of the active section and
+  // into Archived. Reversible only via DB intervention; the warning
+  // tells Bashaier this is effectively final.
+  async function discardOffer() {
+    if (readOnly) return;
+    if (!confirm(
+      `Discard the offer to ${offer.candidate_name}?\n\n` +
+      `This moves it to the archive. To restart, create a new offer.`
+    )) return;
+    setActingOn('discard');
+    try {
+      await directPatch('offer_letters', 'id', offer.id, {
+        status: 'cancelled',
+        updated_at: new Date().toISOString(),
+      });
+      onChanged?.();
+    } catch (e) {
+      alert(e?.message || 'Could not discard offer.');
+    } finally {
+      setActingOn(null);
+    }
+  }
+
+  // Expired rows fade so Bashaier's eye is drawn to active work first.
+  // Still fully readable, just visually de-emphasised.
+  const isExpired = effStatus === 'expired';
+
   return (
     <div
       className="rounded-lg border p-3"
-      style={{ borderColor: 'var(--border-soft)', background: 'var(--paper)' }}
+      style={{
+        borderColor: 'var(--border-soft)',
+        background: 'var(--paper)',
+        opacity: isExpired ? 0.72 : 1,
+      }}
     >
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="min-w-0 flex-1">
@@ -575,14 +764,33 @@ function OfferRow({ offer, employees, onChanged, onIssuePsn, me, readOnly = fals
               {presentation.label}
             </span>
             {daysRemaining !== null && (
+              // Three urgency tiers via expiryUrgency():
+              //   urgent (0–1 days):  red bg / red text / red border
+              //   warning (2–3 days): amber bg / amber text / amber border
+              //   ok (4+ days):       neutral paper bg / dark text
               <span
                 className="text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1"
                 style={{
-                  background: daysRemaining <= 3 ? '#FEF2F2' : 'var(--paper-2)',
-                  color: daysRemaining <= 3 ? '#991B1B' : '#0A0A0A',
-                  border: '1px solid ' + (daysRemaining <= 3 ? '#FCA5A5' : 'var(--border)'),
+                  background: urgency === 'urgent'  ? '#FEF2F2'
+                            : urgency === 'warning' ? '#FEF6E2'
+                            :                          'var(--paper-2)',
+                  color:      urgency === 'urgent'  ? '#991B1B'
+                            : urgency === 'warning' ? '#854F0B'
+                            :                          '#0A0A0A',
+                  border: '1px solid ' + (
+                              urgency === 'urgent'  ? '#FCA5A5'
+                            : urgency === 'warning' ? '#E8C896'
+                            :                          'var(--border)'
+                            ),
                   fontWeight: 600,
                 }}
+                title={
+                    urgency === 'urgent'
+                      ? 'Acceptance window closing — re-send if needed'
+                      : urgency === 'warning'
+                        ? 'Acceptance window closing within a few days'
+                        : 'Acceptance window healthy'
+                }
               >
                 <Clock className="w-2.5 h-2.5" />
                 {daysRemaining === 0 ? 'expires today' : `${daysRemaining}d left`}
@@ -655,9 +863,10 @@ function OfferRow({ offer, employees, onChanged, onIssuePsn, me, readOnly = fals
 
           {/* Email — opens an Outlook draft with To/Cc/body/link
               prefilled. Hidden in read-only mode (viewers preview
-              the contract but don't send communications). Available
-              on every status so Bashaier can re-send if needed. */}
-          {!readOnly && (
+              the contract but don't send communications). Hidden on
+              expired offers because the link is dead — Re-send first
+              to revive it, then send a fresh email if needed. */}
+          {!readOnly && effStatus !== 'expired' && (
             <button
               onClick={composeEmail}
               className="text-[11px] px-2.5 py-1 rounded-full inline-flex items-center gap-1.5"
@@ -677,9 +886,10 @@ function OfferRow({ offer, employees, onChanged, onIssuePsn, me, readOnly = fals
               the clipboard so Bashaier can paste it elsewhere (a
               follow-up WhatsApp, a separate manual email, etc.).
               Hidden in read-only mode (viewers shouldn't be sharing
-              the candidate's private acceptance link). The toast
-              flashes "Copied!" for 1.5s after a successful copy. */}
-          {!readOnly && (
+              the candidate's private acceptance link). Hidden on
+              expired offers — the link wouldn't work for the
+              candidate anyway. */}
+          {!readOnly && effStatus !== 'expired' && (
             <button
               onClick={copyLink}
               className="text-[11px] px-2.5 py-1 rounded-full inline-flex items-center gap-1.5"
@@ -697,9 +907,61 @@ function OfferRow({ offer, employees, onChanged, onIssuePsn, me, readOnly = fals
             </button>
           )}
 
-          {/* Withdraw — only on offer_sent (still pending response).
-              Hidden in read-only mode. */}
-          {!readOnly && offer.status === 'offer_sent' && (
+          {/* Re-send — only on expired offers. Bumps expires_at by
+              7 days and flips status back to offer_sent so the same
+              acceptance URL works again. Bashaier still has to ping
+              the candidate manually since we don't auto-send anything. */}
+          {!readOnly && effStatus === 'expired' && (
+            <button
+              onClick={resendOffer}
+              disabled={actingOn === 'resend'}
+              className="text-[11px] px-2.5 py-1 rounded-full inline-flex items-center gap-1.5"
+              style={{
+                background: 'var(--evergreen-600)',
+                color: '#FFFFFF',
+                border: '1px solid var(--evergreen-600)',
+                fontWeight: 600,
+                cursor: actingOn === 'resend' ? 'wait' : 'pointer',
+                opacity: actingOn === 'resend' ? 0.6 : 1,
+              }}
+              title="Extend the acceptance window by 7 days (same link)"
+            >
+              {actingOn === 'resend'
+                ? <Loader2 className="w-3 h-3 animate-spin" />
+                : <Send className="w-3 h-3" />}
+              Re-send
+            </button>
+          )}
+
+          {/* Discard — only on expired offers. Sets status='cancelled'
+              so the row drops out of the active section. Used when
+              Bashaier doesn't want to revive the offer. */}
+          {!readOnly && effStatus === 'expired' && (
+            <button
+              onClick={discardOffer}
+              disabled={actingOn === 'discard'}
+              className="text-[11px] px-2.5 py-1 rounded-full inline-flex items-center gap-1.5"
+              style={{
+                background: 'transparent',
+                color: '#525252',
+                border: '1px solid var(--border)',
+                fontWeight: 500,
+                cursor: actingOn === 'discard' ? 'not-allowed' : 'pointer',
+                opacity: actingOn === 'discard' ? 0.5 : 1,
+              }}
+              title="Move to archive (cancelled)"
+            >
+              {actingOn === 'discard'
+                ? <Loader2 className="w-3 h-3 animate-spin" />
+                : <Trash2 className="w-3 h-3" />}
+              Discard
+            </button>
+          )}
+
+          {/* Withdraw — only on still-active offer_sent (response
+              still pending). Hidden in read-only mode and on expired
+              offers (Discard replaces Withdraw for the expired case). */}
+          {!readOnly && effStatus === 'offer_sent' && (
             <button
               onClick={withdrawOffer}
               disabled={actingOn === 'withdraw'}
@@ -719,7 +981,7 @@ function OfferRow({ offer, employees, onChanged, onIssuePsn, me, readOnly = fals
               Withdraw
             </button>
           )}
-          {!readOnly && offer.status === 'offer_accepted' && (
+          {!readOnly && effStatus === 'offer_accepted' && (
             <button
               onClick={onIssuePsn}
               className="text-[11px] px-2.5 py-1 rounded-full inline-flex items-center gap-1.5"
