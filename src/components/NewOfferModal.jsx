@@ -201,7 +201,7 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
   // Managers are filtered by the OFFICE the offer is for. Per
   // Nadeem the authoritative reporting-line lists are:
   //
-  //   Dammam (DMM):  Fahad Sulaiman (H94712), Sadakath, Sharique
+  //   Dammam (DMM):  Fahad Sulaiman (H94712), Sadakath, Sharique, Haider
   //   Riyadh (RYD):  Zaher, Sadakath
   //   Jeddah (JED):  James, Seyed Naoman, Sonnie
   //
@@ -215,7 +215,7 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
   // Location are set, matching the dependent-field pattern we
   // already use for Position.
   const MANAGER_ALLOWLIST_BY_LOCATION = {
-    DMM: ['fahad sulaiman', 'sadakath', 'sharique'],
+    DMM: ['fahad sulaiman', 'sadakath', 'sharique', 'haider'],
     RYD: ['zaher', 'sadakath'],
     JED: ['james', 'naoman', 'sonnie'],
   };
