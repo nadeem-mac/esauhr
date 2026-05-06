@@ -256,6 +256,8 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
   let shiftWorkerSkipped = 0;  // count of rows we left as 'present'
                                 // because the employee is a shift worker
   let mawaniDayCount = 0;       // count of rows tagged as Mawani duty
+  let totalMissedIn = 0;        // out only — no clock-in punch
+  let totalMissedOut = 0;       // in only — no clock-out punch
   let minDate = null;
   let maxDate = null;
   const now = new Date().toISOString();
@@ -279,11 +281,18 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
     const empId = emp?.id || psn;
     if (!emp) unmatched++;
 
-    // Skip rows with no usable punch data — purely informational
-    // entries that don't tell us anything attendance-wise.
-    const firstPunch = r.firstPunch;
-    const lastPunch  = r.lastPunch || r.firstPunch;
-    if (!firstPunch && !lastPunch) { skipped++; continue; }
+    // Skip rows with no usable punch data — both punches missing
+    // means the row is purely informational and tells us nothing
+    // attendance-wise. Rows with only ONE punch are kept and
+    // classified as missed-in (no first) or missed-out (no last)
+    // so Bashaier can see them as data-quality issues.
+    const firstPunchRaw = r.firstPunch;
+    const lastPunchRaw  = r.lastPunch;
+    if (!firstPunchRaw && !lastPunchRaw) { skipped++; continue; }
+    const hasFirst = !!firstPunchRaw;
+    const hasLast  = !!lastPunchRaw;
+    const isMissedIn  = !hasFirst && hasLast;   // out only
+    const isMissedOut = hasFirst && !hasLast;   // in only
 
     // ─── Evaluation ──────────────────────────────────────────────
     // Apply standard 08:00-17:00 office-hours evaluation when we
@@ -311,26 +320,66 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
     const policy = policyFor(emp);
 
     let status, lateMin, earlyMin, expectedStart, expectedEnd, noteText;
+    let missedInCount = 0, missedOutCount = 0;  // local flags for the
+                                                 // outer counters below
     if (isMawaniDay) {
+      // Mawani visits subsume the missed-punch concern — staff is
+      // off-site on duty, partial punches are expected.
       status        = 'present';
       lateMin       = 0;
       earlyMin      = 0;
       expectedStart = policy.startTime;
       expectedEnd   = policy.endTime;
-      noteText      = `Backfill — Mawani duty visit (${policy.label})`;
+      noteText      = isMissedIn
+        ? `Backfill — Mawani duty visit (${policy.label}) (no punch-in)`
+        : isMissedOut
+          ? `Backfill — Mawani duty visit (${policy.label}) (no punch-out)`
+          : `Backfill — Mawani duty visit (${policy.label})`;
       mawaniDayCount++;
     } else if (isShiftWorker || isWeekend) {
+      // Shift workers: schedule unknown, but missing punches are
+      // still meaningful data-quality flags. We mark as 'present'
+      // (since we can't classify late/short) but stamp the note.
       status        = 'present';
       lateMin       = 0;
       earlyMin      = 0;
       expectedStart = null;
       expectedEnd   = null;
       if (isShiftWorker) shiftWorkerSkipped++;
-      noteText = isShiftWorker
-        ? 'Backfill — shift worker, schedule unknown'
-        : 'Backfill — KSA weekend punch';
+      const baseLabel = isShiftWorker
+        ? 'shift worker, schedule unknown'
+        : 'KSA weekend punch';
+      noteText = isMissedIn
+        ? `Backfill — ${baseLabel} (no punch-in)`
+        : isMissedOut
+          ? `Backfill — ${baseLabel} (no punch-out)`
+          : `Backfill — ${baseLabel}`;
+    } else if (isMissedIn) {
+      // Missed clock-in for office staff — mirrors daily-flow
+      // convention (status='late' so the violation surfaces, with
+      // a note explaining the missing clock-in). late_minutes=0
+      // because we genuinely don't know how late they arrived.
+      status        = 'late';
+      lateMin       = 0;
+      earlyMin      = 0;
+      expectedStart = policy.startTime;
+      expectedEnd   = policy.endTime;
+      noteText      = `Backfill — no punch-in recorded (${policy.label})`;
+      missedInCount = 1;
+    } else if (isMissedOut) {
+      // Missed clock-out — same rationale, classified as 'short'
+      // with a note. early_leave_minutes=0 since we don't know.
+      status        = 'short';
+      lateMin       = 0;
+      earlyMin      = 0;
+      expectedStart = policy.startTime;
+      expectedEnd   = policy.endTime;
+      noteText      = `Backfill — no punch-out recorded (${policy.label})`;
+      missedOutCount = 1;
     } else {
-      const evalRes = evaluateOffice(firstPunch, lastPunch, policy);
+      // Normal case: both punches present. Run the policy-based
+      // late/short evaluation.
+      const evalRes = evaluateOffice(firstPunchRaw, lastPunchRaw, policy);
       status        = evalRes.status;
       lateMin       = evalRes.lateMin;
       earlyMin      = evalRes.earlyMin;
@@ -342,13 +391,18 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
     if (status === 'late') lateCount++;
     else if (status === 'short') shortCount++;
     else presentCount++;
+    if (missedInCount)  totalMissedIn++;
+    if (missedOutCount) totalMissedOut++;
 
     rows.push({
       employee_id:        empId,
       attendance_date:    dateIso,
       status,
-      first_punch:        toTime(firstPunch),
-      last_punch:         toTime(lastPunch),
+      // Don't conflate first/last — preserve which punch is
+      // actually present so the UI can show "no punch-in"/"no
+      // punch-out" decorations correctly.
+      first_punch:        hasFirst ? toTime(firstPunchRaw) : null,
+      last_punch:         hasLast  ? toTime(lastPunchRaw)  : null,
       punch_count:        r.uniqueCount || 0,
       expected_start:     expectedStart,
       expected_end:       expectedEnd,
@@ -385,6 +439,8 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
       presentCount,
       shiftWorkerSkipped,
       mawaniDayCount,
+      missedInCount:  totalMissedIn,
+      missedOutCount: totalMissedOut,
     },
   };
 }
@@ -571,6 +627,14 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
     if (isDailyRow && (r.status === 'off_roster' || r.status === 'on_leave' ||
                        r.status === 'annual_leave' || r.status === 'sick_leave')) continue;
 
+    // Detect missing punches — preserves the same semantics as
+    // buildBackfillRows so a row imported via backfill keeps its
+    // missed-in / missed-out classification across re-evaluation.
+    const hasFirst = !!r.first_punch;
+    const hasLast  = !!r.last_punch;
+    const isMissedIn  = !hasFirst && hasLast;
+    const isMissedOut = hasFirst && !hasLast;
+
     let newStatus, newLate, newEarly, newExpStart, newExpEnd, newNote;
     if (isMawaniDay) {
       newStatus    = 'present';
@@ -578,7 +642,11 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
       newEarly     = 0;
       newExpStart  = policy.startTime;
       newExpEnd    = policy.endTime;
-      newNote      = `Mawani duty visit (${policy.label}) (re-evaluated)`;
+      newNote      = isMissedIn
+        ? `Mawani duty visit (${policy.label}) (no punch-in) (re-evaluated)`
+        : isMissedOut
+          ? `Mawani duty visit (${policy.label}) (no punch-out) (re-evaluated)`
+          : `Mawani duty visit (${policy.label}) (re-evaluated)`;
       mawaniDayCount++;
     } else if (isShiftWorker || isWeekend) {
       // Force back to a clean 'present' baseline — no eval applies.
@@ -587,9 +655,28 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
       newEarly     = 0;
       newExpStart  = null;
       newExpEnd    = null;
-      newNote = isShiftWorker
+      const baseLabel = isShiftWorker
         ? 'Shift worker, schedule unknown (re-evaluated)'
         : 'KSA weekend punch (re-evaluated)';
+      newNote = isMissedIn
+        ? `${baseLabel} (no punch-in)`
+        : isMissedOut
+          ? `${baseLabel} (no punch-out)`
+          : baseLabel;
+    } else if (isMissedIn) {
+      newStatus    = 'late';
+      newLate      = 0;
+      newEarly     = 0;
+      newExpStart  = policy.startTime;
+      newExpEnd    = policy.endTime;
+      newNote      = `No punch-in recorded (${policy.label}) (re-evaluated)`;
+    } else if (isMissedOut) {
+      newStatus    = 'short';
+      newLate      = 0;
+      newEarly     = 0;
+      newExpStart  = policy.startTime;
+      newExpEnd    = policy.endTime;
+      newNote      = `No punch-out recorded (${policy.label}) (re-evaluated)`;
     } else {
       const ev = evaluateOffice(r.first_punch, r.last_punch, policy);
       newStatus   = ev.status;

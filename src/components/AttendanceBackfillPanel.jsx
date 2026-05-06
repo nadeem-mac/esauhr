@@ -509,7 +509,9 @@ export default function AttendanceBackfillPanel({ me, employees }) {
                   rules so backfilled office staff get classified the
                   same way they would by a daily upload of the same
                   schedule. */}
-              {(preview.summary.lateCount > 0 || preview.summary.shortCount > 0 || preview.summary.presentCount > 0) && (
+              {(preview.summary.lateCount > 0 || preview.summary.shortCount > 0 ||
+                preview.summary.presentCount > 0 || preview.summary.missedInCount > 0 ||
+                preview.summary.missedOutCount > 0 || preview.summary.mawaniDayCount > 0) && (
                 <div className="flex flex-wrap gap-2 mt-1">
                   {preview.summary.presentCount > 0 && (
                     <EvalChip
@@ -530,6 +532,27 @@ export default function AttendanceBackfillPanel({ me, employees }) {
                       bg="#FED7AA" fg="#7C2D12" border="#FB923C"
                       label="Left early"
                       count={preview.summary.shortCount}
+                    />
+                  )}
+                  {preview.summary.missedInCount > 0 && (
+                    <EvalChip
+                      bg="#FCE7F3" fg="#86198F" border="#F0ABFC"
+                      label="No clock-in"
+                      count={preview.summary.missedInCount}
+                    />
+                  )}
+                  {preview.summary.missedOutCount > 0 && (
+                    <EvalChip
+                      bg="#E0E7FF" fg="#3730A3" border="#A5B4FC"
+                      label="No clock-out"
+                      count={preview.summary.missedOutCount}
+                    />
+                  )}
+                  {preview.summary.mawaniDayCount > 0 && (
+                    <EvalChip
+                      bg="#CCFBF1" fg="#115E59" border="#5EEAD4"
+                      label="Mawani duty"
+                      count={preview.summary.mawaniDayCount}
                     />
                   )}
                 </div>
@@ -565,8 +588,9 @@ export default function AttendanceBackfillPanel({ me, employees }) {
                   <div className="flex items-start gap-2.5">
                     <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: '#92400E' }} />
                     <div className="text-[12px]" style={{ color: '#7C2D12', lineHeight: 1.55 }}>
-                      <strong>{preview.overwrites.existingCount}</strong> existing row{preview.overwrites.existingCount === 1 ? '' : 's'} will be overwritten.
-                      Backfill rows are <code style={{ background: '#FFFFFF', padding: '0 4px', borderRadius: 3 }}>status='present'</code> with no late/short evaluation. If those dates were daily-evaluated, the evaluations are lost.
+                      <strong>{preview.overwrites.existingCount}</strong> existing row{preview.overwrites.existingCount === 1 ? '' : 's'} will be overwritten with the freshly-evaluated backfill version.
+                      Backfill applies the full late/short rules, missed-punch detection, SUP-team hours, and Mawani-visit handling &mdash;
+                      same logic as the daily flow. The two should usually agree, but any manual edits to the existing rows will be lost.
                       <label className="inline-flex items-center gap-2 cursor-pointer mt-2.5">
                         <input
                           type="checkbox"

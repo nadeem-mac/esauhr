@@ -690,14 +690,24 @@ function MonthCalendar({ year, monthIdx, rows }) {
             const isToday = todayDay === day;
             const isFuture = dt > today && !isToday;
             const meta = r ? statusMeta(r.status) : null;
+            // Missed-punch flag — shows on the cell as a small magenta
+            // dot and in the hover tooltip. Same convention as the
+            // Monthly Overview calendar.
+            const hasFirstP = r ? !!r.first_punch : false;
+            const hasLastP  = r ? !!r.last_punch : false;
+            const missedPunch = r && ((hasFirstP && !hasLastP) || (!hasFirstP && hasLastP));
+            const missedKind = missedPunch
+              ? (hasFirstP ? 'No clock-out recorded' : 'No clock-in recorded')
+              : null;
             // Tooltip — full detail for hover
             const tipParts = [];
             tipParts.push(dt.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' }));
             if (r) {
               tipParts.push(meta.label);
-              if (r.status === 'late' && r.late_minutes != null)
+              if (missedKind) tipParts.push('⚠ ' + missedKind);
+              if (r.status === 'late' && r.late_minutes != null && r.late_minutes > 0)
                 tipParts.push(`${r.late_minutes} min late`);
-              else if (r.status === 'short' && r.early_leave_minutes != null)
+              else if (r.status === 'short' && r.early_leave_minutes != null && r.early_leave_minutes > 0)
                 tipParts.push(`${r.early_leave_minutes} min early out`);
               if (r.first_punch || r.last_punch)
                 tipParts.push(`${trimTime(r.first_punch) || '—'} → ${trimTime(r.last_punch) || '—'}`);
@@ -746,6 +756,25 @@ function MonthCalendar({ year, monthIdx, rows }) {
 
                 {r && (
                   <>
+                    {/* Missed-punch dot — top-left corner of the cell.
+                        Magenta to stand out against any status palette. */}
+                    {missedPunch && (
+                      <span
+                        aria-hidden
+                        title={missedKind}
+                        style={{
+                          position: 'absolute',
+                          top: 4,
+                          left: 4,
+                          width: 8,
+                          height: 8,
+                          borderRadius: 999,
+                          background: '#C026D3',
+                          boxShadow: '0 0 0 2px #FFFFFF',
+                          zIndex: 1,
+                        }}
+                      />
+                    )}
                     {/* Status chip — middle */}
                     <div
                       style={{
@@ -775,8 +804,11 @@ function MonthCalendar({ year, monthIdx, rows }) {
                       </div>
                     </div>
 
-                    {/* Tiny punch summary — bottom (only fits when present) */}
-                    {r.first_punch && (
+                    {/* Tiny punch summary — bottom. Always show
+                        whichever punch is available (even just one),
+                        and mark the missing one with a dash so the
+                        hole is visible at a glance. */}
+                    {(r.first_punch || r.last_punch) && (
                       <div
                         style={{
                           fontSize: 8.5,
@@ -789,13 +821,13 @@ function MonthCalendar({ year, monthIdx, rows }) {
                           fontWeight: 600,
                         }}
                       >
-                        {trimTime(r.first_punch)}
-                        {r.last_punch && (
-                          <>
-                            <br/>
-                            <span style={{ opacity: 0.6 }}>{trimTime(r.last_punch)}</span>
-                          </>
+                        {r.first_punch ? trimTime(r.first_punch) : (
+                          <span style={{ color: '#C026D3' }}>—:—</span>
                         )}
+                        <br/>
+                        <span style={{ opacity: r.last_punch ? 0.6 : 1, color: r.last_punch ? meta.fg : '#C026D3' }}>
+                          {r.last_punch ? trimTime(r.last_punch) : '—:—'}
+                        </span>
                       </div>
                     )}
                   </>
@@ -1046,15 +1078,24 @@ function exportAttendanceHtml(employee, range, monthly, summary, leaveRows, leav
   const monthBlocks = monthly.map(g => {
     const rowsHtml = g.rows.map(r => {
       const meta = statusMeta(r.status);
-      const detail = r.status === 'late'
-        ? `${r.late_minutes || 0} min late`
-        : r.status === 'short'
-          ? `${r.early_leave_minutes || 0} min early out`
-          : r.status === 'absent'
-            ? 'No punches recorded'
-            : '—';
-      const punch = (r.first_punch || r.last_punch)
-        ? `${trimTime(r.first_punch) || '—'} → ${trimTime(r.last_punch) || '—'}`
+      // Missed-punch detection — same convention as the UI.
+      const hasFirst = !!r.first_punch;
+      const hasLast  = !!r.last_punch;
+      const isMissedIn  = !hasFirst && hasLast;
+      const isMissedOut = hasFirst && !hasLast;
+      const detail = isMissedIn
+        ? '<strong style="color:#86198F">⚠ No clock-in recorded</strong>'
+        : isMissedOut
+          ? '<strong style="color:#3730A3">⚠ No clock-out recorded</strong>'
+          : r.status === 'late' && r.late_minutes > 0
+            ? `${r.late_minutes} min late`
+            : r.status === 'short' && r.early_leave_minutes > 0
+              ? `${r.early_leave_minutes} min early out`
+              : r.status === 'absent'
+                ? 'No punches recorded'
+                : '—';
+      const punch = (hasFirst || hasLast)
+        ? `${hasFirst ? trimTime(r.first_punch) : '<span style="color:#C026D3">—:—</span>'} → ${hasLast ? trimTime(r.last_punch) : '<span style="color:#C026D3">—:—</span>'}`
         : '—';
       const sched = (r.expected_start || r.expected_end)
         ? `${trimTime(r.expected_start) || '?'}–${trimTime(r.expected_end) || '?'}`
@@ -1063,9 +1104,9 @@ function exportAttendanceHtml(employee, range, monthly, summary, leaveRows, leav
         <tr>
           <td>${esc(fmtDate(r.attendance_date))}</td>
           <td><span class="chip ${esc(r.status)}">${esc(statusLabelFor(r.status))}</span></td>
-          <td>${esc(punch)}</td>
+          <td>${punch}</td>
           <td>${esc(sched)}</td>
-          <td>${esc(detail)}</td>
+          <td>${detail}</td>
         </tr>
       `;
     }).join('');

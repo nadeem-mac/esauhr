@@ -364,6 +364,12 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick }) {
                       );
                     }
                     const sty = styleForStatus(r.status);
+                    // Missed-punch indicator — small magenta dot on the
+                    // chip when first or last punch is missing. Same
+                    // visual language as the tooltip's ⚠ marker.
+                    const hasFirst = !!r.first_punch;
+                    const hasLast  = !!r.last_punch;
+                    const missedPunch = (hasFirst && !hasLast) || (!hasFirst && hasLast);
                     return (
                       <div
                         key={dStr}
@@ -381,6 +387,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick }) {
                       >
                         <div
                           style={{
+                            position: 'relative',
                             background: sty.bg,
                             color: sty.fg,
                             border: `1px solid ${sty.border}`,
@@ -397,6 +404,21 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick }) {
                           }}
                         >
                           {sty.label}
+                          {missedPunch && (
+                            <span
+                              aria-hidden
+                              style={{
+                                position: 'absolute',
+                                top: 1,
+                                right: 1,
+                                width: 6,
+                                height: 6,
+                                borderRadius: 999,
+                                background: '#C026D3',
+                                boxShadow: '0 0 0 1.5px ' + sty.bg,
+                              }}
+                            />
+                          )}
                         </div>
                       </div>
                     );
@@ -464,6 +486,19 @@ function HoverTooltip({ x, yTop, yBottom, record, employee, dateStr, weekday }) 
       ? `Left ${record.early_leave_minutes} min early`
       : null;
 
+  // Detect missing punches — surfaces the data-quality issue clearly
+  // rather than hiding it inside the notes field. A row is "missed
+  // in" if it has a last_punch but no first_punch (staff left, but
+  // we don't have proof of arrival time), and "missed out" the
+  // converse.
+  const hasFirst = !!record.first_punch;
+  const hasLast  = !!record.last_punch;
+  const missedLine = (!hasFirst && hasLast)
+    ? 'No clock-in recorded'
+    : (hasFirst && !hasLast)
+      ? 'No clock-out recorded'
+      : null;
+
   const style = {
     position: 'fixed',
     left: x,
@@ -490,6 +525,7 @@ function HoverTooltip({ x, yTop, yBottom, record, employee, dateStr, weekday }) 
       </div>
       {punch && <div style={{ fontSize: 10.5 }}>Punched: {punch}</div>}
       {sched && <div style={{ fontSize: 10.5, opacity: 0.85 }}>{sched}</div>}
+      {missedLine && <div style={{ fontSize: 10.5, color: '#F0ABFC', marginTop: 2, fontWeight: 700 }}>⚠ {missedLine}</div>}
       {minutesLine && <div style={{ fontSize: 10.5, color: '#FCD34D', marginTop: 2 }}>{minutesLine}</div>}
       {record.notes && <div style={{ fontSize: 10, opacity: 0.85, marginTop: 4, fontStyle: 'italic' }}>{record.notes}</div>}
     </div>
