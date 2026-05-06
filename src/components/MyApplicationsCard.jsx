@@ -446,11 +446,24 @@ function Row({ item, empMap, leaveTypes, onClick }) {
   // rejected the leave. Only shown for leaves that have actually
   // been rejected and that have a reason recorded (legacy rejections
   // pre-migration won't have one; they fall back to the pill alone).
-  const isRejected = item._kind === 'leave'
-    && (item.status === 'rejected' || /^rejected/.test(item.stage || ''));
-  const rejectionReason = isRejected ? findRejectionReason(item.rejection_reason_code) : null;
-  const rejectionNote   = isRejected ? (item.rejection_reason_note || '').trim() : '';
-  const showRejection   = isRejected && (rejectionReason || rejectionNote);
+  const isRejected = (item._kind === 'leave'
+    && (item.status === 'rejected' || /^rejected/.test(item.stage || '')))
+    || (item._kind === 'permission'
+    && (item.status === 'rejected' || /^rejected/.test(item.stage || '')));
+  // Leaves use rejection_reason_code/note (curated dropdown + freeform).
+  // Permissions use decision_note (single freeform comment from the
+  // RejectPermissionModal). Both surface here as a single rejection
+  // explanation pill so the staff member sees WHY their request was
+  // declined.
+  const rejectionReason = (isRejected && item._kind === 'leave')
+    ? findRejectionReason(item.rejection_reason_code)
+    : null;
+  const rejectionNote = isRejected
+    ? ((item._kind === 'permission'
+        ? (item.decision_note || '')
+        : (item.rejection_reason_note || '')) || '').trim()
+    : '';
+  const showRejection = isRejected && (rejectionReason || rejectionNote);
 
   return (
     <li

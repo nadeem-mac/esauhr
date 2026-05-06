@@ -142,6 +142,13 @@ export default function ReviewerPanel({ me }) {
   // selected code + note get persisted on rejection so the staff
   // member can see the rejection reason on their My Applications card.
   const [rejectLeaveReq, setRejectLeaveReq] = useState(null);
+  // Permission rejection — opens RejectPermissionModal so the manager
+  // or HR has to type a short note. Per Nadeem: "Fahad who is
+  // Bashaier's manager rejected her request but he could not input
+  // comments at all to her it just got rejected" — the bug was that
+  // permission rejection had no comment input. The note lands in
+  // permission_requests.decision_note for the staff member to read.
+  const [rejectPermReq, setRejectPermReq] = useState(null);
 
   // Role flags for stage-based routing
   // - is_admin (Nadeem): sees both pending_manager and pending_hr
@@ -702,7 +709,7 @@ export default function ReviewerPanel({ me }) {
     }
   }
 
-  async function decidePerm(req, action) {
+  async function decidePerm(req, action, decisionNote = null) {
     setBusyId(`perm-${req.id}`);
     const now = new Date().toISOString();
     let nextStage, patch = {};
@@ -745,6 +752,15 @@ export default function ReviewerPanel({ me }) {
     // from `stage` so we don't need to touch it.
     patch.reviewed_at = now;
     patch.reviewed_by = me.id;
+    // Decision note — written for rejections so the staff member sees
+    // why their permission was declined on My Applications. Approvals
+    // can also carry an optional note (currently unused but the column
+    // accepts it).
+    if (decisionNote && decisionNote.trim()) {
+      patch.decision_note = decisionNote.trim();
+    } else if (action === 'rejected') {
+      patch.decision_note = null;
+    }
 
     try {
       await directPatch('permission_requests', 'id', req.id, patch, { timeoutMs: 10000 });
@@ -1167,7 +1183,7 @@ export default function ReviewerPanel({ me }) {
                               style={{ background: 'var(--evergreen-500)', color: 'var(--paper)' }}>
                               <CheckCircle2 className="w-3 h-3" /> Approve
                             </button>
-                            <button onClick={() => decidePerm(req, 'rejected')}
+                            <button onClick={() => setRejectPermReq(req)}
                               disabled={busyId === `perm-${req.id}`}
                               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs border disabled:opacity-50"
                               style={{ borderColor: 'var(--clay)', color: 'var(--clay)' }}>
@@ -1381,6 +1397,17 @@ export default function ReviewerPanel({ me }) {
           onConfirm={async (code, note) => {
             await decideLeave(rejectLeaveReq, 'rejected', code, note);
             setRejectLeaveReq(null);
+          }}
+        />
+      )}
+      {rejectPermReq && (
+        <RejectPermissionModal
+          request={rejectPermReq}
+          employee={empMap[rejectPermReq.employee_id]}
+          onClose={() => setRejectPermReq(null)}
+          onConfirm={async (note) => {
+            await decidePerm(rejectPermReq, 'rejected', note);
+            setRejectPermReq(null);
           }}
         />
       )}
@@ -2096,6 +2123,106 @@ function RejectLeaveModal({ request, employee, onClose, onConfirm }) {
             {submitting
               ? <>Saving…</>
               : <><XCircle className="w-3 h-3"/> Reject with this reason</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── RejectPermissionModal ────────────────────────────────────────────────
+// Opens when the manager / HR clicks 'Reject' on a permission request.
+// Per Nadeem: "Fahad who is Bashaier's manager rejected her request but
+// he could not input comments at all to her, it just got rejected" —
+// fix is to require a short note from the rejector so the staff member
+// has context. Note lands in permission_requests.decision_note and
+// surfaces on MyApplicationsCard.
+function RejectPermissionModal({ request, employee, onClose, onConfirm }) {
+  const [note, setNote] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  // Note is mandatory — empty rejections produce confused staff.
+  const canSubmit = note.trim().length > 0;
+
+  const submit = async () => {
+    if (!canSubmit || submitting) return;
+    setSubmitting(true);
+    setError('');
+    try {
+      await onConfirm(note);
+    } catch (err) {
+      setError(err?.message || String(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const typeLabel = request?.type === 'late_arrival' ? 'Late arrival' : 'Early leave';
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4"
+         style={{ background: 'rgba(15,31,26,0.55)' }}
+         onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bg-paper rounded-t-2xl sm:rounded-2xl w-full max-w-md fade-in"
+        style={{ boxShadow: '0 12px 40px rgba(31,27,22,0.2)' }}>
+        <div className="px-5 py-4 border-b" style={{ borderColor: 'var(--border-soft)' }}>
+          <div className="text-[10px] tracking-[0.25em] font-bold mb-1" style={{ color: '#B91C1C' }}>
+            REJECT PERMISSION REQUEST
+          </div>
+          <h3 className="text-lg" style={{ fontFamily: 'Georgia, serif', color: '#0A0A0A', fontWeight: 500 }}>
+            Add a comment for the staff member
+          </h3>
+          <div className="text-[11px] mt-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+            {employee?.name} ({request.employee_id}) · {typeLabel} · {Number(request.hours)}h on {request.permission_date}
+          </div>
+        </div>
+
+        <div className="px-5 py-4 space-y-3">
+          <div>
+            <label className="text-[10px] tracking-wider font-bold mb-1 block" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+              COMMENT <span style={{ color: '#B91C1C' }}>*</span>
+            </label>
+            <textarea value={note} onChange={e => setNote(e.target.value)}
+              rows={3}
+              placeholder="Why is this being rejected? The staff member will see this on their application."
+              autoFocus
+              className="w-full px-3 py-2 rounded-lg border text-sm bg-transparent focus:outline-none resize-none"
+              style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}/>
+            <div className="text-[10px] mt-1" style={{ color: '#0A0A0A', opacity: 0.55 }}>
+              Required. Staff sees this on My Applications.
+            </div>
+          </div>
+
+          {error && (
+            <div className="text-[11px] px-3 py-2 rounded-lg"
+              style={{ background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}>
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-3 border-t flex justify-end gap-2"
+          style={{ borderColor: 'var(--border-soft)' }}>
+          <button onClick={onClose}
+            disabled={submitting}
+            className="text-[11px] px-3 py-1.5 rounded-full border"
+            style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', color: '#0A0A0A' }}>
+            Cancel
+          </button>
+          <button onClick={submit}
+            disabled={!canSubmit || submitting}
+            className="text-[11px] inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full"
+            style={{
+              background: !canSubmit ? '#9CA3AF' : '#B91C1C',
+              color: '#FFFFFF',
+              fontWeight: 700,
+              cursor: (!canSubmit || submitting) ? 'not-allowed' : 'pointer',
+              opacity: (!canSubmit || submitting) ? 0.7 : 1,
+            }}>
+            {submitting
+              ? <>Saving…</>
+              : <><XCircle className="w-3 h-3"/> Reject permission</>}
           </button>
         </div>
       </div>
