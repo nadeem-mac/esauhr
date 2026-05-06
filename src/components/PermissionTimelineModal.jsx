@@ -40,7 +40,7 @@ function fmtPermissionDate(iso) {
   return `${dow} ${dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
 }
 
-export default function PermissionTimelineModal({ row, employee, onClose }) {
+export default function PermissionTimelineModal({ row, employee, requesterIsHr = false, requesterIsManager = false, onClose }) {
   // Lock body scroll while the modal is open so the page behind doesn't
   // bounce or scroll when the user interacts with the modal. Restored on
   // unmount.
@@ -56,8 +56,14 @@ export default function PermissionTimelineModal({ row, employee, onClose }) {
   const TypeIcon = row.type === 'early_leave' ? Sunset : Sunrise;
   const stage   = row.stage || 'pending_manager';
 
-  // Build the four stages with their resolved state
-  const stages = buildStages(row, stage);
+  // Build the four stages with their resolved state. HR-self and
+  // manager-self both collapse to a 3-step timeline (Submit → one
+  // approval → Final) because there's only one real approval gate
+  // for those cases.
+  const stages = buildStages(row, stage, {
+    requesterIsHr: requesterIsHr || !!employee?.is_hr_reviewer,
+    requesterIsManager,
+  });
 
   // Render via portal directly into document.body so the modal sits outside
   // PermissionStatusCard's DOM tree. Without the portal, every realtime
@@ -225,7 +231,8 @@ const KNOWN_STAGES = new Set([
   'cancelled',
 ]);
 
-function buildStages(row, stage) {
+function buildStages(row, stage, ctx = {}) {
+  const { requesterIsHr = false, requesterIsManager = false } = ctx;
   // Stage 1 — Submitted (always done if the record exists)
   const submitted = {
     id: 'submitted',
@@ -243,6 +250,124 @@ function buildStages(row, stage) {
       console.warn('[PermissionTimeline] Unknown stage value:', stage, '— rendering as pending_manager');
     }
     safeStage = 'pending_manager';
+  }
+
+  // ── Special case A — HR (Bashaier) applying for herself.
+  // She's not a manager, so she has a direct manager (Fahad). Her
+  // manager's approval IS the final approval — there's no separate
+  // HR step because asking her to approve her own row is nonsensical.
+  // The decideLeave/decidePerm self-approval guard finalises on the
+  // manager step. So the timeline collapses to: Submit → Manager → Final.
+  if (requesterIsHr && !requesterIsManager) {
+    switch (safeStage) {
+      case 'pending_manager':
+        return [
+          submitted,
+          {
+            id: 'manager',
+            label: 'Pending manager approval',
+            detail: 'Awaiting your direct manager — this is the final step.',
+            state: 'current',
+          },
+          {
+            id: 'final',
+            label: 'Final approval',
+            detail: 'Confirmed once your manager approves.',
+            state: 'pending',
+          },
+        ];
+      case 'rejected_by_manager':
+        return [
+          submitted,
+          {
+            id: 'manager',
+            label: 'Rejected by manager',
+            timestamp: row.manager_decided_at,
+            note: row.manager_note,
+            state: 'rejected',
+          },
+          {
+            id: 'final',
+            label: 'Application closed',
+            detail: 'Rejected — see the decision note above.',
+            state: 'rejected',
+          },
+        ];
+      case 'approved':
+        return [
+          submitted,
+          {
+            id: 'manager',
+            label: 'Approved by manager',
+            timestamp: row.manager_decided_at,
+            state: 'done',
+          },
+          {
+            id: 'final',
+            label: 'Final approval issued',
+            timestamp: row.manager_decided_at,
+            state: 'done',
+          },
+        ];
+      // cancelled and any leftover stages fall through to the default
+      // logic below.
+    }
+  }
+
+  // ── Special case B — manager (e.g. Fahad) applying for himself.
+  // No subordinate-style manager step; HR (Bashaier) is the only
+  // gate. Timeline: Submit → HR → Final.
+  if (requesterIsManager && !requesterIsHr) {
+    switch (safeStage) {
+      case 'pending_hr':
+        return [
+          submitted,
+          {
+            id: 'hr',
+            label: 'Pending HR approval',
+            detail: 'Awaiting Bashaier (HR) — this is the final step.',
+            state: 'current',
+          },
+          {
+            id: 'final',
+            label: 'Final approval',
+            detail: 'Confirmed once HR approves.',
+            state: 'pending',
+          },
+        ];
+      case 'rejected_by_hr':
+        return [
+          submitted,
+          {
+            id: 'hr',
+            label: 'Rejected by HR',
+            timestamp: row.hr_decided_at,
+            state: 'rejected',
+          },
+          {
+            id: 'final',
+            label: 'Application closed',
+            detail: 'Rejected — see the decision note above.',
+            state: 'rejected',
+          },
+        ];
+      case 'approved':
+        return [
+          submitted,
+          {
+            id: 'hr',
+            label: 'Approved by HR',
+            timestamp: row.hr_decided_at,
+            state: 'done',
+          },
+          {
+            id: 'final',
+            label: 'Final approval issued',
+            timestamp: row.hr_decided_at,
+            state: 'done',
+          },
+        ];
+    }
   }
 
   switch (safeStage) {

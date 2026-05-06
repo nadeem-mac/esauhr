@@ -373,6 +373,8 @@ export default function MyApplicationsCard({
           request={openLeave}
           empMap={empMap}
           leaveTypes={leaveTypes}
+          requesterIsHr={!!me?.is_hr_reviewer}
+          requesterIsManager={Object.values(empMap).some(e => e?.manager_id === me?.id)}
           onClose={() => setOpenLeave(null)}
         />
       )}
@@ -380,6 +382,8 @@ export default function MyApplicationsCard({
         <PermissionTimelineModal
           row={openPerm}
           employee={empMap[openPerm.employee_id]}
+          requesterIsHr={!!me?.is_hr_reviewer}
+          requesterIsManager={Object.values(empMap).some(e => e?.manager_id === me?.id)}
           onClose={() => setOpenPerm(null)}
         />
       )}

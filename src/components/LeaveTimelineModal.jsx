@@ -30,7 +30,7 @@ const fmtDateTime = (iso) => {
   return `${d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} · ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
 };
 
-export default function LeaveTimelineModal({ request, empMap = {}, leaveTypes = [], onClose }) {
+export default function LeaveTimelineModal({ request, empMap = {}, leaveTypes = [], requesterIsHr = false, requesterIsManager = false, onClose }) {
   // Body scroll lock while open
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -94,6 +94,37 @@ export default function LeaveTimelineModal({ request, empMap = {}, leaveTypes = 
     buildHrStep(stage, request, empMap),
   ];
 
+  // Adjust timeline for HR/manager self-applications.
+  //
+  // HR (Bashaier) applying for herself: there's no separate HR step
+  // — her manager's approval IS the final decision. Drop the HR
+  // tile and relabel the manager tile so the timeline reads
+  // truthfully ("Final approval — your manager"). Without this fix,
+  // her timeline shows a phantom "Awaiting Bashaier (HR)" step that
+  // never resolves because the system rightly skips the HR self-step.
+  //
+  // Manager (e.g. Fahad) applying for himself: there's no manager
+  // step — HR (Bashaier) is the only gate. Drop the manager tile.
+  let displaySteps = steps;
+  const requesterEffectivelyHr = !!(requesterIsHr || empMap[request.employee_id]?.is_hr_reviewer);
+  if (requesterEffectivelyHr && !requesterIsManager) {
+    // Keep [submit, subs, manager], drop [hr]. Annotate manager tile.
+    displaySteps = steps.slice(0, 3).map((s, idx) => {
+      if (idx !== 2 || !s) return s;
+      // The manager tile becomes the final tile — extend its detail.
+      return {
+        ...s,
+        title: s.title?.replace(/Manager review/, 'Final approval'),
+        body: s.body || (s.state === 'now'
+          ? 'Awaiting your direct manager — this is the final step.'
+          : null),
+      };
+    });
+  } else if (requesterIsManager && !requesterEffectivelyHr) {
+    // Drop the manager step. HR is the only approval.
+    displaySteps = [steps[0], steps[1], steps[3]].filter(Boolean);
+  }
+
   const leaveType = leaveTypes.find(t => t.id === request.leave_type_id);
   const headerSubtitle = `${leaveType?.name || 'Leave'} · ${fmtDateShort(request.start_date)} → ${fmtDateShort(request.end_date)} · ${request.days} day${request.days !== 1 ? 's' : ''}`;
 
@@ -140,9 +171,9 @@ export default function LeaveTimelineModal({ request, empMap = {}, leaveTypes = 
 
         {/* Timeline */}
         <ol className="px-6 py-5 space-y-1">
-          {steps.map((s, i) => {
+          {displaySteps.map((s, i) => {
             const StepIcon = s.icon;
-            const isLast   = i === steps.length - 1;
+            const isLast   = i === displaySteps.length - 1;
             const ringColor = s.status === 'done'     ? '#047857'
                             : s.status === 'now'      ? '#92400E'
                             : s.status === 'rejected' ? '#B91C1C'
