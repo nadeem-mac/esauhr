@@ -125,10 +125,10 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                   : '#FEE2E2';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 modal-bounce-backdrop"
          style={{ background: 'rgba(15, 31, 26, 0.4)' }} onClick={onClose}>
       <div onClick={e => e.stopPropagation()}
-        className="rounded-t-2xl sm:rounded-2xl w-full max-w-3xl max-h-[92vh] overflow-y-auto fade-in"
+        className="rounded-t-2xl sm:rounded-2xl w-full max-w-3xl max-h-[92vh] overflow-y-auto modal-bounce-card"
         style={{ background: 'var(--paper)' }}>
         {/* Compact info-rich header. Pulls more details forward
             (manager, email, phone, employment status) so admin can
@@ -200,12 +200,16 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
               {canResetPin && (
                 <button
                   onClick={() => { setPinOpen(v => !v); if (delStage !== 'idle') { setDelStage('idle'); setDelTyped(''); setDelError(''); } }}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px]"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] transition-colors"
                   style={{
-                    background: pinOpen ? '#E8F5E9' : '#FFFFFF',
-                    border: '1px solid ' + (pinOpen ? '#A7F3D0' : 'var(--border-soft)'),
-                    color: pinOpen ? '#0F4C2A' : '#1F1B16',
-                    fontWeight: 600,
+                    /* PIN button: mint-green tinted always — clearly an
+                       admin action, not just neutral chrome. Tone deepens
+                       when the panel is open so admin sees the active
+                       state. */
+                    background: pinOpen ? '#0F4C2A' : '#ECFDF5',
+                    border: '1px solid ' + (pinOpen ? '#0F4C2A' : '#A7F3D0'),
+                    color: pinOpen ? '#FFFFFF' : '#0F4C2A',
+                    fontWeight: 700,
                     lineHeight: 1,
                     cursor: 'pointer',
                   }}
@@ -229,12 +233,15 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                       setDelError('');
                     }
                   }}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px]"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] transition-colors"
                   style={{
-                    background: delStage !== 'idle' ? '#FEE2E2' : '#FFFFFF',
-                    border: '1px solid ' + (delStage !== 'idle' ? '#FCA5A5' : 'var(--border-soft)'),
-                    color: delStage !== 'idle' ? '#991B1B' : '#1F1B16',
-                    fontWeight: 600,
+                    /* Delete button: clay-red tinted always — destructive
+                       action, must read as "danger" at a glance. Solid
+                       red when the confirm dialog is open. */
+                    background: delStage !== 'idle' ? '#991B1B' : '#FEF2F2',
+                    border: '1px solid ' + (delStage !== 'idle' ? '#991B1B' : '#FCA5A5'),
+                    color: delStage !== 'idle' ? '#FFFFFF' : '#991B1B',
+                    fontWeight: 700,
                     lineHeight: 1,
                     cursor: 'pointer',
                   }}

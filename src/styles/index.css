@@ -275,3 +275,27 @@ input[type="date"] { color-scheme: light; }
   animation: click-bounce 0.36s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
+/* Modal-entry bounce — applied to the employee detail modal card
+   when it mounts. Per Nadeem: "the bounce feature is for the
+   window when it shows the card". Same spring curve as the click
+   bounce, but starts from a slightly smaller scale and arrives
+   on the resting size, so the modal feels like it's springing
+   into existence. Backdrop fades in with a gentler curve. */
+@keyframes modal-card-bounce-in {
+  0%   { transform: scale(0.88); opacity: 0; }
+  60%  { transform: scale(1.03); opacity: 1; }
+  100% { transform: scale(1);    opacity: 1; }
+}
+@keyframes modal-backdrop-fade-in {
+  0%   { opacity: 0; }
+  100% { opacity: 1; }
+}
+.modal-bounce-card {
+  animation: modal-card-bounce-in 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform-origin: center center;
+  will-change: transform, opacity;
+}
+.modal-bounce-backdrop {
+  animation: modal-backdrop-fade-in 0.24s ease-out;
+}
+

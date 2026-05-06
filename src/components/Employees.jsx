@@ -2,7 +2,6 @@ import React, { useMemo, useState } from 'react';
 import { Search, Users } from 'lucide-react';
 import { Avatar, Empty } from './Dashboard.jsx';
 import { LOCATION_LABELS, calculateBalance } from '../lib/leaveLogic.js';
-import BounceTap from '../lib/useClickBounce.jsx';
 
 export default function Employees({ employees, leaveTypes, requests, balances, onSelect }) {
   const [search, setSearch] = useState('');
@@ -77,10 +76,7 @@ export default function Employees({ employees, leaveTypes, requests, balances, o
             const pct = bal && bal.total > 0 ? Math.min(100, ((bal.used + bal.pending) / bal.total) * 100) : 0;
 
             return (
-              <BounceTap
-                as="button"
-                key={emp.id}
-                onClick={() => onSelect(emp)}
+              <button key={emp.id} onClick={() => onSelect(emp)}
                 className="w-full grid grid-cols-1 md:grid-cols-12 gap-3 px-4 py-3 text-left border-b hover:bg-black/[0.02] transition-colors"
                 style={{ borderColor: 'var(--border-soft)' }}>
                 <div className="col-span-5 flex items-center gap-3">
@@ -112,7 +108,7 @@ export default function Employees({ employees, leaveTypes, requests, balances, o
                     </>
                   )}
                 </div>
-              </BounceTap>
+              </button>
             );
           })
         )}
