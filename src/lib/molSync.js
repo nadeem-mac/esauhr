@@ -165,8 +165,18 @@ export function reconcile(molSubscribers, employees) {
   );
   const matchedEmpIds = new Set();
 
+  // Threshold tuned per Nadeem's request: best-effort matching, so
+  // anything plausible surfaces as a "match" (even at low confidence)
+  // rather than being marked unmatched. Truly nothing-similar rows
+  // still go to unmatched. The auto-sync button only auto-applies
+  // ≥0.7 confident matches; lower-confidence ones need a manual
+  // tick from admin, which keeps false-positives out of the DB.
+  const MATCH_THRESHOLD = 0.18;
+
   for (const mol of molSubscribers) {
-    // Phase 1 — exact National ID match (perfect signal)
+    // Phase 1 — exact National ID match (perfect signal). Once a
+    // portal employee has been synced once, their national_id is
+    // populated, so this path dominates on subsequent uploads.
     const nidMatch = employeesByNationalId.get(mol.national_id);
     if (nidMatch) {
       matches.push({
@@ -179,35 +189,48 @@ export function reconcile(molSubscribers, employees) {
       continue;
     }
 
-    // Phase 2 — fuzzy name match. The MOL Arabic name and portal
-    // English name need to be compared via a transliteration-aware
-    // similarity score. Strategy:
-    //   1. Strip common Arabic name connectors (bin, abdul, al-)
-    //   2. Romanize remaining Arabic tokens via a lookup table
-    //   3. Token-overlap with portal name
-    const candidates = (employees || [])
+    // Phase 2 — best-effort name match. Score every portal employee
+    // against this MOL record using englishNameSimilarity on the
+    // canonical English name (transliterated via the dictionary).
+    // This is apples-to-apples Latin-vs-Latin comparison; the legacy
+    // arabic-to-romanized comparison was producing false 50% matches
+    // because every Arabic name romanizes to tokens like "abdullah",
+    // "ahmed", "al-X" that overlap with practically anything.
+    //
+    // Falls back to the legacy nameSimilarity ONLY if canonical_name
+    // is somehow missing (defensive — shouldn't happen since
+    // parseMolFile computes it).
+    const scored = (employees || [])
       .filter(e => !matchedEmpIds.has(e.id))
       .map(e => ({
         emp: e,
-        score: nameSimilarity(mol.arabic_name, e.name),
+        score: mol.canonical_name
+          ? englishNameSimilarity(mol.canonical_name, e.name)
+          : nameSimilarity(mol.arabic_name, e.name),
       }))
       .filter(x => x.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 3); // Top 3 candidates
+      .sort((a, b) => b.score - a.score);
 
-    if (candidates.length > 0 && candidates[0].score >= 0.5) {
+    // Surface up to 5 candidates so the "Change" dropdown has plenty
+    // of suggestions even when the top isn't a confident match.
+    const candidates = scored.slice(0, 5);
+
+    if (candidates.length > 0 && candidates[0].score >= MATCH_THRESHOLD) {
       matches.push({
         mol,
         employeeId: candidates[0].emp.id,
         confidence: candidates[0].score,
-        reason: 'Name similarity',
+        reason: candidates[0].score >= 0.95 ? 'Strong name match'
+              : candidates[0].score >= 0.7  ? 'Name similarity'
+              : 'Best-effort name match',
         alternatives: candidates.slice(1).map(c => ({
           employeeId: c.emp.id,
           confidence: c.score,
         })),
       });
-      // Don't add to matchedEmpIds yet — these are suggestions,
-      // not confirmed matches; user may swap during review
+      // Note: we still don't claim the empId here. The portal may
+      // legitimately have two staff with similar names; admin can
+      // swap via the Change dropdown if our top pick is wrong.
     } else {
       unmatched.push({
         mol,
@@ -232,6 +255,209 @@ export function reconcile(molSubscribers, employees) {
   const orphaned = (employees || []).filter(e => !allSuggestedIds.has(e.id));
 
   return { matches, unmatched, orphaned };
+}
+
+// ─── English-to-English name similarity ────────────────────────────
+//
+// Compares two Latin-script names (typically the canonical
+// transliteration of the MOL Arabic name vs the portal's existing
+// English name). Returns 0..1.
+//
+// Layered:
+//   1. After cleanup (strip punctuation, AL-/AL prefix, BIN
+//      connector), compare token sets.
+//   2. For each canonical token, find the BEST matching portal
+//      token via:
+//        • Exact match → 1.0
+//        • Prefix match (k=4) → 0.85
+//        • Levenshtein distance ≤ 2 normalized to length → 0.7-0.95
+//        • Substring match → 0.6
+//   3. Final score = sum of best per-token scores / max(token sets)
+//      Using max keeps the score honest when one name has more
+//      tokens than the other (a 3-token match against a 5-token
+//      MOL entry shouldn't max out at 1.0 since 2 tokens are
+//      unaccounted for).
+//
+// Special pattern: portal names sometimes mash a connector into
+// the family name ("ALSUBAIE") while MOL canonical separates with
+// dash ("AL-SUBAIE"). Tokenize() drops punctuation, and the
+// edit-distance fallback handles "ALSUBAIE" vs "ALSUBAIE" easily
+// (since dashes are stripped in both).
+export function englishNameSimilarity(nameA, nameB) {
+  if (!nameA || !nameB) return 0;
+  const tokensA = englishTokenize(nameA);
+  const tokensB = englishTokenize(nameB);
+  if (!tokensA.length || !tokensB.length) return 0;
+
+  // Score each tokenA against best tokenB (greedy, no rematch)
+  const usedB = new Set();
+  let totalScore = 0;
+  let aMatched = 0;
+  let bMatchedCount = 0;
+  for (const ta of tokensA) {
+    let best = 0;
+    let bestIdx = -1;
+    for (let i = 0; i < tokensB.length; i++) {
+      if (usedB.has(i)) continue;
+      const s = tokenSimilarity(ta, tokensB[i]);
+      if (s > best) { best = s; bestIdx = i; }
+    }
+    if (bestIdx >= 0 && best > 0.5) {
+      usedB.add(bestIdx);
+      totalScore += best;
+      aMatched++;
+    }
+  }
+  bMatchedCount = usedB.size;
+
+  // Hybrid normalization. The naive "max tokens" denominator
+  // punishes the common case where the portal stores a short form
+  // ("SADAKATHULLAH") of a long MOL name ("SADAKATHULLAH SHADULY
+  // PALAYAM MEERA SAHIB") — the score lands at 0.2 even though it's
+  // unambiguously the same person. We lift such cases via a
+  // SUBSET BONUS: when ALL tokens of the shorter name are matched
+  // strongly in the longer name, bump the final score so the row
+  // surfaces as a confident match.
+  const lenA = tokensA.length;
+  const lenB = tokensB.length;
+  const maxLen = Math.max(lenA, lenB);
+  const minLen = Math.min(lenA, lenB);
+  let score = totalScore / maxLen;
+
+  // Subset bonus — applies when one side is fully (or near-fully)
+  // covered by the other. The shorter side IS contained in the
+  // longer side. Only applies if all of the smaller set matched
+  // and the smaller set is small (≤3 tokens, the common portal-
+  // name length).
+  //
+  // Guard against single-token portal-name false positives: when
+  // minLen===1, only apply the bonus if the matched token is at
+  // least 6 characters AND the match was strong (≥0.85). This
+  // filters out cases like portal "FAHAD" (5 chars, common name)
+  // accidentally bonus-promoted against any MOL row containing a
+  // distantly-similar token. Long-token single-name portals like
+  // "SADAKATHULLAH" (13 chars) still get the full bonus.
+  const aFullyMatched = aMatched === lenA;
+  const bFullyMatched = bMatchedCount === lenB;
+  if ((aFullyMatched || bFullyMatched) && minLen >= 1 && minLen <= 3) {
+    let bonusEligible = true;
+    if (minLen === 1) {
+      // Find the matched token from the shorter side
+      const shorterTokens = lenA <= lenB ? tokensA : tokensB;
+      const matchedToken = shorterTokens[0];
+      // Only allow single-token bonus if the token is long enough
+      // to be a meaningful identifier (not common given names like
+      // FAHAD, ALI, SAAD, OMAR which would over-match).
+      if (!matchedToken || matchedToken.length < 6) {
+        bonusEligible = false;
+      } else {
+        // And require that the average per-token score from the
+        // match is high (≥0.85) — for a single matched token, this
+        // means the actual token similarity must be strong.
+        const avg = totalScore / Math.max(aMatched, 1);
+        if (avg < 0.85) bonusEligible = false;
+      }
+    }
+    if (bonusEligible) {
+      const minNorm = totalScore / minLen;
+      const blend = minLen === 1 ? 0.75 : minLen === 2 ? 0.6 : 0.45;
+      score = score * (1 - blend) + minNorm * blend;
+    }
+  }
+
+  return Math.min(score, 1.0);
+}
+
+// Tokenize an English name by stripping punctuation, dashes, and
+// known connectors. Uppercased for consistent comparisons.
+function englishTokenize(name) {
+  if (!name) return [];
+  const cleaned = String(name)
+    .toUpperCase()
+    .replace(/[.,()'"]/g, '')      // strip punctuation
+    .replace(/-/g, ' ')            // dash → space ("AL-SUBAIE" → "AL SUBAIE")
+    .replace(/\s+/g, ' ')
+    .trim();
+  const STOP = new Set(['BIN', 'BINT', 'IBN', 'ABU', 'UM', 'AL']);
+  return cleaned
+    .split(/\s+/)
+    .filter(t => t.length > 1)
+    .filter(t => !STOP.has(t));
+}
+
+// Compute similarity between two single tokens (uppercase Latin).
+// Combines exact match, prefix, and edit-distance signals.
+function tokenSimilarity(a, b) {
+  if (!a || !b) return 0;
+  if (a === b) return 1.0;
+
+  // Prefix match — common transliteration variants typically share
+  // a long prefix (MOHAMMED / MOHAMMAD / MUHAMMAD all share "MOHAM"
+  // or "MUHAM"). 4 chars catches the genuine matches without
+  // false-positives on short common roots.
+  const minLen = Math.min(a.length, b.length);
+  if (minLen >= 4) {
+    if (a.slice(0, 4) === b.slice(0, 4)) {
+      const common = commonPrefixLength(a, b);
+      return Math.min(0.85 + (common / Math.max(a.length, b.length)) * 0.15, 0.97);
+    }
+  }
+
+  // Edit-distance fallback. Use a RATIO threshold (distance / maxLen
+  // ≤ 0.25) rather than absolute distance — distance 2 on a 5-char
+  // name (AWAD vs FAHAD) is 40% of length and shouldn't count, but
+  // distance 2 on an 8-char name (SUBAIE vs ALSUBAIE) is 25% and
+  // should. Distance 1 always counts when both names are ≥4 chars.
+  const dist = levenshtein(a, b);
+  const maxLen = Math.max(a.length, b.length);
+  if (dist === 1 && maxLen >= 4) {
+    return 1.0 - (1 / maxLen) * 0.4;   // 4-char name w/ 1 edit → 0.9
+  }
+  if (dist >= 2 && maxLen >= 6 && dist / maxLen <= 0.25) {
+    return 1.0 - (dist / maxLen) * 0.6;
+  }
+
+  // Substring match — portal name might be a partial of MOL or vice
+  // versa. Require both ≥ 5 chars to avoid trivial substrings (FAH
+  // matching FAHAD inside FAHD-something).
+  if (a.length >= 5 && b.length >= 5) {
+    if (a.includes(b) || b.includes(a)) return 0.6;
+  }
+
+  return 0;
+}
+
+function commonPrefixLength(a, b) {
+  const m = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < m && a[i] === b[i]) i++;
+  return i;
+}
+
+// Standard Levenshtein edit distance, iterative O(n*m) memory.
+// For typical name token lengths (5-12 chars) this runs in ~100µs.
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const m = a.length, n = b.length;
+  let prev = new Array(n + 1);
+  let curr = new Array(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    const ac = a.charCodeAt(i - 1);
+    for (let j = 1; j <= n; j++) {
+      const cost = ac === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(
+        curr[j - 1] + 1,
+        prev[j] + 1,
+        prev[j - 1] + cost
+      );
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[n];
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────

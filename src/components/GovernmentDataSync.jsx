@@ -29,7 +29,7 @@ import {
   ChevronDown, ChevronUp, Loader2, Save, FileText, RefreshCw,
 } from 'lucide-react';
 import { directGet, directPatch } from '../supabaseClient.js';
-import { parseMolFile, reconcile, nameSimilarity } from '../lib/molSync.js';
+import { parseMolFile, reconcile, nameSimilarity, englishNameSimilarity } from '../lib/molSync.js';
 import bundledSnapshot from '../data/molSnapshot.json';
 import { logAction } from '../lib/audit.js';
 
@@ -802,7 +802,13 @@ function MatchRow({ mol, emp, confidence, reason, alternatives, allEmployees, de
             {allEmployees
               .map(e => ({
                 e,
-                score: nameSimilarity(mol.arabic_name, e.name),
+                // Prefer canonical-vs-portal English comparison; falls
+                // back to Arabic-romanized only if canonical is missing.
+                // Same priority as the reconcile() function so the
+                // dropdown's sort matches the suggested top match.
+                score: mol.canonical_name
+                  ? englishNameSimilarity(mol.canonical_name, e.name)
+                  : nameSimilarity(mol.arabic_name, e.name),
               }))
               .sort((a, b) => b.score - a.score)
               .map(({ e, score }) => (
