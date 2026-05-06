@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { psnToEmail, generatePin, getAdminParallelClient } from '../lib/psnAuth.js';
 import { logAction, formatAction, actionCategory } from '../lib/audit.js';
+import GovernmentDataSync from './GovernmentDataSync.jsx';
 
 // Admin panel: review pending PSN registration requests, generate PIN, create auth user,
 // link to employee, mark request approved. Surfaces PIN to admin so they can share it
@@ -339,6 +340,9 @@ export default function AdminPanel({ session, me, onRefreshMe }) {
         {/* SIGN-IN ACTIVITY */}
         <SignInActivity auditLog={auditLog} loading={auditLoading} onRefresh={loadAudit} />
       </div>
+
+      {/* ─────────── GOVERNMENT DATA SYNC (admin-only) ─────────── */}
+      <GovernmentDataSync me={me} />
 
       {/* ─────────── ACTIVITY LOG (admin-only) ─────────── */}
       <section className="rounded-2xl p-4 sm:p-5"
