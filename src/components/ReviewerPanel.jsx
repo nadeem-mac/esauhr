@@ -176,18 +176,22 @@ export default function ReviewerPanel({ me }) {
     new Promise((_, rej) => setTimeout(() => rej(new Error(label + ' timed out after ' + ms + 'ms')), ms)),
   ]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       // Use directGet (raw fetch) instead of supabase-js for all reads — the
       // JS client lazy builder occasionally wedges and never sends the query.
-      // is_hr_reviewer is REQUIRED — the HR-self approval guard in
-      // decideLeave/decidePerm reads this flag from empMap to decide
-      // whether to finalise on the manager step (Bashaier's case) or
-      // advance to pending_hr. Missing this column made Bashaier's
-      // requests get stuck at pending_hr after Fahad approved.
+      // is_hr_reviewer + is_admin are BOTH REQUIRED for the HR-self
+      // approval guard in decideLeave/decidePerm. The guard checks
+      // (is_hr_reviewer && !is_admin) — if either field is missing
+      // from empMap, the rule misfires. Per Nadeem (2026-05-06):
+      // "this issue is only happening for Nadeem when he is applying,
+      // after his manager sadakath approves, it does not go to
+      // Bashaier for final approval" — root cause was is_admin not
+      // selected, so !is_admin evaluated to !undefined = true,
+      // making the guard treat Nadeem as Bashaier-style HR-only.
       const emps = await directGet('employees',
-        'select=id,name,location,department,manager_id,email,join_date,is_hr_reviewer',
+        'select=id,name,location,department,manager_id,email,join_date,is_hr_reviewer,is_admin',
         { timeoutMs: 10000 });
       const map = {};
       (emps || []).forEach(e => { map[e.id] = e; });
@@ -529,18 +533,21 @@ export default function ReviewerPanel({ me }) {
   // "sadakath has to refresh his screen only then he can see Nadeem's
   // request, and once sadakath approves it should go to Bashaier for
   // final approval it should happen instant and live". We poll every
-  // 15 seconds and re-fetch on tab focus / visibility change. AppShell
-  // also has its own polling layer for the data feeding Dashboards;
-  // this one keeps the manager/HR review queues fresh independently.
+  // 30 seconds and re-fetch on tab focus / visibility change. SILENT
+  // mode skips the loading spinner so the page doesn't visibly flash.
+  // Per Nadeem follow-up (2026-05-06): "The page keeps refreshing" —
+  // the visible flicker came from setLoading(true) being toggled on
+  // every tick. Silent flag fixes that. AppShell has its own polling
+  // layer for the data feeding Dashboards.
   useEffect(() => {
     let intervalId = null;
     const tick = () => {
       if (document.hidden) return;
-      load();
+      load({ silent: true });
     };
-    intervalId = setInterval(tick, 15_000);
-    const onFocus = () => load();
-    const onVisibilityChange = () => { if (!document.hidden) load(); };
+    intervalId = setInterval(tick, 30_000);
+    const onFocus = () => load({ silent: true });
+    const onVisibilityChange = () => { if (!document.hidden) load({ silent: true }); };
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
