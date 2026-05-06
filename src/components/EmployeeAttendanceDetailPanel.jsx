@@ -301,8 +301,22 @@ export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
   // Single combined report — attendance calendar + the per-leave-type
   // breakdown that's now baked into the summary tiles. The previous
   // "Leave" report is folded into this one.
+  //
+  // Wrapped in try/catch so any error in the report builder surfaces
+  // to the user instead of silently failing on click — the previous
+  // bug ("Export button does nothing") was hard to diagnose because
+  // every error was swallowed.
   const exportHtml = useCallback(() => {
-    exportAttendanceHtml(employee, range, monthly, summary || {}, leaveRows || [], leaveTypeName);
+    try {
+      exportAttendanceHtml(employee, range, monthly, summary || {}, leaveRows || [], leaveTypeName);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Export HTML failed:', err);
+      try {
+        // eslint-disable-next-line no-alert
+        alert('Could not generate the report: ' + (err?.message || err));
+      } catch {}
+    }
   }, [employee, range, monthly, summary, leaveRows, leaveTypeName]);
 
   if (!employee) return null;
@@ -1736,26 +1750,70 @@ function exportLeaveHtml(employee, range, leaveRows, leaveTypeName) {
 }
 
 function openHtml(html, filename) {
-  // Open in a new tab. Older Safari blocks popups when triggered from
-  // an async callback, but since this function is called in the same
-  // tick as the click handler it should be fine in our case.
+  // Render the report in a new tab. The previous implementation used
+  // document.write() which has been deprecated and is now blocked by
+  // some browsers' Trusted Types / sandbox rules — that was the cause
+  // of the "Export HTML button does nothing" report.
+  //
+  // Strategy now:
+  //   1. Build a Blob URL (text/html). Always works, no popup-blocker
+  //      heuristic ambiguity, no document.write edge cases.
+  //   2. Try to open it in a new tab via window.open with the URL.
+  //      If the popup-blocker allows, the browser navigates the new
+  //      tab to the HTML directly — same result as before, more
+  //      reliable.
+  //   3. If window.open returns null (popup blocker), fall through
+  //      to a hidden anchor's `download` attribute so the user gets
+  //      the report as a saved file instead of silent failure.
   try {
-    const w = window.open('', '_blank');
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+
+    // Try popup. Pop-up blockers usually return null (no exception).
+    const w = window.open(url, '_blank');
     if (w) {
-      w.document.open();
-      w.document.write(html);
-      w.document.close();
-      try { w.document.title = filename.replace(/\.html$/, ''); } catch {}
+      // Set a friendly title once the document is ready. If we can't
+      // touch the new doc (cross-origin sandbox quirk), this just
+      // throws and the URL remains valid — the file viewer will use
+      // its own default title.
+      try {
+        w.addEventListener('load', () => {
+          try { w.document.title = filename.replace(/\.html$/, ''); } catch {}
+        });
+      } catch {}
+      // Revoke the URL after the new tab has had time to load. Doing
+      // it too early kills the page; too late leaks memory. 30s is a
+      // safe middle ground given typical report sizes.
+      setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 30000);
       return;
     }
-  } catch {}
-  // Fallback — Blob download
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 0);
+
+    // Pop-up blocked — fall back to download
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      try { URL.revokeObjectURL(url); } catch {}
+      try { a.remove(); } catch {}
+    }, 0);
+    // Tell the user explicitly so they don't think it failed —
+    // this branch is rare but the download might land in the
+    // browser's downloads folder without an obvious notification.
+    try {
+      // eslint-disable-next-line no-alert
+      alert('Pop-ups are blocked, so the report was downloaded as a file instead. Open it from your downloads folder.');
+    } catch {}
+  } catch (err) {
+    // Surface any unexpected error so it doesn't silently disappear.
+    // Console for the developer, alert for the user.
+    // eslint-disable-next-line no-console
+    console.error('Failed to open HTML report:', err);
+    try {
+      // eslint-disable-next-line no-alert
+      alert('Could not open the report: ' + (err?.message || err));
+    } catch {}
+  }
 }
