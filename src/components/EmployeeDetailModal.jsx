@@ -10,6 +10,49 @@ import { downloadMonthlyAttendanceReport } from '../lib/monthlyAttendanceReport.
 export default function EmployeeDetailModal({ employee, leaveTypes, requests, balances, typeMap, me, employees = [], empMap = {}, onSaved, onClose }) {
   const year = new Date().getFullYear();
 
+  // ─── Header PIN-reset state ──────────────────────────────────────
+  // Per Nadeem: PIN reset moves from the bottom of the modal to a
+  // small 🔑 button in the header corner, opens an inline panel
+  // when clicked. Once a PIN is set successfully, the panel shows
+  // a success message + "Edit again" affordance so admin can issue
+  // another PIN without closing the dialog.
+  const canResetPin = (me?.is_admin || me?.can_reset_pins);
+  const [pinOpen, setPinOpen] = useState(false);
+  const [pinValue, setPinValue] = useState('');
+  const [pinBusy, setPinBusy] = useState(false);
+  const [pinDone, setPinDone] = useState('');   // success message
+  const [pinErr, setPinErr] = useState('');
+  // Reset PIN state when the modal swaps to a different employee
+  React.useEffect(() => {
+    setPinOpen(false);
+    setPinValue('');
+    setPinDone('');
+    setPinErr('');
+  }, [employee.id]);
+
+  const submitPin = async (e) => {
+    if (e) e.preventDefault();
+    setPinBusy(true);
+    setPinErr('');
+    setPinDone('');
+    try {
+      if (!pinValue || pinValue.length < 6) {
+        throw new Error('PIN must be at least 6 characters.');
+      }
+      const { data, error } = await supabase.rpc('admin_reset_pin', {
+        target_psn: employee.id,
+        new_pin: pinValue,
+      });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'Unknown error');
+      setPinDone(`PIN ${data.action === 'created' ? 'issued' : 'changed'} to ${pinValue}`);
+    } catch (ex) {
+      setPinErr(ex?.message || String(ex));
+    } finally {
+      setPinBusy(false);
+    }
+  };
+
   const balByType = useMemo(() => {
     return leaveTypes.map(t => {
       const adj = balances.find(b => b.leave_type_id === t.id && b.year === year) || {};
@@ -109,10 +152,131 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                 </div>
               </div>
             </div>
-            <button onClick={onClose} className="p-1.5 rounded-full hover:bg-black/5 flex-shrink-0">
-              <X className="w-4 h-4"/>
-            </button>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              {canResetPin && (
+                <button
+                  onClick={() => setPinOpen(v => !v)}
+                  className="px-2 py-1.5 rounded-full text-[12px] hover:bg-black/5"
+                  style={{ color: pinOpen ? '#0F4C2A' : '#1F1B16', fontWeight: 600, lineHeight: 1 }}
+                  title="Reset PIN for this employee"
+                  aria-label="Reset PIN"
+                >
+                  🔑
+                </button>
+              )}
+              <button onClick={onClose} className="p-1.5 rounded-full hover:bg-black/5">
+                <X className="w-4 h-4"/>
+              </button>
+            </div>
           </div>
+
+          {/* Inline PIN-reset panel — opens when admin clicks the 🔑
+              button in the corner. Shows the input + a few quick-pick
+              defaults; on success, shows the new PIN + "Edit again"
+              link so admin can issue another PIN without closing. */}
+          {pinOpen && canResetPin && (
+            <div className="mt-3 pt-3" style={{ borderTop: '1px dashed var(--border-soft)' }}>
+              {pinDone && !pinErr ? (
+                /* Success state */
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="flex items-start gap-2 text-[12px]" style={{ color: '#0F4C2A' }}>
+                    <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <div style={{ fontWeight: 700 }}>PIN changed</div>
+                      <div className="mt-0.5" style={{ opacity: 0.85 }}>
+                        New PIN: <span className="font-mono px-1.5 py-0.5 rounded" style={{ background: '#FFFFFF', border: '1px solid #A7F3D0', fontWeight: 700, letterSpacing: '0.08em' }}>{pinValue}</span>
+                        {' '}· share this with {employee.name?.split(' ')[0] || 'them'}.
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setPinDone(''); setPinErr(''); setPinValue(''); }}
+                      className="text-[11px] inline-flex items-center gap-1 px-2.5 py-1 rounded-full"
+                      style={{ background: '#FFFFFF', border: '1px solid var(--border-soft)', color: '#0A0A0A', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      <Pencil className="w-3 h-3"/> Edit again
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setPinOpen(false); setPinDone(''); setPinErr(''); setPinValue(''); }}
+                      className="text-[11px] px-2.5 py-1 rounded-full"
+                      style={{ background: 'none', border: 'none', color: '#0A0A0A', opacity: 0.7, cursor: 'pointer' }}
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* Edit state */
+                <form onSubmit={submitPin} className="flex items-end gap-2 flex-wrap">
+                  <div className="flex-1" style={{ minWidth: 180 }}>
+                    <label className="block text-[9px] tracking-[0.16em] mb-1" style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.7 }}>
+                      🔑 NEW PIN FOR {employee.id}
+                    </label>
+                    <input
+                      type="text"
+                      value={pinValue}
+                      onChange={e => setPinValue(e.target.value)}
+                      autoFocus
+                      disabled={pinBusy}
+                      placeholder="At least 6 characters"
+                      className="w-full px-3 py-1.5 rounded-lg border text-sm font-mono"
+                      style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', color: '#1F1B16', letterSpacing: '0.08em' }}
+                    />
+                    <div className="flex gap-1 mt-1.5">
+                      {['202600', '260026', '123456'].map(p => (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => setPinValue(p)}
+                          disabled={pinBusy}
+                          className="text-[10px] tracking-wider px-1.5 py-0.5 rounded font-mono"
+                          style={{ background: 'rgba(15,40,24,0.06)', color: '#0F4C2A', border: 'none', cursor: 'pointer' }}
+                        >
+                          use {p}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => { setPinOpen(false); setPinErr(''); setPinValue(''); }}
+                      disabled={pinBusy}
+                      className="text-[11px] px-3 py-1.5 rounded-full"
+                      style={{ background: '#FFFFFF', border: '1px solid var(--border-soft)', color: '#0A0A0A', cursor: pinBusy ? 'not-allowed' : 'pointer', fontWeight: 600 }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={pinBusy || !pinValue || pinValue.length < 6}
+                      className="inline-flex items-center gap-1 text-[11px] px-3 py-1.5 rounded-full"
+                      style={{
+                        background: '#0F4C2A',
+                        color: '#FFFFFF',
+                        border: 'none',
+                        cursor: (pinBusy || !pinValue || pinValue.length < 6) ? 'not-allowed' : 'pointer',
+                        opacity: (pinBusy || !pinValue || pinValue.length < 6) ? 0.5 : 1,
+                        fontWeight: 700,
+                      }}
+                    >
+                      {pinBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                      {pinBusy ? 'Saving…' : 'Save PIN'}
+                    </button>
+                  </div>
+                  {pinErr && (
+                    <div className="w-full flex items-center gap-1.5 px-2 py-1 rounded text-[11px]"
+                      style={{ background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}>
+                      <AlertCircle className="w-3 h-3 flex-shrink-0" /> {pinErr}
+                    </div>
+                  )}
+                </form>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="p-4 space-y-4">
@@ -153,67 +317,70 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
               stripped-down version here just confuses Bashaier
               about which one to use. */}
 
-          {/* Leave balances — one row per type in a single card.
-              Way denser than the previous tile-grid: 8 leave types
-              fit in ~280px of vertical space instead of ~640px.
-              Each row shows color dot · name · slim progress bar ·
-              "available / total" numbers · accrual note. */}
+          {/* Leave balances — Option C tile grid (per Nadeem's pick).
+              4-column grid of mini stat tiles. Each tile has a thin
+              color stripe at the top, type name (10px caps), and a
+              big mono number with /total subtle. ~130px tall for 8
+              types — half the previous tile-grid footprint. */}
           <div>
             <div className="text-[10px] tracking-[0.22em] mb-2" style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.7 }}>
               LEAVE BALANCES · {year}
             </div>
-            <div className="rounded-xl border overflow-hidden"
-              style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
-              {balByType.map(({ type, balance }, idx) => {
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+              {balByType.map(({ type, balance }) => {
                 const total = balance.total || 0;
-                const pct = total > 0 ? Math.min(100, ((balance.used + balance.pending) / total) * 100) : 0;
                 const exhausted = balance.available <= 0 && total > 0;
+                const unlimited = type.accrual_method === 'unlimited' || (!total && balance.available === 0 && balance.used === 0);
                 return (
-                  <div key={type.id}
-                    className="flex items-center gap-3 px-3"
+                  <div
+                    key={type.id}
+                    className="rounded-lg overflow-hidden relative"
                     style={{
-                      borderTop: idx === 0 ? 'none' : '1px solid var(--border-soft)',
-                      paddingTop: 7, paddingBottom: 7,
-                    }}>
-                    {/* Type indicator */}
-                    <div className="flex items-center gap-1.5 flex-shrink-0" style={{ minWidth: 0, width: 130 }}>
-                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: type.color }}/>
-                      <div className="truncate text-[11.5px]" style={{ fontWeight: 600, color: '#1F1B16' }}>
-                        {type.name}
-                      </div>
+                      background: '#FAFAF6',
+                      padding: '8px 10px 8px',
+                      paddingTop: 10,
+                    }}
+                    title={`${balance.used} used · ${balance.pending} pending · ${balance.available} available${balance.accrualNote ? ' · ' + balance.accrualNote : ''}`}
+                  >
+                    {/* Color stripe */}
+                    <div
+                      style={{
+                        position: 'absolute', top: 0, left: 0, right: 0, height: 2,
+                        background: type.color,
+                      }}
+                    />
+                    {/* Name */}
+                    <div
+                      className="truncate"
+                      style={{
+                        fontSize: 10,
+                        color: '#0A0A0A',
+                        fontWeight: 600,
+                        opacity: 0.8,
+                        marginBottom: 3,
+                      }}
+                    >
+                      {type.name}
                     </div>
-
-                    {/* Progress bar (flex-1) */}
-                    <div className="flex-1 min-w-0">
-                      {total > 0 ? (
-                        <div className="h-1 rounded-full overflow-hidden" style={{ background: '#F0EDE5' }}>
-                          <div className="h-full" style={{
-                            width: `${pct}%`,
-                            background: exhausted ? 'var(--clay)' : type.color,
-                            transition: 'width 0.2s ease',
-                          }}/>
-                        </div>
-                      ) : (
-                        <div className="text-[10px]" style={{ color: '#0A0A0A', opacity: 0.45 }}>
-                          {type.accrual_method === 'unlimited' ? 'unlimited' : balance.accrualNote || '—'}
-                        </div>
+                    {/* Number — big available + small /total */}
+                    <div className="flex items-baseline gap-0.5 font-mono" style={{ lineHeight: 1 }}>
+                      <span style={{
+                        fontSize: 18, fontWeight: 700,
+                        color: exhausted ? 'var(--clay)' : '#1F1B16',
+                      }}>
+                        {unlimited ? '∞' : balance.available}
+                      </span>
+                      {!unlimited && (
+                        <span style={{ fontSize: 11, color: '#0A0A0A', opacity: 0.5, fontWeight: 400 }}>
+                          /{balance.total || 0}
+                        </span>
                       )}
-                    </div>
-
-                    {/* Numbers — available / total. Used + pending shown
-                        as a small subscript so admin sees the breakdown
-                        without crowding the row. */}
-                    <div className="flex items-baseline gap-1 flex-shrink-0 font-mono" style={{ minWidth: 70, justifyContent: 'flex-end' }}>
-                      <span className="text-[13px]" style={{ fontWeight: 700, color: exhausted ? 'var(--clay)' : '#1F1B16' }}>
-                        {balance.available}
-                      </span>
-                      <span className="text-[10px]" style={{ color: '#0A0A0A', opacity: 0.45 }}>
-                        / {balance.total || (type.accrual_method === 'unlimited' ? '∞' : 0)}
-                      </span>
                       {balance.pending > 0 && (
-                        <span className="text-[9px] ml-0.5 px-1 rounded"
-                          style={{ background: '#FEF3C7', color: '#854F0B', fontWeight: 700 }}
-                          title={`${balance.pending} pending request${balance.pending === 1 ? '' : 's'}`}>
+                        <span
+                          className="ml-auto px-1 rounded"
+                          style={{ background: '#FEF3C7', color: '#854F0B', fontSize: 9, fontWeight: 700 }}
+                          title={`${balance.pending} pending`}
+                        >
                           +{balance.pending}
                         </span>
                       )}
@@ -256,9 +423,11 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
             )}
           </div>
 
-          {(me?.is_admin || me?.can_reset_pins) && employee?.id && (
-            <ResetPinSection employee={employee} />
-          )}
+          {/* Reset PIN moved to the header (🔑 button next to close).
+              Per Nadeem: "the admin reset pin option move after the
+              main name in top in the corner, use some logical emoji
+              for it". The inline panel opens below the header on
+              click. */}
         </div>
       </div>
     </div>
@@ -1019,14 +1188,10 @@ function GovernmentRecordsPanel({ employee, onSaved }) {
       )}
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-2">
-        {/* Arabic name — same cell structure as National ID below
-            (label-on-top, value-below) so the panel has a consistent
-            grid rhythm. Spans 2 columns because Arabic full names
-            are long ("بشائر علي عبدالله السبيعي" is ~25 chars). The
-            value text is rendered LTR-aligned in the cell — it
-            still reads correctly because Arabic Unicode handles
-            its own visual order, but the label and value baselines
-            align with the rest of the grid. */}
+        {/* Row 1 — Arabic name (2 cols) · National ID (1) · Profession (1).
+            Per Nadeem: shift National ID up next to the Arabic name
+            (which leaves a gap of unused space without it), and put
+            Profession in the slot after National ID. */}
         <div className="col-span-2">
           <div className="text-[9px] tracking-[0.16em] mb-0.5" style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.7 }}>
             ARABIC NAME · الاسم
@@ -1036,52 +1201,58 @@ function GovernmentRecordsPanel({ employee, onSaved }) {
           </div>
         </div>
 
-        {/* National ID */}
+        {/* National ID — slot to the right of the Arabic name */}
         <GovField label="NATIONAL ID · رقم الهوية" mono>
           {fmt(employee.national_id)}
         </GovField>
 
-        {/* Date of birth */}
-        <GovField label="DATE OF BIRTH · تاريخ الميلاد">
-          {fmtDateLocal(employee.date_of_birth)}
-        </GovField>
+        {/* Profession — Arabic, RTL */}
+        <div>
+          <div className="text-[9px] tracking-[0.16em] mb-0.5" style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.7 }}>
+            PROFESSION · المهنة
+          </div>
+          <div style={{ fontSize: 12, color: '#1F1B16', fontFamily: 'system-ui', lineHeight: 1.2, fontWeight: 600 }}>
+            {employee.arabic_profession || '—'}
+          </div>
+        </div>
 
-        {/* Gender */}
+        {/* Row 2 — starts with Gender, then Nationality, DOB, GOSI registration */}
         <GovField label="GENDER · الجنس">
           {employee.gender ? employee.gender.toUpperCase() : '—'}
         </GovField>
 
-        {/* Nationality */}
         <GovField label="NATIONALITY · الجنسية">
           {employee.nationality ? employee.nationality.toUpperCase() : '—'}
         </GovField>
 
-        {/* GOSI registration date */}
+        <GovField label="DATE OF BIRTH · تاريخ الميلاد">
+          {fmtDateLocal(employee.date_of_birth)}
+        </GovField>
+
         <GovField label="GOSI REGISTRATION · تاريخ الإلتحاق">
           {fmtDateLocal(employee.mol_join_date)}
         </GovField>
-
-        {/* GOSI eligibility */}
-        <GovField label="GOSI ELIGIBILITY · الأهلية">
-          {fmt(employee.gosi_eligibility)}
-        </GovField>
-
-        {/* Arabic profession — wide */}
-        {employee.arabic_profession && (
-          <div className="col-span-2 sm:col-span-4">
-            <div className="text-[9px] tracking-[0.16em] mb-0.5" style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.7 }}>
-              PROFESSION · المهنة
-            </div>
-            <div style={{ direction: 'rtl', fontSize: 12, color: '#1F1B16', fontFamily: 'system-ui', lineHeight: 1.3 }}>
-              {employee.arabic_profession}
-            </div>
-          </div>
-        )}
       </div>
 
-      {employee.mol_synced_at && (
-        <div className="mt-2 pt-2 text-[9.5px]" style={{ borderTop: '1px solid var(--border-soft)', color: '#0A0A0A', opacity: 0.55 }}>
-          Last synced from MOL · GOSI: {fmtDateLocal(employee.mol_synced_at)}
+      {/* Footer line — GOSI Eligibility (small, low-traffic field)
+          and last-synced timestamp share the same line. Keeps the
+          main grid to a clean two rows while preserving the data. */}
+      {(employee.gosi_eligibility || employee.mol_synced_at) && (
+        <div className="mt-2 pt-2 flex items-center justify-between gap-3 flex-wrap text-[9.5px]"
+          style={{ borderTop: '1px solid var(--border-soft)', color: '#0A0A0A', opacity: 0.6 }}>
+          {employee.gosi_eligibility ? (
+            <span>
+              <span style={{ fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', marginRight: 6 }}>
+                GOSI ELIGIBILITY · الأهلية
+              </span>
+              <span className="font-mono" style={{ color: '#1F1B16', opacity: 0.85, fontWeight: 600 }}>
+                {employee.gosi_eligibility}
+              </span>
+            </span>
+          ) : <span/>}
+          {employee.mol_synced_at && (
+            <span>Last synced: {fmtDateLocal(employee.mol_synced_at)}</span>
+          )}
         </div>
       )}
     </section>
