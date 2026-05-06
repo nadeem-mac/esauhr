@@ -947,13 +947,14 @@ function ReevaluateCard({ onClick }) {
             lineHeight: 1.2,
           }}
         >
-          Re-evaluate already-imported rows
+          Re-evaluate all attendance rows
           <Sparkles className="w-3.5 h-3.5" style={{ color: '#F59E0B' }} />
         </div>
         <div className="text-[12px] mt-1" style={{ color: '#0A0A0A', opacity: 0.7, lineHeight: 1.5 }}>
-          Apply the late/short rules to backfill rows that were imported before the evaluation
-          logic existed. Scans <code style={{ background: '#FFFBEB', padding: '0 4px', borderRadius: 3, color: '#854F0B' }}>source=&lsquo;backfill&rsquo;</code> rows and
-          updates classifications in place &mdash; no re-upload needed.
+          Re-classify every existing attendance row using current SUP-team / standard
+          working hours and the active Mawani visit log. Use this after marking new SUP
+          staff or logging Mawani days &mdash; existing rows reclassify in place.
+          Daily-flow rows for shift workers and on-leave dates are preserved.
         </div>
       </div>
     </button>

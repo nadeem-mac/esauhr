@@ -1430,6 +1430,16 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       // check is suppressed (correct: there isn't a fresh punch-in).
       const bridgeFromPrev = nightShiftBridge[`${empKey}|${rowDate}`];
 
+      // ── EXPLICIT SUP-TEAM DESIGNATION OVERRIDES SHIFT STATUS ─────────
+      // If Bashaier has marked this employee as 'sup_team' working
+      // hours, that's authoritative — they're treated as office staff
+      // on 08:00-16:00 regardless of any lingering monthly_shift_plans
+      // entries or per-date shift overrides. This protects against
+      // stale shift data flagging a SUP employee as off-roster or
+      // forcing them onto a custom 13:00-22:00 schedule when they
+      // should be evaluated against 16:00 close time.
+      const isSupTeamForceOffice = isSupTeam(emp);
+
       // ── SHIFT-STAFF OFF-DAY ─────────────────────────────────────────
       // If the employee is on a shift roster THIS MONTH but has no
       // shift assigned for this specific date AND no night-shift end
@@ -1440,7 +1450,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       // We still surface the row in a dedicated bucket so Bashaier
       // sees that they showed up on an off-day (could be a quirk to
       // note) but it does NOT count as late or absent.
-      const isShiftStaffOnRoster = shiftStaffThisMonth.has(empKey);
+      const isShiftStaffOnRoster = !isSupTeamForceOffice && shiftStaffThisMonth.has(empKey);
       if (isShiftStaffOnRoster && !override && !bridgeFromPrev) {
         out.shiftOffDay.push({
           id: 'row-' + idx,
@@ -1454,21 +1464,24 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       }
 
       // Is the override for THIS row a night shift (start > end)?
-      const isNightShiftStart = !!override && override.startStr > override.endStr;
-      const isNightShiftEnd   = !!bridgeFromPrev;
-      const sched = override
+      // Skip override entirely for SUP-team staff — Bashaier marked
+      // them as office hours and that wins over any shift assignment.
+      const effectiveOverride = isSupTeamForceOffice ? null : override;
+      const isNightShiftStart = !!effectiveOverride && effectiveOverride.startStr > effectiveOverride.endStr;
+      const isNightShiftEnd   = !!bridgeFromPrev && !isSupTeamForceOffice;
+      const sched = effectiveOverride
         ? {
-            startStr: override.startStr,
-            endStr:   override.endStr,
-            lateCutoffStr:  addMinutesToTime(override.startStr,  +15),
+            startStr: effectiveOverride.startStr,
+            endStr:   effectiveOverride.endStr,
+            lateCutoffStr:  addMinutesToTime(effectiveOverride.startStr,  +15),
             // For night shifts, the "early cutoff" on the start day
             // is meaningless (the shift doesn't end on this date).
             // We only use earlyCutoffStr for non-night shifts in the
             // early-departure branch below.
-            earlyCutoffStr: addMinutesToTime(override.endStr,    -15),
+            earlyCutoffStr: addMinutesToTime(effectiveOverride.endStr,    -15),
             label: isNightShiftStart
-              ? 'Night shift (' + override.startStr + ' → ' + override.endStr + ' next day)'
-              : 'Custom shift (' + override.startStr + '–' + override.endStr + ')',
+              ? 'Night shift (' + effectiveOverride.startStr + ' → ' + effectiveOverride.endStr + ' next day)'
+              : 'Custom shift (' + effectiveOverride.startStr + '–' + effectiveOverride.endStr + ')',
             isCustom: true,
             isNightShift: isNightShiftStart,
           }

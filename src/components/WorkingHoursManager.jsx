@@ -249,6 +249,12 @@ function WorkingHoursTab({ me, employees, canEdit }) {
   const [filter, setFilter] = useState('all'); // 'all' | 'sup_team' | 'standard'
   const [savingId, setSavingId] = useState(null);
   const [error, setError] = useState(null);
+  // Bulk-select set of employee_ids. Toggled by per-row checkboxes
+  // and the "select all visible" header. Drives the bulk-action bar
+  // that appears when at least one row is selected.
+  const [selected, setSelected] = useState(() => new Set());
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0 });
 
   // Refresh from prop changes so realtime updates from elsewhere flow
   // through — AttendanceView already keeps `employees` live.
@@ -308,6 +314,56 @@ function WorkingHoursTab({ me, employees, canEdit }) {
       setSavingId(null);
     }
   }, [canEdit]);
+
+  // ─── Bulk operations ─────────────────────────────────────────────
+  const toggleRowSelection = useCallback((empId) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(empId)) next.delete(empId); else next.add(empId);
+      return next;
+    });
+  }, []);
+
+  const selectAllVisible = useCallback(() => {
+    setSelected(new Set(filtered.map(e => e.id)));
+  }, [filtered]);
+
+  const clearSelection = useCallback(() => setSelected(new Set()), []);
+
+  const applyBulk = useCallback(async (newGroup) => {
+    if (!canEdit) return;
+    if (selected.size === 0) return;
+    setError(null);
+    setBulkSaving(true);
+    const ids = Array.from(selected);
+    setBulkProgress({ done: 0, total: ids.length });
+    let done = 0;
+    for (const id of ids) {
+      const emp = empMap.get(id);
+      if (!emp) { done++; setBulkProgress({ done, total: ids.length }); continue; }
+      // Skip rows that already match the target group
+      if ((emp.working_hours_group || null) === newGroup) {
+        done++; setBulkProgress({ done, total: ids.length });
+        continue;
+      }
+      try {
+        await directPatch('employees', 'id', id, { working_hours_group: newGroup });
+        setEmpMap(prev => {
+          const next = new Map(prev);
+          const cur = next.get(id);
+          if (cur) next.set(id, { ...cur, working_hours_group: newGroup });
+          return next;
+        });
+      } catch (e) {
+        setError(`Failed for ${emp.name || id}: ${e?.message || e}. Stopping.`);
+        break;
+      }
+      done++;
+      setBulkProgress({ done, total: ids.length });
+    }
+    setBulkSaving(false);
+    setSelected(new Set());
+  }, [canEdit, selected, empMap]);
 
   return (
     <div>
@@ -382,6 +438,74 @@ function WorkingHoursTab({ me, employees, canEdit }) {
         </div>
       )}
 
+      {/* Bulk-action bar — shows when at least 1 row is selected */}
+      {canEdit && selected.size > 0 && (
+        <div
+          className="rounded-xl p-3 mb-3 flex items-center gap-3 flex-wrap"
+          style={{
+            background: '#0F4C2A',
+            color: '#FFFFFF',
+            animation: 'whm-pop-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)',
+            boxShadow: '0 4px 12px rgba(15,76,42,0.18)',
+          }}
+        >
+          <div className="text-[12px]" style={{ fontWeight: 700 }}>
+            {selected.size} selected
+          </div>
+          <div style={{ flex: 1 }} />
+          {bulkSaving ? (
+            <div className="inline-flex items-center gap-2 text-[12px]">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              <span>Saving {bulkProgress.done}/{bulkProgress.total}…</span>
+            </div>
+          ) : (
+            <>
+              <button
+                onClick={() => applyBulk('sup_team')}
+                className="text-[11px] px-3 py-1.5 rounded-full inline-flex items-center gap-1.5"
+                style={{
+                  background: '#FFFFFF',
+                  color: '#0F4C2A',
+                  border: 'none',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                }}
+              >
+                Mark all as SUP (08:00–16:00)
+              </button>
+              <button
+                onClick={() => applyBulk(null)}
+                className="text-[11px] px-3 py-1.5 rounded-full"
+                style={{
+                  background: 'rgba(255,255,255,0.12)',
+                  color: '#FFFFFF',
+                  border: '1px solid rgba(255,255,255,0.4)',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                }}
+              >
+                Revert all to standard
+              </button>
+              <button
+                onClick={clearSelection}
+                aria-label="Clear selection"
+                className="w-7 h-7 rounded-full inline-flex items-center justify-center"
+                style={{
+                  background: 'rgba(255,255,255,0.12)',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {/* List */}
       <div
         style={{
@@ -393,6 +517,34 @@ function WorkingHoursTab({ me, employees, canEdit }) {
           overflowY: 'auto',
         }}
       >
+        {/* List header — select-all checkbox + counts */}
+        {canEdit && filtered.length > 0 && (
+          <div
+            style={{
+              padding: '8px 12px',
+              borderBottom: '1px solid #F0F0F0',
+              background: '#FAFAF6',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              fontSize: 11,
+              color: '#0A0A0A',
+              opacity: 0.75,
+            }}
+          >
+            <input
+              type="checkbox"
+              aria-label="Select all visible"
+              checked={filtered.length > 0 && filtered.every(e => selected.has(e.id))}
+              onChange={(e) => {
+                if (e.target.checked) selectAllVisible();
+                else clearSelection();
+              }}
+              style={{ accentColor: '#0F4C2A', cursor: 'pointer' }}
+            />
+            <span>Select all visible ({filtered.length})</span>
+          </div>
+        )}
         {filtered.length === 0 ? (
           <div className="p-5 text-center" style={{ color: '#0A0A0A', opacity: 0.55, fontSize: 13 }}>
             No matching employees.
@@ -401,6 +553,7 @@ function WorkingHoursTab({ me, employees, canEdit }) {
           filtered.map((emp, i) => {
             const isSup = emp.working_hours_group === 'sup_team';
             const saving = savingId === emp.id;
+            const isSelected = selected.has(emp.id);
             return (
               <div
                 key={emp.id}
@@ -411,9 +564,20 @@ function WorkingHoursTab({ me, employees, canEdit }) {
                   alignItems: 'center',
                   gap: 10,
                   animation: `whm-row-in 0.3s ease-out ${Math.min(i * 8, 200)}ms both`,
-                  background: isSup ? 'rgba(15,76,42,0.025)' : '#FFFFFF',
+                  background: isSelected
+                    ? 'rgba(15,76,42,0.06)'
+                    : (isSup ? 'rgba(15,76,42,0.025)' : '#FFFFFF'),
                 }}
               >
+                {canEdit && (
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${emp.name || emp.id}`}
+                    checked={isSelected}
+                    onChange={() => toggleRowSelection(emp.id)}
+                    style={{ accentColor: '#0F4C2A', cursor: 'pointer', flexShrink: 0 }}
+                  />
+                )}
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="text-[13px]" style={{ color: '#1F1B16', fontWeight: 600 }}>
                     {emp.name || emp.id}

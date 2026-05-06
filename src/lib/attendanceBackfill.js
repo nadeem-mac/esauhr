@@ -292,7 +292,15 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
     // classify their punches as late/short). Skip KSA weekend
     // dates (Fri/Sat) — office staff working those are doing OT,
     // not bound by the office-hours window.
-    const isShiftWorker = shiftSet.has(empId);
+    //
+    // SUP TEAM TAKES PRECEDENCE: if Bashaier has explicitly marked
+    // the employee as 'sup_team' working hours, that designation
+    // wins over any monthly_shift_plans entry. Otherwise, e.g. a
+    // SUP-staffer who briefly appeared on a manager's roster gets
+    // forever skipped from policy evaluation. Explicit SUP
+    // designation = 08:00-16:00 office-hours eval, period.
+    const isSupTeam = emp?.working_hours_group === 'sup_team';
+    const isShiftWorker = !isSupTeam && shiftSet.has(empId);
     const dt = new Date(dateIso + 'T00:00:00');
     const isWeekend = isKsaWeekendDow(dt.getDay());
 
@@ -508,14 +516,24 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
   // Phase 2 — fetch all backfill rows. Project only the columns
   // we need to evaluate; status + minutes + id is enough.
   if (onProgress) try { onProgress({ phase: 'fetching', processed: 0, total: 0 }); } catch {}
+  // Source scope — by default we re-evaluate ALL rows (both backfill
+  // and daily-flow). The daily flow's classification is based on the
+  // employee's working_hours_group at upload time; if Bashaier later
+  // marks an employee as SUP-team, the previously-uploaded rows are
+  // stale until re-evaluated. Caller can opt into the legacy
+  // backfill-only scope by passing options.scope='backfill'.
+  const scope = options?.scope || 'all';
+  const sourceFilter = scope === 'backfill'
+    ? '&source=eq.backfill'
+    : '';  // 'all' — no filter
   const existing = await directGet(
     'attendance_daily',
     'select=id,employee_id,attendance_date,first_punch,last_punch,status,' +
     'late_minutes,early_leave_minutes,expected_start,expected_end,punch_count,' +
-    'leave_request_id,recorded_by' +
-    '&source=eq.backfill' +
+    'leave_request_id,recorded_by,source' +
+    sourceFilter +
     '&order=attendance_date.asc',
-    { timeoutMs: 30000 }
+    { timeoutMs: 45000 }
   ) || [];
 
   // Phase 3 — compute proposed updates in-memory
@@ -531,8 +549,27 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
     const policy = policyFor(emp);
     const dt = new Date(r.attendance_date + 'T00:00:00');
     const isWeekend = isKsaWeekendDow(dt.getDay());
-    const isShiftWorker = shiftSet.has(empId);
+    // SUP team takes precedence over shift-worker membership —
+    // see same comment in buildBackfillRows above.
+    const isSupTeam = emp?.working_hours_group === 'sup_team';
+    const isShiftWorker = !isSupTeam && shiftSet.has(empId);
     const isMawaniDay = mawaniSet.has(`${empId}|${r.attendance_date}`);
+    const isDailyRow = r.source !== 'backfill';
+
+    // SAFETY GUARD — for DAILY-FLOW rows belonging to SHIFT WORKERS,
+    // the original recorder evaluated against the actual shift
+    // schedule (which we don't have here). Re-evaluating those would
+    // discard valid late/short/off_roster classifications. Skip them.
+    // This is only relevant when scope='all'; backfill rows for
+    // shift workers were already written as 'present' so re-eval
+    // is a no-op anyway.
+    if (isDailyRow && isShiftWorker) continue;
+
+    // Same guard for daily-flow rows on existing 'off_roster' or
+    // 'on_leave' status — those classifications carry information
+    // we shouldn't blindly overwrite.
+    if (isDailyRow && (r.status === 'off_roster' || r.status === 'on_leave' ||
+                       r.status === 'annual_leave' || r.status === 'sick_leave')) continue;
 
     let newStatus, newLate, newEarly, newExpStart, newExpEnd, newNote;
     if (isMawaniDay) {
@@ -541,7 +578,7 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
       newEarly     = 0;
       newExpStart  = policy.startTime;
       newExpEnd    = policy.endTime;
-      newNote      = `Backfill — Mawani duty visit (${policy.label}) (re-evaluated)`;
+      newNote      = `Mawani duty visit (${policy.label}) (re-evaluated)`;
       mawaniDayCount++;
     } else if (isShiftWorker || isWeekend) {
       // Force back to a clean 'present' baseline — no eval applies.
@@ -551,8 +588,8 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
       newExpStart  = null;
       newExpEnd    = null;
       newNote = isShiftWorker
-        ? 'Backfill — shift worker, schedule unknown (re-evaluated)'
-        : 'Backfill — KSA weekend punch (re-evaluated)';
+        ? 'Shift worker, schedule unknown (re-evaluated)'
+        : 'KSA weekend punch (re-evaluated)';
     } else {
       const ev = evaluateOffice(r.first_punch, r.last_punch, policy);
       newStatus   = ev.status;
@@ -560,7 +597,7 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
       newEarly    = ev.earlyMin;
       newExpStart = policy.startTime;
       newExpEnd   = policy.endTime;
-      newNote = `Backfill — re-evaluated against ${policy.label} with 15-min grace`;
+      newNote = `Re-evaluated against ${policy.label} with 15-min grace`;
     }
 
     // Tally for the summary regardless of whether we actually write
@@ -593,7 +630,9 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
       notes:              newNote,
       recorded_at:        new Date().toISOString(),
       recorded_by:        r.recorded_by || null,
-      source:             'backfill',
+      // Preserve the original source — daily-flow rows stay as
+      // 'attendance_upload', backfill rows stay as 'backfill'.
+      source:             r.source || 'backfill',
     });
   }
 
