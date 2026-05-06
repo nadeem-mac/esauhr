@@ -127,6 +127,63 @@ function evaluateOffice(firstPunch, lastPunch, policy) {
   return { status, lateMin, earlyMin };
 }
 
+// Build a one-shot policy from a manager-assigned shift's start/end
+// times. Same shape as policyFor() output so the rest of the code
+// can use either interchangeably. 15-min grace mirrors the office
+// policy for consistency — staff get the same buffer no matter what
+// schedule applies.
+//
+// Per Nadeem (2026-05-06): on shift days we evaluate against the
+// MANAGER-ASSIGNED window (e.g. NAWAF on 5 May 00:00-08:00), not
+// against standard office hours. The grace stays at 15 min so the
+// rule is one consistent thing across the org.
+function policyFromShift(shift) {
+  if (!shift?.start || !shift?.end) return null;
+  // Normalize to HH:MM:SS
+  const norm = (t) => /^\d{2}:\d{2}$/.test(t) ? `${t}:00` : t;
+  const start = norm(shift.start);
+  const end   = norm(shift.end);
+  const startMin = timeToMinutes(start);
+  const endMin   = timeToMinutes(end);
+  if (startMin == null || endMin == null) return null;
+  // 15-minute grace either side. Compute as HH:MM strings.
+  const minToHm = (m) => {
+    const mm = ((m % 60) + 60) % 60;
+    const hh = Math.floor(((m - mm + 1440 * 4) / 60)) % 24; // wrap safe
+    return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:00`;
+  };
+  const lateCutoff  = minToHm(startMin + 15);
+  const earlyCutoff = minToHm(endMin - 15);
+  return {
+    startTime:   start,
+    endTime:     end,
+    lateCutoff,
+    earlyCutoff,
+    label:       `Shift (${start.slice(0,5)}-${end.slice(0,5)})`,
+  };
+}
+
+// Evaluate a punch pair against a manager-assigned shift schedule.
+// Same logic as evaluateOffice, but with the shift's policy.
+//
+// Edge case — overnight shifts (e.g. 22:00-06:00 the next morning):
+// the punch records sit on the dates they actually happened, so an
+// overnight shift normally produces two attendance rows (the start
+// row with first_punch ~22:00 and no last_punch; the end row with
+// no first_punch and last_punch ~06:00). For now we treat each row
+// independently — the backfill flow's existing missed-in/missed-out
+// handling already produces sensible classifications. A future
+// enhancement could pair start/end punches across midnight.
+function evaluateShift(firstPunch, lastPunch, shift) {
+  const policy = policyFromShift(shift);
+  if (!policy) {
+    // Schedule unknown — fall back to "present" without late/short.
+    return { status: 'present', lateMin: 0, earlyMin: 0, policy: null };
+  }
+  const evalRes = evaluateOffice(firstPunch, lastPunch, policy);
+  return { ...evalRes, policy };
+}
+
 // KSA weekend = Friday + Saturday. Office-hours policy doesn't apply
 // to weekend work (most office staff are off then; weekend punches
 // are typically OT or special coverage). We leave those as 'present'
@@ -172,43 +229,47 @@ export async function fetchShiftEmployeeIds() {
 
 /**
  * Fetch per-date shift assignments from employee_shifts and return a
- * Set keyed by `${empId}|${YYYY-MM-DD}`. Used by buildBackfillRows /
- * reevaluateBackfillRows to make the "is this person on shift today"
- * check date-specific instead of employee-wide.
+ * Map keyed by `${empId}|${YYYY-MM-DD}` with each value being the
+ * shift's `{ start, end, status }`. Used by buildBackfillRows /
+ * reevaluateBackfillRows to evaluate shift-worker punches against
+ * the actual manager-assigned schedule.
  *
- * Why this matters (Nadeem 2026-05-06): staff like Fahd (CSD) appear
- * in monthly_shift_plans because they cover Saturdays — but on
- * Sun-Thu they're regular office staff and should be evaluated
- * against the standard 08:00-17:00 policy. The previous logic used
- * fetchShiftEmployeeIds (employee-level), which made Fahd a "shift
- * worker" on every weekday and never flagged him for late/early.
+ * Why a Map (not Set) (Nadeem 2026-05-06): on shift days we don't
+ * just want to skip — we want to evaluate punches against the
+ * SHIFT'S actual start/end times. e.g. NAWAF H94295's shift on
+ * 5 May was 00:00-08:00 — system should compare his punches to
+ * that window, marking him late if he started after 00:00 + grace
+ * or short if he left before 08:00 - grace.
  *
  * Only includes shifts that aren't cancelled/declined — pending,
- * accepted, and acknowledged shifts all count as "on shift, skip
- * policy eval".
+ * accepted, and acknowledged shifts all count as schedule of record.
  *
  * @param {string} startDate YYYY-MM-DD inclusive
  * @param {string} endDate   YYYY-MM-DD inclusive
- * @returns {Promise<Set<string>>}
+ * @returns {Promise<Map<string, {start: string, end: string, status: string}>>}
  */
 export async function fetchShiftAssignmentDates(startDate, endDate) {
   try {
     const qs =
-      'select=employee_id,shift_date,status' +
+      'select=employee_id,shift_date,shift_start,shift_end,status' +
       `&shift_date=gte.${startDate}` +
       `&shift_date=lte.${endDate}` +
       '&status=neq.declined' +
       '&status=neq.cancelled';
     const rows = await directGet('employee_shifts', qs, { timeoutMs: 9000 });
-    const out = new Set();
+    const out = new Map();
     (rows || []).forEach(r => {
       if (r?.employee_id && r?.shift_date) {
-        out.add(`${r.employee_id}|${r.shift_date}`);
+        out.set(`${r.employee_id}|${r.shift_date}`, {
+          start: r.shift_start,
+          end: r.shift_end,
+          status: r.status,
+        });
       }
     });
     return out;
   } catch {
-    return new Set();
+    return new Map();
   }
 }
 
@@ -368,8 +429,9 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
     // employee-level) is now a fallback only when shiftDateSet is
     // empty (e.g. caller didn't pass it in for backwards compat).
     const isSupTeam = emp?.working_hours_group === 'sup_team';
-    const hasDateSpecificShift = shiftDateSet.has(`${empId}|${dateIso}`);
-    const fallbackToEmpLevel = shiftDateSet.size === 0 && shiftSet.has(empId);
+    const shiftEntry = shiftDateSet.get(`${empId}|${dateIso}`) || null;
+    const hasDateSpecificShift = !!shiftEntry;
+    const fallbackToEmpLevel = (shiftDateSet.size === 0) && shiftSet.has(empId);
     const isShiftWorker = !isSupTeam && (hasDateSpecificShift || fallbackToEmpLevel);
     const dt = new Date(dateIso + 'T00:00:00');
     const isWeekend = isKsaWeekendDow(dt.getDay());
@@ -397,10 +459,51 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
           ? `Backfill — Mawani duty visit (${policy.label}) (no punch-out)`
           : `Backfill — Mawani duty visit (${policy.label})`;
       mawaniDayCount++;
+    } else if (hasDateSpecificShift) {
+      // Shift day with a known manager-assigned schedule.
+      // Evaluate punches against THAT window with 15-min grace.
+      // Per Nadeem (2026-05-06): e.g. NAWAF on 5 May 00:00-08:00 —
+      // late if first_punch > 00:15, short if last_punch < 07:45.
+      const shiftPolicy = policyFromShift(shiftEntry);
+      if (!shiftPolicy) {
+        // Schedule data missing/invalid — fall back to old behaviour
+        // (mark present, skip eval). Defensive only.
+        status        = 'present';
+        lateMin       = 0;
+        earlyMin      = 0;
+        expectedStart = null;
+        expectedEnd   = null;
+        noteText      = `Backfill — shift assigned but times unparseable`;
+        shiftWorkerSkipped++;
+      } else if (isMissedIn) {
+        status        = 'late';
+        lateMin       = 0;
+        earlyMin      = 0;
+        expectedStart = shiftPolicy.startTime;
+        expectedEnd   = shiftPolicy.endTime;
+        noteText      = `Backfill — no punch-in recorded (${shiftPolicy.label})`;
+        missedInCount = 1;
+      } else if (isMissedOut) {
+        status        = 'short';
+        lateMin       = 0;
+        earlyMin      = 0;
+        expectedStart = shiftPolicy.startTime;
+        expectedEnd   = shiftPolicy.endTime;
+        noteText      = `Backfill — no punch-out recorded (${shiftPolicy.label})`;
+        missedOutCount = 1;
+      } else {
+        const evalRes = evaluateOffice(firstPunchRaw, lastPunchRaw, shiftPolicy);
+        status        = evalRes.status;
+        lateMin       = evalRes.lateMin;
+        earlyMin      = evalRes.earlyMin;
+        expectedStart = shiftPolicy.startTime;
+        expectedEnd   = shiftPolicy.endTime;
+        noteText      = `Backfill — evaluated against ${shiftPolicy.label} with 15-min grace`;
+      }
     } else if (isShiftWorker || isWeekend) {
-      // Shift workers: schedule unknown, but missing punches are
-      // still meaningful data-quality flags. We mark as 'present'
-      // (since we can't classify late/short) but stamp the note.
+      // Legacy / fallback path — employee-level shift fallback or
+      // KSA weekend without a shift entry. Schedule unknown, mark
+      // present, no late/short.
       status        = 'present';
       lateMin       = 0;
       earlyMin      = 0;
@@ -690,20 +793,21 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
     // shift check (Nadeem 2026-05-06): only treat as shift worker
     // on dates where they actually have an employee_shifts row.
     const isSupTeam = emp?.working_hours_group === 'sup_team';
-    const hasDateSpecificShift = shiftDateSet.has(`${empId}|${r.attendance_date}`);
-    const fallbackToEmpLevel = shiftDateSet.size === 0 && shiftSet.has(empId);
+    const shiftEntry = shiftDateSet.get(`${empId}|${r.attendance_date}`) || null;
+    const hasDateSpecificShift = !!shiftEntry;
+    const fallbackToEmpLevel = (shiftDateSet.size === 0) && shiftSet.has(empId);
     const isShiftWorker = !isSupTeam && (hasDateSpecificShift || fallbackToEmpLevel);
     const isMawaniDay = mawaniSet.has(`${empId}|${r.attendance_date}`);
     const isDailyRow = r.source !== 'backfill';
 
-    // SAFETY GUARD — for DAILY-FLOW rows belonging to SHIFT WORKERS,
+    // SAFETY GUARD — for DAILY-FLOW rows belonging to SHIFT WORKERS
+    // WITHOUT a date-specific shift entry (legacy fallback path),
     // the original recorder evaluated against the actual shift
     // schedule (which we don't have here). Re-evaluating those would
     // discard valid late/short/off_roster classifications. Skip them.
-    // This is only relevant when scope='all'; backfill rows for
-    // shift workers were already written as 'present' so re-eval
-    // is a no-op anyway.
-    if (isDailyRow && isShiftWorker) continue;
+    // For rows WITH a date-specific shift entry, we now have the
+    // schedule and can evaluate properly — those are NOT skipped.
+    if (isDailyRow && isShiftWorker && !hasDateSpecificShift) continue;
 
     // Same guard for daily-flow rows on existing 'off_roster' or
     // 'on_leave' status — those classifications carry information
@@ -732,8 +836,29 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
           ? `Mawani duty visit (${policy.label}) (no punch-out) (re-evaluated)`
           : `Mawani duty visit (${policy.label}) (re-evaluated)`;
       mawaniDayCount++;
+    } else if (hasDateSpecificShift) {
+      // Shift day with manager-assigned schedule — evaluate against it.
+      const shiftPolicy = policyFromShift(shiftEntry);
+      if (!shiftPolicy) {
+        newStatus = 'present'; newLate = 0; newEarly = 0;
+        newExpStart = null; newExpEnd = null;
+        newNote = 'Shift assigned but times unparseable (re-evaluated)';
+      } else if (isMissedIn) {
+        newStatus = 'late'; newLate = 0; newEarly = 0;
+        newExpStart = shiftPolicy.startTime; newExpEnd = shiftPolicy.endTime;
+        newNote = `No punch-in recorded (${shiftPolicy.label}) (re-evaluated)`;
+      } else if (isMissedOut) {
+        newStatus = 'short'; newLate = 0; newEarly = 0;
+        newExpStart = shiftPolicy.startTime; newExpEnd = shiftPolicy.endTime;
+        newNote = `No punch-out recorded (${shiftPolicy.label}) (re-evaluated)`;
+      } else {
+        const ev = evaluateOffice(r.first_punch, r.last_punch, shiftPolicy);
+        newStatus = ev.status; newLate = ev.lateMin; newEarly = ev.earlyMin;
+        newExpStart = shiftPolicy.startTime; newExpEnd = shiftPolicy.endTime;
+        newNote = `Re-evaluated against ${shiftPolicy.label} with 15-min grace`;
+      }
     } else if (isShiftWorker || isWeekend) {
-      // Force back to a clean 'present' baseline — no eval applies.
+      // Legacy fallback / weekend path — schedule unknown, baseline present.
       newStatus    = 'present';
       newLate      = 0;
       newEarly     = 0;
