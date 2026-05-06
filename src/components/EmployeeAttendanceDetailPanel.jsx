@@ -1219,7 +1219,10 @@ html, body {
   margin: 0; padding: 0;
   background: #FFFFFF;
   color: var(--ink);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  /* Calibri throughout — matches what's on screen so the PDF/print
+     output looks like a continuation of the in-app panel rather
+     than a separate document. */
+  font-family: Calibri, 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif;
   font-size: 13px; line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
@@ -1235,9 +1238,10 @@ header.report-header {
   text-transform: uppercase; margin-bottom: 8px;
 }
 h1 {
-  font-family: Georgia, 'Times New Roman', serif;
+  font-family: Calibri, 'Segoe UI', sans-serif;
   font-size: 30px; line-height: 1.15;
   margin: 0 0 6px; font-weight: 700; color: var(--ink);
+  letter-spacing: -0.005em;
 }
 .sub { color: var(--ink-mute); font-size: 13px; }
 .meta {
@@ -1247,41 +1251,77 @@ h1 {
 .meta strong { color: var(--ink); }
 .summary {
   display: grid; grid-template-columns: repeat(4, 1fr);
-  gap: 12px; margin-bottom: 28px;
+  gap: 10px; margin-bottom: 14px;
 }
+/* TILES — palette-driven so the printed report inherits the same
+   visual language Bashaier sees on screen. Each tile gets one of
+   the .tile.* color classes; the base .tile rule sets layout, the
+   modifier rules set bg / fg / border. Print-color-adjust forces
+   browsers to keep the colors in printed output (most default to
+   stripping backgrounds when printing). */
 .tile {
-  background: var(--cream); border-radius: 10px; padding: 14px;
+  border-radius: 10px; padding: 12px;
   border: 1px solid var(--rule);
+  background: var(--cream);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
 }
 .tile .v {
-  font-family: Georgia, serif; font-size: 28px; font-weight: 700;
-  color: var(--ink); line-height: 1; font-variant-numeric: tabular-nums;
+  font-family: Calibri, 'Segoe UI', sans-serif;
+  font-size: 26px; font-weight: 700;
+  color: inherit; line-height: 1; font-variant-numeric: tabular-nums;
 }
 .tile .l {
-  font-size: 10px; letter-spacing: 0.16em;
-  color: var(--ink-mute); font-weight: 700;
-  text-transform: uppercase; margin-top: 6px;
+  font-size: 10px; letter-spacing: 0.14em;
+  font-weight: 700; text-transform: uppercase;
+  margin-top: 6px; opacity: 0.85;
 }
 .tile .s {
   font-size: 11px;
-  color: var(--ink-mute);
   margin-top: 4px;
   font-weight: 500;
+  opacity: 0.75;
   font-variant-numeric: tabular-nums;
 }
-.summary + .summary { margin-top: 8px; }
+/* Color modifiers — matched to the on-screen palettes */
+.tile.t-present     { background: #ECFDF5; color: #0F4C2A; border-color: #A7F3D0; }
+.tile.t-late        { background: #FEF3C7; color: #854F0B; border-color: #FCD34D; }
+.tile.t-short       { background: #FED7AA; color: #7C2D12; border-color: #FB923C; }
+.tile.t-absent      { background: #FEE2E2; color: #991B1B; border-color: #FCA5A5; }
+.tile.t-missin      { background: #FCE7F3; color: #86198F; border-color: #F0ABFC; }
+.tile.t-missout     { background: #E0E7FF; color: #3730A3; border-color: #A5B4FC; }
+.tile.t-annual      { background: #CCFBF1; color: #115E59; border-color: #5EEAD4; }
+.tile.t-sick        { background: #EDE9FE; color: #5B21B6; border-color: #C4B5FD; }
+.tile.t-emergency   { background: #FEE2E2; color: #991B1B; border-color: #FCA5A5; }
+.tile.t-unpaid      { background: #F5F5F5; color: #525252; border-color: #A3A3A3; }
+.tile.t-maternity   { background: #FCE7F3; color: #9D174D; border-color: #F9A8D4; }
+.tile.t-paternity   { background: #DBEAFE; color: #1E3A8A; border-color: #93C5FD; }
+.tile.t-hajj        { background: #FEF3C7; color: #854F0B; border-color: #FCD34D; }
+.tile.t-compassion  { background: #E0E7FF; color: #3730A3; border-color: #A5B4FC; }
+/* Muted variant — for zero-value tiles when shown for layout
+   symmetry. Slightly desaturated against the base background. */
+.tile.muted {
+  background: #FAFAF6 !important;
+  color: #737373 !important;
+  border-color: #E5E5E5 !important;
+}
+.summary + .summary { margin-top: 0; }
 h2.section-h2 {
-  font-family: Georgia, serif; font-size: 16px; font-weight: 700;
-  color: var(--ink); margin: 16px 0 10px; padding-bottom: 6px;
+  font-family: Calibri, 'Segoe UI', sans-serif;
+  font-size: 14px; font-weight: 700;
+  color: var(--ink); margin: 18px 0 8px; padding-bottom: 6px;
   border-bottom: 1px solid var(--rule);
+  letter-spacing: 0.05em; text-transform: uppercase;
 }
 section.month {
   margin-bottom: 22px;
   break-inside: avoid;
 }
 section.month h2 {
-  font-family: Georgia, serif; font-size: 18px; font-weight: 700;
+  font-family: Calibri, 'Segoe UI', sans-serif;
+  font-size: 16px; font-weight: 700;
   color: var(--ink); margin: 0 0 8px;
+  letter-spacing: -0.005em;
 }
 table {
   width: 100%; border-collapse: collapse;
@@ -1293,6 +1333,8 @@ thead th {
   font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
   text-align: left; padding: 8px 10px; font-weight: 700;
   border-bottom: 1px solid var(--green-mid);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
 }
 tbody td {
   padding: 7px 10px; font-size: 12px; border-top: 1px solid var(--rule);
@@ -1304,6 +1346,8 @@ tbody tr:first-child td { border-top: none; }
   padding: 1px 7px; border-radius: 999px;
   font-size: 10px; font-weight: 700;
   letter-spacing: 0.04em;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
 }
 .chip.present      { background: #ECFDF5; color: #0F4C2A; border: 1px solid #A7F3D0; }
 .chip.late         { background: #FEF3C7; color: #854F0B; border: 1px solid #FCD34D; }
@@ -1397,44 +1441,95 @@ function exportAttendanceHtml(employee, range, monthly, summary, leaveRows, leav
   // tile). Sub is rendered inline below the value so the printed
   // report carries the same magnitude information as the on-screen
   // panel.
-  const tile = (count, label, sub) => `
-    <div class="tile">
+  // Colored tile renderer. `tone` is the modifier suffix that maps to
+  // a .tile.t-* class in REPORT_STYLES; `muted` adds the .muted
+  // override for zero-value cells. Mirrors the SummaryTile component
+  // on screen so the printed report carries the same visual language.
+  const tile = (count, label, sub, tone, muted) => `
+    <div class="tile t-${tone}${muted ? ' muted' : ''}">
       <div class="v">${count}</div>
       <div class="l">${esc(label)}</div>
       ${sub ? `<div class="s">${esc(sub)}</div>` : ''}
     </div>
   `;
 
+  // Tone for each leave type — same code-pattern matching as the
+  // on-screen leaveMetaFor() helper, here just translated to a CSS
+  // class suffix.
+  const leaveTone = (entry) => {
+    const k = String(entry?.code || entry?.name || '').toUpperCase();
+    if (/SICK/.test(k))             return 'sick';
+    if (/EMERG/.test(k))            return 'emergency';
+    if (/UNPAID/.test(k))           return 'unpaid';
+    if (/MATERNIT/.test(k))         return 'maternity';
+    if (/PATERNIT/.test(k))         return 'paternity';
+    if (/HAJJ/.test(k))             return 'hajj';
+    if (/COMPASS|BEREAVE/.test(k))  return 'compassion';
+    return 'annual';
+  };
+
   const lateMins  = summary?.totalLateMinutes  || 0;
   const earlyMins = summary?.totalEarlyMinutes || 0;
   const missedIn  = summary?.missedInCount     || 0;
   const missedOut = summary?.missedOutCount    || 0;
 
+  // Attendance row — three primary tiles always render. Zero-value
+  // tiles use the muted variant for layout symmetry, matching the
+  // on-screen treatment.
   const attendanceTilesHtml = `
-    <div class="summary">
-      ${tile(counts.present || 0, 'Present')}
-      ${tile(counts.late    || 0, 'Late',       lateMins  > 0 ? `${lateMins} min total`  : null)}
-      ${tile(counts.short   || 0, 'Left early', earlyMins > 0 ? `${earlyMins} min total` : null)}
-      ${tile(counts.absent  || 0, 'Absent')}
+    <div class="summary" style="grid-template-columns: repeat(3, 1fr);">
+      ${tile(counts.present || 0, 'Present',    null,                                            'present',  (counts.present || 0) === 0)}
+      ${tile(counts.late    || 0, 'Late',       lateMins  > 0 ? `${lateMins} min total`  : null, 'late',     (counts.late    || 0) === 0)}
+      ${tile(counts.short   || 0, 'Left early', earlyMins > 0 ? `${earlyMins} min total` : null, 'short',    (counts.short   || 0) === 0)}
     </div>
-    ${(missedIn > 0 || missedOut > 0) ? `
-    <div class="summary">
-      ${tile(missedIn,  'No clock-in')}
-      ${tile(missedOut, 'No clock-out')}
-    </div>` : ''}
+    <div class="summary" style="grid-template-columns: repeat(3, 1fr);">
+      ${tile(counts.absent  || 0, 'Absent',       null, 'absent',  (counts.absent || 0) === 0)}
+      ${tile(missedIn,            'No clock-in',  null, 'missin',  missedIn === 0)}
+      ${tile(missedOut,           'No clock-out', null, 'missout', missedOut === 0)}
+    </div>
   `;
 
-  // Leave breakdown — one tile per leave type that has approved
-  // days in the range. Iterates the Map in descending-days order so
-  // the report leads with the most-used type.
-  const leaveTypesList = summary?.leaveByType
-    ? Array.from(summary.leaveByType.values()).sort((a, b) => b.days - a.days)
-    : [];
-  const leaveTilesHtml = leaveTypesList.length === 0 ? '' : `
+  // Leave breakdown — always show the canonical 8 types so every
+  // report has the same shape. Used types from summary.leaveByType
+  // win when matched; unused types render as 0/muted.
+  const FALLBACK_LEAVE_TYPES = [
+    { code: 'ANNUAL',        name: 'Annual leave' },
+    { code: 'SICK',          name: 'Sick leave' },
+    { code: 'EMERGENCY',     name: 'Emergency leave' },
+    { code: 'UNPAID',        name: 'Unpaid leave' },
+    { code: 'MATERNITY',     name: 'Maternity leave' },
+    { code: 'PATERNITY',     name: 'Paternity leave' },
+    { code: 'HAJJ',          name: 'Hajj leave' },
+    { code: 'COMPASSIONATE', name: 'Compassionate leave' },
+  ];
+  const usedByCode = new Map();
+  if (summary?.leaveByType) {
+    for (const entry of summary.leaveByType.values()) {
+      const k = String(entry.code || entry.name || '').toUpperCase();
+      usedByCode.set(k, entry);
+    }
+  }
+  const leaveTilesList = FALLBACK_LEAVE_TYPES.map(fb => {
+    const fbKey = fb.code.toUpperCase();
+    let used = null;
+    for (const [k, v] of usedByCode) {
+      if (k.includes(fbKey) || fbKey.includes(k)) { used = v; break; }
+    }
+    return used
+      ? { ...used, _fallback: false }
+      : { id: `fb-${fb.code}`, name: fb.name, code: fb.code, days: 0, requests: 0, _fallback: true };
+  });
+  const leaveTilesHtml = `
     <h2 class="section-h2">Leave breakdown</h2>
-    <div class="summary">
-      ${leaveTypesList.map(entry =>
-        tile(entry.days, entry.name, `${entry.requests} request${entry.requests === 1 ? '' : 's'}`)
+    <div class="summary" style="grid-template-columns: repeat(4, 1fr);">
+      ${leaveTilesList.map(entry =>
+        tile(
+          entry.days,
+          entry.name,
+          entry.requests > 0 ? `${entry.requests} request${entry.requests === 1 ? '' : 's'}` : null,
+          leaveTone(entry),
+          entry.days === 0
+        )
       ).join('')}
     </div>
   `;
