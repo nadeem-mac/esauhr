@@ -2671,15 +2671,20 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // and renders the matching panel inside the tile expansion area —
   // there are no longer any always-visible action sections below the
   // FileSummary card; everything happens inside the tile.
-  const buildLatePanel = () => (
+  const buildLatePanel = (opts = {}) => {
+    const { shiftMode = false } = opts;
+    const filteredEntries = (detection.late || []).filter(e =>
+      shiftMode ? !!e.isCustomShift : !e.isCustomShift
+    );
+    return (
     <FlaggedSection
-      title="Late arrivals"
-      kicker={'AFTER ' + LATE_CUTOFF + ' · TODAY'}
+      title={shiftMode ? 'Shift staff — Late arrivals' : 'Late arrivals'}
+      kicker={shiftMode ? 'BEYOND SHIFT START + 15 MIN GRACE' : 'AFTER ' + LATE_CUTOFF + ' · TODAY'}
       iconColor="#BE123C"
       barFrom="#FB7185" barTo="#BE123C"
-      empty="Nobody arrived late today — well done team."
+      empty={shiftMode ? 'No shift staff flagged for late shift-IN.' : 'Nobody arrived late today — well done team.'}
       onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'late', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
-      entries={detection.late.map(e => {
+      entries={filteredEntries.map(e => {
         const baseDetail = 'Punched in at ' + e.punchInStr + ' — '
           + e.minutesLate + ' min after grace period'
           + (e.isCustomShift ? ' · ' + e.scheduleLabel : '');
@@ -2740,7 +2745,8 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         </span>
       )}
     />
-  );
+    );
+  };
   const buildMissedInPanel = () => (
     <FlaggedSection
       title="Missed punch-in"
@@ -2786,15 +2792,20 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       )}
     />
   );
-  const buildEarlyPanel = () => (
+  const buildEarlyPanel = (opts = {}) => {
+    const { shiftMode = false } = opts;
+    const filteredEntries = (detection.early || []).filter(e =>
+      shiftMode ? !!e.isCustomShift : !e.isCustomShift
+    );
+    return (
     <FlaggedSection
-      title="Early departures"
-      kicker="LEFT BEFORE GRACE WINDOW · YESTERDAY"
+      title={shiftMode ? 'Shift staff — Early departures' : 'Early departures'}
+      kicker={shiftMode ? 'LEFT BEFORE SHIFT END − 15 MIN GRACE' : 'LEFT BEFORE GRACE WINDOW · YESTERDAY'}
       iconColor="#A16207"
       barFrom="#FACC15" barTo="#A16207"
-      empty="Nobody left early yesterday — full day attendance recorded."
+      empty={shiftMode ? 'No shift staff flagged for early shift-OUT.' : 'Nobody left early yesterday — full day attendance recorded.'}
       onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'early', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
-      entries={detection.early.map(e => {
+      entries={filteredEntries.map(e => {
         const baseDetail = 'Punched out at ' + e.punchOutStr + ' — '
           + e.minutesEarly + ' min before scheduled ' + e.scheduledEnd
           + (e.isCustomShift ? ' · ' + e.scheduleLabel : (e.isSup ? ' (SUP team)' : ''));
@@ -2848,7 +2859,8 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         </span>
       )}
     />
-  );
+    );
+  };
   const buildMissedOutPanel = () => (
     <FlaggedSection
       title="Missed punch-out"
@@ -3561,10 +3573,18 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // the report.
   const dailyPanelsOk = !windowMismatch && !csvIsWeekend;
   const actionPanels = {
-    ...(dailyPanelsOk && parsed.hasTodayData     ? { late:      buildLatePanel() }      : {}),
+    ...(dailyPanelsOk && parsed.hasTodayData     ? { late:      buildLatePanel({ shiftMode: false }) }      : {}),
     ...(dailyPanelsOk && parsed.hasTodayData     ? { missedIn:  buildMissedInPanel() }  : {}),
-    ...(dailyPanelsOk && parsed.hasYesterdayData ? { early:     buildEarlyPanel() }     : {}),
+    ...(dailyPanelsOk && parsed.hasYesterdayData ? { early:     buildEarlyPanel({ shiftMode: false }) }     : {}),
     ...(dailyPanelsOk && parsed.hasYesterdayData ? { missedOut: buildMissedOutPanel() } : {}),
+    // Shift-staff panels — populated when there's at least one
+    // shift-tagged entry. Shifts can fire for either today (night
+    // shift START flagged late) or yesterday (early shift-OUT), so
+    // we include them whenever the daily window is valid.
+    ...(dailyPanelsOk && (detection.late || []).some(e => e.isCustomShift)
+      ? { shiftLate:  buildLatePanel({ shiftMode: true }) }  : {}),
+    ...(dailyPanelsOk && (detection.early || []).some(e => e.isCustomShift)
+      ? { shiftEarly: buildEarlyPanel({ shiftMode: true }) } : {}),
     ...(detection.weekend.length ? { weekend: buildWeekendPanel() } : {}),
   };
 
@@ -3897,10 +3917,20 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           totalRows={parsed.rows.length}
           offDateCount={parsed.offDateCount}
           counts={{
-            late:        detection.late.length,
-            missedIn:    detection.missedIn.length,
-            early:       detection.early.length,
-            missedOut:   detection.missedOut.length,
+            late:           detection.late.filter(e => !e.isCustomShift).length,
+            missedIn:       detection.missedIn.filter(e => !e.isCustomShift).length,
+            early:          detection.early.filter(e => !e.isCustomShift).length,
+            missedOut:      detection.missedOut.filter(e => !e.isCustomShift).length,
+            // Shift staff defaulters — split out so Bashaier sees them
+            // in a dedicated section with their own email flow. Per
+            // Nadeem (2026-05-06): "shift staff will have their own
+            // tile". The same emails fire (with shift-flavoured subject
+            // and body), but the counts surface separately to keep the
+            // dashboard clean.
+            shiftLate:      detection.late.filter(e => !!e.isCustomShift).length,
+            shiftEarly:     detection.early.filter(e => !!e.isCustomShift).length,
+            shiftMissedIn:  detection.missedIn.filter(e => !!e.isCustomShift).length,
+            shiftMissedOut: detection.missedOut.filter(e => !!e.isCustomShift).length,
             onTime:      detection.onTime.length,
             onLeave:     detection.onLeave.length,
             unknown:     detection.unknownEmp.length,
@@ -4445,6 +4475,59 @@ function FileSummary({
                 <CountPill kind="early"     icon="⏰" label="Early departure"  count={counts.early}     color="#A16207" tint="#FEFCE8" subtext="left before grace cutoff"  isOpen={drillKind === 'early'}     onClick={() => setDrillKind(drillKind === 'early'     ? null : 'early')}     progress={progressByKind?.early}/>
                 <CountPill kind="missedOut" icon="🚪" label="Missed punch-out" count={counts.missedOut} color="#7E22CE" tint="#FAF5FF" subtext="no last-punch on record"   isOpen={drillKind === 'missedOut'} onClick={() => setDrillKind(drillKind === 'missedOut' ? null : 'missedOut')} progress={progressByKind?.missedOut}/>
                 <CountPill kind="onLeave"   icon="🌴" label="On leave"         count={counts.onLeave}   color="#0E7490" tint="#ECFEFF" subtext="approved leave on file"    isOpen={drillKind === 'onLeave'}   onClick={() => setDrillKind(drillKind === 'onLeave'   ? null : 'onLeave')}/>
+              </div>
+            </div>
+          )}
+
+          {/* SHIFT STAFF — separate dashboard for shift-roster
+              defaulters. Same email function as office staff,
+              but the tiles surface independently so Bashaier
+              can see "shift-night-start late" and "shift-end
+              early" without them being mixed into the office
+              attendance counts. Per Nadeem (2026-05-06): "shift
+              staff will have their own tile". Renders only when
+              there's at least one shift defaulter to avoid
+              taking up vertical space when there's nothing
+              actionable. */}
+          {(counts.shiftLate > 0 || counts.shiftEarly > 0) && (
+            <div>
+              <div className="flex items-baseline gap-2 mb-2">
+                <span className="text-[10px] tracking-[0.25em]" style={{ fontWeight: 700, color: '#0A0A0A' }}>
+                  SHIFT STAFF
+                </span>
+                <span className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+                  Manager-assigned shift schedule &middot; click for details
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {counts.shiftLate > 0 && (
+                  <CountPill
+                    kind="shiftLate"
+                    icon="🌙"
+                    label="Shift late arrival"
+                    count={counts.shiftLate}
+                    color="#3730A3"
+                    tint="#EEF2FF"
+                    subtext="late shift-IN punch"
+                    isOpen={drillKind === 'shiftLate'}
+                    onClick={() => setDrillKind(drillKind === 'shiftLate' ? null : 'shiftLate')}
+                    progress={progressByKind?.shiftLate}
+                  />
+                )}
+                {counts.shiftEarly > 0 && (
+                  <CountPill
+                    kind="shiftEarly"
+                    icon="⏰"
+                    label="Shift early departure"
+                    count={counts.shiftEarly}
+                    color="#5B21B6"
+                    tint="#F5F3FF"
+                    subtext="early shift-OUT punch"
+                    isOpen={drillKind === 'shiftEarly'}
+                    onClick={() => setDrillKind(drillKind === 'shiftEarly' ? null : 'shiftEarly')}
+                    progress={progressByKind?.shiftEarly}
+                  />
+                )}
               </div>
             </div>
           )}
