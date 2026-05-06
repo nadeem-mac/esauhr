@@ -4,8 +4,9 @@ import { X, AlertTriangle, Sunrise, Sunset, Loader2, History, Clock } from 'luci
 import { logAction } from '../lib/audit.js';
 import { checkExceeds, summariseMonth, PERMISSION_QUOTA, PERMISSION_TYPES, reasonsFor } from '../lib/permissionLogic.js';
 import { getMinPermissionDate, isRetroactive, MAX_RETROACTIVE_DAYS } from '../lib/retroactivePermissions.js';
+import { initialApprovalStage } from '../lib/leaveLogic.js';
 
-export default function PermissionRequestModal({ me, type = 'late_arrival', monthRows = [], onClose, onSubmitted }) {
+export default function PermissionRequestModal({ me, type = 'late_arrival', monthRows = [], employees = [], onClose, onSubmitted }) {
   const today = new Date().toISOString().slice(0, 10);
   // Earliest date the staff can pick — today minus MAX_RETROACTIVE_DAYS.
   // The HTML date input enforces this client-side via `min`. The DB
@@ -168,7 +169,10 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
         // gets excluded from the staff's visible list.
         requested_at:    new Date().toISOString(),
         requested_by:    me.id,
-        stage:           'pending_manager',
+        // Stage routing — managers (anyone with direct reports) skip
+        // the manager-approval step and go straight to HR. Non-managers
+        // start at 'pending_manager' as usual.
+        stage:           initialApprovalStage(me, employees),
       }).select().single();
       if (error) throw error;
       logAction(me, 'permission_create', {

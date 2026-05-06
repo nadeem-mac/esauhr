@@ -1105,6 +1105,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
       {(requestFlow === 'sick_unified' || requestFlow === 'sick_unified_cert_only') && (
         <SickLeaveModal
           employee={me}
+          employees={employees}
           forceCertPath={requestFlow === 'sick_unified_cert_only'}
           myDeclarations={(requests || []).filter(r => r.employee_id === me?.id)}
           onClose={() => setRequestFlow(null)}
@@ -1151,6 +1152,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
         <PermissionRequestModal
           me={me}
           type={requestFlow}
+          employees={employees}
           monthRows={(() => {
             // Filter the global permissions list down to this user's
             // current-month rows, which is what the modal needs for its

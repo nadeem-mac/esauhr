@@ -203,7 +203,32 @@ export function findOverlappingRequests(employeeId, startDate, endDate, requests
 }
 
 // ──────────────────────────────────────────────────────────────────────
-//  ELIGIBILITY CHECK — can this employee take this leave type right now?
+//  INITIAL APPROVAL STAGE — where does this requester's row START?
+// ──────────────────────────────────────────────────────────────────────
+// Per Nadeem: managers' own requests should skip the manager-approval
+// step entirely and go straight to HR (Bashaier). Rationale: when Fahad
+// (SUP manager) applies for leave or permission, asking him to approve
+// his own request is nonsensical, and Bashaier as deputy manager owns
+// the next-level authority. Same principle for any other manager who
+// gets added later — if you have direct reports, your own request is a
+// peer-level one, not a subordinate one.
+//
+// Inputs:
+//   • requester  — the employee record submitting the request
+//   • employees  — the full company list (used to detect direct reports)
+//
+// Returns one of:
+//   • 'pending_hr'      — requester is a manager themselves, so HR
+//                         (Bashaier) is the only approver
+//   • 'pending_manager' — normal flow, requester's manager approves first
+//                         then HR finalises
+export function initialApprovalStage(requester, employees = []) {
+  if (!requester) return 'pending_manager';
+  const hasDirectReports = (employees || []).some(e => e.manager_id === requester.id);
+  if (hasDirectReports) return 'pending_hr';
+  return 'pending_manager';
+}
+
 // ──────────────────────────────────────────────────────────────────────
 export function checkEligibility(employee, leaveType, requests = [], asOf = new Date()) {
   const errors = [];

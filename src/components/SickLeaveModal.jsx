@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { HeartPulse, X, Loader2, AlertTriangle, FileText, Check, Upload, RefreshCw } from 'lucide-react';
 import { directPost, directGet, directPatch } from '../supabaseClient.js';
 import { extractFromPdf } from '../lib/sehhatyPdfExtract.js';
+import { initialApprovalStage } from '../lib/leaveLogic.js';
 import { getExtendableDeclaration, buildExtensionPatch, formatDeclarationRange, MAX_DECLARATION_SPAN_DAYS } from '../lib/sickDeclaration.js';
 
 // =============================================================================
@@ -78,18 +79,12 @@ const REASON_OPTIONS = [
 
 export default function SickLeaveModal({
   employee,
+  employees = [],
   onClose,
   onCreated,
   declaredVia = 'staff',
   isOnBehalf = false,
-  // forceCertPath — when true, skip the Path A/B picker and start
-  // directly in Path B (cert upload). Set by AppShell when the staff
-  // arrived via the soft-block escape hatch on RequestTypePicker
-  // (their prior declaration is overdue, only path forward is cert).
   forceCertPath = false,
-  // myDeclarations — the staff's leave_requests rows. Passed in so
-  // the modal can find an extendable pending_certificate row and
-  // surface the extend-by-1-day prompt before the Path A form opens.
   myDeclarations = [],
 }) {
   // path: null until the staff picks. 'declare' = Path A, 'submit' = Path B.
@@ -449,7 +444,10 @@ export default function SickLeaveModal({
       if (useAttach) {
         // Branch 1: PATCH the prior pending_certificate row.
         const patch = {
-          stage:                  'pending_manager',
+          // Stage routing — managers (anyone with direct reports)
+          // skip the manager-approval step and go straight to HR.
+          // Non-managers: normal pending_manager flow.
+          stage:                  initialApprovalStage(employee, employees),
           sehhaty_code:           ex.leaveId,
           start_date:             startDate,
           end_date:               endDate,
@@ -485,7 +483,9 @@ export default function SickLeaveModal({
           end_date:               endDate,
           days:                   days,
           is_half_day:            false,
-          stage:                  'pending_manager',
+          // Same manager-bypass rule as Branch 1 — managers' sick
+          // leaves go straight to HR (Bashaier).
+          stage:                  initialApprovalStage(employee, employees),
           // Set requested_at explicitly — same reason as Path A. Without
           // it, MyApplicationsCard's 90-day window filter excludes the
           // row from the staff's own visible list.

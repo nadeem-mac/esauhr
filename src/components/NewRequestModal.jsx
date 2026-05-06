@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { X, AlertTriangle, AlertCircle, Calendar, ShieldCheck } from 'lucide-react';
 import {
   calculateRequestDays, calculateBalance, findOverlappingRequests, checkEligibility,
-  todayISO, fmtDateShort, LOCATION_LABELS,
+  todayISO, fmtDateShort, LOCATION_LABELS, initialApprovalStage,
 } from '../lib/leaveLogic.js';
 import {
   normaliseSehhatyCode, looksLikeSehhatyCode,
@@ -161,10 +161,23 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
         // queries that read these fields.
         substitute_ids: isSick ? [] : substituteIds,
         substitute_decisions: decisions,
-        // Stage transition skips pending_substitutes for sick leaves —
-        // they go straight to the manager so the substitute-accept
-        // gate doesn't block a back-dated illness submission.
-        stage: isSick ? 'pending_manager' : 'pending_substitutes',
+        // Stage routing —
+        //   • Sick leaves and managers' own requests skip the
+        //     substitute-accept step (sick leaves: backdated illness,
+        //     managers: no manager step needed since they ARE the
+        //     manager) and start at HR or manager review accordingly.
+        //   • Non-managers submitting non-sick leave start at
+        //     pending_substitutes per the standard flow.
+        stage: (() => {
+          const initial = initialApprovalStage(me, employees);
+          // Manager-of-self is HR — go directly there (skip substitute
+          // accept and skip manager step).
+          if (initial === 'pending_hr') return 'pending_hr';
+          // Non-manager: sick leaves skip the substitute step (backdated
+          // illness shouldn't be blocked by sub-accept), other leaves go
+          // through the substitute-accept gate first.
+          return isSick ? 'pending_manager' : 'pending_substitutes';
+        })(),
         // Sehhaty fields. Staff provides only the leave ID
         // (sehhaty_code). Issue date and clinic are left null —
         // HR sees them directly on Sehhaty during verification, so
