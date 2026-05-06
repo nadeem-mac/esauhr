@@ -50,7 +50,24 @@ function todayYmd() { return ymd(new Date()); }
 // ─── Status → visual style mapping ───────────────────────────────────
 // Each entry returns the chip style + a 2-3 char label. Returning
 // inline lets the cell renderer keep one switch and stay readable.
-function styleForStatus(status) {
+//
+// A second optional parameter (notes) lets us distinguish present
+// rows that were originally late or early but downgraded to present
+// because an approved permission covered the punch. Per Nadeem
+// (2026-05-06): on the monthly grid, those should look distinct
+// from "naturally on time" so HR can tell at a glance which days
+// were permission-covered. We detect via the note text the backfill
+// stamps when applying coverage ("late arrival covered by..." /
+// "early leave covered by...").
+function styleForStatus(status, notes) {
+  if (status === 'present' && typeof notes === 'string') {
+    if (/late arrival covered by approved permission/i.test(notes)) {
+      return { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: 'LP' };
+    }
+    if (/early leave covered by approved permission/i.test(notes)) {
+      return { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: 'EP' };
+    }
+  }
   switch (status) {
     case 'present':
       return { bg: '#ECFDF5', fg: '#0F4C2A', border: '#A7F3D0', label: '✓' };
@@ -491,7 +508,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick }) {
                         />
                       );
                     }
-                    const sty = styleForStatus(r.status);
+                    const sty = styleForStatus(r.status, r.notes);
                     // Missed-punch indicator — small magenta dot on the
                     // chip when first or last punch is missing. Same
                     // visual language as the tooltip's ⚠ marker.
@@ -562,6 +579,8 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick }) {
       <div className="text-[11px] mt-4 flex flex-wrap gap-2.5 items-center" style={{ color: '#0A0A0A', opacity: 0.85 }}>
         {[
           { st: 'present',      lbl: 'Present' },
+          { st: 'present',      lbl: 'Late — permitted', overrideStyle: { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: 'LP' } },
+          { st: 'present',      lbl: 'Early — permitted', overrideStyle: { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: 'EP' } },
           { st: 'late',         lbl: 'Late' },
           { st: 'short',        lbl: 'Short' },
           { st: 'absent',       lbl: 'Absent' },
@@ -569,10 +588,10 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick }) {
           { st: 'sick_leave',   lbl: 'Sick leave' },
           { st: 'off_roster',   lbl: 'Off-roster work' },
           { st: 'off_day',      lbl: 'Off-day' },
-        ].map(({ st, lbl }) => {
-          const sty = styleForStatus(st);
+        ].map(({ st, lbl, overrideStyle }, idx) => {
+          const sty = overrideStyle || styleForStatus(st);
           return (
-            <span key={st} className="inline-flex items-center gap-1.5">
+            <span key={`${st}-${idx}`} className="inline-flex items-center gap-1.5">
               <span style={{
                 background: sty.bg,
                 color: sty.fg,
@@ -599,7 +618,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick }) {
 function HoverTooltip({ x, yTop, yBottom, record, employee, dateStr, weekday }) {
   // Position above the cell when there's room, otherwise below
   const flipBelow = yTop < 140;
-  const sty = styleForStatus(record.status);
+  const sty = styleForStatus(record.status, record.notes);
   const label = readableStatus(record.status);
   const punch = (record.first_punch || record.last_punch)
     ? `${record.first_punch ? record.first_punch.slice(0,5) : '—'} → ${record.last_punch ? record.last_punch.slice(0,5) : '—'}`
@@ -612,6 +631,18 @@ function HoverTooltip({ x, yTop, yBottom, record, employee, dateStr, weekday }) 
     ? `${record.late_minutes} min late`
     : record.early_leave_minutes > 0
       ? `Left ${record.early_leave_minutes} min early`
+      : null;
+
+  // Permission-coverage line — shown when the row was downgraded
+  // from late/short to present because an approved permission
+  // covered the punch. The blue chip on the cell uses the LP/EP
+  // label; the tooltip explains it in words.
+  const isLatePermitted  = typeof record.notes === 'string' && /late arrival covered by approved permission/i.test(record.notes);
+  const isEarlyPermitted = typeof record.notes === 'string' && /early leave covered by approved permission/i.test(record.notes);
+  const coveredLine = isLatePermitted
+    ? 'Late arrival — covered by approved permission'
+    : isEarlyPermitted
+      ? 'Early leave — covered by approved permission'
       : null;
 
   // Detect missing punches — surfaces the data-quality issue clearly
@@ -655,6 +686,7 @@ function HoverTooltip({ x, yTop, yBottom, record, employee, dateStr, weekday }) 
       {sched && <div style={{ fontSize: 10.5, opacity: 0.85 }}>{sched}</div>}
       {missedLine && <div style={{ fontSize: 10.5, color: '#F0ABFC', marginTop: 2, fontWeight: 700 }}>⚠ {missedLine}</div>}
       {minutesLine && <div style={{ fontSize: 10.5, color: '#FCD34D', marginTop: 2 }}>{minutesLine}</div>}
+      {coveredLine && <div style={{ fontSize: 10.5, color: '#93C5FD', marginTop: 2, fontWeight: 700 }}>✓ {coveredLine}</div>}
       {record.notes && <div style={{ fontSize: 10, opacity: 0.85, marginTop: 4, fontStyle: 'italic' }}>{record.notes}</div>}
     </div>
   );
