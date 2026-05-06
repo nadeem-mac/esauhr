@@ -263,10 +263,22 @@ export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
     let totalEarlyMinutes = 0;
     let missedInCount  = 0;
     let missedOutCount = 0;
+    // Permission-coverage counts. A row with status='present' AND
+    // a coverage marker in notes was originally late/early but
+    // downgraded because an approved permission covered the punch.
+    // Per Nadeem (2026-05-06): the summary tiles need to surface
+    // these distinctly so HR can see "LP: 3 / EP: 1" alongside
+    // the regular Late / Left-early counts.
+    let latePermitted  = 0;
+    let earlyPermitted = 0;
     for (const r of attRows) {
       counts[r.status] = (counts[r.status] || 0) + 1;
       if (r.status === 'late')  totalLateMinutes  += (r.late_minutes || 0);
       if (r.status === 'short') totalEarlyMinutes += (r.early_leave_minutes || 0);
+      if (r.status === 'present' && typeof r.notes === 'string') {
+        if (/late arrival covered by approved permission/i.test(r.notes))   latePermitted++;
+        else if (/early leave covered by approved permission/i.test(r.notes)) earlyPermitted++;
+      }
       // Missed-punch detection — same convention as the calendar grid
       const hasFirst = !!r.first_punch;
       const hasLast  = !!r.last_punch;
@@ -301,6 +313,8 @@ export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
       totalEarlyMinutes,
       missedInCount,
       missedOutCount,
+      latePermitted,
+      earlyPermitted,
       leaveByType,
     };
   }, [attRows, leaveRows, leaveTypes]);
@@ -753,6 +767,28 @@ function AttendanceSummaryPinned({ summary }) {
           sub={(summary.totalEarlyMinutes || 0) > 0 ? `${summary.totalEarlyMinutes} min` : null}
           meta={statusMeta('short')}
           muted={(counts.short || 0) === 0}
+        />
+      </div>
+
+      {/* Permission-covered row — LP/EP tiles. These came from late
+          or early-leave punches that had a matching approved
+          permission on file, so they're recorded as 'present' in
+          the DB but counted separately here so HR can see them at
+          a glance. Blue ✓ chip to match the calendar cell colours. */}
+      <div className="grid grid-cols-2 gap-1.5 mb-1.5">
+        <SummaryTile
+          label="Late — permitted"
+          value={summary.latePermitted || 0}
+          sub="✓ Covered by permission"
+          meta={{ bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD' }}
+          muted={(summary.latePermitted || 0) === 0}
+        />
+        <SummaryTile
+          label="Early — permitted"
+          value={summary.earlyPermitted || 0}
+          sub="✓ Covered by permission"
+          meta={{ bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD' }}
+          muted={(summary.earlyPermitted || 0) === 0}
         />
       </div>
 
