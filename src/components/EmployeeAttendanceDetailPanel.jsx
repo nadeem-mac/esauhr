@@ -271,6 +271,16 @@ export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
     // the regular Late / Left-early counts.
     let latePermitted  = 0;
     let earlyPermitted = 0;
+    // Shift-day tracking (Nadeem 2026-05-06): for staff with assigned
+    // shifts, surface their shift performance distinct from regular
+    // office days. We detect shift rows via the notes pattern the
+    // backfill stamps when applying a shift policy ("Shift (HH:MM-..."
+    // or "Overnight Shift (HH:MM-..."). On those rows, the existing
+    // status (present/late/short) is the SHIFT outcome.
+    let shiftDays = 0;
+    let shiftLate = 0;
+    let shiftShort = 0;
+    let shiftPresent = 0;
     for (const r of attRows) {
       counts[r.status] = (counts[r.status] || 0) + 1;
       if (r.status === 'late')  totalLateMinutes  += (r.late_minutes || 0);
@@ -278,6 +288,14 @@ export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
       if (r.status === 'present' && typeof r.notes === 'string') {
         if (/late arrival covered by approved permission/i.test(r.notes))   latePermitted++;
         else if (/early leave covered by approved permission/i.test(r.notes)) earlyPermitted++;
+      }
+      // Shift detection — notes mention "Shift (HH:MM-..." for both
+      // standard-window and overnight shift evaluations.
+      if (typeof r.notes === 'string' && /(?:^|\s)(?:Overnight\s+)?Shift\s*\(\d{2}:\d{2}-\d{2}:\d{2}\)/i.test(r.notes)) {
+        shiftDays++;
+        if (r.status === 'late') shiftLate++;
+        else if (r.status === 'short') shiftShort++;
+        else if (r.status === 'present') shiftPresent++;
       }
       // Missed-punch detection — same convention as the calendar grid
       const hasFirst = !!r.first_punch;
@@ -315,6 +333,10 @@ export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
       missedOutCount,
       latePermitted,
       earlyPermitted,
+      shiftDays,
+      shiftLate,
+      shiftShort,
+      shiftPresent,
       leaveByType,
     };
   }, [attRows, leaveRows, leaveTypes]);
@@ -815,6 +837,43 @@ function AttendanceSummaryPinned({ summary }) {
           muted={(summary.missedOutCount || 0) === 0}
         />
       </div>
+
+      {/* Shift work — only renders when the employee actually has
+          shift days in the period. For staff like Abdulrahman (pure
+          shift) or Fahd (Saturday-shift + weekday office), this
+          block separates shift-day performance from office-day
+          performance so HR can see them at a glance. */}
+      {(summary.shiftDays || 0) > 0 && (
+        <>
+          <SectionLabel mt>SHIFT WORK</SectionLabel>
+          <div className="grid grid-cols-4 gap-1.5 mb-1.5">
+            <SummaryTile
+              label="Shift days"
+              value={summary.shiftDays || 0}
+              meta={{ bg:'#F1F5F9', fg:'#0F172A', border:'#CBD5E1' }}
+              muted={false}
+            />
+            <SummaryTile
+              label="On time"
+              value={summary.shiftPresent || 0}
+              meta={statusMeta('present')}
+              muted={(summary.shiftPresent || 0) === 0}
+            />
+            <SummaryTile
+              label="Late"
+              value={summary.shiftLate || 0}
+              meta={statusMeta('late')}
+              muted={(summary.shiftLate || 0) === 0}
+            />
+            <SummaryTile
+              label="Left early"
+              value={summary.shiftShort || 0}
+              meta={statusMeta('short')}
+              muted={(summary.shiftShort || 0) === 0}
+            />
+          </div>
+        </>
+      )}
 
       <SectionLabel mt>LEAVE</SectionLabel>
       <div

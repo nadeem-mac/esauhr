@@ -476,6 +476,88 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
   // defend against unexpected null/garbage.
   const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+  // ─── Punch index for overnight-shift evaluation ─────────────────
+  //
+  // For shifts that cross midnight (e.g. 20:00 → 05:00 next day),
+  // the punches that bookend the shift live on TWO calendar dates:
+  //
+  //     Mon row:  first_punch ~05:00 (end of Sun shift)
+  //               last_punch  ~20:00 (start of Mon shift)   ← shift IN
+  //     Tue row:  first_punch ~05:00 (end of Mon shift)     ← shift OUT
+  //               last_punch  ~20:00 (start of Tue shift)
+  //
+  // To evaluate Mon's shift correctly, we need Mon.last_punch (IN)
+  // and Tue.first_punch (OUT). We index every row's punches by
+  // (empId, dateIso) up front so the loop can pull tomorrow's
+  // first_punch in O(1).
+  //
+  // Per Nadeem (2026-05-06): the previous string-comparison evaluator
+  // accidentally returned 'present' on overnight rows because both
+  // checks failed silently — first_punch was the END of the previous
+  // shift, not the START of the current one. This index plus the
+  // dedicated overnight evaluator below fixes that.
+  const punchByEmpDate = new Map();
+  for (const r of (parsedRows || [])) {
+    if (!r?.psn || !r?.date || !ISO_RE.test(r.date)) continue;
+    const psnUp = String(r.psn).toUpperCase().trim();
+    const empResolved = empById.get(psnUp) || empByDigits.get(psnUp.replace(/^H/, ''));
+    const empIdResolved = empResolved?.id || psnUp;
+    punchByEmpDate.set(`${empIdResolved}|${r.date}`, {
+      firstPunch: r.firstPunch || null,
+      lastPunch:  r.lastPunch  || null,
+    });
+  }
+
+  // Add N days to a YYYY-MM-DD string. Used to look up tomorrow's
+  // punch row when evaluating an overnight shift.
+  function addDaysIso(iso, days) {
+    const [y, m, d] = iso.split('-').map(n => parseInt(n, 10));
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    dt.setUTCDate(dt.getUTCDate() + days);
+    return dt.toISOString().slice(0, 10);
+  }
+
+  // Detect overnight schedule — start time after end time numerically.
+  // e.g. 20:00 → 05:00 has end < start, so isOvernight() = true.
+  function isOvernightShift(shift) {
+    const sm = timeToMinutes(shift?.startTime);
+    const em = timeToMinutes(shift?.endTime);
+    if (sm == null || em == null) return false;
+    return em < sm;
+  }
+
+  // Evaluate an overnight shift correctly. Returns same shape as
+  // evaluateOffice but using the two relevant punches across two
+  // calendar dates.
+  //
+  //   shiftInPunch   = today's last_punch  (should be ~ shift_start)
+  //   shiftOutPunch  = tomorrow's first_punch (should be ~ shift_end)
+  //
+  // Late: shiftInPunch > shift_start + 15min  → late by minutes past
+  // Short: shiftOutPunch < shift_end - 15min   → left early by minutes
+  // Late dominates short.
+  //
+  // Missing-punch handling:
+  //   no shiftInPunch  → 'late' with lateMin=0 + missed-in note
+  //   no shiftOutPunch → 'short' with earlyMin=0 + missed-out note
+  //   both missing     → 'late' (treated as no-show on shift)
+  function evaluateOvernightShift(shiftInPunch, shiftOutPunch, shiftPolicy) {
+    const sm = timeToMinutes(shiftPolicy.startTime);
+    const em = timeToMinutes(shiftPolicy.endTime);
+    const inM  = timeToMinutes(shiftInPunch);
+    const outM = timeToMinutes(shiftOutPunch);
+    let lateMin = 0;
+    let earlyMin = 0;
+    if (inM != null && inM > timeToMinutes(shiftPolicy.lateCutoff)) {
+      lateMin = Math.max(0, Math.round(inM - sm));
+    }
+    if (outM != null && outM < timeToMinutes(shiftPolicy.earlyCutoff)) {
+      earlyMin = Math.max(0, Math.round(em - outM));
+    }
+    const status = lateMin > 0 ? 'late' : earlyMin > 0 ? 'short' : 'present';
+    return { status, lateMin, earlyMin };
+  }
+
   for (const r of (parsedRows || [])) {
     parsed++;
     const psn = String(r.psn || '').toUpperCase().trim();
@@ -567,8 +649,6 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
       // late if first_punch > 00:15, short if last_punch < 07:45.
       const shiftPolicy = policyFromShift(shiftEntry);
       if (!shiftPolicy) {
-        // Schedule data missing/invalid — fall back to old behaviour
-        // (mark present, skip eval). Defensive only.
         status        = 'present';
         lateMin       = 0;
         earlyMin      = 0;
@@ -576,6 +656,49 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
         expectedEnd   = null;
         noteText      = `Backfill — shift assigned but times unparseable`;
         shiftWorkerSkipped++;
+      } else if (isOvernightShift(shiftPolicy)) {
+        // ─── OVERNIGHT SHIFT (crosses midnight) ─────────────────
+        // Per Nadeem (2026-05-06): correctness fix for shifts like
+        // 20:00→05:00. The "shift IN" punch is today's last_punch
+        // (around 20:00). The "shift OUT" punch is tomorrow's
+        // first_punch (around 05:00). The previous evaluator
+        // compared today's first_punch (which is actually the END
+        // of yesterday's shift) against today's shift_start, which
+        // produced false 'present' classifications.
+        const shiftInPunch  = lastPunchRaw;
+        const nextDateIso   = addDaysIso(dateIso, 1);
+        const tomorrowRow   = punchByEmpDate.get(`${empId}|${nextDateIso}`);
+        const shiftOutPunch = tomorrowRow?.firstPunch || null;
+
+        expectedStart = shiftPolicy.startTime;
+        expectedEnd   = shiftPolicy.endTime;
+
+        if (!shiftInPunch && !shiftOutPunch) {
+          // No punches that match this shift on either side.
+          status   = 'late';
+          lateMin  = 0;
+          earlyMin = 0;
+          noteText = `Backfill — overnight ${shiftPolicy.label}: no shift-IN or shift-OUT punches recorded`;
+          missedInCount = 1;
+        } else if (!shiftInPunch) {
+          status   = 'late';
+          lateMin  = 0;
+          earlyMin = 0;
+          noteText = `Backfill — overnight ${shiftPolicy.label}: no shift-IN punch (expected ~${shiftPolicy.startTime.slice(0,5)}); shift-OUT ${shiftOutPunch?.slice(0,5)}`;
+          missedInCount = 1;
+        } else if (!shiftOutPunch) {
+          status   = 'short';
+          lateMin  = 0;
+          earlyMin = 0;
+          noteText = `Backfill — overnight ${shiftPolicy.label}: shift-IN ${shiftInPunch?.slice(0,5)}; no shift-OUT punch (expected ~${shiftPolicy.endTime.slice(0,5)})`;
+          missedOutCount = 1;
+        } else {
+          const evalRes = evaluateOvernightShift(shiftInPunch, shiftOutPunch, shiftPolicy);
+          status   = evalRes.status;
+          lateMin  = evalRes.lateMin;
+          earlyMin = evalRes.earlyMin;
+          noteText = `Backfill — overnight ${shiftPolicy.label}: shift-IN ${shiftInPunch.slice(0,5)} (today) → shift-OUT ${shiftOutPunch.slice(0,5)} (next day) with 15-min grace`;
+        }
       } else if (isMissedIn) {
         status        = 'late';
         lateMin       = 0;
@@ -896,6 +1019,47 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
     permsMap = await fetchApprovedPermissions(minD, maxD);
   }
 
+  // Punch index for overnight-shift evaluation in the reeval path —
+  // mirrors the index built in buildBackfillRows. Indexed by
+  // (empId, attendance_date) so we can look up tomorrow's first_punch
+  // when evaluating today's overnight shift.
+  const reevalPunchIndex = new Map();
+  for (const r of existing) {
+    if (!r?.employee_id || !r?.attendance_date) continue;
+    reevalPunchIndex.set(`${r.employee_id}|${r.attendance_date}`, {
+      firstPunch: r.first_punch || null,
+      lastPunch:  r.last_punch  || null,
+    });
+  }
+
+  function reevalAddDaysIso(iso, days) {
+    const [y, m, d] = iso.split('-').map(n => parseInt(n, 10));
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    dt.setUTCDate(dt.getUTCDate() + days);
+    return dt.toISOString().slice(0, 10);
+  }
+  function reevalIsOvernightShift(shift) {
+    const sm = timeToMinutes(shift?.startTime);
+    const em = timeToMinutes(shift?.endTime);
+    if (sm == null || em == null) return false;
+    return em < sm;
+  }
+  function reevalEvalOvernight(inP, outP, shiftPolicy) {
+    const sm = timeToMinutes(shiftPolicy.startTime);
+    const em = timeToMinutes(shiftPolicy.endTime);
+    const inM  = timeToMinutes(inP);
+    const outM = timeToMinutes(outP);
+    let lateMin = 0, earlyMin = 0;
+    if (inM != null && inM > timeToMinutes(shiftPolicy.lateCutoff)) {
+      lateMin = Math.max(0, Math.round(inM - sm));
+    }
+    if (outM != null && outM < timeToMinutes(shiftPolicy.earlyCutoff)) {
+      earlyMin = Math.max(0, Math.round(em - outM));
+    }
+    const status = lateMin > 0 ? 'late' : earlyMin > 0 ? 'short' : 'present';
+    return { status, lateMin, earlyMin };
+  }
+
   // Phase 3 — compute proposed updates in-memory
   const toUpsert = [];
   let lateCount = 0;
@@ -964,6 +1128,30 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
         newStatus = 'present'; newLate = 0; newEarly = 0;
         newExpStart = null; newExpEnd = null;
         newNote = 'Shift assigned but times unparseable (re-evaluated)';
+      } else if (reevalIsOvernightShift(shiftPolicy)) {
+        // Overnight shift — pull shift-IN from today's last_punch
+        // and shift-OUT from tomorrow's first_punch, just like
+        // buildBackfillRows. See evaluateOvernightShift docstring.
+        const shiftInPunch  = r.last_punch || null;
+        const nextDateIso   = reevalAddDaysIso(r.attendance_date, 1);
+        const tomorrowRow   = reevalPunchIndex.get(`${empId}|${nextDateIso}`);
+        const shiftOutPunch = tomorrowRow?.firstPunch || null;
+        newExpStart = shiftPolicy.startTime;
+        newExpEnd   = shiftPolicy.endTime;
+        if (!shiftInPunch && !shiftOutPunch) {
+          newStatus = 'late'; newLate = 0; newEarly = 0;
+          newNote = `Overnight ${shiftPolicy.label}: no shift-IN or shift-OUT punches (re-evaluated)`;
+        } else if (!shiftInPunch) {
+          newStatus = 'late'; newLate = 0; newEarly = 0;
+          newNote = `Overnight ${shiftPolicy.label}: no shift-IN punch (expected ~${shiftPolicy.startTime.slice(0,5)}); shift-OUT ${shiftOutPunch?.slice(0,5)} (re-evaluated)`;
+        } else if (!shiftOutPunch) {
+          newStatus = 'short'; newLate = 0; newEarly = 0;
+          newNote = `Overnight ${shiftPolicy.label}: shift-IN ${shiftInPunch?.slice(0,5)}; no shift-OUT punch (expected ~${shiftPolicy.endTime.slice(0,5)}) (re-evaluated)`;
+        } else {
+          const ev = reevalEvalOvernight(shiftInPunch, shiftOutPunch, shiftPolicy);
+          newStatus = ev.status; newLate = ev.lateMin; newEarly = ev.earlyMin;
+          newNote = `Overnight ${shiftPolicy.label}: shift-IN ${shiftInPunch.slice(0,5)} (today) → shift-OUT ${shiftOutPunch.slice(0,5)} (next day) with 15-min grace (re-evaluated)`;
+        }
       } else if (isMissedIn) {
         newStatus = 'late'; newLate = 0; newEarly = 0;
         newExpStart = shiftPolicy.startTime; newExpEnd = shiftPolicy.endTime;
