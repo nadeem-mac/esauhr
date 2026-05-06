@@ -142,6 +142,34 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
   // card fetches its own data so the count stays live.
   const [pinModalOpen, setPinModalOpen] = useState(false);
   const [pinReqCount,  setPinReqCount]  = useState(0);
+  // Freshness tracker — "Live · updated 2m ago"-style badge at the
+  // top of the dashboard. AppShell already subscribes to leave_requests,
+  // employees, and leave_types via supabase realtime channels, so the
+  // data flowing in via props is auto-refreshing. We just need to
+  // surface that fact to the user. The timestamp resets to "now" any
+  // time the props array reference changes (i.e. AppShell re-fetched).
+  const [lastUpdated, setLastUpdated] = useState(() => Date.now());
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    setLastUpdated(Date.now());
+  }, [requests, employees, permissions]);
+  useEffect(() => {
+    // Tick once a minute so the relative-time label updates even
+    // when no realtime event has arrived. 60s is fine — we don't
+    // need second-level precision for "5m ago".
+    const id = setInterval(() => setNowTick(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  const updatedRel = useMemo(() => {
+    const diffSec = Math.max(0, Math.floor((nowTick - lastUpdated) / 1000));
+    if (diffSec < 10)  return 'just now';
+    if (diffSec < 60)  return `${diffSec}s ago`;
+    const min = Math.floor(diffSec / 60);
+    if (min < 60)      return `${min}m ago`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24)       return `${hr}h ago`;
+    return `${Math.floor(hr / 24)}d ago`;
+  }, [nowTick, lastUpdated]);
   const canSeePinReqs = !!(me?.is_admin || me?.is_hr_reviewer);
 
   // Report reminder popup — fires once per page load if today is the day a
@@ -263,16 +291,60 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
         .esau-badge { transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 220ms ease, border-color 220ms ease; }
         .esau-badge:hover { transform: translateY(-3px); box-shadow: 0 6px 16px rgba(31,27,22,0.08), 0 20px 38px rgba(31,27,22,0.14) !important; border-color: #D4D4D4 !important; }
         .esau-badge:active { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(31,27,22,0.06), 0 8px 18px rgba(31,27,22,0.10) !important; }
+        /* Live indicator — tiny pulsing green dot to signal the dashboard
+           is wired to realtime updates. */
+        @keyframes esau-live-pulse {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5); }
+          70%      { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+        }
+        .esau-live-dot {
+          width: 7px; height: 7px; border-radius: 50%;
+          background: #10B981;
+          animation: esau-live-pulse 1.6s ease-in-out infinite;
+        }
+        /* Pending-approval pulse — soft red ring around the count badge
+           on the PENDING APPROVAL tile when count > 0, drawing the eye
+           to action items. */
+        @keyframes esau-pending-pulse {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.35); }
+          70%      { box-shadow: 0 0 0 8px rgba(220, 38, 38, 0); }
+        }
+        .esau-pending-pulse { animation: esau-pending-pulse 1.8s ease-in-out infinite; }
       `}</style>
+
+      {/* Live header bar — sits above the hero. Shows today's date on
+          the left and a live-data freshness indicator on the right.
+          The pulsing green dot signals that the dashboard is wired
+          to Supabase realtime, so admin knows the numbers are
+          current without having to manually refresh. The relative
+          time auto-updates every minute. */}
+      <div className="flex items-center justify-between gap-3 flex-wrap pb-1"
+           style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
+        <div className="text-[10px]" style={{ color: '#9D6B53', letterSpacing: '0.3em', fontWeight: 600 }}>
+          {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase()}
+        </div>
+        <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full"
+             title={`Last refreshed at ${new Date(lastUpdated).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`}
+             style={{
+               background: '#ECFDF5',
+               border: '1px solid #A7F3D0',
+               fontSize: '10px',
+               letterSpacing: '0.16em',
+               color: '#0F4C2A',
+               fontWeight: 700,
+             }}>
+          <span className="esau-live-dot" aria-hidden="true"/>
+          <span>LIVE</span>
+          <span style={{ opacity: 0.5 }}>·</span>
+          <span style={{ letterSpacing: '0.04em', fontWeight: 600 }}>updated {updatedRel}</span>
+        </div>
+      </div>
 
       {/* Hero — Editorial Minimal (Option 1): cream background, serif typography, italic quote.
           Bashaier sees her name + heroMessage as the italic quote; everyone else sees the
           plain greeting. No tiles, no gradients. */}
       {bashaierMode ? (
         <div className="pb-8" style={{ borderBottom: '1px solid #E5E5E5' }}>
-          <div className="text-xs mb-3.5" style={{ color: '#9D6B53', letterSpacing: '0.3em' }}>
-            — {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase()}
-          </div>
           <h1 className="leading-[1] mb-4" style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 'clamp(2.2rem, 5vw, 3.5rem)', color: '#1F1B16', fontWeight: 400, letterSpacing: '-0.02em' }}>
             Good {_period}, Bashaier.
           </h1>
@@ -297,9 +369,6 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
         </div>
       ) : (
       <div className="pb-8" style={{ borderBottom: '1px solid #E5E5E5' }}>
-        <div className="text-xs mb-3.5" style={{ color: '#9D6B53', letterSpacing: '0.3em' }}>
-          — {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase()}
-        </div>
         <h1 className="leading-[1]" style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 'clamp(2.5rem, 5vw, 3.8rem)', color: '#1F1B16', fontWeight: 400, letterSpacing: '-0.02em' }}>
           {greeting}
         </h1>
@@ -359,8 +428,11 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           <div className="text-[20px]">🏖️</div>
         </Tile>
 
-        {/* PENDING APPROVAL */}
+        {/* PENDING APPROVAL — pulse on the count badge when items are
+            waiting on admin/HR action. Soft red ring fading in/out
+            draws the eye to the tile without being aggressive. */}
         <Tile label="PENDING APPROVAL" sublabel="Awaiting your decision" count={pending.length}
+              pulse={pending.length > 0}
               accentDark="#C2410C" accentTint="#FFFBEB" onClick={onGoToReviews || onGoToRequests}>
           <div className="text-[20px]">⏳</div>
         </Tile>
@@ -786,7 +858,7 @@ export function Card({ title, subtitle, children, accent }) {
 // chrome (#FFFFFF + border-soft + esau-card hover) while preserving the
 // dept-color identity through the small accent dot and the tinted count
 // pill on the right.
-export function Tile({ label, sublabel, count, accentDark, accentTint, onClick, children }) {
+export function Tile({ label, sublabel, count, accentDark, accentTint, onClick, children, pulse }) {
   const Tag = onClick ? 'button' : 'div';
   const tagProps = onClick ? { onClick, type: 'button' } : {};
   return (
@@ -808,8 +880,21 @@ export function Tile({ label, sublabel, count, accentDark, accentTint, onClick, 
           </div>
         </div>
         {(count !== undefined && count !== null) && (
-          <div className="rounded-full px-3 py-1 flex-shrink-0"
-               style={{ background: accentTint || '#F2F2F2', color: accentDark || '#1F1B16', fontSize: '20px', fontWeight: 700, lineHeight: 1 }}>
+          /* Count badge — bumped to 24px (was 20px) so the headline number
+             dominates the tile. Optional `pulse` flag adds a soft red ring
+             that pulses when the count needs admin attention (e.g. PENDING
+             APPROVAL with queue > 0). Pulse is OFF by default so it doesn't
+             distract on tiles where the number is informational only. */
+          <div className={`rounded-full px-3.5 py-1 flex-shrink-0 ${pulse ? 'esau-pending-pulse' : ''}`}
+               style={{
+                 background: accentTint || '#F2F2F2',
+                 color: accentDark || '#1F1B16',
+                 fontSize: '24px',
+                 fontWeight: 700,
+                 lineHeight: 1,
+                 minWidth: '40px',
+                 textAlign: 'center',
+               }}>
             {count}
           </div>
         )}
