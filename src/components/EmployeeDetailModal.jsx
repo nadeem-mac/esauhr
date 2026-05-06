@@ -146,48 +146,78 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
             />
           )}
 
-          {/* Monthly attendance summary — HR-only download. Bashaier
-              picks a month and gets a single-page .docx for the
-              employee's HR file or for evaluation handover. Reads
-              from attendance_violations directly so it always
-              reflects the current record. */}
-          {(me?.is_admin || me?.is_hr_reviewer) && employee?.id && (
-            <MonthlyAttendancePanel employee={employee} empMap={empMap} me={me} />
-          )}
+          {/* Monthly attendance report removed from this modal —
+              the dedicated Attendance tab now owns the per-employee
+              monthly report download (richer flow with calendar +
+              evaluation tiles + month picker), so duplicating a
+              stripped-down version here just confuses Bashaier
+              about which one to use. */}
 
+          {/* Leave balances — one row per type in a single card.
+              Way denser than the previous tile-grid: 8 leave types
+              fit in ~280px of vertical space instead of ~640px.
+              Each row shows color dot · name · slim progress bar ·
+              "available / total" numbers · accrual note. */}
           <div>
             <div className="text-[10px] tracking-[0.22em] mb-2" style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.7 }}>
               LEAVE BALANCES · {year}
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {balByType.map(({ type, balance }) => {
+            <div className="rounded-xl border overflow-hidden"
+              style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
+              {balByType.map(({ type, balance }, idx) => {
                 const total = balance.total || 0;
-                const used = balance.used + balance.pending;
-                const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
+                const pct = total > 0 ? Math.min(100, ((balance.used + balance.pending) / total) * 100) : 0;
+                const exhausted = balance.available <= 0 && total > 0;
                 return (
-                  <div key={type.id} className="rounded-lg border"
-                       style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', padding: '8px 10px' }}>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: type.color }}/>
-                        <div className="text-[12px] truncate" style={{ fontWeight: 600, color: '#1F1B16' }}>{type.name}</div>
+                  <div key={type.id}
+                    className="flex items-center gap-3 px-3"
+                    style={{
+                      borderTop: idx === 0 ? 'none' : '1px solid var(--border-soft)',
+                      paddingTop: 7, paddingBottom: 7,
+                    }}>
+                    {/* Type indicator */}
+                    <div className="flex items-center gap-1.5 flex-shrink-0" style={{ minWidth: 0, width: 130 }}>
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: type.color }}/>
+                      <div className="truncate text-[11.5px]" style={{ fontWeight: 600, color: '#1F1B16' }}>
+                        {type.name}
                       </div>
-                      <Pill color={type.color}>{balance.available} left</Pill>
                     </div>
-                    {total > 0 && (
-                      <div className="h-1 rounded-full overflow-hidden mb-1.5" style={{ background: 'var(--border-soft)' }}>
-                        <div className="h-full" style={{
-                          width: `${pct}%`,
-                          background: pct > 80 ? 'var(--clay)' : type.color,
-                        }}/>
-                      </div>
-                    )}
-                    <div className="grid grid-cols-3 gap-1 text-[10px]" style={{ color: '#0A0A0A', opacity: 0.75 }}>
-                      <div>Entitled <strong style={{ color: '#1F1B16' }}>{balance.total}</strong></div>
-                      <div>Used <strong style={{ color: '#1F1B16' }}>{balance.used}</strong></div>
-                      <div>Pending <strong style={{ color: '#1F1B16' }}>{balance.pending}</strong></div>
+
+                    {/* Progress bar (flex-1) */}
+                    <div className="flex-1 min-w-0">
+                      {total > 0 ? (
+                        <div className="h-1 rounded-full overflow-hidden" style={{ background: '#F0EDE5' }}>
+                          <div className="h-full" style={{
+                            width: `${pct}%`,
+                            background: exhausted ? 'var(--clay)' : type.color,
+                            transition: 'width 0.2s ease',
+                          }}/>
+                        </div>
+                      ) : (
+                        <div className="text-[10px]" style={{ color: '#0A0A0A', opacity: 0.45 }}>
+                          {type.accrual_method === 'unlimited' ? 'unlimited' : balance.accrualNote || '—'}
+                        </div>
+                      )}
                     </div>
-                    {balance.accrualNote && <div className="text-[9.5px] mt-0.5" style={{ color: '#0A0A0A', opacity: 0.55 }}>{balance.accrualNote}</div>}
+
+                    {/* Numbers — available / total. Used + pending shown
+                        as a small subscript so admin sees the breakdown
+                        without crowding the row. */}
+                    <div className="flex items-baseline gap-1 flex-shrink-0 font-mono" style={{ minWidth: 70, justifyContent: 'flex-end' }}>
+                      <span className="text-[13px]" style={{ fontWeight: 700, color: exhausted ? 'var(--clay)' : '#1F1B16' }}>
+                        {balance.available}
+                      </span>
+                      <span className="text-[10px]" style={{ color: '#0A0A0A', opacity: 0.45 }}>
+                        / {balance.total || (type.accrual_method === 'unlimited' ? '∞' : 0)}
+                      </span>
+                      {balance.pending > 0 && (
+                        <span className="text-[9px] ml-0.5 px-1 rounded"
+                          style={{ background: '#FEF3C7', color: '#854F0B', fontWeight: 700 }}
+                          title={`${balance.pending} pending request${balance.pending === 1 ? '' : 's'}`}>
+                          +{balance.pending}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -845,7 +875,12 @@ function GovernmentRecordsPanel({ employee, onSaved }) {
       className="rounded-xl"
       style={{
         background: '#FFFFFF',
-        border: '1px solid var(--border-soft)',
+        // Evergreen-themed green border to visually mark this as the
+        // government-data section (mirrors the green MOL · GOSI pill).
+        // Slightly heavier than var(--border-soft) so the panel reads
+        // as a deliberate accent rather than a flat divider.
+        border: '1px solid #A7F3D0',
+        boxShadow: '0 0 0 3px rgba(15, 76, 42, 0.04)',
         padding: '10px 12px',
       }}
     >
