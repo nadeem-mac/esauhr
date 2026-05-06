@@ -780,10 +780,21 @@ export default function ReviewerPanel({ me }) {
       // draft (To: staff, CC: manager + executives). The patched fields
       // are merged onto the row so the modal shows the just-stamped
       // hr_decided_at without waiting for the next load() pass.
-      if (nextStage === 'approved') {
+      //
+      // Per Nadeem: "this screen is exclusively for bashaier, once
+      // sadakath approves his staff request the request closes". The
+      // modal triggered for Sadakath because Nadeem (the requester)
+      // is is_hr_reviewer=true → the HR-self guard finalised at the
+      // manager step. We want to suppress the letter/email modal for
+      // any non-HR-reviewer approver — they just need closure
+      // (queue clears), not the letter-sending workflow.
+      const isBashaierMode = !!(me?.is_hr_reviewer && !me?.is_admin);
+      if (nextStage === 'approved' && isBashaierMode) {
         setApprovedPermission({ ...req, ...patch });
-
-        // Retroactive-permission auto-clear:
+      }
+      if (nextStage === 'approved') {
+        // Retroactive-permission auto-clear runs regardless of who
+        // finalised — it's a data-cleanup step, not a UI flourish.
         // If the just-approved permission has a permission_date in the
         // past, find any matching attendance_violations rows for that
         // employee/date/type and stamp them as cleared. The violation
