@@ -205,27 +205,42 @@ export function findOverlappingRequests(employeeId, startDate, endDate, requests
 // ──────────────────────────────────────────────────────────────────────
 //  INITIAL APPROVAL STAGE — where does this requester's row START?
 // ──────────────────────────────────────────────────────────────────────
-// Per Nadeem: managers' own requests should skip the manager-approval
-// step entirely and go straight to HR (Bashaier). Rationale: when Fahad
-// (SUP manager) applies for leave or permission, asking him to approve
-// his own request is nonsensical, and Bashaier as deputy manager owns
-// the next-level authority. Same principle for any other manager who
-// gets added later — if you have direct reports, your own request is a
-// peer-level one, not a subordinate one.
+// Per Nadeem: only the Bashaier ↔ Fahad pair gets special routing —
+// every other employee follows the standard manager → HR flow even if
+// they happen to be a manager themselves.
+//
+// The rule is scoped tightly to the case it was designed for:
+// "skip the manager step when the requester has an HR reviewer
+// as a direct report". That captures Fahad specifically — his
+// deputy Bashaier IS the HR reviewer, so his own request goes
+// straight to her for final approval, no manager-step needed.
+//
+// Why this scoping (and not "anyone with direct reports"):
+//   • Sadakathullah (BIZ manager) has direct reports — but none of
+//     them are HR reviewers, so his own request goes through the
+//     normal flow: his manager approves first, then Bashaier finalises.
+//   • Any future manager whose deputy isn't HR follows the same
+//     normal flow.
+//   • Only when the manager's deputy IS the HR-reviewer role does
+//     the bypass kick in — because in that specific case there is
+//     no separate "HR step" to wait for.
+//
+// HR-self approval (Bashaier applying for herself) is handled
+// separately in decideLeave/decidePerm via the requesterIsHr guard
+// at the manager step. That fix is independent of this routing.
 //
 // Inputs:
 //   • requester  — the employee record submitting the request
 //   • employees  — the full company list (used to detect direct reports)
 //
 // Returns one of:
-//   • 'pending_hr'      — requester is a manager themselves, so HR
-//                         (Bashaier) is the only approver
-//   • 'pending_manager' — normal flow, requester's manager approves first
-//                         then HR finalises
+//   • 'pending_hr'      — requester's deputy is HR; skip manager step
+//   • 'pending_manager' — normal flow
 export function initialApprovalStage(requester, employees = []) {
   if (!requester) return 'pending_manager';
-  const hasDirectReports = (employees || []).some(e => e.manager_id === requester.id);
-  if (hasDirectReports) return 'pending_hr';
+  const directReports = (employees || []).filter(e => e.manager_id === requester.id);
+  const hasHrDirectReport = directReports.some(e => e?.is_hr_reviewer);
+  if (hasHrDirectReport) return 'pending_hr';
   return 'pending_manager';
 }
 
