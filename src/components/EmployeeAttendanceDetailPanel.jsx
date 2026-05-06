@@ -418,7 +418,7 @@ export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
         {attRows !== null && summary && (
           <div
             style={{
-              padding: '12px 20px',
+              padding: '8px 16px 10px',
               background: '#FAFAF6',
               borderBottom: '1px solid #E5E5E5',
               flexShrink: 0,
@@ -503,8 +503,8 @@ function SummaryTile({ label, value, sub, meta, delay = 0, muted = false }) {
       style={{
         background: muted ? '#FAFAF6' : '#FFFFFF',
         border: `1px solid ${muted ? '#E5E5E5' : m.border}`,
-        borderRadius: 10,
-        padding: '10px 8px',
+        borderRadius: 8,
+        padding: '6px 6px 5px',
         textAlign: 'center',
         animation: `detail-fade-in 0.4s ease-out ${delay}ms both`,
         opacity: muted ? 0.55 : 1,
@@ -514,7 +514,7 @@ function SummaryTile({ label, value, sub, meta, delay = 0, muted = false }) {
       <div
         style={{
           fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
-          fontSize: 24,
+          fontSize: 18,
           color: muted ? '#737373' : m.fg,
           fontWeight: 700,
           lineHeight: 1,
@@ -524,28 +524,30 @@ function SummaryTile({ label, value, sub, meta, delay = 0, muted = false }) {
         {value}
       </div>
       <div
-        className="text-[10px] mt-1"
         style={{
+          fontSize: 9,
+          marginTop: 3,
           color: '#0A0A0A',
           opacity: 0.75,
           fontWeight: 700,
-          letterSpacing: '0.08em',
+          letterSpacing: '0.06em',
           textTransform: 'uppercase',
-          // Long leave-type labels (e.g. "Emergency leave") shouldn't
-          // truncate; allow a 2-line wrap with tight leading
-          lineHeight: 1.2,
-          minHeight: 24,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
+          // Tight 2-line cap so longer leave-type names ("Emergency
+          // leave", "Compassionate") still fit without truncation
+          lineHeight: 1.15,
         }}
       >
         {label}
       </div>
       {sub && (
         <div
-          className="text-[10px] mt-0.5"
-          style={{ color: muted ? '#737373' : m.fg, opacity: 0.85, fontWeight: 500 }}
+          style={{
+            fontSize: 9,
+            marginTop: 1,
+            color: muted ? '#737373' : m.fg,
+            opacity: 0.85,
+            fontWeight: 500,
+          }}
         >
           {sub}
         </div>
@@ -562,13 +564,13 @@ function SectionLabel({ children, mt }) {
   return (
     <div
       style={{
-        fontSize: 10,
+        fontSize: 9,
         fontWeight: 700,
-        letterSpacing: '0.22em',
+        letterSpacing: '0.2em',
         color: '#1F1B16',
         opacity: 0.6,
-        marginTop: mt ? 12 : 0,
-        marginBottom: 6,
+        marginTop: mt ? 8 : 0,
+        marginBottom: 4,
       }}
     >
       {children}
@@ -643,91 +645,132 @@ function TabButton({ active, onClick, icon, label, count }) {
 //     non-zero (otherwise hidden to keep the band compact).
 //   • LEAVE      — one tile per leave_type the employee actually
 //     used in the range, hidden entirely if no approved leaves.
+// ─── ALL_LEAVE_TYPE_KEYS ──────────────────────────────────────────────
+// Canonical set of leave-type keys that should render a tile for
+// EVERY staff member, regardless of whether they've taken that
+// leave in the visible range. Bashaier asked for "all box appear
+// for all staff" so absent leave counts are still shown (with a 0,
+// muted) — gives a consistent visual scan across staff.
+//
+// Code-based matching here uses the same pattern as leaveMetaFor()
+// so the tile's color is consistent. Display name is best-guess
+// for when no DB row exists yet; the real leave_types row's name
+// overrides this when present.
+const FALLBACK_LEAVE_TYPES = [
+  { code: 'ANNUAL',     name: 'Annual leave' },
+  { code: 'SICK',       name: 'Sick leave' },
+  { code: 'EMERGENCY',  name: 'Emergency leave' },
+  { code: 'UNPAID',     name: 'Unpaid leave' },
+  { code: 'MATERNITY',  name: 'Maternity leave' },
+  { code: 'PATERNITY',  name: 'Paternity leave' },
+  { code: 'HAJJ',       name: 'Hajj leave' },
+  { code: 'COMPASSIONATE', name: 'Compassionate leave' },
+];
+
 function AttendanceSummaryPinned({ summary }) {
   if (!summary) return null;
   const counts = summary;
-  const total  = (counts.present || 0) + (counts.late || 0) +
-                 (counts.short   || 0) + (counts.absent || 0) +
-                 (counts.annual_leave || 0) + (counts.sick_leave || 0) +
-                 (counts.off_day || 0) + (counts.off_roster || 0);
-  if (total === 0 && (!summary.leaveByType || summary.leaveByType.size === 0)) {
-    // Truly empty — let the empty-state in the calendar body cover it
-    return null;
+
+  // Build the leave tiles list — merge actual usage from
+  // summary.leaveByType with the canonical fallback set so a tile
+  // appears for every leave type even when the staff hasn't used
+  // it in the range. Used types win on the (matched) code so the
+  // DB-driven `name` and `id` survive.
+  const usedByCode = new Map();
+  if (summary.leaveByType) {
+    for (const entry of summary.leaveByType.values()) {
+      const k = String(entry.code || entry.name || '').toUpperCase();
+      usedByCode.set(k, entry);
+    }
   }
-  const showQualityRow =
-    (counts.absent || 0) > 0 ||
-    (summary.missedInCount  || 0) > 0 ||
-    (summary.missedOutCount || 0) > 0;
+  const leaveTiles = FALLBACK_LEAVE_TYPES.map(fb => {
+    // Try to find a matching used entry by code or name partial
+    const fbKey = fb.code.toUpperCase();
+    let used = null;
+    for (const [k, v] of usedByCode) {
+      if (k.includes(fbKey) || fbKey.includes(k)) { used = v; break; }
+    }
+    if (used) {
+      return { ...used, _fallback: false };
+    }
+    return {
+      id: `fallback-${fb.code}`,
+      name: fb.name,
+      code: fb.code,
+      days: 0,
+      requests: 0,
+      _fallback: true,
+    };
+  });
 
   return (
     <div>
       <SectionLabel>ATTENDANCE</SectionLabel>
-      <div className="grid grid-cols-3 gap-2 mb-2">
+      <div className="grid grid-cols-3 gap-1.5 mb-1.5">
         <SummaryTile
           label="Present"
           value={counts.present || 0}
           meta={statusMeta('present')}
+          muted={(counts.present || 0) === 0}
         />
         <SummaryTile
           label="Late"
           value={counts.late || 0}
-          sub={(summary.totalLateMinutes || 0) > 0 ? `${summary.totalLateMinutes} min total` : null}
+          sub={(summary.totalLateMinutes || 0) > 0 ? `${summary.totalLateMinutes} min` : null}
           meta={statusMeta('late')}
+          muted={(counts.late || 0) === 0}
         />
         <SummaryTile
           label="Left early"
           value={counts.short || 0}
-          sub={(summary.totalEarlyMinutes || 0) > 0 ? `${summary.totalEarlyMinutes} min total` : null}
+          sub={(summary.totalEarlyMinutes || 0) > 0 ? `${summary.totalEarlyMinutes} min` : null}
           meta={statusMeta('short')}
+          muted={(counts.short || 0) === 0}
         />
       </div>
 
-      {showQualityRow && (
-        <div className="grid grid-cols-3 gap-2">
-          <SummaryTile
-            label="Absent"
-            value={counts.absent || 0}
-            meta={statusMeta('absent')}
-            muted={(counts.absent || 0) === 0}
-          />
-          <SummaryTile
-            label="No clock-in"
-            value={summary.missedInCount || 0}
-            meta={{ bg:'#FCE7F3', fg:'#86198F', border:'#F0ABFC' }}
-            muted={(summary.missedInCount || 0) === 0}
-          />
-          <SummaryTile
-            label="No clock-out"
-            value={summary.missedOutCount || 0}
-            meta={{ bg:'#E0E7FF', fg:'#3730A3', border:'#A5B4FC' }}
-            muted={(summary.missedOutCount || 0) === 0}
-          />
-        </div>
-      )}
+      {/* Quality row — always rendered so the panel layout is
+          consistent across staff. Zero-value tiles render in muted
+          variant. */}
+      <div className="grid grid-cols-3 gap-1.5">
+        <SummaryTile
+          label="Absent"
+          value={counts.absent || 0}
+          meta={statusMeta('absent')}
+          muted={(counts.absent || 0) === 0}
+        />
+        <SummaryTile
+          label="No clock-in"
+          value={summary.missedInCount || 0}
+          meta={{ bg:'#FCE7F3', fg:'#86198F', border:'#F0ABFC' }}
+          muted={(summary.missedInCount || 0) === 0}
+        />
+        <SummaryTile
+          label="No clock-out"
+          value={summary.missedOutCount || 0}
+          meta={{ bg:'#E0E7FF', fg:'#3730A3', border:'#A5B4FC' }}
+          muted={(summary.missedOutCount || 0) === 0}
+        />
+      </div>
 
-      {summary.leaveByType && summary.leaveByType.size > 0 && (
-        <>
-          <SectionLabel mt>LEAVE</SectionLabel>
-          <div
-            className="grid gap-2"
-            style={{
-              gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
-            }}
-          >
-            {Array.from(summary.leaveByType.values())
-              .sort((a, b) => b.days - a.days)
-              .map((entry) => (
-                <SummaryTile
-                  key={entry.id}
-                  label={entry.name}
-                  value={entry.days}
-                  sub={`${entry.requests} request${entry.requests === 1 ? '' : 's'}`}
-                  meta={leaveMetaFor(entry)}
-                />
-              ))}
-          </div>
-        </>
-      )}
+      <SectionLabel mt>LEAVE</SectionLabel>
+      <div
+        className="grid gap-1.5"
+        style={{
+          gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+        }}
+      >
+        {leaveTiles.map((entry) => (
+          <SummaryTile
+            key={entry.id}
+            label={entry.name}
+            value={entry.days}
+            sub={entry.requests > 0 ? `${entry.requests} req` : null}
+            meta={leaveMetaFor(entry)}
+            muted={entry.days === 0}
+          />
+        ))}
+      </div>
     </div>
   );
 }
