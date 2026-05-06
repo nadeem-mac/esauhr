@@ -121,7 +121,6 @@ function esc(s) {
 
 export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
   const [closing, setClosing] = useState(false);
-  const [tab, setTab] = useState('attendance');
   const [attRows, setAttRows] = useState(null); // null = loading
   const [leaveRows, setLeaveRows] = useState(null);
   const [leaveTypes, setLeaveTypes] = useState([]);
@@ -299,13 +298,12 @@ export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
   }, [leaveTypes]);
 
   // ─── HTML export ──────────────────────────────────────────────────
+  // Single combined report — attendance calendar + the per-leave-type
+  // breakdown that's now baked into the summary tiles. The previous
+  // "Leave" report is folded into this one.
   const exportHtml = useCallback(() => {
-    if (tab === 'attendance') {
-      exportAttendanceHtml(employee, range, monthly, summary || {}, leaveRows || [], leaveTypeName);
-    } else {
-      exportLeaveHtml(employee, range, leaveRows || [], leaveTypeName);
-    }
-  }, [employee, tab, range, monthly, summary, leaveRows, leaveTypeName]);
+    exportAttendanceHtml(employee, range, monthly, summary || {}, leaveRows || [], leaveTypeName);
+  }, [employee, range, monthly, summary, leaveRows, leaveTypeName]);
 
   if (!employee) return null;
 
@@ -410,41 +408,17 @@ export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
             <CalIcon className="w-3 h-3" />
             {fmtRangeShort(range.from)} &ndash; {fmtRangeShort(range.to)}
           </div>
-
-          {/* Tabs */}
-          <div className="flex gap-1 mt-3" role="tablist">
-            <TabButton
-              active={tab === 'attendance'}
-              onClick={() => setTab('attendance')}
-              icon={<CheckCircle2 className="w-3.5 h-3.5" />}
-              label="Attendance"
-            />
-            <TabButton
-              active={tab === 'leave'}
-              onClick={() => setTab('leave')}
-              icon={<CalIcon className="w-3.5 h-3.5" />}
-              label="Leave"
-              count={Array.isArray(leaveRows) ? leaveRows.length : null}
-            />
-          </div>
         </div>
 
-        {/* Body — scrollable */}
+        {/* Body — scrollable. Single attendance view; everything Bashaier
+            needs (calendar, summary tiles, per-leave-type breakdown)
+            lives in this one pane now — no tab switch required. */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '14px 20px 20px' }}>
-          {tab === 'attendance' && (
-            <AttendanceTab
-              loading={attRows === null}
-              monthly={monthly}
-              summary={summary}
-            />
-          )}
-          {tab === 'leave' && (
-            <LeaveTab
-              loading={leaveRows === null}
-              rows={leaveRows || []}
-              leaveTypeName={leaveTypeName}
-            />
-          )}
+          <AttendanceTab
+            loading={attRows === null}
+            monthly={monthly}
+            summary={summary}
+          />
         </div>
 
         {/* Footer — actions */}
@@ -464,7 +438,7 @@ export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
           </div>
           <button
             onClick={exportHtml}
-            disabled={tab === 'attendance' ? attRows === null : leaveRows === null}
+            disabled={attRows === null}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[12px]"
             style={{
               background: '#0F4C2A',
