@@ -233,12 +233,65 @@ export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
     });
   }, [attRows]);
 
+  // Rich per-employee aggregate over the visible date range.
+  // Drives the summary tiles at the top of the Attendance tab.
+  // Keeps the legacy shape (status-keyed counts) intact for the
+  // export functions, and adds:
+  //   • totalLateMinutes / totalEarlyMinutes — useful for HR
+  //     to see the magnitude, not just the count of incidents
+  //   • missedInCount / missedOutCount — data-quality signal
+  //   • leaveByType — Map of leave_type_id → { name, days, requests }
+  //     so each leave type (annual, sick, emergency, unpaid, ...)
+  //     gets its own tile instead of being collapsed into one
+  //     generic "leave" number
   const summary = useMemo(() => {
     if (!Array.isArray(attRows)) return null;
     const counts = {};
-    for (const r of attRows) counts[r.status] = (counts[r.status] || 0) + 1;
-    return counts;
-  }, [attRows]);
+    let totalLateMinutes  = 0;
+    let totalEarlyMinutes = 0;
+    let missedInCount  = 0;
+    let missedOutCount = 0;
+    for (const r of attRows) {
+      counts[r.status] = (counts[r.status] || 0) + 1;
+      if (r.status === 'late')  totalLateMinutes  += (r.late_minutes || 0);
+      if (r.status === 'short') totalEarlyMinutes += (r.early_leave_minutes || 0);
+      // Missed-punch detection — same convention as the calendar grid
+      const hasFirst = !!r.first_punch;
+      const hasLast  = !!r.last_punch;
+      if (!hasFirst && hasLast) missedInCount++;
+      if (hasFirst && !hasLast) missedOutCount++;
+    }
+
+    // Per-leave-type breakdown. Only requests with status='approved'
+    // count toward "days off taken" — pending/declined are noise here.
+    // Each entry tracks request count + total approved days.
+    const leaveByType = new Map();
+    if (Array.isArray(leaveRows)) {
+      for (const lr of leaveRows) {
+        if (lr.status !== 'approved') continue;
+        const tid = lr.leave_type_id;
+        if (!tid) continue;
+        const tname = (leaveTypes.find(t => t.id === tid))?.name || 'Leave';
+        const tcode = (leaveTypes.find(t => t.id === tid))?.code || null;
+        const s = new Date(lr.start_date + 'T00:00:00');
+        const e = new Date(lr.end_date   + 'T00:00:00');
+        const days = Math.max(1, Math.floor((e - s) / 86400000) + 1);
+        const cur = leaveByType.get(tid) || { id: tid, name: tname, code: tcode, days: 0, requests: 0 };
+        cur.days     += days;
+        cur.requests += 1;
+        leaveByType.set(tid, cur);
+      }
+    }
+
+    return {
+      ...counts,
+      totalLateMinutes,
+      totalEarlyMinutes,
+      missedInCount,
+      missedOutCount,
+      leaveByType,
+    };
+  }, [attRows, leaveRows, leaveTypes]);
 
   const leaveTypeName = useCallback((id) => {
     const t = leaveTypes.find(x => x.id === id);
@@ -440,6 +493,120 @@ export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
   );
 }
 
+// ─── SummaryTile ─────────────────────────────────────────────────────
+// Single stat card used in the Attendance tab's summary header. Shows
+// a big serif-style number, an uppercase label below, and an optional
+// sub-line for finer-grained context (e.g. "183 min total" under the
+// Late count, or "3 requests" under a leave-type tile).
+//
+// `meta` = { bg, fg, border } matches the statusMeta shape so any
+// new chip palette can be slotted in without code changes.
+//
+// `muted=true` renders a desaturated variant — used when a 0-value
+// tile is shown for visual symmetry but shouldn't draw attention.
+function SummaryTile({ label, value, sub, meta, delay = 0, muted = false }) {
+  const m = meta || { bg: '#FFFFFF', fg: '#1F1B16', border: '#E5E5E5' };
+  return (
+    <div
+      style={{
+        background: muted ? '#FAFAF6' : '#FFFFFF',
+        border: `1px solid ${muted ? '#E5E5E5' : m.border}`,
+        borderRadius: 10,
+        padding: '10px 8px',
+        textAlign: 'center',
+        animation: `detail-fade-in 0.4s ease-out ${delay}ms both`,
+        opacity: muted ? 0.55 : 1,
+        minWidth: 0,
+      }}
+    >
+      <div
+        style={{
+          fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
+          fontSize: 24,
+          color: muted ? '#737373' : m.fg,
+          fontWeight: 700,
+          lineHeight: 1,
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        {value}
+      </div>
+      <div
+        className="text-[10px] mt-1"
+        style={{
+          color: '#0A0A0A',
+          opacity: 0.75,
+          fontWeight: 700,
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          // Long leave-type labels (e.g. "Emergency leave") shouldn't
+          // truncate; allow a 2-line wrap with tight leading
+          lineHeight: 1.2,
+          minHeight: 24,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        {label}
+      </div>
+      {sub && (
+        <div
+          className="text-[10px] mt-0.5"
+          style={{ color: muted ? '#737373' : m.fg, opacity: 0.85, fontWeight: 500 }}
+        >
+          {sub}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── SectionLabel ────────────────────────────────────────────────────
+// Small uppercase kicker that introduces a group of summary tiles.
+// `mt` adds a top margin so it visually separates from the previous
+// section without leaning on padding hacks.
+function SectionLabel({ children, mt }) {
+  return (
+    <div
+      style={{
+        fontSize: 10,
+        fontWeight: 700,
+        letterSpacing: '0.22em',
+        color: '#1F1B16',
+        opacity: 0.6,
+        marginTop: mt ? 12 : 0,
+        marginBottom: 6,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ─── leaveMetaFor ────────────────────────────────────────────────────
+// Picks a chip palette for a given leave-type entry. The convention:
+//   • `code` is the canonical machine-friendly identifier on the
+//     leave_types row ('SICK', 'EMERGENCY', 'ANNUAL', etc.). When
+//     present, it drives the color so the same type always renders
+//     consistently across UIs.
+//   • Falls back to a name-based heuristic for legacy types without
+//     a code.
+//   • Final fallback is a neutral teal so unknown types still look
+//     intentional rather than broken.
+function leaveMetaFor(entry) {
+  const codeOrName = String(entry?.code || entry?.name || '').toUpperCase();
+  if (/SICK/.test(codeOrName))      return { bg:'#EDE9FE', fg:'#5B21B6', border:'#C4B5FD' };
+  if (/EMERG/.test(codeOrName))     return { bg:'#FEE2E2', fg:'#991B1B', border:'#FCA5A5' };
+  if (/UNPAID/.test(codeOrName))    return { bg:'#F5F5F5', fg:'#525252', border:'#A3A3A3' };
+  if (/MATERNIT/.test(codeOrName))  return { bg:'#FCE7F3', fg:'#9D174D', border:'#F9A8D4' };
+  if (/PATERNIT/.test(codeOrName))  return { bg:'#DBEAFE', fg:'#1E3A8A', border:'#93C5FD' };
+  if (/HAJJ/.test(codeOrName))      return { bg:'#FEF3C7', fg:'#854F0B', border:'#FCD34D' };
+  if (/COMPASS|BEREAVE/.test(codeOrName)) return { bg:'#E0E7FF', fg:'#3730A3', border:'#A5B4FC' };
+  if (/ANNUAL/.test(codeOrName))    return { bg:'#CCFBF1', fg:'#115E59', border:'#5EEAD4' };
+  return { bg:'#CCFBF1', fg:'#115E59', border:'#5EEAD4' };
+}
+
 // ─── TabButton ───────────────────────────────────────────────────────
 function TabButton({ active, onClick, icon, label, count }) {
   return (
@@ -490,50 +657,103 @@ function AttendanceTab({ loading, monthly, summary }) {
 
   return (
     <div>
-      {/* Summary tiles */}
+      {/* Summary tiles — split into two sections so the visual
+          weight reflects the data's structure:
+            • Attendance vitals (the daily-flow signals)
+            • Leave breakdown (one tile per leave type the employee
+              actually used in this range — annual, sick, emergency,
+              unpaid, etc.)
+          The two sections only render when there's data to show. */}
       {total > 0 && (
-        <div className="grid grid-cols-4 gap-2 mb-4">
-          {[
-            ['present',      'Present', 0],
-            ['late',         'Late',    50],
-            ['absent',       'Absent',  100],
-            ['annual_leave', 'Leave',   150],
-          ].map(([k, label, delay], i) => {
-            const meta = statusMeta(k);
-            const count = (k === 'annual_leave' ? (counts.annual_leave || 0) + (counts.sick_leave || 0) : (counts[k] || 0));
-            return (
+        <div className="mb-4">
+          <SectionLabel>ATTENDANCE</SectionLabel>
+          <div className="grid grid-cols-3 gap-2 mb-2">
+            <SummaryTile
+              label="Present"
+              value={counts.present || 0}
+              meta={statusMeta('present')}
+              delay={0}
+            />
+            <SummaryTile
+              label="Late"
+              value={counts.late || 0}
+              sub={(summary?.totalLateMinutes || 0) > 0 ? `${summary.totalLateMinutes} min total` : null}
+              meta={statusMeta('late')}
+              delay={50}
+            />
+            <SummaryTile
+              label="Left early"
+              value={counts.short || 0}
+              sub={(summary?.totalEarlyMinutes || 0) > 0 ? `${summary.totalEarlyMinutes} min total` : null}
+              meta={statusMeta('short')}
+              delay={100}
+            />
+          </div>
+
+          {/* Second row — only populated chips show. Absent + missed
+              punches are data-quality / process-failure signals; if
+              they're zero we hide the row to avoid visual noise. */}
+          {((counts.absent || 0) > 0 ||
+            (summary?.missedInCount  || 0) > 0 ||
+            (summary?.missedOutCount || 0) > 0) && (
+            <div className="grid grid-cols-3 gap-2">
+              <SummaryTile
+                label="Absent"
+                value={counts.absent || 0}
+                meta={statusMeta('absent')}
+                delay={150}
+                muted={(counts.absent || 0) === 0}
+              />
+              <SummaryTile
+                label="No clock-in"
+                value={summary?.missedInCount || 0}
+                meta={{ bg:'#FCE7F3', fg:'#86198F', border:'#F0ABFC' }}
+                delay={200}
+                muted={(summary?.missedInCount || 0) === 0}
+              />
+              <SummaryTile
+                label="No clock-out"
+                value={summary?.missedOutCount || 0}
+                meta={{ bg:'#E0E7FF', fg:'#3730A3', border:'#A5B4FC' }}
+                delay={250}
+                muted={(summary?.missedOutCount || 0) === 0}
+              />
+            </div>
+          )}
+
+          {/* LEAVE section — one tile per leave type that has approved
+              days in this range. Hidden entirely if no approved leaves
+              exist. The label uses the leave_type's `name` from the
+              DB so it adapts to whatever types are configured (annual
+              leave, sick leave, emergency, unpaid, paternity, hajj,
+              etc. — Bashaier's HR config drives this list). */}
+          {summary?.leaveByType && summary.leaveByType.size > 0 && (
+            <>
+              <SectionLabel mt>LEAVE</SectionLabel>
               <div
-                key={k}
+                className="grid gap-2"
                 style={{
-                  background: '#FFFFFF',
-                  border: `1.5px solid ${meta.border}`,
-                  borderRadius: 12,
-                  padding: '10px 8px',
-                  textAlign: 'center',
-                  animation: `detail-fade-in 0.5s ease-out ${delay}ms both`,
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
                 }}
               >
-                <div
-                  style={{
-                    fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
-                    fontSize: 24,
-                    color: meta.fg,
-                    fontWeight: 700,
-                    lineHeight: 1,
-                    fontVariantNumeric: 'tabular-nums',
-                  }}
-                >
-                  {count}
-                </div>
-                <div
-                  className="text-[10px] mt-1"
-                  style={{ color: '#0A0A0A', opacity: 0.7, fontWeight: 600, letterSpacing: '0.08em' }}
-                >
-                  {label.toUpperCase()}
-                </div>
+                {Array.from(summary.leaveByType.values())
+                  .sort((a, b) => b.days - a.days)
+                  .map((entry, idx) => {
+                    const meta = leaveMetaFor(entry);
+                    return (
+                      <SummaryTile
+                        key={entry.id}
+                        label={entry.name}
+                        value={entry.days}
+                        sub={`${entry.requests} request${entry.requests === 1 ? '' : 's'}`}
+                        meta={meta}
+                        delay={idx * 50}
+                      />
+                    );
+                  })}
               </div>
-            );
-          })}
+            </>
+          )}
         </div>
       )}
 
@@ -1011,6 +1231,19 @@ h1 {
   color: var(--ink-mute); font-weight: 700;
   text-transform: uppercase; margin-top: 6px;
 }
+.tile .s {
+  font-size: 11px;
+  color: var(--ink-mute);
+  margin-top: 4px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.summary + .summary { margin-top: 8px; }
+h2.section-h2 {
+  font-family: Georgia, serif; font-size: 16px; font-weight: 700;
+  color: var(--ink); margin: 16px 0 10px; padding-bottom: 6px;
+  border-bottom: 1px solid var(--rule);
+}
 section.month {
   margin-bottom: 22px;
   break-inside: avoid;
@@ -1128,22 +1361,54 @@ function exportAttendanceHtml(employee, range, monthly, summary, leaveRows, leav
     `;
   }).join('');
 
-  const tile = (count, label) => `
+  // Tile renderer with optional sub-line for context (e.g. total
+  // minutes under a Late count, or "3 requests" under a leave-type
+  // tile). Sub is rendered inline below the value so the printed
+  // report carries the same magnitude information as the on-screen
+  // panel.
+  const tile = (count, label, sub) => `
     <div class="tile">
       <div class="v">${count}</div>
       <div class="l">${esc(label)}</div>
+      ${sub ? `<div class="s">${esc(sub)}</div>` : ''}
     </div>
   `;
 
-  const totalLeave = (counts.annual_leave || 0) + (counts.sick_leave || 0);
-  const summaryTiles = `
+  const lateMins  = summary?.totalLateMinutes  || 0;
+  const earlyMins = summary?.totalEarlyMinutes || 0;
+  const missedIn  = summary?.missedInCount     || 0;
+  const missedOut = summary?.missedOutCount    || 0;
+
+  const attendanceTilesHtml = `
     <div class="summary">
       ${tile(counts.present || 0, 'Present')}
-      ${tile(counts.late || 0, 'Late')}
-      ${tile(counts.absent || 0, 'Absent')}
-      ${tile(totalLeave, 'On leave')}
+      ${tile(counts.late    || 0, 'Late',       lateMins  > 0 ? `${lateMins} min total`  : null)}
+      ${tile(counts.short   || 0, 'Left early', earlyMins > 0 ? `${earlyMins} min total` : null)}
+      ${tile(counts.absent  || 0, 'Absent')}
+    </div>
+    ${(missedIn > 0 || missedOut > 0) ? `
+    <div class="summary">
+      ${tile(missedIn,  'No clock-in')}
+      ${tile(missedOut, 'No clock-out')}
+    </div>` : ''}
+  `;
+
+  // Leave breakdown — one tile per leave type that has approved
+  // days in the range. Iterates the Map in descending-days order so
+  // the report leads with the most-used type.
+  const leaveTypesList = summary?.leaveByType
+    ? Array.from(summary.leaveByType.values()).sort((a, b) => b.days - a.days)
+    : [];
+  const leaveTilesHtml = leaveTypesList.length === 0 ? '' : `
+    <h2 class="section-h2">Leave breakdown</h2>
+    <div class="summary">
+      ${leaveTypesList.map(entry =>
+        tile(entry.days, entry.name, `${entry.requests} request${entry.requests === 1 ? '' : 's'}`)
+      ).join('')}
     </div>
   `;
+
+  const summaryTiles = attendanceTilesHtml + leaveTilesHtml;
 
   const html = `<!DOCTYPE html>
 <html lang="en">
