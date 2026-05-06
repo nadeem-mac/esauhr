@@ -181,8 +181,13 @@ export default function ReviewerPanel({ me }) {
     try {
       // Use directGet (raw fetch) instead of supabase-js for all reads — the
       // JS client lazy builder occasionally wedges and never sends the query.
+      // is_hr_reviewer is REQUIRED — the HR-self approval guard in
+      // decideLeave/decidePerm reads this flag from empMap to decide
+      // whether to finalise on the manager step (Bashaier's case) or
+      // advance to pending_hr. Missing this column made Bashaier's
+      // requests get stuck at pending_hr after Fahad approved.
       const emps = await directGet('employees',
-        'select=id,name,location,department,manager_id,email,join_date',
+        'select=id,name,location,department,manager_id,email,join_date,is_hr_reviewer',
         { timeoutMs: 10000 });
       const map = {};
       (emps || []).forEach(e => { map[e.id] = e; });
