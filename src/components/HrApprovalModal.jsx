@@ -305,7 +305,62 @@ export default function HrApprovalModal({ request, employee, manager, substitute
   // This is the policy enforcement — an unverified sick leave should
   // never reach 'approved' stage. HR can still see and review the
   // request; the Approve button is what's locked.
-  const approvalBlocked = isSick && !verifiedAt;
+  //
+  // Exception (per Nadeem 2026-05-06): for very short sick declarations
+  // where no Sehhaty cert is required (e.g. 1-day "today only" rest),
+  // Bashaier can mark the row as cert-exempt and approve in one step.
+  // The approveAsCertExempt path below stamps sick_cert_exempt=true
+  // before running the normal approve flow, so the policy "sick must
+  // be verified" still holds — exempt rows are explicitly waived
+  // rather than silently bypassed.
+  const approvalBlocked = isSick && !verifiedAt && !request.sick_cert_exempt;
+
+  const approveAsCertExempt = useCallback(async () => {
+    setStep('approving');
+    setError('');
+    try {
+      const now = new Date().toISOString();
+      await directPatch('leave_requests', 'id', request.id, {
+        sick_cert_exempt: true,
+        // Stamp a note so the audit trail records why this was
+        // approved without a cert. Pulled from the verification
+        // note field if Bashaier typed something, otherwise a
+        // standard placeholder.
+        sehhaty_verification_note: (confirmNote && confirmNote.trim())
+          || 'Approved as cert-exempt — no Sehhaty cert required for this declaration.',
+        stage: 'approved',
+        hr_decided_at: now,
+        hr_decided_by: me?.auth_user_id || me?.id || null,
+      }, { timeoutMs: 15000 });
+
+      try {
+        logAction(me, 'leave_request_decide', {
+          targetType: 'leave_request',
+          targetId: request.id,
+          targetLabel: `${employee?.name || request.employee_id} · approved (cert-exempt)`,
+          details: { stage: 'approved', action: 'approved', cert_exempt: true },
+        });
+      } catch { /* audit log is best-effort */ }
+
+      setDraft(buildSickLeaveApprovalEmailDraft({
+        request: {
+          ...request,
+          sick_cert_exempt: true,
+          sehhaty_verification_note: (confirmNote && confirmNote.trim()) || 'Approved as cert-exempt',
+        },
+        employee,
+        manager,
+        hrApprover: me,
+        payBracketLabel: sickBracket?.endBracket?.label,
+        badria: empMap?.['H94458'] || null,
+        fahad:  empMap?.['H94712'] || null,
+      }));
+      setStep('done');
+    } catch (err) {
+      setError(err?.message || String(err));
+      setStep('review');
+    }
+  }, [request, employee, manager, me, sickBracket, empMap, confirmNote]);
 
   const approve = useCallback(async () => {
     setStep('approving');
@@ -609,9 +664,32 @@ export default function HrApprovalModal({ request, employee, manager, substitute
                           ⚠ {codeDiag.messages.join(' ')}
                         </div>
                       )}
-                      {!request.sehhaty_code && (
-                        <div className="text-[10px] mt-2" style={{ color: '#B91C1C' }}>
-                          Cannot mark as verified — no service code on this request. Ask the requester to resubmit with the Sehhaty code.
+                      {!request.sehhaty_code && !request.sick_cert_exempt && (
+                        <div className="mt-2 px-3 py-2 rounded"
+                          style={{ background: '#FEF3C7', border: '1px solid #FCD34D' }}>
+                          <div className="text-[11px] font-semibold mb-1" style={{ color: '#7C2D12' }}>
+                            No Sehhaty service code on this request
+                          </div>
+                          <div className="text-[10px] mb-2" style={{ color: '#7C2D12', opacity: 0.85 }}>
+                            For short illnesses (e.g. 1-day rest) Sehhaty doesn't issue a cert.
+                            You can approve this as <strong>cert-exempt</strong>, or close and ask the
+                            staff member to add the Sehhaty code if a cert was actually issued. Use
+                            the Reject button on the row in your queue if you need to decline.
+                          </div>
+                          <button onClick={approveAsCertExempt}
+                            className="text-[11px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full"
+                            style={{
+                              background: '#0F4C2A', color: '#FFFFFF',
+                              fontWeight: 600, cursor: 'pointer',
+                            }}>
+                            <Check className="w-3 h-3"/> Approve as cert-exempt
+                          </button>
+                        </div>
+                      )}
+                      {request.sick_cert_exempt && (
+                        <div className="text-[11px] mt-2 px-2 py-1 rounded inline-block"
+                          style={{ background: '#DCFCE7', color: '#14532D', border: '1px solid #86EFAC', fontWeight: 600 }}>
+                          ✓ Marked cert-exempt
                         </div>
                       )}
                     </>
@@ -666,20 +744,20 @@ export default function HrApprovalModal({ request, employee, manager, substitute
                             approve();
                           }
                         }}
-                        disabled={isSick && !request.sehhaty_code}
-                        title={(isSick && !request.sehhaty_code)
-                          ? 'No Sehhaty code on this request'
+                        disabled={isSick && !request.sehhaty_code && !request.sick_cert_exempt}
+                        title={(isSick && !request.sehhaty_code && !request.sick_cert_exempt)
+                          ? 'No Sehhaty code — use the cert-exempt option above, or close and reject the request'
                           : approvalBlocked
                           ? 'Confirm the certificate on Sehhaty before approving'
                           : ''}
                         className="inline-flex items-center gap-1.5 px-5 py-2 rounded-full text-xs font-semibold"
                         style={{
-                          background: (isSick && !request.sehhaty_code)
+                          background: (isSick && !request.sehhaty_code && !request.sick_cert_exempt)
                             ? '#9CA3AF'
                             : 'linear-gradient(135deg, #2D5F3F 0%, #1F4530 100%)',
                           color: '#fff',
-                          cursor: (isSick && !request.sehhaty_code) ? 'not-allowed' : 'pointer',
-                          opacity: (isSick && !request.sehhaty_code) ? 0.7 : 1,
+                          cursor: (isSick && !request.sehhaty_code && !request.sick_cert_exempt) ? 'not-allowed' : 'pointer',
+                          opacity: (isSick && !request.sehhaty_code && !request.sick_cert_exempt) ? 0.7 : 1,
                         }}>
                   <Check className="w-3.5 h-3.5" />
                   {approvalBlocked ? 'Verify & approve' : 'Approve & continue'}
