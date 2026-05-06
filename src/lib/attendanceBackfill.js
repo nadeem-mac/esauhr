@@ -184,6 +184,103 @@ function evaluateShift(firstPunch, lastPunch, shift) {
   return { ...evalRes, policy };
 }
 
+/**
+ * Fetch approved permission_requests in a date range as a Map keyed
+ * by `${empId}|${YYYY-MM-DD}|${type}` → { time_from, time_to, type }.
+ *
+ * Used by buildBackfillRows / reevaluateBackfillRows to suppress
+ * late/short flags when a covering permission is on file. e.g.
+ * Bashaier with an approved early_leave 08:00→08:20 on 06/05 should
+ * show as 'present', not 'short'.
+ *
+ * Permission types align with timeCard.js daily flow:
+ *   - 'late_arrival'  → covers late first-punch
+ *   - 'early_leave'   → covers early last-punch
+ *
+ * @param {string} startDate YYYY-MM-DD inclusive
+ * @param {string} endDate   YYYY-MM-DD inclusive
+ */
+export async function fetchApprovedPermissions(startDate, endDate) {
+  try {
+    const qs =
+      'select=employee_id,permission_date,type,time_from,time_to,stage,status' +
+      `&permission_date=gte.${startDate}` +
+      `&permission_date=lte.${endDate}` +
+      '&or=(stage.eq.approved,status.eq.approved)';
+    const rows = await directGet('permission_requests', qs, { timeoutMs: 9000 });
+    const out = new Map();
+    (rows || []).forEach(p => {
+      if (!p?.employee_id || !p?.permission_date || !p?.type) return;
+      const key = `${p.employee_id}|${p.permission_date}|${p.type}`;
+      // Prefer the widest existing window if duplicates appear.
+      const prev = out.get(key);
+      const prevWidth = prev ? widthMins(prev) : -1;
+      const thisWidth = widthMins(p);
+      if (!prev || thisWidth > prevWidth) out.set(key, p);
+    });
+    return out;
+  } catch {
+    return new Map();
+  }
+}
+
+function widthMins(p) {
+  const a = timeToMinutes(p?.time_from);
+  const b = timeToMinutes(p?.time_to);
+  if (a == null || b == null) return 0;
+  return Math.max(0, b - a);
+}
+
+// Apply an approved permission to a (status, lateMin, earlyMin)
+// classification. Returns the same shape with the late/short
+// downgraded to 'present' when a matching permission covers the
+// punch. Permission coverage rules:
+//
+//   • late_arrival : if first_punch ≤ time_to → present
+//                    if first_punch > time_to → keep 'late', minutes
+//                                               recomputed as beyond
+//   • early_leave  : if last_punch ≥ time_from → present
+//                    if last_punch < time_from → keep 'short', minutes
+//                                                 recomputed as beyond
+function applyPermissionCoverage({ status, lateMin, earlyMin, firstPunch, lastPunch, perms, empId, dateIso }) {
+  let coveredNote = null;
+  if (status === 'late') {
+    const perm = perms?.get?.(`${empId}|${dateIso}|late_arrival`);
+    if (perm && perm.time_to) {
+      const fpMin = timeToMinutes(firstPunch);
+      const ptMin = timeToMinutes(perm.time_to);
+      if (fpMin != null && ptMin != null) {
+        if (fpMin <= ptMin) {
+          coveredNote = `late arrival covered by approved permission (${(perm.time_from||'').slice(0,5)}–${(perm.time_to||'').slice(0,5)})`;
+          return { status: 'present', lateMin: 0, earlyMin, coveredNote };
+        }
+        // Beyond the permission window — keep 'late', minutes from
+        // the permission's time_to (not from scheduled start).
+        const beyond = Math.max(0, fpMin - ptMin);
+        coveredNote = `arrived ${beyond} min beyond permission window (permitted to ${(perm.time_to||'').slice(0,5)})`;
+        return { status: 'late', lateMin: beyond, earlyMin, coveredNote };
+      }
+    }
+  }
+  if (status === 'short') {
+    const perm = perms?.get?.(`${empId}|${dateIso}|early_leave`);
+    if (perm && perm.time_from) {
+      const lpMin = timeToMinutes(lastPunch);
+      const pfMin = timeToMinutes(perm.time_from);
+      if (lpMin != null && pfMin != null) {
+        if (lpMin >= pfMin) {
+          coveredNote = `early leave covered by approved permission (${(perm.time_from||'').slice(0,5)}–${(perm.time_to||'').slice(0,5)})`;
+          return { status: 'present', lateMin, earlyMin: 0, coveredNote };
+        }
+        const beyond = Math.max(0, pfMin - lpMin);
+        coveredNote = `left ${beyond} min before permission window (permitted from ${(perm.time_from||'').slice(0,5)})`;
+        return { status: 'short', lateMin, earlyMin: beyond, coveredNote };
+      }
+    }
+  }
+  return { status, lateMin, earlyMin, coveredNote: null };
+}
+
 // KSA weekend = Friday + Saturday. Office-hours policy doesn't apply
 // to weekend work (most office staff are off then; weekend punches
 // are typically OT or special coverage). We leave those as 'present'
@@ -323,7 +420,7 @@ export async function fetchMawaniDays() {
  *    maxDate:    latest YYYY-MM-DD
  *  }
  */
-export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmployeeIds, shiftAssignmentDates, mawaniDays }) {
+export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmployeeIds, shiftAssignmentDates, permissionsMap, mawaniDays }) {
   // Index the directory once. Two indexes — one for full PSN match
   // (e.g. "H94499"), one for the digits-only fallback ("94499") since
   // some xlsx exports drop the H prefix.
@@ -347,6 +444,9 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
     : new Set(shiftEmployeeIds || []);
   const shiftDateSet = (shiftAssignmentDates instanceof Map)
     ? shiftAssignmentDates
+    : new Map();
+  const permsMap = (permissionsMap instanceof Map)
+    ? permissionsMap
     : new Map();
 
   // Mawani-visit set keyed as `${empId}|${YYYY-MM-DD}` so a single
@@ -553,6 +653,24 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
       noteText      = `Backfill — evaluated against ${policy.label} with 15-min grace`;
     }
 
+    // Apply approved permission coverage — late_arrival or
+    // early_leave permissions on file for this date downgrade
+    // 'late'/'short' to 'present'. Beyond-the-window cases keep
+    // the violation but recompute minutes against the permission
+    // boundary. Per Nadeem (2026-05-06): an early-leaving permit
+    // for Bashaier should NOT show as SH on the monthly grid.
+    const cov = applyPermissionCoverage({
+      status, lateMin, earlyMin,
+      firstPunch: firstPunchRaw, lastPunch: lastPunchRaw,
+      perms: permsMap, empId, dateIso,
+    });
+    if (cov.coveredNote) {
+      status   = cov.status;
+      lateMin  = cov.lateMin;
+      earlyMin = cov.earlyMin;
+      noteText = `${noteText} · ${cov.coveredNote}`;
+    }
+
     if (status === 'late') lateCount++;
     else if (status === 'short') shortCount++;
     else presentCount++;
@@ -721,6 +839,7 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
   // existing rows we're about to re-evaluate. Done after the
   // attendance_daily fetch below to keep the query tight.
   let shiftDateSet = new Map();
+  let permsMap     = new Map();
 
   // Build empPolicyMap: employee_id → policy. ALWAYS fetch fresh
   // here — the caller's employees prop may be stale if the user
@@ -774,6 +893,7 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
     const minD = existing[0].attendance_date;
     const maxD = existing[existing.length - 1].attendance_date;
     shiftDateSet = await fetchShiftAssignmentDates(minD, maxD);
+    permsMap = await fetchApprovedPermissions(minD, maxD);
   }
 
   // Phase 3 — compute proposed updates in-memory
@@ -895,6 +1015,19 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
       newExpStart = policy.startTime;
       newExpEnd   = policy.endTime;
       newNote = `Re-evaluated against ${policy.label} with 15-min grace`;
+    }
+
+    // Apply approved permission coverage on re-eval too.
+    const covRe = applyPermissionCoverage({
+      status: newStatus, lateMin: newLate, earlyMin: newEarly,
+      firstPunch: r.first_punch, lastPunch: r.last_punch,
+      perms: permsMap, empId, dateIso: r.attendance_date,
+    });
+    if (covRe.coveredNote) {
+      newStatus = covRe.status;
+      newLate   = covRe.lateMin;
+      newEarly  = covRe.earlyMin;
+      newNote   = `${newNote} · ${covRe.coveredNote}`;
     }
 
     // Tally for the summary regardless of whether we actually write

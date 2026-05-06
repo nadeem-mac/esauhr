@@ -48,6 +48,7 @@ import {
   recordBackfillRows,
   fetchShiftEmployeeIds,
   fetchShiftAssignmentDates,
+  fetchApprovedPermissions,
   fetchMawaniDays,
   reevaluateBackfillRows,
 } from '../lib/attendanceBackfill.js';
@@ -139,9 +140,10 @@ export default function AttendanceBackfillPanel({ me, employees, embedded = fals
       const minIso = isoDates.length ? isoDates.reduce((a,b) => a < b ? a : b) : null;
       const maxIso = isoDates.length ? isoDates.reduce((a,b) => a > b ? a : b) : null;
 
-      const [shiftEmployeeIds, shiftAssignmentDates, mawaniDays, freshEmps] = await Promise.all([
+      const [shiftEmployeeIds, shiftAssignmentDates, permissionsMap, mawaniDays, freshEmps] = await Promise.all([
         fetchShiftEmployeeIds(),
-        minIso && maxIso ? fetchShiftAssignmentDates(minIso, maxIso) : Promise.resolve(new Set()),
+        minIso && maxIso ? fetchShiftAssignmentDates(minIso, maxIso) : Promise.resolve(new Map()),
+        minIso && maxIso ? fetchApprovedPermissions(minIso, maxIso)  : Promise.resolve(new Map()),
         fetchMawaniDays(),
         directGet('employees', 'select=*&order=name', { timeoutMs: 9000 })
           .catch(() => null),
@@ -152,6 +154,7 @@ export default function AttendanceBackfillPanel({ me, employees, embedded = fals
         recordedBy: me?.id || null,
         shiftEmployeeIds,
         shiftAssignmentDates,
+        permissionsMap,
         mawaniDays,
       });
       const overwrites = await previewOverwrites(built.rows);
