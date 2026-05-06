@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { X, Building2, MapPin, Calendar, Briefcase, KeyRound, Loader2, CheckCircle2, AlertCircle, Pencil, Save, FileText, Download } from 'lucide-react';
+import { X, Building2, MapPin, Calendar, Briefcase, KeyRound, Loader2, CheckCircle2, AlertCircle, Pencil, Save, FileText, Download, Mail, Phone, UserCheck } from 'lucide-react';
 import { Avatar, Pill } from './Dashboard.jsx';
 import { supabase, directPatch } from '../supabaseClient.js';
 import {
@@ -25,6 +25,17 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
 
   const yos = yearsOfService(employee.join_date);
   const mos = monthsOfService(employee.join_date) % 12;
+  const manager = (employees || []).find(e => e.id === employee.manager_id);
+  const status = employee.employment_status || 'active';
+  const statusLabel = status === 'on_leave' ? 'ON LEAVE'
+                    : status === 'terminated' ? 'TERMINATED'
+                    : 'ACTIVE';
+  const statusFg = status === 'active' ? '#0F4C2A'
+                  : status === 'on_leave' ? '#854F0B'
+                  : '#991B1B';
+  const statusBg = status === 'active' ? '#ECFDF5'
+                  : status === 'on_leave' ? '#FEF3C7'
+                  : '#FEE2E2';
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
@@ -32,31 +43,79 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
       <div onClick={e => e.stopPropagation()}
         className="rounded-t-2xl sm:rounded-2xl w-full max-w-3xl max-h-[92vh] overflow-y-auto fade-in"
         style={{ background: 'var(--paper)' }}>
-        <div className="sticky top-0 z-10 flex items-center justify-between p-5 border-b backdrop-blur"
+        {/* Compact info-rich header. Pulls more details forward
+            (manager, email, phone, employment status) so admin can
+            see everything important without scrolling. */}
+        <div className="sticky top-0 z-10 px-4 py-3 border-b backdrop-blur"
              style={{ borderColor: 'var(--border-soft)', background: 'rgba(250, 247, 240, 0.95)' }}>
-          <div className="flex items-center gap-4 min-w-0">
-            <Avatar id={employee.id} name={employee.name} size="xl"/>
-            <div className="min-w-0">
-              <div className="text-[10px] tracking-[0.25em] opacity-50 mono">{employee.id}</div>
-              <h2 className="serif text-2xl truncate" style={{ fontWeight: 500, letterSpacing: '-0.01em' }}>{employee.name}</h2>
-              <div className="text-xs opacity-60 flex flex-wrap items-center gap-3 mt-1">
-                <span className="flex items-center gap-1"><Building2 className="w-3 h-3"/>{employee.department}</span>
-                <span className="flex items-center gap-1"><MapPin className="w-3 h-3"/>{LOCATION_LABELS[employee.location] || employee.location}</span>
-                {employee.join_date && (
-                  <span className="flex items-center gap-1">
-                    <Calendar className="w-3 h-3"/>
-                    Joined {fmtDate(employee.join_date)} · {yos}y {mos}m
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0 flex-1">
+              <Avatar id={employee.id} name={employee.name} size="lg"/>
+              <div className="min-w-0 flex-1">
+                {/* Top row: ID + status pill */}
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className="text-[10px] tracking-[0.22em] mono" style={{ color: '#0A0A0A', opacity: 0.55 }}>
+                    {employee.id}
                   </span>
-                )}
+                  <span className="text-[8.5px] tracking-[0.12em] px-1.5 py-0.5 rounded-full"
+                    style={{ background: statusBg, color: statusFg, fontWeight: 700 }}>
+                    {statusLabel}
+                  </span>
+                </div>
+                {/* Name */}
+                <h2 className="serif text-xl truncate"
+                  style={{ fontWeight: 500, letterSpacing: '-0.01em', color: '#1F1B16', lineHeight: 1.15 }}>
+                  {employee.name}
+                </h2>
+                {/* Quick-info chips — wraps nicely on narrow viewports */}
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-[11px]"
+                  style={{ color: '#0A0A0A' }}>
+                  <span className="flex items-center gap-1" title="Department">
+                    <Building2 className="w-3 h-3" style={{ opacity: 0.55 }}/>
+                    {employee.department}
+                  </span>
+                  <span className="flex items-center gap-1" title="Location">
+                    <MapPin className="w-3 h-3" style={{ opacity: 0.55 }}/>
+                    {LOCATION_LABELS[employee.location] || employee.location}
+                  </span>
+                  {employee.join_date && (
+                    <span className="flex items-center gap-1" title="Years of service">
+                      <Calendar className="w-3 h-3" style={{ opacity: 0.55 }}/>
+                      {yos}y {mos}m · joined {fmtDateShort(employee.join_date)}
+                    </span>
+                  )}
+                  {manager && (
+                    <span className="flex items-center gap-1" title="Reports to">
+                      <UserCheck className="w-3 h-3" style={{ opacity: 0.55 }}/>
+                      {manager.name}
+                    </span>
+                  )}
+                  {employee.email && (
+                    <a href={`mailto:${employee.email}`}
+                      className="flex items-center gap-1 hover:underline"
+                      style={{ color: '#0F4C2A' }}>
+                      <Mail className="w-3 h-3" style={{ opacity: 0.6 }}/>
+                      {employee.email}
+                    </a>
+                  )}
+                  {employee.phone && (
+                    <a href={`tel:${employee.phone}`}
+                      className="flex items-center gap-1 hover:underline"
+                      style={{ color: '#0F4C2A' }}>
+                      <Phone className="w-3 h-3" style={{ opacity: 0.6 }}/>
+                      {employee.phone}
+                    </a>
+                  )}
+                </div>
               </div>
             </div>
+            <button onClick={onClose} className="p-1.5 rounded-full hover:bg-black/5 flex-shrink-0">
+              <X className="w-4 h-4"/>
+            </button>
           </div>
-          <button onClick={onClose} className="p-2 rounded-full hover:bg-black/5 flex-shrink-0">
-            <X className="w-5 h-5"/>
-          </button>
         </div>
 
-        <div className="p-5 space-y-6">
+        <div className="p-4 space-y-4">
           {/* Government records — Arabic name, National ID, DOB,
               gender, official Arabic profession, GOSI eligibility,
               MOL join date. Populated by the MOL · GOSI sync flow.
@@ -97,36 +156,38 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
           )}
 
           <div>
-            <div className="text-xs tracking-widest opacity-60 mb-3">LEAVE BALANCES · {year}</div>
-            <div className="grid sm:grid-cols-2 gap-3">
+            <div className="text-[10px] tracking-[0.22em] mb-2" style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.7 }}>
+              LEAVE BALANCES · {year}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {balByType.map(({ type, balance }) => {
                 const total = balance.total || 0;
                 const used = balance.used + balance.pending;
                 const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
                 return (
-                  <div key={type.id} className="rounded-xl border p-4"
-                       style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full" style={{ background: type.color }}/>
-                        <div className="text-sm" style={{ fontWeight: 500 }}>{type.name}</div>
+                  <div key={type.id} className="rounded-lg border"
+                       style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', padding: '8px 10px' }}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: type.color }}/>
+                        <div className="text-[12px] truncate" style={{ fontWeight: 600, color: '#1F1B16' }}>{type.name}</div>
                       </div>
                       <Pill color={type.color}>{balance.available} left</Pill>
                     </div>
                     {total > 0 && (
-                      <div className="h-1.5 rounded-full overflow-hidden mb-2" style={{ background: 'var(--border-soft)' }}>
+                      <div className="h-1 rounded-full overflow-hidden mb-1.5" style={{ background: 'var(--border-soft)' }}>
                         <div className="h-full" style={{
                           width: `${pct}%`,
                           background: pct > 80 ? 'var(--clay)' : type.color,
                         }}/>
                       </div>
                     )}
-                    <div className="grid grid-cols-3 gap-1 text-[11px] opacity-70">
-                      <div>Entitled: <strong>{balance.total}</strong></div>
-                      <div>Used: <strong>{balance.used}</strong></div>
-                      <div>Pending: <strong>{balance.pending}</strong></div>
+                    <div className="grid grid-cols-3 gap-1 text-[10px]" style={{ color: '#0A0A0A', opacity: 0.75 }}>
+                      <div>Entitled <strong style={{ color: '#1F1B16' }}>{balance.total}</strong></div>
+                      <div>Used <strong style={{ color: '#1F1B16' }}>{balance.used}</strong></div>
+                      <div>Pending <strong style={{ color: '#1F1B16' }}>{balance.pending}</strong></div>
                     </div>
-                    {balance.accrualNote && <div className="text-[10px] opacity-50 mt-1">{balance.accrualNote}</div>}
+                    {balance.accrualNote && <div className="text-[9.5px] mt-0.5" style={{ color: '#0A0A0A', opacity: 0.55 }}>{balance.accrualNote}</div>}
                   </div>
                 );
               })}
@@ -134,7 +195,9 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
           </div>
 
           <div>
-            <div className="text-xs tracking-widest opacity-60 mb-3">LEAVE HISTORY</div>
+            <div className="text-[10px] tracking-[0.22em] mb-2" style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.7 }}>
+              LEAVE HISTORY
+            </div>
             {history.length === 0 ? (
               <div className="rounded-xl border p-6 text-center text-sm opacity-60"
                    style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
@@ -367,29 +430,31 @@ function EditProfilePanel({ employee, employees, onSaved }) {
     // Read-only summary with an Edit button. Shows the same fields the
     // editor surfaces, so Bashaier sees what's editable at a glance.
     return (
-      <div className="rounded-xl border p-4"
-           style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
-        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <div className="text-xs tracking-widest opacity-60">PROFILE</div>
+      <div className="rounded-xl border"
+           style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', padding: '10px 12px' }}>
+        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+          <div className="text-[10px] tracking-[0.22em]" style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.7 }}>
+            PROFILE
+          </div>
           <button
             type="button"
             onClick={() => { setEditing(true); setDone(false); }}
-            className="text-[11px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border"
-            style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}
+            className="text-[10.5px] inline-flex items-center gap-1 px-2.5 py-1 rounded-full border"
+            style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A', fontWeight: 600 }}
           >
             <Pencil className="w-3 h-3"/> Edit
           </button>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-xs" style={{ color: '#0A0A0A' }}>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-1.5 text-[11px]" style={{ color: '#0A0A0A' }}>
           <ProfileLine label="Name"        value={employee.name} />
-          <ProfileLine label="Email"       value={employee.email} missing="No email on file" />
+          <ProfileLine label="Email"       value={employee.email} missing="No email" />
+          <ProfileLine label="Phone"       value={employee.phone} missing="—" />
           <ProfileLine label="Department"  value={employee.department} />
           <ProfileLine label="Location"    value={LOCATION_LABELS[employee.location] || employee.location} />
-          <ProfileLine label="Manager"     value={(employees || []).find(e => e.id === employee.manager_id)?.name || employee.manager_id} missing="No manager linked" />
-          <ProfileLine label="Phone"       value={employee.phone} missing="—" />
+          <ProfileLine label="Manager"     value={(employees || []).find(e => e.id === employee.manager_id)?.name || employee.manager_id} missing="—" />
         </div>
         {done && (
-          <div className="mt-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px]"
+          <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px]"
                style={{ background: '#ECFDF5', color: '#047857', border: '1px solid #A7F3D0' }}>
             <CheckCircle2 className="w-3 h-3"/> Saved
           </div>
@@ -493,11 +558,13 @@ function EditProfilePanel({ employee, employees, onSaved }) {
 function ProfileLine({ label, value, missing }) {
   const empty = !value;
   return (
-    <div className="flex flex-wrap items-baseline gap-x-2">
-      <span className="text-[10px] tracking-wider font-semibold opacity-70">{label.toUpperCase()}</span>
-      <span style={{ fontWeight: empty ? 400 : 600, color: empty ? '#B45309' : '#0A0A0A' }}>
+    <div className="min-w-0">
+      <div className="text-[9px] tracking-[0.16em] mb-0.5" style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.7 }}>
+        {label.toUpperCase()}
+      </div>
+      <div className="truncate" style={{ fontSize: 11.5, fontWeight: empty ? 400 : 600, color: empty ? '#B45309' : '#0A0A0A', lineHeight: 1.2 }}>
         {empty ? (missing || '—') : value}
-      </span>
+      </div>
     </div>
   );
 }
@@ -775,14 +842,14 @@ function GovernmentRecordsPanel({ employee, onSaved }) {
 
   return (
     <section
-      className="rounded-2xl"
+      className="rounded-xl"
       style={{
         background: '#FFFFFF',
         border: '1px solid var(--border-soft)',
-        padding: '14px 16px',
+        padding: '10px 12px',
       }}
     >
-      <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
+      <div className="flex items-start justify-between gap-3 mb-2 flex-wrap">
         <div className="text-[10px] tracking-[0.25em]" style={{ color: '#0F4C2A', fontWeight: 700 }}>
           GOVERNMENT RECORDS
           <span className="ml-2 px-1.5 py-0.5 rounded-full text-[8.5px]"
@@ -916,14 +983,14 @@ function GovernmentRecordsPanel({ employee, onSaved }) {
         </div>
       )}
 
-      <div className="grid sm:grid-cols-2 gap-x-6 gap-y-3">
-        {/* Arabic name — wide, RTL */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-2">
+        {/* Arabic name — full width, RTL */}
         {employee.arabic_name && (
-          <div className="sm:col-span-2">
-            <div className="text-[9.5px] tracking-[0.18em] mb-0.5" style={{ color: '#0A0A0A', fontWeight: 700 }}>
+          <div className="col-span-2 sm:col-span-4">
+            <div className="text-[9px] tracking-[0.16em] mb-0.5" style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.7 }}>
               ARABIC NAME · الاسم
             </div>
-            <div style={{ direction: 'rtl', fontSize: 15, fontWeight: 700, color: '#1F1B16', fontFamily: 'system-ui' }}>
+            <div style={{ direction: 'rtl', fontSize: 14, fontWeight: 700, color: '#1F1B16', fontFamily: 'system-ui', lineHeight: 1.2 }}>
               {employee.arabic_name}
             </div>
           </div>
@@ -949,18 +1016,6 @@ function GovernmentRecordsPanel({ employee, onSaved }) {
           {employee.nationality ? employee.nationality.toUpperCase() : '—'}
         </GovField>
 
-        {/* Arabic profession — wide */}
-        {employee.arabic_profession && (
-          <div className="sm:col-span-2">
-            <div className="text-[9.5px] tracking-[0.18em] mb-0.5" style={{ color: '#0A0A0A', fontWeight: 700 }}>
-              GOVERNMENT-RECORDED PROFESSION · المهنة
-            </div>
-            <div style={{ direction: 'rtl', fontSize: 13, color: '#1F1B16', fontFamily: 'system-ui' }}>
-              {employee.arabic_profession}
-            </div>
-          </div>
-        )}
-
         {/* GOSI registration date */}
         <GovField label="GOSI REGISTRATION · تاريخ الإلتحاق">
           {fmtDateLocal(employee.mol_join_date)}
@@ -970,11 +1025,23 @@ function GovernmentRecordsPanel({ employee, onSaved }) {
         <GovField label="GOSI ELIGIBILITY · الأهلية">
           {fmt(employee.gosi_eligibility)}
         </GovField>
+
+        {/* Arabic profession — wide */}
+        {employee.arabic_profession && (
+          <div className="col-span-2 sm:col-span-4">
+            <div className="text-[9px] tracking-[0.16em] mb-0.5" style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.7 }}>
+              PROFESSION · المهنة
+            </div>
+            <div style={{ direction: 'rtl', fontSize: 12, color: '#1F1B16', fontFamily: 'system-ui', lineHeight: 1.3 }}>
+              {employee.arabic_profession}
+            </div>
+          </div>
+        )}
       </div>
 
       {employee.mol_synced_at && (
-        <div className="mt-3 pt-3 text-[10px]" style={{ borderTop: '1px solid var(--border-soft)', color: '#0A0A0A', opacity: 0.6 }}>
-          Last synced from MOL/GOSI: {fmtDateLocal(employee.mol_synced_at)}
+        <div className="mt-2 pt-2 text-[9.5px]" style={{ borderTop: '1px solid var(--border-soft)', color: '#0A0A0A', opacity: 0.55 }}>
+          Last synced from MOL · GOSI: {fmtDateLocal(employee.mol_synced_at)}
         </div>
       )}
     </section>
@@ -987,11 +1054,11 @@ function GovernmentRecordsPanel({ employee, onSaved }) {
 function GovField({ label, mono, children }) {
   return (
     <div>
-      <div className="text-[9.5px] tracking-[0.18em] mb-0.5" style={{ color: '#0A0A0A', fontWeight: 700 }}>
+      <div className="text-[9px] tracking-[0.16em] mb-0.5" style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.7 }}>
         {label}
       </div>
-      <div className={mono ? 'font-mono tracking-wider' : ''}
-        style={{ fontSize: 13, color: '#1F1B16', fontWeight: 600 }}>
+      <div className={mono ? 'font-mono tracking-wide' : ''}
+        style={{ fontSize: 12, color: '#1F1B16', fontWeight: 600, lineHeight: 1.2 }}>
         {children}
       </div>
     </div>
