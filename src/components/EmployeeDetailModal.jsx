@@ -1019,17 +1019,22 @@ function GovernmentRecordsPanel({ employee, onSaved }) {
       )}
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-2">
-        {/* Arabic name — full width, RTL */}
-        {employee.arabic_name && (
-          <div className="col-span-2 sm:col-span-4">
-            <div className="text-[9px] tracking-[0.16em] mb-0.5" style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.7 }}>
-              ARABIC NAME · الاسم
-            </div>
-            <div style={{ direction: 'rtl', fontSize: 14, fontWeight: 700, color: '#1F1B16', fontFamily: 'system-ui', lineHeight: 1.2 }}>
-              {employee.arabic_name}
-            </div>
+        {/* Arabic name — same cell structure as National ID below
+            (label-on-top, value-below) so the panel has a consistent
+            grid rhythm. Spans 2 columns because Arabic full names
+            are long ("بشائر علي عبدالله السبيعي" is ~25 chars). The
+            value text is rendered LTR-aligned in the cell — it
+            still reads correctly because Arabic Unicode handles
+            its own visual order, but the label and value baselines
+            align with the rest of the grid. */}
+        <div className="col-span-2">
+          <div className="text-[9px] tracking-[0.16em] mb-0.5" style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.7 }}>
+            ARABIC NAME · الاسم
           </div>
-        )}
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#1F1B16', fontFamily: 'system-ui', lineHeight: 1.2 }}>
+            {employee.arabic_name || '—'}
+          </div>
+        </div>
 
         {/* National ID */}
         <GovField label="NATIONAL ID · رقم الهوية" mono>
