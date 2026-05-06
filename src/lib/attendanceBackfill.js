@@ -171,6 +171,48 @@ export async function fetchShiftEmployeeIds() {
 }
 
 /**
+ * Fetch per-date shift assignments from employee_shifts and return a
+ * Set keyed by `${empId}|${YYYY-MM-DD}`. Used by buildBackfillRows /
+ * reevaluateBackfillRows to make the "is this person on shift today"
+ * check date-specific instead of employee-wide.
+ *
+ * Why this matters (Nadeem 2026-05-06): staff like Fahd (CSD) appear
+ * in monthly_shift_plans because they cover Saturdays — but on
+ * Sun-Thu they're regular office staff and should be evaluated
+ * against the standard 08:00-17:00 policy. The previous logic used
+ * fetchShiftEmployeeIds (employee-level), which made Fahd a "shift
+ * worker" on every weekday and never flagged him for late/early.
+ *
+ * Only includes shifts that aren't cancelled/declined — pending,
+ * accepted, and acknowledged shifts all count as "on shift, skip
+ * policy eval".
+ *
+ * @param {string} startDate YYYY-MM-DD inclusive
+ * @param {string} endDate   YYYY-MM-DD inclusive
+ * @returns {Promise<Set<string>>}
+ */
+export async function fetchShiftAssignmentDates(startDate, endDate) {
+  try {
+    const qs =
+      'select=employee_id,shift_date,status' +
+      `&shift_date=gte.${startDate}` +
+      `&shift_date=lte.${endDate}` +
+      '&status=neq.declined' +
+      '&status=neq.cancelled';
+    const rows = await directGet('employee_shifts', qs, { timeoutMs: 9000 });
+    const out = new Set();
+    (rows || []).forEach(r => {
+      if (r?.employee_id && r?.shift_date) {
+        out.add(`${r.employee_id}|${r.shift_date}`);
+      }
+    });
+    return out;
+  } catch {
+    return new Set();
+  }
+}
+
+/**
  * Fetch all active (non-cancelled) Mawani-visit (employee_id, date)
  * pairs in a single query, return them as a Set keyed by
  * `${empId}|${YYYY-MM-DD}`. Used by buildBackfillRows /
@@ -220,7 +262,7 @@ export async function fetchMawaniDays() {
  *    maxDate:    latest YYYY-MM-DD
  *  }
  */
-export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmployeeIds, mawaniDays }) {
+export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmployeeIds, shiftAssignmentDates, mawaniDays }) {
   // Index the directory once. Two indexes — one for full PSN match
   // (e.g. "H94499"), one for the digits-only fallback ("94499") since
   // some xlsx exports drop the H prefix.
@@ -233,11 +275,17 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
     if (m && m[1]) empByDigits.set(m[1], e);
   });
 
-  // Normalize the shift-worker set so .has() works regardless of how
-  // the caller passed it in (Set, Array, null).
+  // Normalize both shift sets. shiftSet (employee-level) is kept as a
+  // fallback / legacy path — but the primary check is the date-aware
+  // shiftDateSet keyed `${empId}|${YYYY-MM-DD}`. A staffer is treated
+  // as "on shift today" only if their employee_shifts row matches
+  // THIS specific date.
   const shiftSet = (shiftEmployeeIds instanceof Set)
     ? shiftEmployeeIds
     : new Set(shiftEmployeeIds || []);
+  const shiftDateSet = (shiftAssignmentDates instanceof Set)
+    ? shiftAssignmentDates
+    : new Set(shiftAssignmentDates || []);
 
   // Mawani-visit set keyed as `${empId}|${YYYY-MM-DD}` so a single
   // .has() call answers "is this employee on Mawani duty this date?"
@@ -308,8 +356,21 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
     // SUP-staffer who briefly appeared on a manager's roster gets
     // forever skipped from policy evaluation. Explicit SUP
     // designation = 08:00-16:00 office-hours eval, period.
+    //
+    // SHIFT CHECK IS DATE-SPECIFIC (Nadeem 2026-05-06): we only
+    // treat the employee as a shift worker on dates where there's
+    // an actual employee_shifts row. Staff like Fahd (Saturday
+    // shifts only) get evaluated against the standard policy on
+    // Sun-Thu, fixing the bug where any monthly_shift_plans entry
+    // made them un-flaggable for late/early on every day.
+    //
+    // shiftDateSet is the primary source of truth. shiftSet (legacy
+    // employee-level) is now a fallback only when shiftDateSet is
+    // empty (e.g. caller didn't pass it in for backwards compat).
     const isSupTeam = emp?.working_hours_group === 'sup_team';
-    const isShiftWorker = !isSupTeam && shiftSet.has(empId);
+    const hasDateSpecificShift = shiftDateSet.has(`${empId}|${dateIso}`);
+    const fallbackToEmpLevel = shiftDateSet.size === 0 && shiftSet.has(empId);
+    const isShiftWorker = !isSupTeam && (hasDateSpecificShift || fallbackToEmpLevel);
     const dt = new Date(dateIso + 'T00:00:00');
     const isWeekend = isKsaWeekendDow(dt.getDay());
 
@@ -549,6 +610,13 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
   if (onProgress) try { onProgress({ phase: 'shifts', processed: 0, total: 0 }); } catch {}
   const shiftSet = await fetchShiftEmployeeIds();
   const mawaniSet = await fetchMawaniDays();
+  // Date-aware shift assignments — for each row's attendance_date,
+  // we'll check `${empId}|${date}` against this set instead of the
+  // employee-level shiftSet. See fetchShiftAssignmentDates docstring.
+  // We need the date range to scope the fetch — derive from the
+  // existing rows we're about to re-evaluate. Done after the
+  // attendance_daily fetch below to keep the query tight.
+  let shiftDateSet = new Set();
 
   // Build empPolicyMap: employee_id → policy. ALWAYS fetch fresh
   // here — the caller's employees prop may be stale if the user
@@ -595,6 +663,15 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
     { timeoutMs: 45000 }
   ) || [];
 
+  // Now that we have the date range from existing rows, fetch the
+  // date-keyed shift assignments. Tight scope — only the dates that
+  // appear in attendance_daily rows we're re-evaluating.
+  if (existing.length > 0) {
+    const minD = existing[0].attendance_date;
+    const maxD = existing[existing.length - 1].attendance_date;
+    shiftDateSet = await fetchShiftAssignmentDates(minD, maxD);
+  }
+
   // Phase 3 — compute proposed updates in-memory
   const toUpsert = [];
   let lateCount = 0;
@@ -609,9 +686,13 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
     const dt = new Date(r.attendance_date + 'T00:00:00');
     const isWeekend = isKsaWeekendDow(dt.getDay());
     // SUP team takes precedence over shift-worker membership —
-    // see same comment in buildBackfillRows above.
+    // see same comment in buildBackfillRows above. Date-aware
+    // shift check (Nadeem 2026-05-06): only treat as shift worker
+    // on dates where they actually have an employee_shifts row.
     const isSupTeam = emp?.working_hours_group === 'sup_team';
-    const isShiftWorker = !isSupTeam && shiftSet.has(empId);
+    const hasDateSpecificShift = shiftDateSet.has(`${empId}|${r.attendance_date}`);
+    const fallbackToEmpLevel = shiftDateSet.size === 0 && shiftSet.has(empId);
+    const isShiftWorker = !isSupTeam && (hasDateSpecificShift || fallbackToEmpLevel);
     const isMawaniDay = mawaniSet.has(`${empId}|${r.attendance_date}`);
     const isDailyRow = r.source !== 'backfill';
 

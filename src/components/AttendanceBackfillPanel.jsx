@@ -47,6 +47,7 @@ import {
   previewOverwrites,
   recordBackfillRows,
   fetchShiftEmployeeIds,
+  fetchShiftAssignmentDates,
   fetchMawaniDays,
   reevaluateBackfillRows,
 } from '../lib/attendanceBackfill.js';
@@ -126,14 +127,21 @@ export default function AttendanceBackfillPanel({ me, employees, embedded = fals
     setParsing(true);
     try {
       const parsedFile = await parseBackfillXlsx(file);
-      // Fetch shift-worker IDs + Mawani-visit days + fresh employee
-      // working-hours-group lookup in parallel with parsing. Fresh
-      // employees fetch is critical — the prop from the parent page
-      // is loaded once on mount, so any SUP designations made via
-      // the WorkingHoursManager since then wouldn't be reflected.
-      // Falls back to the parent prop if the fetch fails.
-      const [shiftEmployeeIds, mawaniDays, freshEmps] = await Promise.all([
+      // Determine date range of the file so we can scope the
+      // employee_shifts fetch tightly. Date-aware shift check
+      // (Nadeem 2026-05-06): each row's "is on shift today" is
+      // looked up by `${empId}|${date}`, so on regular weekdays
+      // shift staff (e.g. Saturday-only Fahd) get evaluated
+      // against the standard office-hours policy.
+      const isoDates = (parsedFile.rows || [])
+        .map(r => r.date)
+        .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+      const minIso = isoDates.length ? isoDates.reduce((a,b) => a < b ? a : b) : null;
+      const maxIso = isoDates.length ? isoDates.reduce((a,b) => a > b ? a : b) : null;
+
+      const [shiftEmployeeIds, shiftAssignmentDates, mawaniDays, freshEmps] = await Promise.all([
         fetchShiftEmployeeIds(),
+        minIso && maxIso ? fetchShiftAssignmentDates(minIso, maxIso) : Promise.resolve(new Set()),
         fetchMawaniDays(),
         directGet('employees', 'select=*&order=name', { timeoutMs: 9000 })
           .catch(() => null),
@@ -143,6 +151,7 @@ export default function AttendanceBackfillPanel({ me, employees, embedded = fals
         employees: Array.isArray(freshEmps) && freshEmps.length > 0 ? freshEmps : employees,
         recordedBy: me?.id || null,
         shiftEmployeeIds,
+        shiftAssignmentDates,
         mawaniDays,
       });
       const overwrites = await previewOverwrites(built.rows);
