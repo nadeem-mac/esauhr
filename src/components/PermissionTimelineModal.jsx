@@ -58,17 +58,19 @@ export default function PermissionTimelineModal({ row, employee, requesterIsHr =
 
   // Build the four stages with their resolved state. HR-self and
   // manager-self both collapse to a 3-step timeline (Submit → one
-  // approval → Final) because there's only one real approval gate
-  // for those cases. Auto-detect from the row when explicit flags
-  // aren't passed: if the row is at pending_hr or beyond AND the
-  // manager_decided_at is null, the manager step was skipped, which
-  // only happens for managers' own requests.
-  const autoDetectedManagerSelf = (
+  // approval → Final). Auto-detect manager-self from the row when
+  // explicit flags aren't passed, BUT only when the requester is
+  // not HR. HR-self always wins because the system's HR self-approval
+  // guard finalises Bashaier's rows on the manager step — any
+  // pending_hr row owned by an HR reviewer is a stuck-state bug,
+  // not a legitimate manager-bypass.
+  const requesterIsActuallyHr = requesterIsHr || !!employee?.is_hr_reviewer;
+  const autoDetectedManagerSelf = !requesterIsActuallyHr && (
     (stage === 'pending_hr' || stage === 'rejected_by_hr' || stage === 'approved')
     && !row.manager_decided_at
   );
   const stages = buildStages(row, stage, {
-    requesterIsHr: requesterIsHr || !!employee?.is_hr_reviewer,
+    requesterIsHr: requesterIsActuallyHr,
     requesterIsManager: requesterIsManager || autoDetectedManagerSelf,
   });
 
