@@ -62,10 +62,10 @@ function todayYmd() { return ymd(new Date()); }
 function styleForStatus(status, notes) {
   if (status === 'present' && typeof notes === 'string') {
     if (/late arrival covered by approved permission/i.test(notes)) {
-      return { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: 'LP' };
+      return { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: '✓LP' };
     }
     if (/early leave covered by approved permission/i.test(notes)) {
-      return { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: 'EP' };
+      return { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: '✓EP' };
     }
   }
   switch (status) {
@@ -579,8 +579,8 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick }) {
       <div className="text-[11px] mt-4 flex flex-wrap gap-2.5 items-center" style={{ color: '#0A0A0A', opacity: 0.85 }}>
         {[
           { st: 'present',      lbl: 'Present' },
-          { st: 'present',      lbl: 'Late — permitted', overrideStyle: { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: 'LP' } },
-          { st: 'present',      lbl: 'Early — permitted', overrideStyle: { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: 'EP' } },
+          { st: 'present',      lbl: 'Late — permitted', overrideStyle: { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: '✓LP' } },
+          { st: 'present',      lbl: 'Early — permitted', overrideStyle: { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: '✓EP' } },
           { st: 'late',         lbl: 'Late' },
           { st: 'short',        lbl: 'Short' },
           { st: 'absent',       lbl: 'Absent' },

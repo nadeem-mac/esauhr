@@ -84,7 +84,20 @@ const STATUS_META = {
   off_day:      { bg: '#EEF0FA', fg: '#3B4279', border: '#C7CFE5', label: 'Off-day',      icon: 'OF' },
 };
 
-function statusMeta(s) {
+function statusMeta(s, notes) {
+  // Permission-coverage variants — when a 'present' row was actually
+  // late or early but downgraded because an approved permission
+  // covered the punch, show a distinct blue chip with a tick.
+  // Per Nadeem (2026-05-06): the tick signals "complete with permit",
+  // distinguishing LP/EP from naturally-on-time presents.
+  if (s === 'present' && typeof notes === 'string') {
+    if (/late arrival covered by approved permission/i.test(notes)) {
+      return { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: 'Late — permitted',  icon: '✓LP' };
+    }
+    if (/early leave covered by approved permission/i.test(notes)) {
+      return { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: 'Early — permitted', icon: '✓EP' };
+    }
+  }
   return STATUS_META[s] || { bg: '#F5F5F5', fg: '#525252', border: '#D4D4D4', label: s, icon: '?' };
 }
 
@@ -858,9 +871,18 @@ function MonthCalendar({ year, monthIdx, rows }) {
     byDay.set(day, r);
   }
 
-  // Per-month chip-strip counts
+  // Per-month chip-strip counts. Permission-covered presents are
+  // tracked separately under synthetic keys 'present_lp' / 'present_ep'
+  // so the chip strip can show them distinctly from naturally-on-time
+  // presents. The DB still stores them as status='present' — these
+  // synthetic keys are UI-only.
   const monthCounts = rows.reduce((acc, r) => {
-    acc[r.status] = (acc[r.status] || 0) + 1;
+    let key = r.status;
+    if (r.status === 'present' && typeof r.notes === 'string') {
+      if (/late arrival covered by approved permission/i.test(r.notes))   key = 'present_lp';
+      else if (/early leave covered by approved permission/i.test(r.notes)) key = 'present_ep';
+    }
+    acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {});
 
@@ -892,7 +914,16 @@ function MonthCalendar({ year, monthIdx, rows }) {
       {/* Mini chip strip */}
       <div className="flex flex-wrap gap-1 mb-2">
         {Object.entries(monthCounts).map(([k, v]) => {
-          const meta = statusMeta(k);
+          // Synthetic keys 'present_lp' / 'present_ep' get their own
+          // blue tick chips. Otherwise fall through to statusMeta.
+          let meta;
+          if (k === 'present_lp') {
+            meta = { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: 'Late — permitted',  icon: '✓LP' };
+          } else if (k === 'present_ep') {
+            meta = { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: 'Early — permitted', icon: '✓EP' };
+          } else {
+            meta = statusMeta(k);
+          }
           return (
             <span
               key={k}
@@ -953,7 +984,7 @@ function MonthCalendar({ year, monthIdx, rows }) {
             const isWeekend = dow === 5 || dow === 6;
             const isToday = todayDay === day;
             const isFuture = dt > today && !isToday;
-            const meta = r ? statusMeta(r.status) : null;
+            const meta = r ? statusMeta(r.status, r.notes) : null;
             // Missed-punch flag — shows on the cell as a small magenta
             // dot and in the hover tooltip. Same convention as the
             // Monthly Overview calendar.
@@ -968,6 +999,14 @@ function MonthCalendar({ year, monthIdx, rows }) {
             tipParts.push(dt.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' }));
             if (r) {
               tipParts.push(meta.label);
+              // Permission-coverage callout — use the meta.label
+              // we set above and add a "✓ Covered by..." line so
+              // the hover tooltip echoes the same blue-tick story
+              // shown on the cell chip.
+              const isLP = meta.icon === '✓LP';
+              const isEP = meta.icon === '✓EP';
+              if (isLP) tipParts.push('✓ Late arrival covered by approved permission');
+              if (isEP) tipParts.push('✓ Early leave covered by approved permission');
               if (missedKind) tipParts.push('⚠ ' + missedKind);
               if (r.status === 'late' && r.late_minutes != null && r.late_minutes > 0)
                 tipParts.push(`${r.late_minutes} min late`);
