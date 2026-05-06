@@ -59,10 +59,17 @@ export default function PermissionTimelineModal({ row, employee, requesterIsHr =
   // Build the four stages with their resolved state. HR-self and
   // manager-self both collapse to a 3-step timeline (Submit → one
   // approval → Final) because there's only one real approval gate
-  // for those cases.
+  // for those cases. Auto-detect from the row when explicit flags
+  // aren't passed: if the row is at pending_hr or beyond AND the
+  // manager_decided_at is null, the manager step was skipped, which
+  // only happens for managers' own requests.
+  const autoDetectedManagerSelf = (
+    (stage === 'pending_hr' || stage === 'rejected_by_hr' || stage === 'approved')
+    && !row.manager_decided_at
+  );
   const stages = buildStages(row, stage, {
     requesterIsHr: requesterIsHr || !!employee?.is_hr_reviewer,
-    requesterIsManager,
+    requesterIsManager: requesterIsManager || autoDetectedManagerSelf,
   });
 
   // Render via portal directly into document.body so the modal sits outside

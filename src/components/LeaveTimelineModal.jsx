@@ -105,9 +105,18 @@ export default function LeaveTimelineModal({ request, empMap = {}, leaveTypes = 
   //
   // Manager (e.g. Fahad) applying for himself: there's no manager
   // step — HR (Bashaier) is the only gate. Drop the manager tile.
+  //
+  // Auto-detect manager-self from the row when no flag is passed:
+  // if the row is at pending_hr or beyond AND manager_decided_at is
+  // null, the manager step was skipped (manager-self routing).
+  const autoDetectedManagerSelf = (
+    (stage === 'pending_hr' || stage === 'rejected_by_hr' || stage === 'approved')
+    && !request.manager_decided_at
+  );
   let displaySteps = steps;
   const requesterEffectivelyHr = !!(requesterIsHr || empMap[request.employee_id]?.is_hr_reviewer);
-  if (requesterEffectivelyHr && !requesterIsManager) {
+  const requesterEffectivelyManager = !!(requesterIsManager || autoDetectedManagerSelf);
+  if (requesterEffectivelyHr && !requesterEffectivelyManager) {
     // Keep [submit, subs, manager], drop [hr]. Annotate manager tile.
     displaySteps = steps.slice(0, 3).map((s, idx) => {
       if (idx !== 2 || !s) return s;
@@ -120,7 +129,7 @@ export default function LeaveTimelineModal({ request, empMap = {}, leaveTypes = 
           : null),
       };
     });
-  } else if (requesterIsManager && !requesterEffectivelyHr) {
+  } else if (requesterEffectivelyManager && !requesterEffectivelyHr) {
     // Drop the manager step. HR is the only approval.
     displaySteps = [steps[0], steps[1], steps[3]].filter(Boolean);
   }
