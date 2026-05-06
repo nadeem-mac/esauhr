@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom';
 import {
   Upload, FileText, Clock, AlertTriangle, Mail, CheckCircle2,
-  X, Calendar, Briefcase, Users, Send, Sparkles,
+  X, Calendar, Briefcase, Users, Send, Sparkles, Anchor, FileSpreadsheet,
 } from 'lucide-react';
 import { directGet, directPost } from '../supabaseClient.js';
 import { parseTimeCardXlsx, TimeCardParseError } from '../lib/timeCard.js';
@@ -61,6 +61,120 @@ class AttendanceErrorBoundary extends React.Component {
     }
     return this.props.children;
   }
+}
+
+// ─── AttendanceSidebar ────────────────────────────────────────────────
+// Vertical nav sidebar that drives the Attendance page's master/detail
+// layout. Lists the discrete functions Bashaier uses (calendar,
+// daily upload, schedules, Mawani, backfill); clicking sets activeView
+// in the parent so the right pane renders the matching content.
+//
+// Layout:
+//   • Desktop: 220px-wide column on the left, sticky to the top so it
+//     stays in view when the right-pane content scrolls.
+//   • Narrow viewports: collapses to a horizontal pill bar that wraps.
+//     The wrap fallback keeps nav reachable on phones without forcing
+//     a hamburger menu — Bashaier opens this on her work laptop most
+//     of the time.
+//
+// Visual:
+//   • Subtle paper-white card with light border; no decorative
+//     gradients (Nadeem asked to remove the bouncy/decorative
+//     treatments).
+//   • Active item: solid ink-dark background, white text.
+//   • Idle items: muted text on transparent bg, light hover.
+//   • Each item has a tiny icon + the label.
+function AttendanceSidebar({ activeView, setActiveView }) {
+  const items = [
+    { id: 'calendar',  icon: <Calendar className="w-4 h-4" />,         label: 'Monthly overview',     hint: 'See the calendar' },
+    { id: 'daily',     icon: <Upload className="w-4 h-4" />,           label: 'Daily upload',         hint: 'Today\u2019s xlsx import' },
+    { id: 'schedules', icon: <Clock className="w-4 h-4" />,            label: 'Working hours',        hint: 'SUP / standard hours' },
+    { id: 'mawani',    icon: <Anchor className="w-4 h-4" />,           label: 'Mawani visits',        hint: 'Duty-visit log' },
+    { id: 'backfill',  icon: <FileSpreadsheet className="w-4 h-4" />,  label: 'Historical backfill',  hint: 'One-shot multi-month import' },
+  ];
+  return (
+    <nav
+      aria-label="Attendance sections"
+      style={{
+        flex: '0 0 220px',
+        minWidth: 220,
+        maxWidth: '100%',
+        background: '#FFFFFF',
+        border: '1px solid #E5E5E5',
+        borderRadius: 12,
+        padding: 8,
+        position: 'sticky',
+        top: 12,
+        alignSelf: 'flex-start',
+        fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
+      }}
+    >
+      <div
+        style={{
+          fontSize: 10,
+          letterSpacing: '0.22em',
+          color: '#1F1B16',
+          fontWeight: 700,
+          padding: '8px 10px 6px',
+          opacity: 0.65,
+        }}
+      >
+        ATTENDANCE
+      </div>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+        {items.map(it => {
+          const active = activeView === it.id;
+          return (
+            <li key={it.id} style={{ marginBottom: 2 }}>
+              <button
+                onClick={() => setActiveView(it.id)}
+                aria-current={active ? 'page' : undefined}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '8px 10px',
+                  borderRadius: 8,
+                  background: active ? '#1F1B16' : 'transparent',
+                  color: active ? '#FFFFFF' : '#1F1B16',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  fontSize: 13,
+                  fontWeight: active ? 700 : 500,
+                  textAlign: 'left',
+                  transition: 'background 0.15s ease, color 0.15s ease',
+                }}
+                onMouseEnter={(e) => {
+                  if (!active) e.currentTarget.style.background = '#F5F5F5';
+                }}
+                onMouseLeave={(e) => {
+                  if (!active) e.currentTarget.style.background = 'transparent';
+                }}
+              >
+                <span style={{ flexShrink: 0, opacity: active ? 1 : 0.75 }}>{it.icon}</span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: 'block' }}>{it.label}</span>
+                  <span
+                    style={{
+                      display: 'block',
+                      fontSize: 10,
+                      fontWeight: 400,
+                      opacity: active ? 0.8 : 0.55,
+                      marginTop: 1,
+                    }}
+                  >
+                    {it.hint}
+                  </span>
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
+  );
 }
 
 // ─── ZoneHeader ───────────────────────────────────────────────────────
@@ -733,6 +847,13 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // drawer with that employee's full Jan-1-to-today attendance + leave
   // history. null means the drawer is closed.
   const [detailEmployee, setDetailEmployee] = useState(null);
+
+  // ─── Sidebar navigation ──────────────────────────────────────────
+  // The Attendance page is a master-detail layout: a left sidebar
+  // lists the discrete functions and the right pane shows whichever
+  // one Bashaier clicked. Lands on 'calendar' (Monthly Overview) by
+  // default — that's the most-glance-worthy summary.
+  const [activeView, setActiveView] = useState('calendar');
   const [parsedData, setParsedData]     = useState({ rows: [], dataDate: null, sheetName: null });
   const [parseError, setParseError]     = useState(null);
 
@@ -3498,7 +3619,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             style={{
               background: '#FFFFFF',
               border: '1px solid #E5E5DD',
-              animation: 'help-panel-pop 0.36s cubic-bezier(0.34, 1.56, 0.64, 1)',
+              animation: 'help-panel-pop 0.36s ease-out',
               transformOrigin: 'top center',
             }}
           >
@@ -3537,44 +3658,33 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         )}
       </div>
 
-      {/* Monthly attendance calendar — persistent record built from
-          every file Bashaier uploads. Sits above the daily workflow
-          so the month-at-a-glance is visible before she dives into
-          today's import. Each cell shows status (present, late,
-          absent, leave, etc.) for that employee × that date. Hover
-          for punch times, schedule, and computed metrics.
+      {/* ─── Master/detail layout ────────────────────────────────────
+          Left sidebar = list of discrete functions; right pane = the
+          selected function's content. Replaces the previous vertical
+          stack of zones so Bashaier sees one focused workspace at a
+          time instead of scrolling past everything to find what she
+          needs. The sidebar collapses to a horizontal pill bar on
+          narrow viewports. */}
+      <div
+        style={{
+          display: 'flex',
+          gap: 16,
+          alignItems: 'flex-start',
+          flexWrap: 'wrap',
+        }}
+      >
+        <AttendanceSidebar activeView={activeView} setActiveView={setActiveView} />
 
-          Self-fetches from attendance_daily, subscribes to realtime,
-          updates live as new rows land. Filters to employees who
-          have at least one record this month — directory members
-          who've never been uploaded for stay hidden. */}
-      <AttendanceErrorBoundary label="Monthly attendance calendar">
-        {/* ZONE 1 — SEE
-            The accumulating monthly overview. This is the dashboard
-            view that builds up as Bashaier uploads daily files. Lives
-            at the top so it's the first thing she sees on page load. */}
-        <ZoneHeader
-          number={1}
-          kicker="SEE"
-          title="Monthly overview"
-          body="One row per employee, one column per day. Each chip shows that day's status — present, late, absent, on leave, sick, or off-day. Hover any cell for the full detail. The calendar updates live every time a daily file is uploaded."
-        />
-        <AttendanceMonthGrid employees={employees} onEmployeeClick={setDetailEmployee} />
-      </AttendanceErrorBoundary>
+        <div style={{ flex: '1 1 0', minWidth: 0 }}>
 
-      {/* ZONE 2 — DAILY ROUTINE
-          What Bashaier does every morning. The pending-EOD banner
-          (when active) warns about days where the morning pass was
-          done but the end-of-day pass is overdue. Below it: the
-          drop-zone, then all the results sections that appear after
-          a successful upload. */}
-      <ZoneHeader
-        number={2}
-        kicker="DO EVERY DAY"
-        title="Daily upload"
-        body="Upload the Time Card xlsx covering yesterday and today. The system flags late arrivals, early departures, missed punches, and shift off-days, and lets you email notices in one click. Upload here and the calendar above updates automatically."
-        accent="#0F4C2A"
-      />
+      {activeView === 'calendar' && (
+        <AttendanceErrorBoundary label="Monthly attendance calendar">
+          <AttendanceMonthGrid employees={employees} onEmployeeClick={setDetailEmployee} />
+        </AttendanceErrorBoundary>
+      )}
+
+      {activeView === 'daily' && (<></>)}{/* Zone 2 content rendered below the gate */}
+      {activeView === 'daily' && (<>
 
       {/* ─── Pending end-of-day review banner ───────────────────────────
           Surfaces dates where the morning pass was completed but the
@@ -3903,25 +4013,40 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         />
       )}
 
-      {/* ZONE 3 — ONE-TIME SETUP
-          Configuration tools that don't get touched daily. Working
-          hours and Mawani visits at the top because they're standing
-          configuration; historical backfill at the bottom because
-          it's a one-shot import. */}
-      <ZoneHeader
-        number={3}
-        kicker="ONE-TIME SETUP"
-        title="Configuration & backfill"
-        body="Mark staff with non-standard working hours, log Mawani duty visits, and import historical attendance. Day-to-day, the section above handles everything — these panels are for setup and exceptions."
-        accent="#854F0B"
-      />
-      <AttendanceErrorBoundary label="Working hours & Mawani">
-        <WorkingHoursManager me={me} employees={employees} canEdit={!!me?.id} />
-      </AttendanceErrorBoundary>
-      <div style={{ height: 12 }} />
-      <AttendanceErrorBoundary label="Historical backfill">
-        <AttendanceBackfillPanel me={me} employees={employees} />
-      </AttendanceErrorBoundary>
+      </>)}{/* end activeView === 'daily' */}
+
+      {activeView === 'schedules' && (
+        <AttendanceErrorBoundary label="Working hours">
+          <WorkingHoursManager
+            me={me}
+            employees={employees}
+            canEdit={!!me?.id}
+            embedded
+            activeTab="hours"
+          />
+        </AttendanceErrorBoundary>
+      )}
+
+      {activeView === 'mawani' && (
+        <AttendanceErrorBoundary label="Mawani visits">
+          <WorkingHoursManager
+            me={me}
+            employees={employees}
+            canEdit={!!me?.id}
+            embedded
+            activeTab="mawani"
+          />
+        </AttendanceErrorBoundary>
+      )}
+
+      {activeView === 'backfill' && (
+        <AttendanceErrorBoundary label="Historical backfill">
+          <AttendanceBackfillPanel me={me} employees={employees} embedded />
+        </AttendanceErrorBoundary>
+      )}
+
+        </div>{/* end content pane */}
+      </div>{/* end master/detail flex */}
 
       {/* Slide-in detail drawer — opens when an employee row in the
           Monthly Overview calendar is clicked. Rendered at the root

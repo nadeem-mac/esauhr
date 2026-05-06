@@ -53,48 +53,26 @@ import {
 import { TimeCardParseError } from '../lib/timeCard.js';
 
 // ─── Inline keyframes ────────────────────────────────────────────────
-// Co-located so the animations move with the component. Naming:
-//   backfill-pop-in   — spring scale + fade for cards/states entering
-//   backfill-pulse    — gentle highlight on the collapsed-icon when idle
+// Plain ease transitions — bounces removed per Nadeem's feedback.
+//   backfill-fade-in  — small upward slide + opacity
 //   backfill-shimmer  — moving sheen across the active progress bar
-//   backfill-tile-in  — staggered bounce for the three stat tiles
-//   backfill-burst    — bigger spring for the success state (more reward)
 const ANIM_CSS = `
-@keyframes backfill-pop-in {
-  0%   { opacity: 0; transform: translateY(6px) scale(0.96); }
-  70%  { opacity: 1; transform: translateY(-2px) scale(1.015); }
-  100% { opacity: 1; transform: translateY(0) scale(1); }
-}
-@keyframes backfill-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(252, 211, 77, 0.45); }
-  50%      { box-shadow: 0 0 0 8px rgba(252, 211, 77, 0); }
+@keyframes backfill-fade-in {
+  0%   { opacity: 0; transform: translateY(2px); }
+  100% { opacity: 1; transform: translateY(0); }
 }
 @keyframes backfill-shimmer {
   0%   { transform: translateX(-100%); }
   100% { transform: translateX(100%); }
 }
-@keyframes backfill-tile-in {
-  0%   { opacity: 0; transform: translateY(10px) scale(0.92); }
-  60%  { opacity: 1; transform: translateY(-3px) scale(1.04); }
-  100% { opacity: 1; transform: translateY(0) scale(1); }
-}
-@keyframes backfill-burst {
-  0%   { opacity: 0; transform: scale(0.8); }
-  60%  { opacity: 1; transform: scale(1.06); }
-  100% { opacity: 1; transform: scale(1); }
-}
-@keyframes backfill-arrow-down {
-  0%   { transform: rotate(-180deg); }
-  100% { transform: rotate(0deg); }
-}
-@keyframes backfill-arrow-up {
-  0%   { transform: rotate(0deg); }
-  100% { transform: rotate(-180deg); }
-}
 `;
 
-export default function AttendanceBackfillPanel({ me, employees }) {
-  const [expanded, setExpanded]     = useState(false);
+export default function AttendanceBackfillPanel({ me, employees, embedded = false }) {
+  // When embedded inside the AttendanceView sidebar layout the panel
+  // is always "open" — there's no point in collapsing it since the
+  // user already chose to navigate here. The header chrome (decorative
+  // gradient + chevron) is also stripped in embed mode.
+  const [expanded, setExpanded]     = useState(embedded);
   const [parseErr, setParseErr]     = useState(null);
   const [preview, setPreview]       = useState(null);
   const [parsing, setParsing]       = useState(false);
@@ -212,83 +190,118 @@ export default function AttendanceBackfillPanel({ me, employees }) {
     <div
       className="rounded-2xl overflow-hidden relative"
       style={{
-        // Subtle warm gradient — sets the "decorative one-time" tone
-        // distinct from the more transactional daily upload area.
-        background: 'linear-gradient(135deg, #FFFBEB 0%, #FFF7E0 100%)',
-        border: '1px solid #FCD34D',
-        boxShadow: expanded ? '0 8px 24px rgba(133, 79, 11, 0.12)' : '0 1px 2px rgba(0,0,0,0.04)',
-        transition: 'box-shadow 0.3s ease',
+        // Embedded mode: plain white card matching the rest of the
+        // sidebar-driven layout. Standalone mode keeps the warm
+        // gradient as a one-shot visual cue.
+        background: embedded
+          ? '#FFFFFF'
+          : 'linear-gradient(135deg, #FFFBEB 0%, #FFF7E0 100%)',
+        border: '1px solid ' + (embedded ? '#E5E5E5' : '#FCD34D'),
+        boxShadow: embedded
+          ? 'none'
+          : (expanded ? '0 8px 24px rgba(133, 79, 11, 0.12)' : '0 1px 2px rgba(0,0,0,0.04)'),
+        transition: 'box-shadow 0.2s ease',
+        fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
       }}
     >
       {/* Embed keyframes locally so the component is self-contained. */}
       <style>{ANIM_CSS}</style>
 
-      {/* Decorative corner blur — pure visual flourish, no semantics.
-          Lives behind everything via z-index 0. */}
-      <div
-        aria-hidden
-        style={{
-          position: 'absolute',
-          right: -40, top: -40,
-          width: 160, height: 160,
-          background: 'radial-gradient(circle at center, rgba(252,211,77,0.35) 0%, transparent 70%)',
-          pointerEvents: 'none',
-          zIndex: 0,
-        }}
-      />
-
-      {/* Header — clickable to expand/collapse */}
-      <button
-        onClick={() => setExpanded(v => !v)}
-        className="w-full flex items-center justify-between gap-3 relative"
-        style={{
-          cursor: 'pointer', background: 'transparent', border: 'none',
-          padding: '16px 18px', textAlign: 'left', zIndex: 1,
-        }}
-        aria-expanded={expanded}
-      >
-        <div className="flex items-center gap-3">
-          <div
-            className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
-            style={{
-              background: '#FCD34D',
-              color: '#854F0B',
-              animation: expanded ? 'none' : 'backfill-pulse 2.4s ease-in-out infinite',
-            }}
-          >
-            <FileSpreadsheet className="w-5 h-5" />
-          </div>
-          <div>
-            <div
-              className="text-[10px]"
-              style={{ color: '#854F0B', fontWeight: 700, letterSpacing: '0.22em' }}
-            >
-              ONE-SHOT
-            </div>
-            <div
-              style={{
-                fontFamily: 'Georgia, serif',
-                fontSize: 18,
-                color: '#1F1B16',
-                lineHeight: 1.2,
-              }}
-            >
-              Historical backfill
-            </div>
-            <div className="text-[12px] mt-0.5" style={{ color: '#0A0A0A', opacity: 0.7 }}>
-              Import a multi-month xlsx to populate the calendar for periods before daily uploads were active.
-            </div>
-          </div>
-        </div>
-        <ChevronDown
-          className="w-5 h-5 flex-shrink-0"
+      {/* Decorative corner blur — only in standalone mode. */}
+      {!embedded && (
+        <div
+          aria-hidden
           style={{
-            color: '#854F0B',
-            transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)',
-            transition: 'transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
+            position: 'absolute',
+            right: -40, top: -40,
+            width: 160, height: 160,
+            background: 'radial-gradient(circle at center, rgba(252,211,77,0.35) 0%, transparent 70%)',
+            pointerEvents: 'none',
+            zIndex: 0,
           }}
         />
-      </button>
+      )}
+
+      {/* Header — clickable to expand/collapse. Hidden in embed mode
+          (the sidebar already provides the section heading). */}
+      {!embedded && (
+        <button
+          onClick={() => setExpanded(v => !v)}
+          className="w-full flex items-center justify-between gap-3 relative"
+          style={{
+            cursor: 'pointer', background: 'transparent', border: 'none',
+            padding: '16px 18px', textAlign: 'left', zIndex: 1,
+            fontFamily: 'inherit',
+          }}
+          aria-expanded={expanded}
+        >
+          <div className="flex items-center gap-3">
+            <div
+              className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+              style={{
+                background: '#FCD34D',
+                color: '#854F0B',
+              }}
+            >
+              <FileSpreadsheet className="w-5 h-5" />
+            </div>
+            <div>
+              <div
+                className="text-[10px]"
+                style={{ color: '#854F0B', fontWeight: 700, letterSpacing: '0.22em' }}
+              >
+                ONE-SHOT
+              </div>
+              <div
+                style={{
+                  fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
+                  fontSize: 18,
+                  color: '#1F1B16',
+                  lineHeight: 1.2,
+                  fontWeight: 700,
+                }}
+              >
+                Historical backfill
+              </div>
+              <div className="text-[12px] mt-0.5" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+                Import a multi-month xlsx to populate the calendar for periods before daily uploads were active.
+              </div>
+            </div>
+          </div>
+          <ChevronDown
+            className="w-5 h-5 flex-shrink-0"
+            style={{
+              color: '#854F0B',
+              transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)',
+              transition: 'transform 0.2s ease',
+            }}
+          />
+        </button>
+      )}
+
+      {/* Embedded heading — short, no chevron, sits above the body */}
+      {embedded && (
+        <div style={{ padding: '16px 18px 0' }}>
+          <div className="text-[10px]" style={{ color: '#854F0B', fontWeight: 700, letterSpacing: '0.22em' }}>
+            ONE-SHOT
+          </div>
+          <div
+            style={{
+              fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
+              fontSize: 18,
+              color: '#1F1B16',
+              lineHeight: 1.2,
+              fontWeight: 700,
+              marginTop: 2,
+            }}
+          >
+            Historical backfill
+          </div>
+          <div className="text-[12px] mt-0.5" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+            Import a multi-month xlsx to populate the calendar for periods before daily uploads were active.
+          </div>
+        </div>
+      )}
 
       {/* Expanded body */}
       {expanded && (
@@ -297,7 +310,7 @@ export default function AttendanceBackfillPanel({ me, employees }) {
             position: 'relative', zIndex: 1,
             padding: '4px 18px 18px',
             borderTop: '1px solid rgba(252,211,77,0.5)',
-            animation: 'backfill-pop-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)',
+            animation: 'backfill-fade-in 0.5s ease-out',
           }}
         >
           {/* ── EMPTY STATE — File picker + re-evaluate action ────── */}
@@ -305,7 +318,7 @@ export default function AttendanceBackfillPanel({ me, employees }) {
             <div
               key="empty"
               style={{
-                animation: 'backfill-pop-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                animation: 'backfill-fade-in 0.45s ease-out',
                 paddingTop: 14,
               }}
             >
@@ -343,7 +356,7 @@ export default function AttendanceBackfillPanel({ me, employees }) {
             <div
               key="reevaluating"
               className="space-y-3 py-2"
-              style={{ animation: 'backfill-pop-in 0.4s ease-out' }}
+              style={{ animation: 'backfill-fade-in 0.4s ease-out' }}
             >
               <div className="inline-flex items-center gap-2" style={{ color: '#854F0B' }}>
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -391,7 +404,7 @@ export default function AttendanceBackfillPanel({ me, employees }) {
               style={{
                 background: '#FFFFFF',
                 border: '1.5px solid #10B981',
-                animation: 'backfill-burst 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                animation: 'backfill-fade-in 0.6s ease-out',
               }}
             >
               <div className="flex items-start gap-3">
@@ -452,7 +465,7 @@ export default function AttendanceBackfillPanel({ me, employees }) {
               key="parsing"
               className="flex items-center gap-3 py-6 justify-center"
               style={{
-                animation: 'backfill-pop-in 0.4s ease-out',
+                animation: 'backfill-fade-in 0.4s ease-out',
                 color: '#854F0B',
               }}
             >
@@ -466,7 +479,7 @@ export default function AttendanceBackfillPanel({ me, employees }) {
             <div
               key="preview"
               className="space-y-3"
-              style={{ animation: 'backfill-pop-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1)' }}
+              style={{ animation: 'backfill-fade-in 0.45s ease-out' }}
             >
               <div
                 className="text-[11px] mb-1 inline-flex items-center gap-1.5"
@@ -582,7 +595,7 @@ export default function AttendanceBackfillPanel({ me, employees }) {
                   style={{
                     background: '#FEF3C7',
                     border: '1.5px solid #F59E0B',
-                    animation: 'backfill-pop-in 0.45s ease-out',
+                    animation: 'backfill-fade-in 0.45s ease-out',
                   }}
                 >
                   <div className="flex items-start gap-2.5">
@@ -636,7 +649,7 @@ export default function AttendanceBackfillPanel({ me, employees }) {
             <div
               key="importing"
               className="space-y-3 py-2"
-              style={{ animation: 'backfill-pop-in 0.4s ease-out' }}
+              style={{ animation: 'backfill-fade-in 0.4s ease-out' }}
             >
               <div className="flex items-baseline justify-between">
                 <div className="inline-flex items-center gap-2" style={{ color: '#854F0B' }}>
@@ -687,7 +700,7 @@ export default function AttendanceBackfillPanel({ me, employees }) {
               style={{
                 background: '#FFFFFF',
                 border: '1.5px solid #10B981',
-                animation: 'backfill-burst 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                animation: 'backfill-fade-in 0.6s ease-out',
               }}
             >
               <div
@@ -735,7 +748,7 @@ export default function AttendanceBackfillPanel({ me, employees }) {
               style={{
                 background: '#FEF2F2',
                 border: '1.5px solid #FCA5A5',
-                animation: 'backfill-pop-in 0.4s ease-out',
+                animation: 'backfill-fade-in 0.4s ease-out',
               }}
             >
               <AlertTriangle className="w-5 h-5 flex-shrink-0" style={{ color: '#991B1B', marginTop: 2 }} />
@@ -797,7 +810,7 @@ function FilePickerHero({ onFile }) {
         padding: '26px 18px',
         transform: (hover || dragOver) ? 'translateY(-2px)' : 'translateY(0)',
         boxShadow: (hover || dragOver) ? '0 6px 18px rgba(133,79,11,0.15)' : 'none',
-        transition: 'transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.25s ease, border-color 0.2s ease, background 0.2s ease',
+        transition: 'transform 0.25s ease-out, box-shadow 0.25s ease, border-color 0.2s ease, background 0.2s ease',
       }}
     >
       <div
@@ -846,7 +859,7 @@ function StatTile({ icon, label, value, delay = 0 }) {
       style={{
         background: '#FFFFFF',
         border: '1px solid rgba(133,79,11,0.18)',
-        animation: `backfill-tile-in 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) ${delay}ms both`,
+        animation: `backfill-fade-in 0.55s ease-out ${delay}ms both`,
       }}
     >
       <div className="inline-flex items-center gap-1.5 text-[10px]" style={{ color: '#854F0B', fontWeight: 700, letterSpacing: '0.18em' }}>
@@ -892,7 +905,7 @@ function ImportButton({ disabled, onClick, count }) {
           ? 'none'
           : (hover ? '0 6px 16px rgba(15,76,42,0.28)' : '0 2px 6px rgba(15,76,42,0.18)'),
         transform: (!disabled && hover) ? 'translateY(-1px)' : 'translateY(0)',
-        transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
+        transition: 'all 0.2s ease-out',
       }}
     >
       <Upload className="w-4 h-4" />
@@ -919,7 +932,7 @@ function EvalChip({ bg, fg, border, label, count }) {
         display: 'inline-flex',
         alignItems: 'center',
         gap: 5,
-        animation: 'backfill-tile-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both',
+        animation: 'backfill-fade-in 0.45s ease-out both',
       }}
     >
       {label}: <span style={{ fontVariantNumeric: 'tabular-nums' }}>{count.toLocaleString()}</span>
@@ -946,7 +959,7 @@ function ReevaluateCard({ onClick }) {
         padding: '14px 16px',
         transform: hover ? 'translateY(-1px)' : 'translateY(0)',
         boxShadow: hover ? '0 6px 18px rgba(133,79,11,0.15)' : 'none',
-        transition: 'all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)',
+        transition: 'all 0.25s ease-out',
       }}
     >
       <div
@@ -955,7 +968,7 @@ function ReevaluateCard({ onClick }) {
           background: '#FEF3C7',
           color: '#854F0B',
           transform: hover ? 'rotate(-30deg)' : 'rotate(0deg)',
-          transition: 'transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
+          transition: 'transform 0.4s ease-out',
         }}
       >
         <RefreshCw className="w-5 h-5" />

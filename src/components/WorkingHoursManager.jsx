@@ -43,18 +43,16 @@ import {
 } from '../supabaseClient.js';
 
 // ─── Inline keyframes ────────────────────────────────────────────────
+// Plain ease transitions, no spring/bounce — the page is a focused
+// workspace, not a marketing surface, and the bounces were drawing
+// attention away from the data.
 const ANIM_CSS = `
-@keyframes whm-pop-in {
-  0%   { opacity: 0; transform: translateY(6px) scale(0.96); }
-  70%  { opacity: 1; transform: translateY(-2px) scale(1.015); }
-  100% { opacity: 1; transform: translateY(0) scale(1); }
-}
-@keyframes whm-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(15, 76, 42, 0.4); }
-  50%      { box-shadow: 0 0 0 8px rgba(15, 76, 42, 0); }
+@keyframes whm-fade-in {
+  0%   { opacity: 0; transform: translateY(2px); }
+  100% { opacity: 1; transform: translateY(0); }
 }
 @keyframes whm-row-in {
-  0%   { opacity: 0; transform: translateX(8px); }
+  0%   { opacity: 0; transform: translateX(4px); }
   100% { opacity: 1; transform: translateX(0); }
 }
 `;
@@ -86,9 +84,59 @@ function trimTime(t) {
 
 // =============================================================================
 
-export default function WorkingHoursManager({ me, employees, canEdit }) {
-  const [expanded, setExpanded] = useState(false);
-  const [tab, setTab] = useState('hours');
+export default function WorkingHoursManager({ me, employees, canEdit, embedded = false, activeTab: forcedTab }) {
+  const [expanded, setExpanded] = useState(embedded);
+  const [tab, setTab] = useState(forcedTab || 'hours');
+
+  // When the parent forces a tab (for sidebar-driven embed), keep
+  // local state in sync. The internal tab bar is hidden in embed
+  // mode since the sidebar already shows which view is active.
+  useEffect(() => {
+    if (forcedTab) setTab(forcedTab);
+  }, [forcedTab]);
+
+  // ── Embedded variant — no decorative shell, no header, no own tabs.
+  // Just renders the active tab body inside a plain card. Used when
+  // the AttendanceView sidebar drives view selection.
+  if (embedded) {
+    return (
+      <div
+        style={{
+          background: '#FFFFFF',
+          border: '1px solid #E5E5E5',
+          borderRadius: 12,
+          padding: 16,
+          fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
+        }}
+      >
+        <div
+          className="text-[10px] mb-2"
+          style={{ color: '#0F4C2A', fontWeight: 700, letterSpacing: '0.22em' }}
+        >
+          {tab === 'hours' ? 'WORKING HOURS' : 'MAWANI VISITS'}
+        </div>
+        <h2
+          style={{
+            fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
+            fontSize: 18,
+            color: '#1F1B16',
+            fontWeight: 700,
+            lineHeight: 1.2,
+            marginBottom: 12,
+          }}
+        >
+          {tab === 'hours'
+            ? 'Working hours per employee'
+            : 'Mawani duty visits'}
+        </h2>
+        {tab === 'hours'
+          ? <WorkingHoursTab me={me} employees={employees} canEdit={canEdit} />
+          : <MawaniVisitsTab  me={me} employees={employees} canEdit={canEdit} />}
+      </div>
+    );
+  }
+
+  // Original collapsible card variant (kept for backward compat)
 
   return (
     <div
@@ -133,7 +181,7 @@ export default function WorkingHoursManager({ me, employees, canEdit }) {
             style={{
               background: '#0F4C2A',
               color: '#FFFFFF',
-              animation: expanded ? 'none' : 'whm-pulse 2.4s ease-in-out infinite',
+              animation: 'none',
             }}
           >
             <Clock className="w-5 h-5" />
@@ -166,7 +214,7 @@ export default function WorkingHoursManager({ me, employees, canEdit }) {
           style={{
             color: '#0F4C2A',
             transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)',
-            transition: 'transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
+            transition: 'transform 0.4s ease-out',
           }}
         />
       </button>
@@ -177,7 +225,7 @@ export default function WorkingHoursManager({ me, employees, canEdit }) {
             position: 'relative', zIndex: 1,
             padding: '4px 18px 18px',
             borderTop: '1px solid rgba(187,222,192,0.7)',
-            animation: 'whm-pop-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)',
+            animation: 'whm-fade-in 0.22s ease-out',
           }}
         >
           {/* Tabs */}
@@ -222,7 +270,7 @@ function TabButton({ active, onClick, icon, label }) {
         border: '1px solid ' + (active ? '#1F1B16' : 'rgba(0,0,0,0.1)'),
         fontWeight: active ? 700 : 500,
         cursor: 'pointer',
-        transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
+        transition: 'all 0.2s ease-out',
         fontFamily: 'inherit',
       }}
     >
@@ -445,7 +493,7 @@ function WorkingHoursTab({ me, employees, canEdit }) {
           style={{
             background: '#0F4C2A',
             color: '#FFFFFF',
-            animation: 'whm-pop-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)',
+            animation: 'whm-fade-in 0.2s ease-out',
             boxShadow: '0 4px 12px rgba(15,76,42,0.18)',
           }}
         >
@@ -616,7 +664,7 @@ function WorkingHoursTab({ me, employees, canEdit }) {
                       cursor: saving ? 'wait' : 'pointer',
                       opacity: saving ? 0.6 : 1,
                       fontFamily: 'inherit',
-                      transition: 'all 0.18s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                      transition: 'all 0.18s ease-out',
                     }}
                   >
                     {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
@@ -988,7 +1036,7 @@ function AddMawaniVisit({ me, employees, onSaved, onCancel }) {
       style={{
         background: '#FFFFFF',
         border: '1.5px solid #0F4C2A',
-        animation: 'whm-pop-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1)',
+        animation: 'whm-fade-in 0.2s ease-out',
       }}
     >
       <div className="flex items-center justify-between mb-3">

@@ -40,6 +40,7 @@ import {
 import { directGet } from '../supabaseClient.js';
 
 // ─── Inline keyframes ────────────────────────────────────────────────
+// Plain ease — bounces removed per Nadeem's feedback.
 const ANIM_CSS = `
 @keyframes detail-backdrop-in {
   0%   { opacity: 0; }
@@ -47,16 +48,14 @@ const ANIM_CSS = `
 }
 @keyframes detail-panel-in {
   0%   { transform: translateX(100%); opacity: 0; }
-  60%  { transform: translateX(-1.5%); opacity: 1; }
   100% { transform: translateX(0); opacity: 1; }
 }
-@keyframes detail-tile-in {
-  0%   { opacity: 0; transform: translateY(8px) scale(0.94); }
-  60%  { opacity: 1; transform: translateY(-2px) scale(1.03); }
-  100% { opacity: 1; transform: translateY(0) scale(1); }
+@keyframes detail-fade-in {
+  0%   { opacity: 0; transform: translateY(2px); }
+  100% { opacity: 1; transform: translateY(0); }
 }
 @keyframes detail-row-in {
-  0%   { opacity: 0; transform: translateX(8px); }
+  0%   { opacity: 0; transform: translateX(4px); }
   100% { opacity: 1; transform: translateX(0); }
 }
 `;
@@ -297,7 +296,7 @@ export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
           fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
           animation: closing
             ? 'detail-panel-in 0.22s cubic-bezier(0.4, 0, 0.6, 1) reverse forwards'
-            : 'detail-panel-in 0.42s cubic-bezier(0.34, 1.56, 0.64, 1)',
+            : 'detail-panel-in 0.42s ease-out',
         }}
       >
         {/* Header */}
@@ -421,7 +420,7 @@ export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
               fontWeight: 700,
               cursor: 'pointer',
               boxShadow: '0 2px 6px rgba(15,76,42,0.18)',
-              transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
+              transition: 'all 0.2s ease-out',
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.transform = 'translateY(-1px)';
@@ -455,7 +454,7 @@ function TabButton({ active, onClick, icon, label, count }) {
         border: '1px solid ' + (active ? '#1F1B16' : '#E5E5E5'),
         fontWeight: active ? 700 : 500,
         cursor: 'pointer',
-        transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
+        transition: 'all 0.2s ease-out',
       }}
     >
       {icon}
@@ -511,7 +510,7 @@ function AttendanceTab({ loading, monthly, summary }) {
                   borderRadius: 12,
                   padding: '10px 8px',
                   textAlign: 'center',
-                  animation: `detail-tile-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) ${delay}ms both`,
+                  animation: `detail-fade-in 0.5s ease-out ${delay}ms both`,
                 }}
               >
                 <div
@@ -877,7 +876,7 @@ function LeaveTab({ loading, rows, leaveTypeName }) {
           style={{
             background: '#FFFFFF', border: '1.5px solid #5EEAD4', borderRadius: 12,
             padding: '10px 8px', textAlign: 'center',
-            animation: 'detail-tile-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0ms both',
+            animation: 'detail-fade-in 0.5s ease-out 0ms both',
           }}
         >
           <div style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif', fontSize: 24, color: '#115E59', fontWeight: 700, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
@@ -891,7 +890,7 @@ function LeaveTab({ loading, rows, leaveTypeName }) {
           style={{
             background: '#FFFFFF', border: '1.5px solid #5EEAD4', borderRadius: 12,
             padding: '10px 8px', textAlign: 'center',
-            animation: 'detail-tile-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 50ms both',
+            animation: 'detail-fade-in 0.5s ease-out 50ms both',
           }}
         >
           <div style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif', fontSize: 24, color: '#115E59', fontWeight: 700, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
