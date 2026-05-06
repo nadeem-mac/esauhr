@@ -517,7 +517,53 @@ function formatDateLong(yyyymmdd) {
 // ────────────────────────────────────────────────────────────────────────
 // Email body builders. Each returns { subject, body }.
 // ────────────────────────────────────────────────────────────────────────
-function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, scheduledStart, lateCutoff, isCustomShift, scheduleLabel, isNightShiftStart, assignedBy, assignedAt, managerName }) {
+
+// Helper — formats the staff's full month of manager-assigned shifts
+// as a plain-text block for inclusion in violation emails. Per Nadeem
+// (2026-05-06): "shift staff when there is an email, they must be
+// shown what dates and days their managers have approved for them".
+// The violationDate (YYYY-MM-DD) is highlighted with a ▶ marker so the
+// staff sees exactly which row this email is about within the full
+// schedule. Returns empty string if list is empty.
+function buildAssignedShiftsBlock(shifts, violationDate, divider) {
+  if (!Array.isArray(shifts) || shifts.length === 0) return '';
+  const dayName = (dStr) => {
+    try {
+      const [y, m, d] = String(dStr).split('-').map(Number);
+      return new Date(y, m - 1, d).toLocaleDateString('en-GB', { weekday: 'short' });
+    } catch { return ''; }
+  };
+  const dayLong = (dStr) => {
+    try {
+      const [y, m, d] = String(dStr).split('-').map(Number);
+      return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    } catch { return dStr; }
+  };
+  const lines = shifts.map(s => {
+    const isViolation = String(s.date) === String(violationDate);
+    const overnight = s.startStr && s.endStr && s.startStr > s.endStr;
+    const timeStr = (s.startStr || '') + ' \u2192 ' + (s.endStr || '') + (overnight ? ' (overnight)' : '');
+    const marker = isViolation ? '\u25B6' : '\u2022';
+    const suffix = isViolation ? '   \u2190 THIS DATE' : '';
+    return marker + ' ' + dayName(s.date) + ', ' + dayLong(s.date) + '  \u2014  ' + timeStr + suffix;
+  });
+  // Try to extract the YYYY-MM from the first shift to title the
+  // block with the actual month — falls back to a generic title.
+  let monthLabel = 'this month';
+  try {
+    const first = shifts[0]?.date;
+    if (first) {
+      const [y, m] = first.split('-').map(Number);
+      monthLabel = new Date(y, m - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+    }
+  } catch { /* ignore */ }
+  return 'YOUR ASSIGNED SHIFTS — ' + monthLabel.toUpperCase() + ' (set by your line manager):\n'
+    + divider + '\n'
+    + lines.join('\n') + '\n'
+    + divider + '\n\n';
+}
+
+function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, scheduledStart, lateCutoff, isCustomShift, scheduleLabel, isNightShiftStart, assignedBy, assignedAt, managerName, assignedShifts, violationDate }) {
   const psn = String(employee.id || employee.psn || '').toUpperCase();
   const fullName = String(employee.name || '').toUpperCase();
   // Shift staff get a distinct subject prefix so the inbox makes
@@ -576,6 +622,7 @@ function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, schedul
     'Dear ' + greetName + ',\n\n' +
     'HR\u2019s daily attendance review for ' + dateLong + ' shows your ' + punchPhrase + ' at ' + punchInStr + ', ' + minutesLate + ' minutes past the 15-minute grace period and with no approved permission on file. This is recorded as a late-arrival violation.' + shiftContext + '\n\n' +
     assignmentPara +
+    (isCustomShift ? buildAssignedShiftsBlock(assignedShifts, violationDate, divider) : '') +
     'As a reminder, according to the ESAU attendance policy:\n\n' +
     divider + '\n' +
     policyBullets.join('\n') + '\n' +
@@ -586,7 +633,7 @@ function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, schedul
   return { subject, body };
 }
 
-function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd, minutesEarly, isCustomShift, scheduleLabel, isNightShiftEnd, scheduledStart, assignedBy, assignedAt, managerName }) {
+function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd, minutesEarly, isCustomShift, scheduleLabel, isNightShiftEnd, scheduledStart, assignedBy, assignedAt, managerName, assignedShifts, violationDate }) {
   const psn = String(employee.id || employee.psn || '').toUpperCase();
   const fullName = String(employee.name || '').toUpperCase();
   const subjectPrefix = isCustomShift
@@ -646,6 +693,7 @@ function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd,
     'Dear ' + greetName + ',\n\n' +
     'HR\u2019s daily attendance review for ' + dateLong + ' shows your ' + punchPhrase + ' at ' + punchOutStr + ', ' + minutesEarly + ' minutes before your scheduled ' + endStr12h + (isCustomShift ? ' shift end' : ' clock-out time') + ' and with no approved permission on file. This is recorded as an early-departure violation.' + shiftContext + '\n\n' +
     assignmentPara +
+    (isCustomShift ? buildAssignedShiftsBlock(assignedShifts, violationDate, divider) : '') +
     'As a reminder, according to the ESAU attendance policy:\n\n' +
     divider + '\n' +
     policyBullets.join('\n') + '\n' +
@@ -747,7 +795,7 @@ function missedPunchEmailContent({ employee, dateLong, missingType }) {
 //      the UI plumbing treats all three violation types uniformly.
 // ─────────────────────────────────────────────────────────────────────────
 
-function lateEmailContentTemp({ employee, dateLong, punchInStr, minutesLate, scheduledStart, lateCutoff, isCustomShift, scheduleLabel, isNightShiftStart, assignedBy, assignedAt, managerName }) {
+function lateEmailContentTemp({ employee, dateLong, punchInStr, minutesLate, scheduledStart, lateCutoff, isCustomShift, scheduleLabel, isNightShiftStart, assignedBy, assignedAt, managerName, assignedShifts, violationDate }) {
   const psn = String(employee.id || employee.psn || '').toUpperCase();
   const fullName = String(employee.name || '').toUpperCase();
   const subjectPrefix = isCustomShift
@@ -789,6 +837,7 @@ function lateEmailContentTemp({ employee, dateLong, punchInStr, minutesLate, sch
     'Dear ' + greetName + ',\n\n' +
     'HR\u2019s daily attendance review for ' + dateLong + ' shows your ' + punchPhrase + ' at ' + punchInStr + ', ' + minutesLate + ' minutes past the 15-minute grace period and with no approved permission on file. This is recorded as a late-arrival violation.' + shiftContext + '\n\n' +
     assignmentPara +
+    (isCustomShift ? buildAssignedShiftsBlock(assignedShifts, violationDate, divider) : '') +
     'As a reminder, according to the ESAU attendance policy:\n\n' +
     divider + '\n' +
     policyBullets.join('\n') + '\n' +
@@ -798,7 +847,7 @@ function lateEmailContentTemp({ employee, dateLong, punchInStr, minutesLate, sch
   return { subject, body };
 }
 
-function earlyLeaveEmailContentTemp({ employee, dateLong, punchOutStr, scheduledEnd, minutesEarly, isCustomShift, scheduleLabel, isNightShiftEnd, assignedBy, assignedAt, managerName }) {
+function earlyLeaveEmailContentTemp({ employee, dateLong, punchOutStr, scheduledEnd, minutesEarly, isCustomShift, scheduleLabel, isNightShiftEnd, assignedBy, assignedAt, managerName, assignedShifts, violationDate }) {
   const psn = String(employee.id || employee.psn || '').toUpperCase();
   const fullName = String(employee.name || '').toUpperCase();
   const subjectPrefix = isCustomShift
@@ -842,6 +891,7 @@ function earlyLeaveEmailContentTemp({ employee, dateLong, punchOutStr, scheduled
     'Dear ' + greetName + ',\n\n' +
     'HR\u2019s daily attendance review for ' + dateLong + ' shows your ' + punchPhrase + ' at ' + punchOutStr + ', ' + minutesEarly + ' minutes before your scheduled ' + endStr12h + (isCustomShift ? ' shift end' : ' clock-out time') + ' and with no approved permission on file. This is recorded as an early-departure violation.' + shiftContext + '\n\n' +
     assignmentPara +
+    (isCustomShift ? buildAssignedShiftsBlock(assignedShifts, violationDate, divider) : '') +
     'As a reminder, according to the ESAU attendance policy:\n\n' +
     divider + '\n' +
     policyBullets.join('\n') + '\n' +
@@ -2443,6 +2493,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
       managerName: entry.assignedBy ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
+      assignedShifts: entry.isCustomShift
+        ? (monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [])
+        : [],
+      violationDate: entry.dateLabel || csvDate,
     });
     const cc = [getManagerEmail(entry.employee), ...FIXED_CC].filter(Boolean);
     const url = buildMailto({ to: entry.employee.email, cc, subject, body });
@@ -2479,6 +2533,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
       managerName: entry.assignedBy ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
+      assignedShifts: entry.isCustomShift
+        ? (monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [])
+        : [],
+      violationDate: entry.dateLabel || csvDate,
     });
     const cc = [getManagerEmail(entry.employee), ...FIXED_CC].filter(Boolean);
     const url = buildMailto({ to: entry.employee.email, cc, subject, body });
@@ -4123,6 +4181,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           csvDate={csvDate}
           getManagerEmail={getManagerEmail}
           empById={empById}
+          monthlyShiftsByEmp={monthlyShiftsByEmp}
           onCancel={() => setConfirmEntry(null)}
           onConfirm={() => {
             const { entry, kind, mode = 'live' } = confirmEntry;
@@ -5300,7 +5359,7 @@ function RowButton({ onClick, onClickTest, onMarkSent, sent, logged, emailSentAt
 // Mirrors the pattern used by PermissionApprovedModal and
 // RejoiningApprovedModal — Bashaier reviews the recipients,
 // confirms, the email opens in her client. No silent sends.
-function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, empById, onCancel, onConfirm }) {
+function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, empById, monthlyShiftsByEmp, onCancel, onConfirm }) {
   const { entry, kind, mode = 'live' } = confirm;
   const dateLong = formatDateLong(csvDate);
   const cc = [getManagerEmail(entry.employee), ...FIXED_CC].filter(Boolean);
@@ -5325,6 +5384,10 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, empById, onCance
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
       managerName: (entry.assignedBy && empById) ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
+      assignedShifts: (entry.isCustomShift && monthlyShiftsByEmp)
+        ? (monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [])
+        : [],
+      violationDate: entry.dateLabel || csvDate,
     });
     subject = c.subject;
     summary = `Late arrival on ${dateLong} — punched in ${entry.punchInStr}, ${entry.minutesLate} min after grace.`;
@@ -5342,6 +5405,10 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, empById, onCance
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
       managerName: (entry.assignedBy && empById) ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
+      assignedShifts: (entry.isCustomShift && monthlyShiftsByEmp)
+        ? (monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [])
+        : [],
+      violationDate: entry.dateLabel || csvDate,
     });
     subject = c.subject;
     summary = `Early departure on ${dateLong} — punched out ${entry.punchOutStr}, ${entry.minutesEarly} min before scheduled ${entry.scheduledEnd}.`;
