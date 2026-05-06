@@ -2085,8 +2085,15 @@ function RejectLeaveModal({ request, employee, onClose, onConfirm }) {
   const [error, setError] = useState('');
 
   const selectedReason = findRejectionReason(code);
-  const noteRequired   = !!selectedReason?.requiresNote;
-  const canSubmit = !!code && (!noteRequired || note.trim().length > 0);
+  // Per Nadeem (2026-05-06): "if any manager wants to reject his
+  // staff's request he gets the same window where he needs to put
+  // the remark why he is rejecting." Note is now MANDATORY for
+  // every rejection, regardless of which dropdown reason is picked.
+  // The previous behaviour (note required only when the reason
+  // marked requiresNote=true) let some rejections through with no
+  // explanation, leaving staff confused.
+  const noteRequired   = true;
+  const canSubmit = !!code && note.trim().length > 0;
 
   const submit = async () => {
     if (!canSubmit || submitting) return;
