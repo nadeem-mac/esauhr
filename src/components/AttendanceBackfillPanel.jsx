@@ -47,6 +47,7 @@ import {
   previewOverwrites,
   recordBackfillRows,
   fetchShiftEmployeeIds,
+  fetchMawaniDays,
   reevaluateBackfillRows,
 } from '../lib/attendanceBackfill.js';
 import { TimeCardParseError } from '../lib/timeCard.js';
@@ -128,14 +129,17 @@ export default function AttendanceBackfillPanel({ me, employees }) {
     setReevalDone(null);
     setReevalProgress({ phase: 'starting', processed: 0, total: 0 });
     try {
-      const result = await reevaluateBackfillRows((p) => setReevalProgress(p));
+      const result = await reevaluateBackfillRows(
+        (p) => setReevalProgress(p),
+        { employees }
+      );
       setReevalDone(result);
     } catch (e) {
       setParseErr(`Re-evaluation failed: ${e?.message || e}`);
     } finally {
       setReevaluating(false);
     }
-  }, []);
+  }, [employees]);
 
   const handleFile = useCallback(async (file) => {
     if (!file) return;
@@ -143,16 +147,19 @@ export default function AttendanceBackfillPanel({ me, employees }) {
     setParsing(true);
     try {
       const parsedFile = await parseBackfillXlsx(file);
-      // Fetch shift-worker IDs in parallel with parsing — quick query
-      // (one column from a small table). Used by buildBackfillRows
-      // to leave shift-worker rows as 'present' since their
-      // historical schedules aren't recoverable.
-      const shiftEmployeeIds = await fetchShiftEmployeeIds();
+      // Fetch shift-worker IDs + Mawani-visit days in parallel with
+      // parsing — both are quick queries. Used by buildBackfillRows
+      // to apply the right policy per employee/date.
+      const [shiftEmployeeIds, mawaniDays] = await Promise.all([
+        fetchShiftEmployeeIds(),
+        fetchMawaniDays(),
+      ]);
       const built = buildBackfillRows({
         parsedRows: parsedFile.rows,
         employees,
         recordedBy: me?.id || null,
         shiftEmployeeIds,
+        mawaniDays,
       });
       const overwrites = await previewOverwrites(built.rows);
       setPreview({ rows: built.rows, summary: built.summary, overwrites, fileName: file.name });

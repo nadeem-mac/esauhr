@@ -69,6 +69,13 @@ const STD_END_TIME        = '17:00:00';
 const STD_LATE_CUTOFF     = '08:15:00';  // 15-min grace
 const STD_EARLY_CUTOFF    = '16:45:00';  // 15-min grace before close
 
+// SUP-team policy — same start, earlier end (no lunch break).
+// Mirrors the SUP_END / SUP_EARLY_CUTOFF constants in AttendanceView
+// so the daily flow and the historical backfill agree on what
+// "08:00-16:00" means.
+const SUP_END_TIME        = '16:00:00';
+const SUP_EARLY_CUTOFF    = '15:45:00';  // 15-min grace before close
+
 function timeToMinutes(t) {
   if (!t) return null;
   const m = /^(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(t);
@@ -76,16 +83,40 @@ function timeToMinutes(t) {
   return parseInt(m[1], 10) * 60 + parseInt(m[2], 10) + (parseInt(m[3] || '0', 10) / 60);
 }
 
-// Evaluate a non-shift-worker punch pair against standard office hours.
+// Pick the schedule that applies to a given employee. Returns the
+// canonical { startTime, endTime, lateCutoff, earlyCutoff, label }
+// object. SUP team gets 08:00-16:00; everyone else gets the standard
+// 08:00-17:00. Future per-employee overrides should hook in here.
+function policyFor(emp) {
+  if (emp?.working_hours_group === 'sup_team') {
+    return {
+      startTime:    STD_START_TIME,
+      endTime:      SUP_END_TIME,
+      lateCutoff:   STD_LATE_CUTOFF,
+      earlyCutoff:  SUP_EARLY_CUTOFF,
+      label:        'SUP team (08:00-16:00)',
+    };
+  }
+  return {
+    startTime:    STD_START_TIME,
+    endTime:      STD_END_TIME,
+    lateCutoff:   STD_LATE_CUTOFF,
+    earlyCutoff:  STD_EARLY_CUTOFF,
+    label:        'Standard (08:00-17:00)',
+  };
+}
+
+// Evaluate a non-shift-worker punch pair against the supplied policy.
 // Returns { status, lateMin, earlyMin } where status ∈ {present,late,short}.
-function evaluateOffice(firstPunch, lastPunch) {
+function evaluateOffice(firstPunch, lastPunch, policy) {
+  const p = policy || policyFor(null);
   const fp = toTime(firstPunch);
   const lp = toTime(lastPunch);
-  const lateMin  = (fp && fp > STD_LATE_CUTOFF)
-    ? Math.max(0, Math.round(timeToMinutes(fp) - timeToMinutes(STD_START_TIME)))
+  const lateMin  = (fp && fp > p.lateCutoff)
+    ? Math.max(0, Math.round(timeToMinutes(fp) - timeToMinutes(p.startTime)))
     : 0;
-  const earlyMin = (lp && lp < STD_EARLY_CUTOFF)
-    ? Math.max(0, Math.round(timeToMinutes(STD_END_TIME) - timeToMinutes(lp)))
+  const earlyMin = (lp && lp < p.earlyCutoff)
+    ? Math.max(0, Math.round(timeToMinutes(p.endTime) - timeToMinutes(lp)))
     : 0;
   // Late dominates short if both apply on the same day — late is the
   // more actionable signal for HR follow-up. We still record the
@@ -140,6 +171,37 @@ export async function fetchShiftEmployeeIds() {
 }
 
 /**
+ * Fetch all active (non-cancelled) Mawani-visit (employee_id, date)
+ * pairs in a single query, return them as a Set keyed by
+ * `${empId}|${YYYY-MM-DD}`. Used by buildBackfillRows /
+ * reevaluateBackfillRows to short-circuit late/short evaluation on
+ * duty-visit days.
+ *
+ * @returns {Promise<Set<string>>}
+ */
+export async function fetchMawaniDays() {
+  try {
+    const rows = await directGet(
+      'mawani_visits',
+      'select=employee_id,visit_date&status=neq.cancelled',
+      { timeoutMs: 9000 }
+    );
+    const out = new Set();
+    (rows || []).forEach(r => {
+      if (r?.employee_id && r?.visit_date) {
+        out.add(`${r.employee_id}|${r.visit_date}`);
+      }
+    });
+    return out;
+  } catch {
+    // Table may not exist yet (migration not run) — degrade
+    // gracefully to "no Mawani days" so the rest of the flow keeps
+    // working until Bashaier runs the migration.
+    return new Set();
+  }
+}
+
+/**
  * Convert parsed rows into attendance_daily upsert payload.
  *
  * @param {Object} args
@@ -158,7 +220,7 @@ export async function fetchShiftEmployeeIds() {
  *    maxDate:    latest YYYY-MM-DD
  *  }
  */
-export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmployeeIds }) {
+export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmployeeIds, mawaniDays }) {
   // Index the directory once. Two indexes — one for full PSN match
   // (e.g. "H94499"), one for the digits-only fallback ("94499") since
   // some xlsx exports drop the H prefix.
@@ -177,6 +239,12 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
     ? shiftEmployeeIds
     : new Set(shiftEmployeeIds || []);
 
+  // Mawani-visit set keyed as `${empId}|${YYYY-MM-DD}` so a single
+  // .has() call answers "is this employee on Mawani duty this date?"
+  const mawaniSet = (mawaniDays instanceof Set)
+    ? mawaniDays
+    : new Set(mawaniDays || []);
+
   const rows = [];
   const touchedEmployees = new Set();
   let parsed = 0;
@@ -187,6 +255,7 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
   let presentCount = 0;
   let shiftWorkerSkipped = 0;  // count of rows we left as 'present'
                                 // because the employee is a shift worker
+  let mawaniDayCount = 0;       // count of rows tagged as Mawani duty
   let minDate = null;
   let maxDate = null;
   const now = new Date().toISOString();
@@ -227,21 +296,39 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
     const dt = new Date(dateIso + 'T00:00:00');
     const isWeekend = isKsaWeekendDow(dt.getDay());
 
-    let status, lateMin, earlyMin, expectedStart, expectedEnd;
-    if (isShiftWorker || isWeekend) {
+    // Mawani visit on this date? Treat as 'present' — leaving
+    // office for duty visit isn't early leave. Cancelled visits
+    // don't count, only planned/completed ones.
+    const isMawaniDay = mawaniSet.has(`${empId}|${dateIso}`);
+    const policy = policyFor(emp);
+
+    let status, lateMin, earlyMin, expectedStart, expectedEnd, noteText;
+    if (isMawaniDay) {
+      status        = 'present';
+      lateMin       = 0;
+      earlyMin      = 0;
+      expectedStart = policy.startTime;
+      expectedEnd   = policy.endTime;
+      noteText      = `Backfill — Mawani duty visit (${policy.label})`;
+      mawaniDayCount++;
+    } else if (isShiftWorker || isWeekend) {
       status        = 'present';
       lateMin       = 0;
       earlyMin      = 0;
       expectedStart = null;
       expectedEnd   = null;
       if (isShiftWorker) shiftWorkerSkipped++;
+      noteText = isShiftWorker
+        ? 'Backfill — shift worker, schedule unknown'
+        : 'Backfill — KSA weekend punch';
     } else {
-      const evalRes = evaluateOffice(firstPunch, lastPunch);
+      const evalRes = evaluateOffice(firstPunch, lastPunch, policy);
       status        = evalRes.status;
       lateMin       = evalRes.lateMin;
       earlyMin      = evalRes.earlyMin;
-      expectedStart = STD_START_TIME;
-      expectedEnd   = STD_END_TIME;
+      expectedStart = policy.startTime;
+      expectedEnd   = policy.endTime;
+      noteText      = `Backfill — evaluated against ${policy.label} with 15-min grace`;
     }
 
     if (status === 'late') lateCount++;
@@ -260,11 +347,7 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
       late_minutes:       lateMin,
       early_leave_minutes:earlyMin,
       leave_request_id:   null,
-      notes: isShiftWorker
-        ? 'Backfill — shift worker, schedule unknown'
-        : isWeekend
-          ? 'Backfill — KSA weekend punch'
-          : 'Backfill — evaluated against standard 08:00-17:00 with 15-min grace',
+      notes:              noteText,
       recorded_at:        now,
       recorded_by:        recordedBy || null,
       source:             'backfill',
@@ -293,6 +376,7 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
       shortCount,
       presentCount,
       shiftWorkerSkipped,
+      mawaniDayCount,
     },
   };
 }
@@ -395,10 +479,31 @@ export async function recordBackfillRows(rows, onProgress) {
  * @param {function} [onProgress] — called with { phase, processed, total }
  * @returns {Promise<{ scanned, changed, lateCount, shortCount, presentCount }>}
  */
-export async function reevaluateBackfillRows(onProgress) {
-  // Phase 1 — load shift-worker IDs
+export async function reevaluateBackfillRows(onProgress, options = {}) {
+  // Phase 1 — load shift-worker IDs + Mawani days + employee
+  // working-hours-group lookup so we can apply per-employee policy
   if (onProgress) try { onProgress({ phase: 'shifts', processed: 0, total: 0 }); } catch {}
   const shiftSet = await fetchShiftEmployeeIds();
+  const mawaniSet = await fetchMawaniDays();
+
+  // Build empPolicyMap: employee_id → policy { startTime, endTime, ... }
+  // Caller can pass `employees` to avoid an extra fetch; otherwise
+  // we look up the working_hours_group column from the employees table.
+  let empById = options?.employees
+    ? new Map((options.employees || []).map(e => [e?.id, e]).filter(([k]) => k))
+    : null;
+  if (!empById) {
+    try {
+      const emps = await directGet(
+        'employees',
+        'select=id,working_hours_group',
+        { timeoutMs: 9000 }
+      );
+      empById = new Map((emps || []).map(e => [e?.id, e]).filter(([k]) => k));
+    } catch {
+      empById = new Map();
+    }
+  }
 
   // Phase 2 — fetch all backfill rows. Project only the columns
   // we need to evaluate; status + minutes + id is enough.
@@ -418,15 +523,27 @@ export async function reevaluateBackfillRows(onProgress) {
   let lateCount = 0;
   let shortCount = 0;
   let presentCount = 0;
+  let mawaniDayCount = 0;
 
   for (const r of existing) {
     const empId = r.employee_id;
+    const emp = empById.get(empId);
+    const policy = policyFor(emp);
     const dt = new Date(r.attendance_date + 'T00:00:00');
     const isWeekend = isKsaWeekendDow(dt.getDay());
     const isShiftWorker = shiftSet.has(empId);
+    const isMawaniDay = mawaniSet.has(`${empId}|${r.attendance_date}`);
 
     let newStatus, newLate, newEarly, newExpStart, newExpEnd, newNote;
-    if (isShiftWorker || isWeekend) {
+    if (isMawaniDay) {
+      newStatus    = 'present';
+      newLate      = 0;
+      newEarly     = 0;
+      newExpStart  = policy.startTime;
+      newExpEnd    = policy.endTime;
+      newNote      = `Backfill — Mawani duty visit (${policy.label}) (re-evaluated)`;
+      mawaniDayCount++;
+    } else if (isShiftWorker || isWeekend) {
       // Force back to a clean 'present' baseline — no eval applies.
       newStatus    = 'present';
       newLate      = 0;
@@ -437,13 +554,13 @@ export async function reevaluateBackfillRows(onProgress) {
         ? 'Backfill — shift worker, schedule unknown (re-evaluated)'
         : 'Backfill — KSA weekend punch (re-evaluated)';
     } else {
-      const ev = evaluateOffice(r.first_punch, r.last_punch);
+      const ev = evaluateOffice(r.first_punch, r.last_punch, policy);
       newStatus   = ev.status;
       newLate     = ev.lateMin;
       newEarly    = ev.earlyMin;
-      newExpStart = STD_START_TIME;
-      newExpEnd   = STD_END_TIME;
-      newNote = 'Backfill — re-evaluated against standard 08:00-17:00 with 15-min grace';
+      newExpStart = policy.startTime;
+      newExpEnd   = policy.endTime;
+      newNote = `Backfill — re-evaluated against ${policy.label} with 15-min grace`;
     }
 
     // Tally for the summary regardless of whether we actually write
@@ -500,6 +617,7 @@ export async function reevaluateBackfillRows(onProgress) {
     lateCount,
     shortCount,
     presentCount,
+    mawaniDayCount,
   };
 }
 

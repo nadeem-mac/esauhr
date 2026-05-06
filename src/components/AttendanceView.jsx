@@ -9,6 +9,7 @@ import { parseTimeCardXlsx, TimeCardParseError } from '../lib/timeCard.js';
 import { buildAttendanceRows, recordAttendanceRows } from '../lib/attendanceRecorder.js';
 import AttendanceMonthGrid from './AttendanceMonthGrid.jsx';
 import AttendanceBackfillPanel from './AttendanceBackfillPanel.jsx';
+import WorkingHoursManager from './WorkingHoursManager.jsx';
 import EmployeeAttendanceDetailPanel from './EmployeeAttendanceDetailPanel.jsx';
 
 // ─── Error Boundary for AttendanceView sections ───────────────────────
@@ -794,6 +795,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   const [approvedLeaves, setApprovedLeaves]       = useState([]);
   const [approvedPermissions, setApprovedPerms]   = useState([]); // for the data date
   const [acceptedShifts, setAcceptedShifts]       = useState([]);
+  // Mawani visits indexed as `${empId}|${YYYY-MM-DD}` for O(1) lookup
+  // during row classification. Fetched for the CSV's month so partial-
+  // year files don't pull more than needed.
+  const [mawaniDays, setMawaniDays]               = useState(() => new Set());
   const [sentMarkers, setSentMarkers]             = useState({}); // key: row.id → true
   const [loggedMarkers, setLoggedMarkers]         = useState({}); // key: 'empId:type' → true
   // Pending-EOD-review tracker. Populated from attendance_review_log on
@@ -1036,6 +1041,43 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       } catch (e) {
         console.warn('Could not fetch month shifts:', e);
         if (!cancelled) setAcceptedShifts([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [csvDate, yesterdayDate]);
+
+  // Mawani visits for the CSV's month. The classifier short-circuits
+  // any (employee, date) pair that's a logged Mawani visit — the
+  // staff is on official duty, so any punch-in/out pattern is
+  // acceptable and shouldn't trigger late/early/missed classification.
+  // Cancelled visits are excluded server-side.
+  useEffect(() => {
+    if (!csvDate) { setMawaniDays(new Set()); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const [yy, mm] = csvDate.split('-').map(Number);
+        const monthStart = `${yy}-${String(mm).padStart(2, '0')}-01`;
+        const lastDay = new Date(yy, mm, 0).getDate();
+        const monthEnd = `${yy}-${String(mm).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+        const data = await directGet(
+          `mawani_visits?select=employee_id,visit_date` +
+          `&status=neq.cancelled` +
+          `&visit_date=gte.${monthStart}&visit_date=lte.${monthEnd}`
+        );
+        if (cancelled) return;
+        const s = new Set();
+        (data || []).forEach(r => {
+          if (r?.employee_id && r?.visit_date) {
+            s.add(`${String(r.employee_id).toUpperCase()}|${r.visit_date}`);
+          }
+        });
+        setMawaniDays(s);
+      } catch (e) {
+        // Table may not exist yet — degrade silently to "no Mawani
+        // visits known" so the rest of the daily flow keeps working
+        // until the migration runs.
+        if (!cancelled) setMawaniDays(new Set());
       }
     })();
     return () => { cancelled = true; };
@@ -1357,6 +1399,24 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         if (!out.onLeave.some(x => x.employee?.id === emp.id)) {
           out.onLeave.push({ id: 'row-' + idx, employee: emp });
         }
+        return;
+      }
+      // Mawani-visit short-circuit. If the staff member is on a logged
+      // Mawani (or other duty) visit for this exact date, they're
+      // officially out of office — any punch-in/punch-out pattern is
+      // acceptable. Push to onTime so the row downstream gets recorded
+      // as 'present' without late/early/missed classification.
+      if (mawaniDays.has(`${String(emp.id).toUpperCase()}|${rowDate}`)) {
+        const punchInStr  = (row['First Punch'] || '').trim();
+        const punchOutStr = (row['Last Punch']  || '').trim();
+        out.onTime.push({
+          id: 'row-' + idx,
+          employee: emp,
+          punchInStr,
+          punchOutStr,
+          dateLabel: rowDate,
+          isMawaniVisit: true,  // surfaced in result tile / report
+        });
         return;
       }
       const empKey = String(emp.id || '').toUpperCase();
@@ -1760,7 +1820,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     // file order so the memo's sort owns the canonical order.
 
     return out;
-  }, [parsed.rows, parsed.weekendRows, csvDate, yesterdayDate, empById, empByDigits, onLeaveOnDate, shiftOverrideById, shiftStaffThisMonth, nightShiftBridge, permIndex]);
+  }, [parsed.rows, parsed.weekendRows, csvDate, yesterdayDate, empById, empByDigits, onLeaveOnDate, shiftOverrideById, shiftStaffThisMonth, nightShiftBridge, permIndex, mawaniDays]);
 
   // ─── Persist daily attendance to attendance_daily ──────────────────
   // Every successful parse triggers a write of one row per
@@ -3831,18 +3891,21 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       )}
 
       {/* ZONE 3 — ONE-TIME SETUP
-          Historical backfill panel. Lives at the very bottom because
-          it's a one-shot tool: import months that predate the daily
-          flow, then never touch this again. Visually distinct from
-          Zone 2's daily action so Bashaier doesn't accidentally use
-          the wrong upload path. Collapsed by default. */}
+          Configuration tools that don't get touched daily. Working
+          hours and Mawani visits at the top because they're standing
+          configuration; historical backfill at the bottom because
+          it's a one-shot import. */}
       <ZoneHeader
         number={3}
         kicker="ONE-TIME SETUP"
-        title="Historical backfill"
-        body="Use this once to fill in attendance for months before the daily flow began. Imports rows as 'present' only — no late/short/absent evaluation, since historical shift schedules aren't available. After backfill is done, the daily flow above takes over and writes properly evaluated rows from that day forward."
+        title="Configuration & backfill"
+        body="Mark staff with non-standard working hours, log Mawani duty visits, and import historical attendance. Day-to-day, the section above handles everything — these panels are for setup and exceptions."
         accent="#854F0B"
       />
+      <AttendanceErrorBoundary label="Working hours & Mawani">
+        <WorkingHoursManager me={me} employees={employees} canEdit={!!me?.id} />
+      </AttendanceErrorBoundary>
+      <div style={{ height: 12 }} />
       <AttendanceErrorBoundary label="Historical backfill">
         <AttendanceBackfillPanel me={me} employees={employees} />
       </AttendanceErrorBoundary>
