@@ -161,22 +161,33 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
         // queries that read these fields.
         substitute_ids: isSick ? [] : substituteIds,
         substitute_decisions: decisions,
-        // Stage routing —
-        //   • Sick leaves and managers' own requests skip the
-        //     substitute-accept step (sick leaves: backdated illness,
-        //     managers: no manager step needed since they ARE the
-        //     manager) and start at HR or manager review accordingly.
-        //   • Non-managers submitting non-sick leave start at
-        //     pending_substitutes per the standard flow.
+        // Stage routing — per Nadeem (2026-05-06) explicit rules:
+        //   • ALL STAFF non-sick    → pending_substitutes
+        //   • ALL STAFF sick        → pending_manager
+        //   • BASHAIER non-sick     → pending_substitutes (then manager
+        //                             via DB trigger; HR-self guard
+        //                             finalises at Fahad's manager step)
+        //   • BASHAIER sick         → pending_manager
+        //   • FAHAD non-sick        → pending_substitutes (then HR via
+        //                             DB trigger which detects the
+        //                             manager-bypass case and routes
+        //                             pending_substitutes → pending_hr,
+        //                             skipping pending_manager)
+        //   • FAHAD sick            → pending_hr (no substitutes for
+        //                             sick; goes straight to Bashaier)
         stage: (() => {
           const initial = initialApprovalStage(me, employees);
-          // Manager-of-self is HR — go directly there (skip substitute
-          // accept and skip manager step).
-          if (initial === 'pending_hr') return 'pending_hr';
-          // Non-manager: sick leaves skip the substitute step (backdated
-          // illness shouldn't be blocked by sub-accept), other leaves go
-          // through the substitute-accept gate first.
-          return isSick ? 'pending_manager' : 'pending_substitutes';
+          if (isSick) {
+            // Sick leaves don't use substitutes. Fahad's sick leave goes
+            // directly to pending_hr; everyone else goes pending_manager.
+            return initial === 'pending_hr' ? 'pending_hr' : 'pending_manager';
+          }
+          // Non-sick (annual, casual, emergency-with-subs etc.): always
+          // start at pending_substitutes. The substitute-accept DB
+          // trigger figures out the next stage:
+          //   - Fahad's row → pending_hr (skip manager)
+          //   - everyone else → pending_manager
+          return 'pending_substitutes';
         })(),
         // Sehhaty fields. Staff provides only the leave ID
         // (sehhaty_code). Issue date and clinic are left null —
