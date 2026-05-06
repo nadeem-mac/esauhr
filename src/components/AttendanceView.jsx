@@ -1759,7 +1759,20 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       //   otherwise fire (correct: there's no punch-out expected
       //   on yesterday's row for an overnight shift).
       if (isYesterday && isNightShiftStart) {
-        if (!punchInMin) {
+        // For night-shift-START on yesterday's row, the shift-IN
+        // punch is the LATEST punch of the day (around shift_start),
+        // not the first_punch. The first_punch is typically the
+        // end of the PREVIOUS night shift (e.g. ~05:00 from Mon's
+        // shift bleeding into Tue's row). Per Nadeem (2026-05-06):
+        // overnight shifts span two calendar dates and the punches
+        // need to be paired to the correct shift before evaluation.
+        //
+        // Rule: shiftInStr = last_punch || first_punch.
+        //   • Two punches (typical): use last_punch (the 20:00ish entry)
+        //   • One punch: that's the only signal — use it
+        const shiftInStr = punchOutStr || punchInStr;
+        const shiftInMin = timeToMinutes(shiftInStr);
+        if (!shiftInMin) {
           // No clock-in for the night shift — missed-punch on the
           // START side. Surface as missedIn (not missedOut) since
           // conceptually they failed to arrive, even though it's
@@ -1778,24 +1791,27 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           });
           return;
         }
-        if (punchInMin > lateCutoffMin) {
+        if (shiftInMin > lateCutoffMin) {
           const permKey = String(emp.id).toUpperCase() + '|late_arrival|' + rowDate;
           const perm = permIndex.get(permKey) || null;
           let permStatus = 'LATE_NO_PERMISSION';
           let minutesBeyond = null;
           if (perm) {
             const permEndMin = timeToMinutes(String(perm.time_to || '').slice(0, 5));
-            if (Number.isFinite(permEndMin) && punchInMin > permEndMin) {
+            if (Number.isFinite(permEndMin) && shiftInMin > permEndMin) {
               permStatus = 'LATE_BEYOND';
-              minutesBeyond = punchInMin - permEndMin;
+              minutesBeyond = shiftInMin - permEndMin;
             } else {
               permStatus = 'LATE_PERMITTED';
             }
           }
           out.late.push({
             id: 'row-' + idx, employee: emp, row,
-            punchInStr, punchInMin,
-            minutesLate: punchInMin - lateCutoffMin,
+            // Display the actual shift-IN punch so reports/emails
+            // make sense to the staff member ("you punched 21:30,
+            // 90 min past 20:00").
+            punchInStr: shiftInStr, punchInMin: shiftInMin,
+            minutesLate: shiftInMin - lateCutoffMin,
             scheduledStart: sched.startStr,
             scheduledEnd: sched.endStr,
             lateCutoff: sched.lateCutoffStr,
