@@ -266,7 +266,10 @@ input[type="date"] { color-scheme: light; }
 .click-bounce {
   cursor: pointer;
   transition: transform 0.12s ease;
-  display: inline-block;
+  /* No display override — preserves whatever display the host
+     element naturally has (grid, flex, block, inline). Forcing
+     inline-block here was breaking grid layouts that relied on
+     the button being a grid container. */
 }
 .click-bounce.bouncing {
   animation: click-bounce 0.36s cubic-bezier(0.34, 1.56, 0.64, 1);
