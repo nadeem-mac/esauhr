@@ -525,6 +525,31 @@ export default function ReviewerPanel({ me }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Live-update fallback for the reviewer queues. Per Nadeem (2026-05-06):
+  // "sadakath has to refresh his screen only then he can see Nadeem's
+  // request, and once sadakath approves it should go to Bashaier for
+  // final approval it should happen instant and live". We poll every
+  // 15 seconds and re-fetch on tab focus / visibility change. AppShell
+  // also has its own polling layer for the data feeding Dashboards;
+  // this one keeps the manager/HR review queues fresh independently.
+  useEffect(() => {
+    let intervalId = null;
+    const tick = () => {
+      if (document.hidden) return;
+      load();
+    };
+    intervalId = setInterval(tick, 15_000);
+    const onFocus = () => load();
+    const onVisibilityChange = () => { if (!document.hidden) load(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [load]);
+
   // Recurring permission pattern detection. For each unique
   // (employee_id, type) currently pending, fetch the last 60 days of
   // approved permissions of the same type and detect weekday clusters.
@@ -635,12 +660,19 @@ export default function ReviewerPanel({ me }) {
     const deciderId = me.auth_user_id || me.id;
 
     if (req.stage === 'pending_manager') {
-      // Self-approval guard (see decidePerm above for full rationale)
+      // HR-self approval guard — fires ONLY for Bashaier (the dedicated
+      // HR reviewer who isn't admin). Per Nadeem (2026-05-06): "BASHAIER
+      // → FAHAD H94712" (her request finalises at Fahad's manager
+      // approval) but "ALL STAFF → MANAGER → BASHAIER" applies to
+      // everyone else including admin/Nadeem. We must NOT collapse
+      // Nadeem's flow at the manager step just because his record
+      // happens to have is_hr_reviewer=true. Only Bashaier (HR-only,
+      // not also admin) gets the self-approval shortcut.
       const requester = empMap[req.employee_id];
-      const requesterIsHr = !!requester?.is_hr_reviewer;
+      const requesterIsExclusiveHr = !!(requester?.is_hr_reviewer && !requester?.is_admin);
       if (action === 'approved') {
-        nextStage = requesterIsHr ? 'approved' : 'pending_hr';
-        if (requesterIsHr) {
+        nextStage = requesterIsExclusiveHr ? 'approved' : 'pending_hr';
+        if (requesterIsExclusiveHr) {
           patch.hr_decided_at = now;
           patch.hr_decided_by = deciderId;
         }
@@ -720,20 +752,20 @@ export default function ReviewerPanel({ me }) {
     let nextStage, patch = {};
 
     if (req.stage === 'pending_manager') {
-      // Self-approval guard: if the requester is themselves an HR
-      // reviewer (e.g. Bashaier requesting time off, approved by her
-      // manager John Ho), skip the pending_hr stage. Otherwise the
-      // request would be stuck — Bashaier can't approve her own request,
-      // and the HR queue filter excludes her own rows.
+      // HR-self approval guard — see decideLeave above for the full
+      // rationale. Fires ONLY for Bashaier (HR-only, not admin).
+      // Nadeem applies → flows ALL STAFF → MANAGER → BASHAIER even
+      // though he happens to have is_hr_reviewer=true (he's also admin
+      // and the system has a real Bashaier to handle the HR step).
       const requester = empMap[req.employee_id];
-      const requesterIsHr = !!requester?.is_hr_reviewer;
+      const requesterIsExclusiveHr = !!(requester?.is_hr_reviewer && !requester?.is_admin);
       if (action === 'approved') {
-        nextStage = requesterIsHr ? 'approved' : 'pending_hr';
-        if (requesterIsHr) {
-          // John approving Bashaier's request finalises it. Stamp the
-          // hr_decided_* fields with the manager's own id so the
-          // approval letter footer + audit trail still record an HR
-          // approver — semantically John is acting in the HR role here.
+        nextStage = requesterIsExclusiveHr ? 'approved' : 'pending_hr';
+        if (requesterIsExclusiveHr) {
+          // Fahad approving Bashaier's request finalises it. Stamp
+          // hr_decided_* with Fahad's id — semantically he's acting
+          // in the HR role here for the audit trail and any letter
+          // footer derivations.
           patch.hr_decided_at = now;
           patch.hr_decided_by = me.id;
         }

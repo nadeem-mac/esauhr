@@ -398,10 +398,11 @@ export default function AppShell({ session, me, onRefreshMe }) {
     let pending = null;
     const debouncedLoad = () => {
       if (pending) return;
-      pending = setTimeout(() => { pending = null; loadAll(); }, 400);
+      pending = setTimeout(() => { pending = null; loadAll({ silent: true }); }, 400);
     };
     const channel = supabase.channel('leave-desk-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_requests' }, debouncedLoad)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'permission_requests' }, debouncedLoad)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'employees' }, debouncedLoad)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_types' }, debouncedLoad)
       .subscribe();
@@ -410,6 +411,37 @@ export default function AppShell({ session, me, onRefreshMe }) {
       supabase.removeChannel(channel);
     };
   }, [loadAll]);
+
+  // Live-update fallback — interval polling + window-focus refetch.
+  // Per Nadeem (2026-05-06): "the system is not live updating soon as
+  // Nadeem applying his request, sadakath has to refresh his screen
+  // only then he can see Nadeem's request, and once sadakath approves
+  // it should go to Bashaier for final approval it should happen
+  // instant and live." The Supabase realtime channel above is best-
+  // effort — the project's known supabase-js wedging issue means it
+  // sometimes silently drops events. This polling layer guarantees
+  // every screen catches up within ~20 seconds even when realtime is
+  // dead in the water. Focus-refetch makes Alt-Tab feel instant.
+  useEffect(() => {
+    if (!session) return undefined;
+    let intervalId = null;
+    const tick = () => {
+      if (document.hidden) return; // don't waste cycles on hidden tabs
+      loadAll({ silent: true });
+    };
+    intervalId = setInterval(tick, 20_000);
+    const onFocus = () => loadAll({ silent: true });
+    const onVisibilityChange = () => {
+      if (!document.hidden) loadAll({ silent: true });
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [loadAll, session]);
 
   const typeMap = useMemo(() => Object.fromEntries(leaveTypes.map(t => [t.id, t])), [leaveTypes]);
   const empMap  = useMemo(() => Object.fromEntries(employees.map(e => [e.id, e])), [employees]);

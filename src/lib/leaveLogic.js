@@ -205,42 +205,39 @@ export function findOverlappingRequests(employeeId, startDate, endDate, requests
 // ──────────────────────────────────────────────────────────────────────
 //  INITIAL APPROVAL STAGE — where does this requester's row START?
 // ──────────────────────────────────────────────────────────────────────
-// Per Nadeem: only the Bashaier ↔ Fahad pair gets special routing —
-// every other employee follows the standard manager → HR flow even if
-// they happen to be a manager themselves.
+// Per Nadeem (2026-05-06) — explicit routing by role:
+//   • ALL STAFF → MANAGER → BASHAIER         (final, normal flow)
+//   • BASHAIER  → FAHAD H94712               (final, no Bashaier step)
+//   • FAHAD     → BASHAIER                   (final, no manager step)
+//   • Annual leaves add a SUBSTITUTES gate at the start of every
+//     non-sick path; the rest of the routing is identical.
 //
-// The rule is scoped tightly to the case it was designed for:
-// "skip the manager step when the requester has an HR reviewer
-// as a direct report". That captures Fahad specifically — his
-// deputy Bashaier IS the HR reviewer, so his own request goes
-// straight to her for final approval, no manager-step needed.
+// This helper handles the FAHAD case — start his request at
+// pending_hr so it skips the manager step and lands directly in
+// Bashaier's HR queue.
 //
-// Why this scoping (and not "anyone with direct reports"):
-//   • Sadakathullah (BIZ manager) has direct reports — but none of
-//     them are HR reviewers, so his own request goes through the
-//     normal flow: his manager approves first, then Bashaier finalises.
-//   • Any future manager whose deputy isn't HR follows the same
-//     normal flow.
-//   • Only when the manager's deputy IS the HR-reviewer role does
-//     the bypass kick in — because in that specific case there is
-//     no separate "HR step" to wait for.
-//
-// HR-self approval (Bashaier applying for herself) is handled
-// separately in decideLeave/decidePerm via the requesterIsHr guard
-// at the manager step. That fix is independent of this routing.
+// Rule: skip the manager step iff the requester has an HR-only
+// (non-admin) reviewer as a direct report. That captures Fahad
+// alone — his deputy Bashaier IS the HR reviewer. Sadakathullah
+// has direct reports too, but none of them are HR-only reviewers,
+// so his own request flows the normal staff path.
 //
 // Inputs:
 //   • requester  — the employee record submitting the request
 //   • employees  — the full company list (used to detect direct reports)
 //
 // Returns one of:
-//   • 'pending_hr'      — requester's deputy is HR; skip manager step
+//   • 'pending_hr'      — requester's deputy is the HR reviewer
 //   • 'pending_manager' — normal flow
 export function initialApprovalStage(requester, employees = []) {
   if (!requester) return 'pending_manager';
   const directReports = (employees || []).filter(e => e.manager_id === requester.id);
-  const hasHrDirectReport = directReports.some(e => e?.is_hr_reviewer);
-  if (hasHrDirectReport) return 'pending_hr';
+  // HR-only direct reports — exclude admin so Nadeem (admin + HR)
+  // doesn't accidentally mark anyone as a Fahad-style manager. The
+  // rule is meant to capture the deputy-is-HR pattern, and Bashaier
+  // is the only deputy-HR in this org.
+  const hasHrOnlyDirectReport = directReports.some(e => e?.is_hr_reviewer && !e?.is_admin);
+  if (hasHrOnlyDirectReport) return 'pending_hr';
   return 'pending_manager';
 }
 
