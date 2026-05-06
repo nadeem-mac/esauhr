@@ -120,6 +120,33 @@ export default function RefreshOverlay({ open, message = 'Refreshing your dashbo
           from { transform: rotate(0deg); }
           to   { transform: rotate(360deg); }
         }
+
+        /* Bird flight — slow drift left to right across the sky. The
+           translation distance covers the viewBox width plus padding
+           on each side so the bird disappears off-screen and reappears
+           cleanly on the other side. */
+        @keyframes esau-bird-fly-left {
+          from { transform: translateX(540px); }
+          to   { transform: translateX(-80px); }
+        }
+        @keyframes esau-bird-fly-right {
+          from { transform: translateX(-80px); }
+          to   { transform: translateX(540px); }
+        }
+        /* Wing flap — quick scaleY oscillation on the wing path so
+           the seagull "M" shape opens and closes as it flies. The
+           transform-box: fill-box keeps the scale anchored to the
+           bird's centre instead of the SVG origin. */
+        @keyframes esau-bird-flap {
+          0%, 100% { transform: scaleY(1); }
+          50%      { transform: scaleY(0.55); }
+        }
+        /* Vertical bob — birds dip and rise gently as they fly so
+           the path doesn't look mechanical. Slower than the flap. */
+        @keyframes esau-bird-bob {
+          0%, 100% { transform: translateY(0); }
+          50%      { transform: translateY(4px); }
+        }
       `}</style>
 
       <div
@@ -217,6 +244,59 @@ export default function RefreshOverlay({ open, message = 'Refreshing your dashbo
               <Cloud x={260}  y={40} scale={1.0} />
               <Cloud x={410}  y={30} scale={1.4} />
               <Cloud x={560}  y={55} scale={0.9} />
+            </g>
+
+            {/* Birds — three seagulls drift across the sky at different
+                heights and speeds. Each bird is a wrapper <g> doing the
+                horizontal traversal, an inner <g> doing the slow vertical
+                bob, and the wing path itself doing the rapid wing flap.
+                Two fly left, one flies right so the sky has cross-traffic
+                like a real coastline. Wing-flap speed varies per bird so
+                the flock doesn't beat in lock-step. */}
+            {/* Bird 1 — high left-drifter, slow flap */}
+            <g style={{ animation: 'esau-bird-fly-left 14s linear infinite' }}>
+              <g style={{ transformOrigin: '0 0', animation: 'esau-bird-bob 2.6s ease-in-out infinite' }}>
+                <g
+                  style={{
+                    transformBox: 'fill-box',
+                    transformOrigin: 'center',
+                    animation: 'esau-bird-flap 0.55s ease-in-out infinite',
+                  }}
+                >
+                  <path d="M -8 18 Q -4 12 0 18 Q 4 12 8 18" stroke="#5C4A2E" strokeWidth="1.4" fill="none" strokeLinecap="round"/>
+                </g>
+              </g>
+            </g>
+            {/* Bird 2 — mid-altitude right-drifter, faster flap. The
+                negative scaleX flips the silhouette so the bird "faces"
+                its direction of travel. */}
+            <g style={{ animation: 'esau-bird-fly-right 17s linear infinite', animationDelay: '-3s' }}>
+              <g style={{ transformOrigin: '0 0', animation: 'esau-bird-bob 2.2s ease-in-out infinite', transform: 'translateY(45px)' }}>
+                <g
+                  style={{
+                    transformBox: 'fill-box',
+                    transformOrigin: 'center',
+                    animation: 'esau-bird-flap 0.42s ease-in-out infinite',
+                  }}
+                >
+                  <path d="M -7 0 Q -3.5 -5 0 0 Q 3.5 -5 7 0" stroke="#5C4A2E" strokeWidth="1.3" fill="none" strokeLinecap="round"/>
+                </g>
+              </g>
+            </g>
+            {/* Bird 3 — lower left-drifter, smallest, fastest flap.
+                Slight delay so it crosses the sky out of sync with bird 1. */}
+            <g style={{ animation: 'esau-bird-fly-left 11s linear infinite', animationDelay: '-7s' }}>
+              <g style={{ transformOrigin: '0 0', animation: 'esau-bird-bob 1.8s ease-in-out infinite', transform: 'translateY(78px)' }}>
+                <g
+                  style={{
+                    transformBox: 'fill-box',
+                    transformOrigin: 'center',
+                    animation: 'esau-bird-flap 0.38s ease-in-out infinite',
+                  }}
+                >
+                  <path d="M -5 0 Q -2.5 -3.5 0 0 Q 2.5 -3.5 5 0" stroke="#5C4A2E" strokeWidth="1.1" fill="none" strokeLinecap="round" opacity="0.85"/>
+                </g>
+              </g>
             </g>
 
             {/* Horizon line — very soft, just enough to anchor the eye */}
