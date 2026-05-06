@@ -621,6 +621,25 @@ export default function AppShell({ session, me, onRefreshMe }) {
     await loadAll();
   };
 
+  // Admin-only — wipe a permission request from history. Same shape
+  // as deleteRequest above so the Requests tab can call either with
+  // a uniform onDelete prop. Per Nadeem: "How I can clear the applied
+  // leave of all type for any staff … only my ID has access to do
+  // this". The button-level gate lives in Requests.jsx; this server
+  // call also fails for non-admins via RLS on permission_requests.
+  const deletePermission = async (id) => {
+    const req = permissions.find(p => p.id === id);
+    const empName = req ? (empMap[req.employee_id]?.name || req.employee_id) : '';
+    const { error } = await supabase.from('permission_requests').delete().eq('id', id);
+    if (error) throw error;
+    logAction(me, 'permission_request_delete', {
+      targetType: 'permission_request',
+      targetId: id,
+      targetLabel: empName,
+    });
+    await loadAll();
+  };
+
   const updateLeaveType = async (id, patch) => {
     const { error } = await supabase.from('leave_types').update(patch).eq('id', id);
     if (error) throw error;
@@ -945,10 +964,13 @@ export default function AppShell({ session, me, onRefreshMe }) {
             // one list was confusing and leaked staff requests across
             // peers.
             requests={isAdmin ? requests : requests.filter(r => r.employee_id === me.id)}
+            permissions={isAdmin ? permissions : permissions.filter(p => p.employee_id === me.id)}
             leaveTypes={leaveTypes}
             typeMap={typeMap} empMap={empMap}
             me={me}
-            onDecide={decideRequest} onDelete={deleteRequest}
+            onDecide={decideRequest}
+            onDelete={deleteRequest}
+            onDeletePermission={deletePermission}
             onNewRequest={() => setShowNewRequest(true)}
           />
         )}
