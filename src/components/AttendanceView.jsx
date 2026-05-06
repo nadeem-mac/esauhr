@@ -517,60 +517,70 @@ function formatDateLong(yyyymmdd) {
 // ────────────────────────────────────────────────────────────────────────
 // Email body builders. Each returns { subject, body }.
 // ────────────────────────────────────────────────────────────────────────
-function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, scheduledStart, lateCutoff }) {
+function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, scheduledStart, lateCutoff, isCustomShift, scheduleLabel, isNightShiftStart }) {
   const psn = String(employee.id || employee.psn || '').toUpperCase();
   const fullName = String(employee.name || '').toUpperCase();
-  const subject = 'Late Arrival Notice — ' + psn + ' ' + fullName + ' — ' + dateLong;
+  // Shift staff get a distinct subject prefix so the inbox makes
+  // it obvious this is a shift-attendance violation, not the
+  // standard 8 AM office one. Per Nadeem (2026-05-06): shift staff
+  // need the same email mechanism as office staff but with their
+  // own title.
+  const subjectPrefix = isCustomShift
+    ? (isNightShiftStart ? 'Shift Late Arrival Notice (Night Shift)' : 'Shift Late Arrival Notice')
+    : 'Late Arrival Notice';
+  const subject = subjectPrefix + ' — ' + psn + ' ' + fullName + ' — ' + dateLong;
   const firstName = (employee.first_name || (employee.name || '').split(' ')[0] || '').trim();
   const greetName = firstName
     ? firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase()
     : 'colleague';
 
-  // Policy bullets — kept identical for every late-arrival email so
-  // staff see consistent wording. Em-dashes were stripped (per Nadeem
-  // 2026-05). Bullet 3 was updated 2026-05 to combined wording: the
-  // 3-permissions-per-month entitlement is shared across late-arrival
-  // and early-departure (per the official ESAU Permission Request
-  // Form), not separate quotas. The early-departure email uses the
-  // same wording for the same reason.
-  const policyBullets = [
-    '\u2022 The official clock-in time is 8:00 AM on regular working days.',
-    '\u2022 A 15-minute grace period is allowed; arrivals after 8:15 AM are recorded as late.',
-    '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
-  ];
+  // Policy bullets — bullet 1+2 swap for shift staff so the email
+  // references their actual scheduled start instead of the standard
+  // 8:00 AM office time. Bullet 3 (3 permissions/month entitlement)
+  // applies to everyone uniformly.
+  const startStr12h = scheduledStart ? fmtTime12h(scheduledStart) : '8:00 AM';
+  const cutoffStr12h = lateCutoff ? fmtTime12h(lateCutoff) : '8:15 AM';
+  const policyBullets = isCustomShift
+    ? [
+        '\u2022 Your scheduled shift start is ' + startStr12h + (isNightShiftStart ? ' (overnight shift to next morning)' : '') + '.',
+        '\u2022 A 15-minute grace period is allowed; arrivals after ' + cutoffStr12h + ' are recorded as late.',
+        '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
+      ]
+    : [
+        '\u2022 The official clock-in time is 8:00 AM on regular working days.',
+        '\u2022 A 15-minute grace period is allowed; arrivals after 8:15 AM are recorded as late.',
+        '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
+      ];
 
-  // Divider — 71 equals signs, character + count both confirmed by
-  // Nadeem against his actual mail client's rendering. NOT computed
-  // from bullet length: equals are narrower than the unicode
-  // box-drawing chars used previously, so a length-matched count
-  // would overshoot. If the bullets are ever rewritten and the box
-  // looks misaligned in production, re-test in the real mail client
-  // and update this constant rather than introducing dynamic sizing
-  // (which proved sensitive to character-width differences in
-  // proportional-font mail clients).
   const divider = '='.repeat(71);
 
-  // Body — written in HR-Department voice (institutional, not
-  // personal). Em-dashes replaced with commas (first prose em-dash)
-  // or periods (second prose em-dash, where a comma would have
-  // created a splice between two independent clauses).
+  // Body — for shift staff, mention the assigned shift label so they
+  // see exactly which shift was missed. The opening sentence wording
+  // adapts: office uses "punch-in", shift uses "shift-IN punch".
+  const punchPhrase = isCustomShift ? 'shift-IN punch' : 'punch-in';
+  const shiftContext = isCustomShift && scheduleLabel
+    ? ' Your assigned ' + scheduleLabel.toLowerCase() + ' begins at ' + startStr12h + '.'
+    : '';
   const body =
     'Dear ' + greetName + ',\n\n' +
-    'HR\u2019s daily attendance review for ' + dateLong + ' shows your punch-in at ' + punchInStr + ', ' + minutesLate + ' minutes past the 15-minute grace period and with no approved permission on file. This is recorded as a late-arrival violation.\n\n' +
+    'HR\u2019s daily attendance review for ' + dateLong + ' shows your ' + punchPhrase + ' at ' + punchInStr + ', ' + minutesLate + ' minutes past the 15-minute grace period and with no approved permission on file. This is recorded as a late-arrival violation.' + shiftContext + '\n\n' +
     'As a reminder, according to the ESAU attendance policy:\n\n' +
     divider + '\n' +
     policyBullets.join('\n') + '\n' +
     divider + '\n\n' +
-    'You are still required to submit a late-arrival permission request via the ESAU HR Portal (esauhr.netlify.app \u2192 New Request \u2192 Permission) for today\u2019s punch-in. Submitting it after the fact lets HR record the reason and consider it against your monthly entitlement. Without an approved permission, the day stands as an unexcused violation on your evaluation record.\n\n' +
+    'You are still required to submit a late-arrival permission request via the ESAU HR Portal (esauhr.netlify.app \u2192 New Request \u2192 Permission) for today\u2019s ' + punchPhrase + '. Submitting it after the fact lets HR record the reason and consider it against your monthly entitlement. Without an approved permission, the day stands as an unexcused violation on your evaluation record.\n\n' +
     'For exceptional cases (medical, official, or other documented emergencies that go beyond the monthly entitlement), please reply to this email within two working days with the supporting details.\n\n' +
     HR_SIGNATURE;
   return { subject, body };
 }
 
-function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd, minutesEarly }) {
+function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd, minutesEarly, isCustomShift, scheduleLabel, isNightShiftEnd, scheduledStart }) {
   const psn = String(employee.id || employee.psn || '').toUpperCase();
   const fullName = String(employee.name || '').toUpperCase();
-  const subject = 'Early Departure Notice — ' + psn + ' ' + fullName + ' — ' + dateLong;
+  const subjectPrefix = isCustomShift
+    ? (isNightShiftEnd ? 'Shift Early Departure Notice (Night Shift)' : 'Shift Early Departure Notice')
+    : 'Early Departure Notice';
+  const subject = subjectPrefix + ' — ' + psn + ' ' + fullName + ' — ' + dateLong;
   const firstName = (employee.first_name || (employee.name || '').split(' ')[0] || '').trim();
   const greetName = firstName
     ? firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase()
@@ -586,16 +596,21 @@ function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd,
   const cutoffStr    = addMinutesToTime(scheduledEnd, -15);
   const cutoffStr12h = fmtTime12h(cutoffStr);
 
-  // Policy bullets — bullet 1 + 2 are personalized to the staff's
-  // own scheduled clock-out time and grace cutoff (varies by role).
-  // Bullet 3 mirrors the late-arrival email exactly: the 3 permissions
-  // per month is a SHARED entitlement spanning both late arrival and
-  // early departure (per the official ESAU Permission Request Form).
-  const policyBullets = [
-    '\u2022 Your scheduled clock-out time is ' + endStr12h + ' on regular working days.',
-    '\u2022 A 15-minute grace period is allowed; departures before ' + cutoffStr12h + ' are recorded as early leave.',
-    '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
-  ];
+  // Policy bullets — bullet 1+2 personalized to the staff's actual
+  // scheduled clock-out time and grace cutoff. For shift staff,
+  // the wording shifts from "regular working days" to the assigned
+  // shift label so it matches how their schedule was set.
+  const policyBullets = isCustomShift
+    ? [
+        '\u2022 Your scheduled shift end is ' + endStr12h + (isNightShiftEnd ? ' (overnight shift completed in the morning)' : '') + '.',
+        '\u2022 A 15-minute grace period is allowed; departures before ' + cutoffStr12h + ' are recorded as early leave.',
+        '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
+      ]
+    : [
+        '\u2022 Your scheduled clock-out time is ' + endStr12h + ' on regular working days.',
+        '\u2022 A 15-minute grace period is allowed; departures before ' + cutoffStr12h + ' are recorded as early leave.',
+        '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
+      ];
 
   // Divider — 71 equals signs, character + count both confirmed by
   // Nadeem against the late-arrival email's rendering in his actual
@@ -603,20 +618,20 @@ function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd,
   // and the visual fit looks off.
   const divider = '='.repeat(71);
 
-  // Body — HR-Department voice, mirrors the late-arrival template.
-  // Em-dashes deliberately avoided in prose (commas / periods used
-  // instead). The violation summary phrases the timing as "X minutes
-  // before your scheduled [time] clock-out time" — this is the diff
-  // between punch-out and scheduledEnd (NOT from the cutoff), which
-  // matches how minutesEarly is computed upstream.
+  // Body — for shift staff, mention the assigned shift label in the
+  // opening so they see exactly which shift they left early on.
+  const punchPhrase = isCustomShift ? 'shift-OUT punch' : 'punch-out';
+  const shiftContext = isCustomShift && scheduleLabel
+    ? ' Your assigned ' + scheduleLabel.toLowerCase() + ' ends at ' + endStr12h + '.'
+    : '';
   const body =
     'Dear ' + greetName + ',\n\n' +
-    'HR\u2019s daily attendance review for ' + dateLong + ' shows your punch-out at ' + punchOutStr + ', ' + minutesEarly + ' minutes before your scheduled ' + endStr12h + ' clock-out time and with no approved permission on file. This is recorded as an early-departure violation.\n\n' +
+    'HR\u2019s daily attendance review for ' + dateLong + ' shows your ' + punchPhrase + ' at ' + punchOutStr + ', ' + minutesEarly + ' minutes before your scheduled ' + endStr12h + (isCustomShift ? ' shift end' : ' clock-out time') + ' and with no approved permission on file. This is recorded as an early-departure violation.' + shiftContext + '\n\n' +
     'As a reminder, according to the ESAU attendance policy:\n\n' +
     divider + '\n' +
     policyBullets.join('\n') + '\n' +
     divider + '\n\n' +
-    'You are still required to submit an early-departure permission request via the ESAU HR Portal (esauhr.netlify.app \u2192 New Request \u2192 Permission) for today\u2019s punch-out. Submitting it after the fact lets HR record the reason and consider it against your monthly entitlement. Without an approved permission, the day stands as an unexcused violation on your evaluation record.\n\n' +
+    'You are still required to submit an early-departure permission request via the ESAU HR Portal (esauhr.netlify.app \u2192 New Request \u2192 Permission) for today\u2019s ' + punchPhrase + '. Submitting it after the fact lets HR record the reason and consider it against your monthly entitlement. Without an approved permission, the day stands as an unexcused violation on your evaluation record.\n\n' +
     'For exceptional cases (medical, official, or other documented emergencies that go beyond the monthly entitlement), please reply to this email within two working days with the supporting details.\n\n' +
     HR_SIGNATURE;
   return { subject, body };
@@ -713,32 +728,41 @@ function missedPunchEmailContent({ employee, dateLong, missingType }) {
 //      the UI plumbing treats all three violation types uniformly.
 // ─────────────────────────────────────────────────────────────────────────
 
-function lateEmailContentTemp({ employee, dateLong, punchInStr, minutesLate, scheduledStart, lateCutoff }) {
+function lateEmailContentTemp({ employee, dateLong, punchInStr, minutesLate, scheduledStart, lateCutoff, isCustomShift, scheduleLabel, isNightShiftStart }) {
   const psn = String(employee.id || employee.psn || '').toUpperCase();
   const fullName = String(employee.name || '').toUpperCase();
-  const subject = 'Late Arrival Notice — ' + psn + ' ' + fullName + ' — ' + dateLong;
+  const subjectPrefix = isCustomShift
+    ? (isNightShiftStart ? 'Shift Late Arrival Notice (Night Shift)' : 'Shift Late Arrival Notice')
+    : 'Late Arrival Notice';
+  const subject = subjectPrefix + ' — ' + psn + ' ' + fullName + ' — ' + dateLong;
   const firstName = (employee.first_name || (employee.name || '').split(' ')[0] || '').trim();
   const greetName = firstName
     ? firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase()
     : 'colleague';
 
-  // Same policy bullets as the live version — these are factual policy
-  // statements, not portal-related, so they stay verbatim.
-  const policyBullets = [
-    '\u2022 The official clock-in time is 8:00 AM on regular working days.',
-    '\u2022 A 15-minute grace period is allowed; arrivals after 8:15 AM are recorded as late.',
-    '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
-  ];
+  const startStr12h = scheduledStart ? fmtTime12h(scheduledStart) : '8:00 AM';
+  const cutoffStr12h = lateCutoff ? fmtTime12h(lateCutoff) : '8:15 AM';
+  const policyBullets = isCustomShift
+    ? [
+        '\u2022 Your scheduled shift start is ' + startStr12h + (isNightShiftStart ? ' (overnight shift to next morning)' : '') + '.',
+        '\u2022 A 15-minute grace period is allowed; arrivals after ' + cutoffStr12h + ' are recorded as late.',
+        '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
+      ]
+    : [
+        '\u2022 The official clock-in time is 8:00 AM on regular working days.',
+        '\u2022 A 15-minute grace period is allowed; arrivals after 8:15 AM are recorded as late.',
+        '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
+      ];
 
   const divider = '='.repeat(71);
 
-  // Body — same opening + policy block as live, but the action paragraph
-  // routes the explanation through email reply rather than portal
-  // submission. The closing "evaluation record" line is softened to
-  // just confirming the violation is on file.
+  const punchPhrase = isCustomShift ? 'shift-IN punch' : 'punch-in';
+  const shiftContext = isCustomShift && scheduleLabel
+    ? ' Your assigned ' + scheduleLabel.toLowerCase() + ' begins at ' + startStr12h + '.'
+    : '';
   const body =
     'Dear ' + greetName + ',\n\n' +
-    'HR\u2019s daily attendance review for ' + dateLong + ' shows your punch-in at ' + punchInStr + ', ' + minutesLate + ' minutes past the 15-minute grace period and with no approved permission on file. This is recorded as a late-arrival violation.\n\n' +
+    'HR\u2019s daily attendance review for ' + dateLong + ' shows your ' + punchPhrase + ' at ' + punchInStr + ', ' + minutesLate + ' minutes past the 15-minute grace period and with no approved permission on file. This is recorded as a late-arrival violation.' + shiftContext + '\n\n' +
     'As a reminder, according to the ESAU attendance policy:\n\n' +
     divider + '\n' +
     policyBullets.join('\n') + '\n' +
@@ -748,33 +772,43 @@ function lateEmailContentTemp({ employee, dateLong, punchInStr, minutesLate, sch
   return { subject, body };
 }
 
-function earlyLeaveEmailContentTemp({ employee, dateLong, punchOutStr, scheduledEnd, minutesEarly }) {
+function earlyLeaveEmailContentTemp({ employee, dateLong, punchOutStr, scheduledEnd, minutesEarly, isCustomShift, scheduleLabel, isNightShiftEnd }) {
   const psn = String(employee.id || employee.psn || '').toUpperCase();
   const fullName = String(employee.name || '').toUpperCase();
-  const subject = 'Early Departure Notice — ' + psn + ' ' + fullName + ' — ' + dateLong;
+  const subjectPrefix = isCustomShift
+    ? (isNightShiftEnd ? 'Shift Early Departure Notice (Night Shift)' : 'Shift Early Departure Notice')
+    : 'Early Departure Notice';
+  const subject = subjectPrefix + ' — ' + psn + ' ' + fullName + ' — ' + dateLong;
   const firstName = (employee.first_name || (employee.name || '').split(' ')[0] || '').trim();
   const greetName = firstName
     ? firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase()
     : 'colleague';
 
-  // Personalized clock-out times — same logic as the live version.
   const endStr12h    = fmtTime12h(scheduledEnd);
   const cutoffStr    = addMinutesToTime(scheduledEnd, -15);
   const cutoffStr12h = fmtTime12h(cutoffStr);
 
-  const policyBullets = [
-    '\u2022 Your scheduled clock-out time is ' + endStr12h + ' on regular working days.',
-    '\u2022 A 15-minute grace period is allowed; departures before ' + cutoffStr12h + ' are recorded as early leave.',
-    '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
-  ];
+  const policyBullets = isCustomShift
+    ? [
+        '\u2022 Your scheduled shift end is ' + endStr12h + (isNightShiftEnd ? ' (overnight shift completed in the morning)' : '') + '.',
+        '\u2022 A 15-minute grace period is allowed; departures before ' + cutoffStr12h + ' are recorded as early leave.',
+        '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
+      ]
+    : [
+        '\u2022 Your scheduled clock-out time is ' + endStr12h + ' on regular working days.',
+        '\u2022 A 15-minute grace period is allowed; departures before ' + cutoffStr12h + ' are recorded as early leave.',
+        '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
+      ];
 
   const divider = '='.repeat(71);
 
-  // Body — same shape as the late-arrival temp variant. Action shifts
-  // to email reply within the same two-working-day window.
+  const punchPhrase = isCustomShift ? 'shift-OUT punch' : 'punch-out';
+  const shiftContext = isCustomShift && scheduleLabel
+    ? ' Your assigned ' + scheduleLabel.toLowerCase() + ' ends at ' + endStr12h + '.'
+    : '';
   const body =
     'Dear ' + greetName + ',\n\n' +
-    'HR\u2019s daily attendance review for ' + dateLong + ' shows your punch-out at ' + punchOutStr + ', ' + minutesEarly + ' minutes before your scheduled ' + endStr12h + ' clock-out time and with no approved permission on file. This is recorded as an early-departure violation.\n\n' +
+    'HR\u2019s daily attendance review for ' + dateLong + ' shows your ' + punchPhrase + ' at ' + punchOutStr + ', ' + minutesEarly + ' minutes before your scheduled ' + endStr12h + (isCustomShift ? ' shift end' : ' clock-out time') + ' and with no approved permission on file. This is recorded as an early-departure violation.' + shiftContext + '\n\n' +
     'As a reminder, according to the ESAU attendance policy:\n\n' +
     divider + '\n' +
     policyBullets.join('\n') + '\n' +
@@ -2345,6 +2379,9 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       minutesLate: entry.minutesLate, // minutes past the grace window — matches the email body wording
       scheduledStart: entry.scheduledStart,
       lateCutoff: entry.lateCutoff,
+      isCustomShift: !!entry.isCustomShift,
+      scheduleLabel: entry.scheduleLabel || null,
+      isNightShiftStart: !!entry.isNightShiftStart,
     });
     const cc = [getManagerEmail(entry.employee), ...FIXED_CC].filter(Boolean);
     const url = buildMailto({ to: entry.employee.email, cc, subject, body });
@@ -2374,6 +2411,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       punchOutStr: entry.punchOutStr,
       scheduledEnd: entry.scheduledEnd,
       minutesEarly: entry.minutesEarly,
+      isCustomShift: !!entry.isCustomShift,
+      scheduleLabel: entry.scheduleLabel || null,
+      isNightShiftEnd: !!entry.isNightShiftEnd,
+      scheduledStart: entry.scheduledStart,
     });
     const cc = [getManagerEmail(entry.employee), ...FIXED_CC].filter(Boolean);
     const url = buildMailto({ to: entry.employee.email, cc, subject, body });
@@ -5130,6 +5171,9 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, onCancel, onConf
       minutesLate: entry.minutesLate,
       scheduledStart: entry.scheduledStart,
       lateCutoff: entry.lateCutoff,
+      isCustomShift: !!entry.isCustomShift,
+      scheduleLabel: entry.scheduleLabel || null,
+      isNightShiftStart: !!entry.isNightShiftStart,
     });
     subject = c.subject;
     summary = `Late arrival on ${dateLong} — punched in ${entry.punchInStr}, ${entry.minutesLate} min after grace.`;
@@ -5140,6 +5184,10 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, onCancel, onConf
       punchOutStr: entry.punchOutStr,
       scheduledEnd: entry.scheduledEnd,
       minutesEarly: entry.minutesEarly,
+      isCustomShift: !!entry.isCustomShift,
+      scheduleLabel: entry.scheduleLabel || null,
+      isNightShiftEnd: !!entry.isNightShiftEnd,
+      scheduledStart: entry.scheduledStart,
     });
     subject = c.subject;
     summary = `Early departure on ${dateLong} — punched out ${entry.punchOutStr}, ${entry.minutesEarly} min before scheduled ${entry.scheduledEnd}.`;
