@@ -1458,6 +1458,15 @@ export default function ReviewerPanel({ me }) {
           empMap={empMap}
           onClose={() => setHrModalReq(null)}
           onApproved={() => { setHrModalReq(null); load(); }}
+          onReject={() => {
+            // Per Nadeem: simplify the modal UX so reject is one click
+            // away. We close the HR modal and open the reject modal on
+            // the same row; Bashaier doesn't have to leave the modal
+            // and hunt for the Reject button on the queue.
+            const target = hrModalReq;
+            setHrModalReq(null);
+            setRejectLeaveReq(target);
+          }}
         />
       )}
       {rejectLeaveReq && (
