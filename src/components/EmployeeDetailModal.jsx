@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { X, Building2, MapPin, Calendar, Briefcase, KeyRound, Loader2, CheckCircle2, AlertCircle, Pencil, Save, FileText, Download, Mail, Phone, UserCheck } from 'lucide-react';
+import { X, Building2, MapPin, Calendar, Briefcase, KeyRound, Loader2, CheckCircle2, AlertCircle, Pencil, Save, FileText, Download, Mail, Phone, UserCheck, Trash2, AlertTriangle } from 'lucide-react';
 import { Avatar, Pill } from './Dashboard.jsx';
 import { supabase, directPatch } from '../supabaseClient.js';
 import {
@@ -7,7 +7,7 @@ import {
 } from '../lib/leaveLogic.js';
 import { downloadMonthlyAttendanceReport } from '../lib/monthlyAttendanceReport.js';
 
-export default function EmployeeDetailModal({ employee, leaveTypes, requests, balances, typeMap, me, employees = [], empMap = {}, onSaved, onClose }) {
+export default function EmployeeDetailModal({ employee, leaveTypes, requests, balances, typeMap, me, employees = [], empMap = {}, onSaved, onDeleted, onClose }) {
   const year = new Date().getFullYear();
 
   // ─── Header PIN-reset state ──────────────────────────────────────
@@ -428,7 +428,247 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
               main name in top in the corner, use some logical emoji
               for it". The inline panel opens below the header on
               click. */}
+
+          {/* Danger zone — admin + HR reviewer can permanently delete
+              an employee record. Sits at the bottom of the modal,
+              visually separated, multi-step confirmation required.
+              Per Nadeem: "Admin and Bashaier has the access to delete
+              the staff completely if they wish to, but with warning
+              message that the complete data for that staff will be
+              deleted from records, once they confirm remove that
+              staff from records and make sure all system is safe." */}
+          {(me?.is_admin || me?.is_hr_reviewer) && employee?.id && me?.id !== employee.id && (
+            <DangerZone
+              employee={employee}
+              me={me}
+              onDeleted={onDeleted}
+              onClose={onClose}
+            />
+          )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── DangerZone ─────────────────────────────────────────────────────
+// Permanently deletes an employee record + all their data via the
+// admin_delete_employee RPC. Multi-step confirmation:
+//   1. Idle: a clearly-marked red "Delete employee" button — easy to
+//      see, hard to click by accident (must scroll to the bottom of
+//      the modal).
+//   2. Confirm: a dialog appears with the warning message, a list
+//      of what will be deleted, and an input requiring the admin to
+//      type the PSN. The Delete button stays disabled until the
+//      typed PSN matches the target employee's ID.
+//   3. Submitting: spinner + "Deleting…" status.
+//   4. Done: brief "Removed" message, modal auto-closes after
+//      ~1 second so admin sees the confirmation.
+//
+// The RPC handles all server-side cascade logic. Client just triggers
+// it and reflects the response.
+function DangerZone({ employee, me, onDeleted, onClose }) {
+  const [stage, setStage] = useState('idle');
+  // 'idle' | 'confirm' | 'submitting' | 'done' | 'error'
+  const [typed, setTyped] = useState('');
+  const [error, setError] = useState('');
+  const [result, setResult] = useState(null);
+
+  // Reset state when the modal swaps to a different employee
+  React.useEffect(() => {
+    setStage('idle');
+    setTyped('');
+    setError('');
+    setResult(null);
+  }, [employee.id]);
+
+  const submit = async () => {
+    setStage('submitting');
+    setError('');
+    try {
+      const { data, error } = await supabase.rpc('admin_delete_employee', {
+        target_psn:   employee.id,
+        confirmation: typed.trim(),
+      });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'Unknown error');
+      setResult(data);
+      setStage('done');
+      // Notify parent so they can refresh the directory + close the
+      // modal. We delay the close slightly so admin sees the success
+      // confirmation before it disappears.
+      setTimeout(() => {
+        if (typeof onDeleted === 'function') {
+          try { onDeleted(employee.id, data); } catch (_) { /* swallow */ }
+        }
+        if (typeof onClose === 'function') {
+          onClose();
+        }
+      }, 1100);
+    } catch (e) {
+      setError(e?.message || String(e));
+      setStage('error');
+    }
+  };
+
+  // Idle — a single clearly-bounded red button
+  if (stage === 'idle') {
+    return (
+      <div className="rounded-xl"
+        style={{
+          border: '1px dashed #FCA5A5',
+          background: '#FEF2F2',
+          padding: '10px 12px',
+        }}
+      >
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#991B1B' }} />
+            <div>
+              <div className="text-[10px] tracking-[0.22em]" style={{ color: '#991B1B', fontWeight: 700, opacity: 0.85 }}>
+                DANGER ZONE
+              </div>
+              <div className="text-[11.5px] mt-0.5" style={{ color: '#991B1B', opacity: 0.85 }}>
+                Permanently delete this employee record from the system.
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => { setStage('confirm'); setTyped(''); setError(''); }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px]"
+            style={{
+              background: '#FFFFFF',
+              border: '1px solid #FCA5A5',
+              color: '#991B1B',
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            <Trash2 className="w-3 h-3" />
+            Delete employee
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Done — brief success state before auto-close
+  if (stage === 'done') {
+    return (
+      <div className="rounded-xl flex items-start gap-2"
+        style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', padding: '10px 12px', color: '#0F4C2A' }}
+      >
+        <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
+        <div className="text-[12px]">
+          <div style={{ fontWeight: 700 }}>{result?.name || employee.name} removed</div>
+          {result?.counts && (
+            <div className="mt-0.5 text-[10.5px]" style={{ opacity: 0.85 }}>
+              Cleaned up:{' '}
+              {Object.entries(result.counts)
+                .filter(([, n]) => n > 0)
+                .map(([k, n]) => `${n} ${k.replace(/_/g, ' ')}`)
+                .join(', ') || 'no associated records'}.
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Confirm / submitting / error — full warning UI
+  return (
+    <div className="rounded-xl"
+      style={{
+        background: '#FEF2F2',
+        border: '1px solid #FCA5A5',
+        padding: '14px 16px',
+        boxShadow: '0 0 0 3px rgba(153, 27, 27, 0.04)',
+      }}
+    >
+      <div className="flex items-start gap-2 mb-3">
+        <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: '#991B1B' }} />
+        <div>
+          <div className="text-[12px]" style={{ color: '#991B1B', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase' }}>
+            Delete {employee.name}?
+          </div>
+          <div className="text-[12px] mt-1.5" style={{ color: '#7F1D1D', lineHeight: 1.5 }}>
+            This action <strong>cannot be undone</strong>. The complete data for this staff member will be deleted from the system, including:
+          </div>
+          <ul className="text-[11.5px] mt-1.5 space-y-0.5" style={{ color: '#7F1D1D', listStyle: 'disc', marginLeft: 18 }}>
+            <li>Employee profile + government records (Arabic name, National ID, DOB, GOSI data)</li>
+            <li>All leave requests, balances, and history</li>
+            <li>All attendance records and uploads</li>
+            <li>All shift plans and acknowledgments</li>
+            <li>All permission requests</li>
+            <li>Their PSN authentication and active sessions</li>
+          </ul>
+          <div className="text-[11px] mt-2" style={{ color: '#7F1D1D', opacity: 0.85 }}>
+            The deletion will be recorded in the activity log under your name. References to this employee in historical records (e.g. who approved someone else's leave) will be set to null but kept.
+          </div>
+        </div>
+      </div>
+
+      {/* Typed-confirmation input */}
+      <div className="mt-3">
+        <label className="block text-[10px] tracking-[0.16em] mb-1" style={{ color: '#7F1D1D', fontWeight: 700 }}>
+          TYPE <span className="font-mono px-1 py-0.5 rounded" style={{ background: '#FFFFFF', border: '1px solid #FCA5A5', letterSpacing: '0.1em' }}>{employee.id}</span> TO CONFIRM
+        </label>
+        <input
+          type="text"
+          value={typed}
+          onChange={e => setTyped(e.target.value)}
+          disabled={stage === 'submitting'}
+          autoFocus
+          placeholder={employee.id}
+          className="w-full px-3 py-2 rounded-lg border text-sm font-mono"
+          style={{
+            borderColor: typed && typed.trim() !== employee.id ? '#FCA5A5' : 'var(--border-soft)',
+            background: '#FFFFFF',
+            color: '#1F1B16',
+            letterSpacing: '0.1em',
+          }}
+        />
+      </div>
+
+      {error && (
+        <div className="mt-2 flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[11.5px]"
+          style={{ background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}>
+          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> {error}
+        </div>
+      )}
+
+      <div className="mt-3 flex justify-end gap-2">
+        <button
+          onClick={() => { setStage('idle'); setTyped(''); setError(''); }}
+          disabled={stage === 'submitting'}
+          className="text-[11px] px-3 py-1.5 rounded-full"
+          style={{
+            background: '#FFFFFF',
+            border: '1px solid var(--border-soft)',
+            color: '#0A0A0A',
+            cursor: stage === 'submitting' ? 'not-allowed' : 'pointer',
+            fontWeight: 600,
+          }}
+        >
+          Cancel
+        </button>
+        <button
+          onClick={submit}
+          disabled={stage === 'submitting' || typed.trim() !== employee.id}
+          className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-full"
+          style={{
+            background: '#991B1B',
+            color: '#FFFFFF',
+            border: 'none',
+            cursor: (stage === 'submitting' || typed.trim() !== employee.id) ? 'not-allowed' : 'pointer',
+            opacity: (stage === 'submitting' || typed.trim() !== employee.id) ? 0.5 : 1,
+            fontWeight: 700,
+          }}
+        >
+          {stage === 'submitting'
+            ? <><Loader2 className="w-3 h-3 animate-spin" /> Deleting…</>
+            : <><Trash2 className="w-3 h-3" /> Permanently delete</>}
+        </button>
       </div>
     </div>
   );

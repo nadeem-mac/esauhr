@@ -1122,6 +1122,14 @@ export default function AppShell({ session, me, onRefreshMe }) {
             setSelectedEmployee(updated);
             loadAll({ silent: true });
           }}
+          // After admin/HR-reviewer permanently deletes a staff
+          // member from the danger zone, refresh the directory so
+          // they vanish from every tab. The modal closes itself
+          // immediately after firing this; we just kick a silent
+          // reload so the in-memory list stays in sync.
+          onDeleted={() => {
+            loadAll({ silent: true });
+          }}
           onClose={() => setSelectedEmployee(null)}
         />
       )}
