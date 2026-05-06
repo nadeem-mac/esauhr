@@ -257,7 +257,107 @@ export function reconcile(molSubscribers, employees) {
   return { matches, unmatched, orphaned };
 }
 
-// ─── English-to-English name similarity ────────────────────────────
+// ─── Roster-driven deterministic reconciliation ────────────────────
+//
+// Badria provided a roster of (PSN, National ID, name, location,
+// department) pairs that bridges the portal's PSNs to the MOL/GOSI
+// Iqamas. This eliminates fuzzy matching entirely — for every
+// roster row, we know which portal employee gets which MOL record.
+//
+// Strategy:
+//   1. For each roster entry: look up portal employee by PSN, look
+//      up MOL subscriber by National ID. Both found → DETERMINISTIC
+//      match (confidence 1.0). MOL missing → "Roster only" (we still
+//      apply Iqama + name + location + department from Badria's
+//      file). Portal PSN missing → "Roster ghost" (employee in
+//      Badria but not in portal — surface as warning).
+//   2. For each MOL record NOT in the roster: fall back to fuzzy
+//      name matching (the existing reconcile behavior). These are
+//      typically new MOL subscribers whose Badria file was prepared
+//      before they joined.
+//   3. Portal employees in neither: marked orphaned (likely ex-staff).
+//
+// Returns the same shape as reconcile() but with extra source
+// tagging on each match: source='roster_full' | 'roster_only' |
+// 'fuzzy_mol'. The UI uses this to colour rows differently.
+export function reconcileWithRoster(rosterEntries, molSubscribers, employees) {
+  const matches = [];
+  const unmatched = [];
+  const rosterGhosts = []; // PSNs in Badria but not in portal
+
+  const empByPsn = new Map((employees || []).map(e => [String(e.id).toUpperCase(), e]));
+  const molByIqama = new Map((molSubscribers || []).map(s => [String(s.national_id), s]));
+  const matchedPortalIds = new Set();
+  const matchedMolIqamas = new Set();
+
+  // Phase 1 — walk the roster. Each entry is a portal-PSN ↔ Iqama
+  // pair, so the match is deterministic.
+  for (const r of rosterEntries || []) {
+    const psn = String(r.psn).toUpperCase();
+    const iqama = String(r.national_id);
+    const emp = empByPsn.get(psn);
+    const mol = molByIqama.get(iqama);
+
+    if (!emp) {
+      // Portal doesn't have this PSN. Surface as a warning so admin
+      // can investigate (probably means Badria added someone before
+      // they were onboarded into the portal, or the PSN was retired).
+      rosterGhosts.push({ roster: r, mol: mol || null });
+      continue;
+    }
+
+    // Build the canonical name: prefer MOL canonical (transliterated
+    // from formal Arabic government record). If MOL doesn't have
+    // this Iqama, fall back to Badria's Latin name uppercased.
+    const canonical = mol?.canonical_name
+      || (r.name ? String(r.name).toUpperCase().replace(/\s+/g, ' ').trim() : emp.name);
+
+    matches.push({
+      mol: mol || null,
+      roster: r,
+      employeeId: emp.id,
+      confidence: 1.0,
+      source: mol ? 'roster_full' : 'roster_only',
+      reason: mol
+        ? 'Roster (Badria) + GOSI cross-reference'
+        : 'Roster (Badria) — no GOSI record yet',
+      proposedName: canonical,
+    });
+    matchedPortalIds.add(emp.id);
+    if (mol) matchedMolIqamas.add(iqama);
+  }
+
+  // Phase 2 — fuzzy match the MOL records that AREN'T in the roster.
+  // These are typically late additions (new GOSI registrations after
+  // Badria's file was prepared).
+  const remainingMol = (molSubscribers || []).filter(s => !matchedMolIqamas.has(String(s.national_id)));
+  const fuzzy = reconcile(remainingMol, (employees || []).filter(e => !matchedPortalIds.has(e.id)));
+  for (const m of fuzzy.matches) {
+    matches.push({
+      ...m,
+      source: 'fuzzy_mol',
+      proposedName: m.mol.canonical_name || null,
+    });
+  }
+  for (const u of fuzzy.unmatched) {
+    unmatched.push({
+      ...u,
+      source: 'fuzzy_mol',
+    });
+  }
+
+  // Phase 3 — orphaned portal employees. Same definition as
+  // reconcile(): in the portal but no roster + no MOL hit.
+  const allSuggestedIds = new Set([
+    ...matches.map(m => m.employeeId),
+    ...matches.flatMap(m => (m.alternatives || []).map(a => a.employeeId)),
+  ]);
+  const orphaned = (employees || []).filter(e => !allSuggestedIds.has(e.id));
+
+  return { matches, unmatched, orphaned, rosterGhosts };
+}
+
+
 //
 // Compares two Latin-script names (typically the canonical
 // transliteration of the MOL Arabic name vs the portal's existing

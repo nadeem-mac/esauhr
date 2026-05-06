@@ -57,6 +57,21 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
         </div>
 
         <div className="p-5 space-y-6">
+          {/* Government records — Arabic name, National ID, DOB,
+              gender, official Arabic profession, GOSI eligibility,
+              MOL join date. Populated by the MOL · GOSI sync flow.
+              Only renders when at least one government field has a
+              value, so for unsynced employees the modal layout
+              stays the same as before.
+              Visible to admin and HR reviewer (they administer
+              government correspondence); regular staff see only
+              their OWN government record on the personal dashboard
+              if needed (out of scope for this commit — the modal
+              is mostly used by privileged roles). */}
+          {(me?.is_admin || me?.is_hr_reviewer) && employee?.id && (
+            <GovernmentRecordsPanel employee={employee} />
+          )}
+
           {/* Edit-profile panel — visible only to admin + HR reviewer.
               Bashaier asked for the ability to fix staff data herself
               (typos, missing emails, wrong department, manager not yet
@@ -598,6 +613,144 @@ function MonthlyAttendancePanel({ employee, empMap, me }) {
           </span>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── GovernmentRecordsPanel ────────────────────────────────────────
+//
+// Displays the MOL/GOSI fields populated by the Government Data
+// Sync flow: Arabic name, National ID, DOB, gender, official Arabic
+// profession (المهنة), MOL join date, GOSI eligibility code,
+// nationality (saudi vs expat).
+//
+// Renders nothing when the employee has no government data yet —
+// keeps the modal compact for staff who haven't been synced. The
+// panel uses the same visual idiom as the rest of the modal (boxed
+// section with a label band on top).
+//
+// All values rendered as-is: Arabic fields keep their RTL direction
+// and Arabic font, English fields are uppercase per HR convention.
+function GovernmentRecordsPanel({ employee }) {
+  const hasAny =
+    employee.arabic_name ||
+    employee.national_id ||
+    employee.date_of_birth ||
+    employee.gender ||
+    employee.arabic_profession ||
+    employee.mol_join_date ||
+    employee.gosi_eligibility ||
+    (employee.nationality && employee.nationality !== 'expat'); // skip the default
+
+  if (!hasAny) return null;
+
+  const fmt = (v) => v == null || v === '' ? '—' : v;
+  const fmtDateLocal = (s) => {
+    if (!s) return '—';
+    try {
+      const d = new Date(s);
+      if (isNaN(d)) return s;
+      return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    } catch {
+      return s;
+    }
+  };
+
+  return (
+    <section
+      className="rounded-2xl"
+      style={{
+        background: '#FFFFFF',
+        border: '1px solid var(--border-soft)',
+        padding: '14px 16px',
+      }}
+    >
+      <div className="text-[10px] tracking-[0.25em] mb-3" style={{ color: '#0F4C2A', fontWeight: 700 }}>
+        GOVERNMENT RECORDS
+        <span className="ml-2 px-1.5 py-0.5 rounded-full text-[8.5px]"
+          style={{ background: '#E8F5E9', color: '#0F4C2A', letterSpacing: '0.04em' }}>
+          MOL · GOSI
+        </span>
+      </div>
+
+      <div className="grid sm:grid-cols-2 gap-x-6 gap-y-3">
+        {/* Arabic name — wide, RTL */}
+        {employee.arabic_name && (
+          <div className="sm:col-span-2">
+            <div className="text-[9.5px] tracking-[0.18em] mb-0.5" style={{ color: '#0A0A0A', fontWeight: 700 }}>
+              ARABIC NAME · الاسم
+            </div>
+            <div style={{ direction: 'rtl', fontSize: 15, fontWeight: 700, color: '#1F1B16', fontFamily: 'system-ui' }}>
+              {employee.arabic_name}
+            </div>
+          </div>
+        )}
+
+        {/* National ID */}
+        <GovField label="NATIONAL ID · رقم الهوية" mono>
+          {fmt(employee.national_id)}
+        </GovField>
+
+        {/* Date of birth */}
+        <GovField label="DATE OF BIRTH · تاريخ الميلاد">
+          {fmtDateLocal(employee.date_of_birth)}
+        </GovField>
+
+        {/* Gender */}
+        <GovField label="GENDER · الجنس">
+          {employee.gender ? employee.gender.toUpperCase() : '—'}
+        </GovField>
+
+        {/* Nationality */}
+        <GovField label="NATIONALITY · الجنسية">
+          {employee.nationality ? employee.nationality.toUpperCase() : '—'}
+        </GovField>
+
+        {/* Arabic profession — wide */}
+        {employee.arabic_profession && (
+          <div className="sm:col-span-2">
+            <div className="text-[9.5px] tracking-[0.18em] mb-0.5" style={{ color: '#0A0A0A', fontWeight: 700 }}>
+              GOVERNMENT-RECORDED PROFESSION · المهنة
+            </div>
+            <div style={{ direction: 'rtl', fontSize: 13, color: '#1F1B16', fontFamily: 'system-ui' }}>
+              {employee.arabic_profession}
+            </div>
+          </div>
+        )}
+
+        {/* GOSI registration date */}
+        <GovField label="GOSI REGISTRATION · تاريخ الإلتحاق">
+          {fmtDateLocal(employee.mol_join_date)}
+        </GovField>
+
+        {/* GOSI eligibility */}
+        <GovField label="GOSI ELIGIBILITY · الأهلية">
+          {fmt(employee.gosi_eligibility)}
+        </GovField>
+      </div>
+
+      {employee.mol_synced_at && (
+        <div className="mt-3 pt-3 text-[10px]" style={{ borderTop: '1px solid var(--border-soft)', color: '#0A0A0A', opacity: 0.6 }}>
+          Last synced from MOL/GOSI: {fmtDateLocal(employee.mol_synced_at)}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// GovField — small labeled value cell used by GovernmentRecordsPanel.
+// Named distinctly from the Field helper higher up in this file
+// (which is used by EditProfilePanel for editable inputs).
+function GovField({ label, mono, children }) {
+  return (
+    <div>
+      <div className="text-[9.5px] tracking-[0.18em] mb-0.5" style={{ color: '#0A0A0A', fontWeight: 700 }}>
+        {label}
+      </div>
+      <div className={mono ? 'font-mono tracking-wider' : ''}
+        style={{ fontSize: 13, color: '#1F1B16', fontWeight: 600 }}>
+        {children}
+      </div>
     </div>
   );
 }

@@ -27,10 +27,12 @@ import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   Database, Upload, CheckCircle2, AlertCircle, X, Search,
   ChevronDown, ChevronUp, Loader2, Save, FileText, RefreshCw,
+  Link2, Users,
 } from 'lucide-react';
 import { directGet, directPatch } from '../supabaseClient.js';
-import { parseMolFile, reconcile, nameSimilarity, englishNameSimilarity } from '../lib/molSync.js';
+import { parseMolFile, reconcile, reconcileWithRoster, nameSimilarity, englishNameSimilarity } from '../lib/molSync.js';
 import bundledSnapshot from '../data/molSnapshot.json';
+import bundledRoster from '../data/badriaRoster.json';
 import { logAction } from '../lib/audit.js';
 
 const PALETTE = {
@@ -96,18 +98,28 @@ export default function GovernmentDataSync({ me }) {
   useEffect(() => { loadEmployees(); }, [loadEmployees]);
 
   // ─── Run reconciliation when snapshot or employees change ──────
+  // Uses Badria's roster as the primary key bridge: every PSN in
+  // Badria's file deterministically maps to a portal employee and
+  // (usually) an MOL Iqama. MOL records that aren't in Badria's
+  // roster fall through to fuzzy name matching.
   useEffect(() => {
     if (!snapshot?.subscribers || empLoading) return;
-    const result = reconcile(snapshot.subscribers, employees);
+    const result = reconcileWithRoster(
+      bundledRoster.entries || [],
+      snapshot.subscribers,
+      employees
+    );
     setReconciliation(result);
 
-    // Initialize per-row decisions: high-confidence matches default
-    // to 'apply' (Nadeem can untick if wrong), low-confidence default
-    // to 'skip' so they don't get auto-applied.
+    // Initialize per-row decisions. Decision keyed by employeeId
+    // (not national_id, since some matches don't have an MOL record
+    // — they're roster-only). Roster-driven matches default to
+    // 'apply' (deterministic, confidence 1.0). Fuzzy matches default
+    // by their confidence threshold.
     const init = {};
     for (const m of result.matches) {
-      init[m.mol.national_id] = {
-        action: m.confidence >= 0.7 ? 'apply' : 'skip',
+      init[m.employeeId] = {
+        action: (m.source === 'roster_full' || m.source === 'roster_only' || m.confidence >= 0.7) ? 'apply' : 'skip',
         employeeId: m.employeeId,
       };
     }
@@ -138,14 +150,24 @@ export default function GovernmentDataSync({ me }) {
   }, []);
 
   // ─── Apply confirmed matches ───────────────────────────────────
+  // Each match has up to two data sources:
+  //   • m.mol — the MOL/GOSI record (Arabic name, DOB, profession,
+  //     gender, MOL join date, eligibility). May be null for
+  //     roster-only matches (Badria has the PSN+Iqama but the
+  //     Iqama hasn't yet appeared in the GOSI subscriber list,
+  //     usually a recent hire).
+  //   • m.roster — Badria's row (PSN, Iqama, Latin name, location,
+  //     department). Present for roster-driven matches.
+  //
+  // The patch combines both sources with MOL winning where it has
+  // data (formal Arabic name → canonical transliteration), and
+  // Badria's roster filling location, department, and the fallback
+  // English name when MOL is absent.
   const applyDecisions = useCallback(async (overrideDecisions) => {
     if (!reconciliation) return;
-    // Allow callers to pass an explicit decisions snapshot (used by
-    // autoSync below — React state hasn't committed in time for a
-    // chained read).
     const decisionsToUse = overrideDecisions || decisions;
     const toApply = reconciliation.matches.filter(m => {
-      const d = decisionsToUse[m.mol.national_id];
+      const d = decisionsToUse[m.employeeId];
       return d?.action === 'apply' && d?.employeeId;
     });
     if (toApply.length === 0) {
@@ -160,32 +182,48 @@ export default function GovernmentDataSync({ me }) {
     const now = new Date().toISOString();
 
     for (const m of toApply) {
-      const d = decisionsToUse[m.mol.national_id];
+      const d = decisionsToUse[m.employeeId];
       const empId = d.employeeId;
       try {
-        // Build the patch. The English `name` field gets overwritten
-        // with the canonical transliteration of the Arabic name —
-        // this is what Nadeem asked for: "system should automatically
-        // change Arabic to English… and update their data". The
-        // canonical name is computed at parse time so what gets
-        // shown in the preview row is exactly what gets written.
-        const patch = {
-          arabic_name:       m.mol.arabic_name || null,
-          national_id:       m.mol.national_id || null,
-          date_of_birth:     m.mol.date_of_birth || null,
-          gender:            m.mol.gender || null,
-          arabic_profession: m.mol.arabic_profession || null,
-          mol_join_date:     m.mol.mol_join_date || null,
-          gosi_eligibility:  m.mol.gosi_eligibility || null,
-          nationality:       m.mol.nationality || null,
-          mol_synced_at:     now,
-        };
-        // Only overwrite `name` if we have a non-empty canonical
-        // form. Defensive — better to keep existing name than
-        // blank it out if transliteration somehow returned empty.
-        if (m.mol.canonical_name) {
+        const patch = { mol_synced_at: now };
+
+        // National ID: prefer MOL (it's the canonical source) but
+        // fall back to roster (which by definition has it).
+        const nid = m.mol?.national_id || m.roster?.national_id || null;
+        if (nid) patch.national_id = nid;
+
+        // MOL fields — only present when m.mol exists
+        if (m.mol) {
+          if (m.mol.arabic_name)        patch.arabic_name       = m.mol.arabic_name;
+          if (m.mol.date_of_birth)      patch.date_of_birth     = m.mol.date_of_birth;
+          if (m.mol.gender)             patch.gender            = m.mol.gender;
+          if (m.mol.arabic_profession)  patch.arabic_profession = m.mol.arabic_profession;
+          if (m.mol.mol_join_date)      patch.mol_join_date     = m.mol.mol_join_date;
+          if (m.mol.gosi_eligibility)   patch.gosi_eligibility  = m.mol.gosi_eligibility;
+          if (m.mol.nationality)        patch.nationality       = m.mol.nationality;
+        }
+
+        // English name — m.proposedName is set by reconcileWithRoster.
+        // For roster_full matches: MOL canonical (transliterated
+        // from formal Arabic name). For roster_only: Badria's name
+        // uppercased. For fuzzy_mol: MOL canonical. Always uppercase.
+        if (m.proposedName) {
+          patch.name = String(m.proposedName).toUpperCase().replace(/\s+/g, ' ').trim();
+        } else if (m.mol?.canonical_name) {
           patch.name = m.mol.canonical_name;
         }
+
+        // Roster-driven fields: location and department from Badria.
+        // Only overwrite if Badria has a value AND it differs from
+        // what the portal already holds (defensive — don't blank
+        // good data).
+        if (m.roster?.location) {
+          patch.location = String(m.roster.location).toUpperCase().trim();
+        }
+        if (m.roster?.department) {
+          patch.department = String(m.roster.department).toUpperCase().trim();
+        }
+
         await directPatch(
           'employees', 'id', empId, patch,
           { timeoutMs: 9000 }
@@ -200,15 +238,12 @@ export default function GovernmentDataSync({ me }) {
     setApplying(false);
     setApplyResult({ ok, failed, errors });
 
-    // Refresh portal employees so subsequent syncs see the
-    // newly-populated national_id and can match on it instead of
-    // fuzzy name.
     if (ok > 0) {
       loadEmployees();
       try {
         await logAction(me, 'mol_sync_apply', {
           targetType: 'employees',
-          targetLabel: `${ok} employees synced from MOL${failed ? ` (${failed} failed)` : ''}`,
+          targetLabel: `${ok} employees synced from MOL/Badria roster${failed ? ` (${failed} failed)` : ''}`,
         });
       } catch {}
     }
@@ -229,14 +264,16 @@ export default function GovernmentDataSync({ me }) {
     if (!reconciliation) return;
     const next = {};
     for (const m of reconciliation.matches) {
-      next[m.mol.national_id] = {
-        action: m.confidence >= 0.7 ? 'apply' : 'skip',
+      const eligible =
+        m.source === 'roster_full' ||
+        m.source === 'roster_only' ||
+        m.confidence >= 0.7;
+      next[m.employeeId] = {
+        action: eligible ? 'apply' : 'skip',
         employeeId: m.employeeId,
       };
     }
     setDecisions(next);
-    // Pass the fresh decisions snapshot directly so we don't have to
-    // wait for React to commit state before calling apply.
     applyDecisions(next);
   }, [reconciliation, applyDecisions]);
 
@@ -246,12 +283,16 @@ export default function GovernmentDataSync({ me }) {
     const q = search.trim().toLowerCase();
     if (!q) return reconciliation.matches;
     return reconciliation.matches.filter(m => {
+      const emp = employees.find(e => e.id === m.employeeId);
       const haystack = [
-        m.mol.arabic_name,
-        m.mol.national_id,
-        m.mol.arabic_profession,
-        employees.find(e => e.id === m.employeeId)?.name,
-        employees.find(e => e.id === m.employeeId)?.id,
+        m.mol?.arabic_name,
+        m.mol?.national_id,
+        m.mol?.arabic_profession,
+        m.roster?.national_id,
+        m.roster?.name,
+        m.proposedName,
+        emp?.name,
+        emp?.id,
       ].filter(Boolean).join(' ').toLowerCase();
       return haystack.includes(q);
     });
@@ -261,11 +302,18 @@ export default function GovernmentDataSync({ me }) {
   const counts = useMemo(() => {
     if (!reconciliation) return null;
     const willApply = Object.values(decisions).filter(d => d.action === 'apply').length;
+    const rosterFull  = reconciliation.matches.filter(m => m.source === 'roster_full').length;
+    const rosterOnly  = reconciliation.matches.filter(m => m.source === 'roster_only').length;
+    const fuzzy       = reconciliation.matches.filter(m => m.source === 'fuzzy_mol').length;
     return {
       total: reconciliation.matches.length + reconciliation.unmatched.length,
       matched: reconciliation.matches.length,
       unmatched: reconciliation.unmatched.length,
       orphaned: reconciliation.orphaned.length,
+      ghosts: reconciliation.rosterGhosts?.length || 0,
+      rosterFull,
+      rosterOnly,
+      fuzzy,
       willApply,
     };
   }, [reconciliation, decisions]);
@@ -312,40 +360,54 @@ export default function GovernmentDataSync({ me }) {
         </button>
       </div>
 
-      {/* Source bar */}
-      <div
-        className="flex items-center gap-3 flex-wrap mb-4 p-3 rounded-lg"
-        style={{ background: PALETTE.cream, border: '1px solid #E5E5E5' }}
-      >
-        <FileText className="w-4 h-4 flex-shrink-0" style={{ color: PALETTE.ink, opacity: 0.6 }} />
-        <div className="text-[12px]" style={{ color: PALETTE.ink }}>
-          <span style={{ fontWeight: 700 }}>Source:</span>{' '}
-          {snapshotSource === 'bundled' ? 'bundled MOLFile.xlsx' : (snapshot.source_file || 'uploaded file')}
-          {snapshot.fetched_at && (
-            <span style={{ opacity: 0.65 }}> · fetched {snapshot.fetched_at}</span>
-          )}
-          {snapshot.gosi_subscription_id && (
-            <span style={{ opacity: 0.65 }}> · GOSI sub. {snapshot.gosi_subscription_id}</span>
-          )}
-          <span style={{ opacity: 0.65 }}> · {snapshot.subscribers?.length || 0} subscribers</span>
-        </div>
-        <label
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] ml-auto"
-          style={{ background: PALETTE.ink, color: '#FFFFFF', fontWeight: 600, cursor: 'pointer' }}
+      {/* Source bar — both data sources stacked */}
+      <div className="mb-4 space-y-2">
+        <div
+          className="flex items-center gap-3 flex-wrap p-3 rounded-lg"
+          style={{ background: PALETTE.cream, border: '1px solid #E5E5E5' }}
         >
-          {uploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
-          Upload new MOL file
-          <input
-            type="file"
-            accept=".xlsx,.xls"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) handleFile(f);
-              e.target.value = '';
-            }}
-            style={{ display: 'none' }}
-          />
-        </label>
+          <FileText className="w-4 h-4 flex-shrink-0" style={{ color: PALETTE.ink, opacity: 0.6 }} />
+          <div className="text-[12px]" style={{ color: PALETTE.ink, flex: '1 1 240px' }}>
+            <span style={{ fontWeight: 700 }}>GOSI:</span>{' '}
+            {snapshotSource === 'bundled' ? 'bundled MOLFile.xlsx' : (snapshot.source_file || 'uploaded file')}
+            {snapshot.fetched_at && (
+              <span style={{ opacity: 0.65 }}> · fetched {snapshot.fetched_at}</span>
+            )}
+            {snapshot.gosi_subscription_id && (
+              <span style={{ opacity: 0.65 }}> · sub. {snapshot.gosi_subscription_id}</span>
+            )}
+            <span style={{ opacity: 0.65 }}> · {snapshot.subscribers?.length || 0} subscribers</span>
+          </div>
+          <label
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px]"
+            style={{ background: PALETTE.ink, color: '#FFFFFF', fontWeight: 600, cursor: 'pointer' }}
+          >
+            {uploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+            Upload new MOL file
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleFile(f);
+                e.target.value = '';
+              }}
+              style={{ display: 'none' }}
+            />
+          </label>
+        </div>
+        <div
+          className="flex items-center gap-3 flex-wrap p-3 rounded-lg"
+          style={{ background: PALETTE.cream, border: '1px solid #E5E5E5' }}
+        >
+          <Link2 className="w-4 h-4 flex-shrink-0" style={{ color: PALETTE.ink, opacity: 0.6 }} />
+          <div className="text-[12px]" style={{ color: PALETTE.ink }}>
+            <span style={{ fontWeight: 700 }}>Roster:</span>{' '}
+            {bundledRoster.source_file}
+            <span style={{ opacity: 0.65 }}> · provided by {bundledRoster.provided_by}</span>
+            <span style={{ opacity: 0.65 }}> · {bundledRoster.entries?.length || 0} PSN ↔ Iqama pairs</span>
+          </div>
+        </div>
       </div>
 
       {uploadErr && (
@@ -370,25 +432,27 @@ export default function GovernmentDataSync({ me }) {
         </div>
       )}
 
-      {/* Counts */}
+      {/* Counts — Roster-aware. Badria's PSN↔Iqama bridge gives
+          deterministic matches; fuzzy MOL matching only kicks in
+          for MOL records not in Badria's roster. */}
       {counts && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
-          <CountTile label="Matched" value={counts.matched} bg="#ECFDF5" fg={PALETTE.green} border="#A7F3D0" />
-          <CountTile label="Unmatched MOL" value={counts.unmatched} bg={PALETTE.amberBg} fg={PALETTE.amber} border="#FCD34D" />
-          <CountTile label="Orphaned portal" value={counts.orphaned} bg="#F5F5F5" fg="#525252" border="#D4D4D4" />
-          <CountTile label="Will apply" value={counts.willApply} bg="#E0E7FF" fg="#3730A3" border="#A5B4FC" />
+          <CountTile label="Roster + GOSI" value={counts.rosterFull} bg="#ECFDF5" fg={PALETTE.green} border="#A7F3D0" />
+          <CountTile label="Roster only"   value={counts.rosterOnly} bg={PALETTE.amberBg} fg={PALETTE.amber} border="#FCD34D" />
+          <CountTile label="Fuzzy MOL"     value={counts.fuzzy}      bg="#E0E7FF" fg="#3730A3" border="#A5B4FC" />
+          <CountTile label="Will apply"    value={counts.willApply}  bg="#F5F5F5" fg="#525252" border="#D4D4D4" />
         </div>
       )}
 
-      {/* Auto-sync banner — the one-click path. Per Nadeem's request:
-          "Every time I upload the file… system should automatically
-          change Arabic to English and check which name belongs to
-          which ID and update their data." This button does exactly
-          that for all confident matches in a single click. Uncertain
-          matches (<70% confidence) still need per-row review and are
-          left for manual handling below. */}
+      {/* Auto-sync banner — Roster-driven. Badria provided PSN↔Iqama
+          mapping for nearly the entire roster, so deterministic
+          matching dominates. The button applies all roster-driven
+          matches (confidence 1.0) plus any fuzzy MOL matches with
+          ≥70% confidence in one click. */}
       {counts && counts.matched > 0 && (() => {
-        const confidentCount = reconciliation.matches.filter(m => m.confidence >= 0.7).length;
+        const confidentCount = reconciliation.matches.filter(m =>
+          m.source === 'roster_full' || m.source === 'roster_only' || m.confidence >= 0.7
+        ).length;
         const uncertainCount = counts.matched - confidentCount;
         return (
           <div
@@ -401,10 +465,10 @@ export default function GovernmentDataSync({ me }) {
             <CheckCircle2 className="w-5 h-5 flex-shrink-0" style={{ color: PALETTE.green }} />
             <div style={{ flex: '1 1 240px', minWidth: 0 }}>
               <div className="text-[12px]" style={{ color: PALETTE.green, fontWeight: 700 }}>
-                Auto-sync confident matches
+                Sync via Badria's roster + GOSI
               </div>
               <div className="text-[11px] mt-0.5" style={{ color: PALETTE.green, opacity: 0.85 }}>
-                Apply {confidentCount} match{confidentCount === 1 ? '' : 'es'} in one click — overwrites English name with the official transliteration, fills in National ID, DOB, profession, and GOSI status.
+                Apply {confidentCount} match{confidentCount === 1 ? '' : 'es'} in one click — Badria's PSN↔National ID mapping bridges to GOSI for the official Arabic name, DOB, profession, and eligibility status. All English names normalized to UPPERCASE.
                 {uncertainCount > 0 && ` ${uncertainCount} uncertain match${uncertainCount === 1 ? '' : 'es'} left for manual review below.`}
               </div>
             </div>
@@ -479,27 +543,41 @@ export default function GovernmentDataSync({ me }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {filteredMatches.map((m) => {
             const emp = employees.find(e => e.id === m.employeeId);
-            const decision = decisions[m.mol.national_id] || { action: 'skip' };
+            const decision = decisions[m.employeeId] || { action: 'skip' };
+            // Build a synthetic mol-shape for the row UI, falling
+            // back to roster fields when MOL is absent. This keeps
+            // MatchRow's contract simple — it doesn't need to know
+            // about source types.
+            const rowData = m.mol || {
+              arabic_name:       null,
+              national_id:       m.roster?.national_id || null,
+              canonical_name:    m.proposedName,
+              arabic_profession: null,
+              date_of_birth:     null,
+            };
             return (
               <MatchRow
-                key={m.mol.national_id}
-                mol={m.mol}
+                key={m.employeeId}
+                mol={rowData}
                 emp={emp}
                 confidence={m.confidence}
                 reason={m.reason}
+                source={m.source}
+                roster={m.roster}
+                proposedName={m.proposedName}
                 alternatives={m.alternatives || []}
                 allEmployees={employees}
                 decision={decision}
                 onChangeAction={(action) => {
                   setDecisions(prev => ({
                     ...prev,
-                    [m.mol.national_id]: { ...prev[m.mol.national_id], action, employeeId: m.employeeId },
+                    [m.employeeId]: { ...prev[m.employeeId], action, employeeId: m.employeeId },
                   }));
                 }}
                 onChangeEmployee={(empId) => {
                   setDecisions(prev => ({
                     ...prev,
-                    [m.mol.national_id]: { action: 'apply', employeeId: empId },
+                    [m.employeeId]: { action: 'apply', employeeId: empId },
                   }));
                 }}
               />
@@ -544,6 +622,32 @@ export default function GovernmentDataSync({ me }) {
         </div>
       )}
 
+      {/* Roster ghosts — Badria PSNs not in the portal. These need
+          investigation: probably PSNs Badria added to her file before
+          the staff member was onboarded into the portal, or PSNs that
+          have since been retired. Surfaced with a red-amber tone so
+          admin notices but doesn't see it as an error. */}
+      {reconciliation?.rosterGhosts?.length > 0 && (
+        <div className="mt-3">
+          <div
+            className="p-3 rounded-lg text-[12px]"
+            style={{ background: PALETTE.amberBg, border: '1px solid #FCD34D', color: PALETTE.amber }}
+          >
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>
+              {reconciliation.rosterGhosts.length} PSN{reconciliation.rosterGhosts.length === 1 ? '' : 's'} in Badria's roster but missing from the portal:
+            </div>
+            <ul style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {reconciliation.rosterGhosts.map((g, idx) => (
+                <li key={idx}>
+                  <span style={{ fontFamily: 'system-ui' }}>{g.roster.psn}</span> · {g.roster.national_id} · {g.roster.name}{g.roster.department ? ` · ${g.roster.department}` : ''}
+                  {g.mol ? <span style={{ opacity: 0.7 }}> (GOSI: {g.mol.canonical_name})</span> : <span style={{ opacity: 0.7 }}> (no GOSI record)</span>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+
       {/* Orphaned portal employees — collapsed by default */}
       {reconciliation && reconciliation.orphaned.length > 0 && (
         <div className="mt-3">
@@ -553,7 +657,7 @@ export default function GovernmentDataSync({ me }) {
             style={{ background: 'none', border: 'none', color: '#525252', fontWeight: 700, cursor: 'pointer', padding: 0 }}
           >
             {showOrphaned ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-            {reconciliation.orphaned.length} portal employee{reconciliation.orphaned.length === 1 ? '' : 's'} not in MOL
+            {reconciliation.orphaned.length} portal employee{reconciliation.orphaned.length === 1 ? '' : 's'} not in roster or MOL
           </button>
           {showOrphaned && (
             <div
@@ -561,7 +665,7 @@ export default function GovernmentDataSync({ me }) {
               style={{ background: '#F5F5F5', border: `1px solid #D4D4D4`, color: '#525252' }}
             >
               <p style={{ fontWeight: 600, marginBottom: 6 }}>
-                These portal employees were not found in the current MOL file. They may be ex-staff still active in the portal, or recently-added staff not yet registered with GOSI:
+                These portal employees aren't in Badria's roster and weren't fuzzy-matched in MOL. They may be ex-staff still active in the portal, or recently-added staff not yet registered with GOSI:
               </p>
               <ul style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {reconciliation.orphaned.map((e) => (
@@ -662,18 +766,30 @@ function CountTile({ label, value, bg, fg, border }) {
   );
 }
 
-function MatchRow({ mol, emp, confidence, reason, alternatives, allEmployees, decision, onChangeAction, onChangeEmployee }) {
+function MatchRow({ mol, emp, confidence, reason, source, roster, proposedName, alternatives, allEmployees, decision, onChangeAction, onChangeEmployee }) {
   const [expanded, setExpanded] = useState(false);
   const apply = decision.action === 'apply';
   const conf = Math.round(confidence * 100);
 
-  // Confidence color
-  const confColor = confidence >= 0.95 ? '#0F4C2A'
-                  : confidence >= 0.7  ? '#854F0B'
+  // Confidence color — roster-driven matches always look green
+  // (deterministic) regardless of the underlying score.
+  const isRoster = source === 'roster_full' || source === 'roster_only';
+  const confColor = isRoster              ? '#0F4C2A'
+                  : confidence >= 0.95   ? '#0F4C2A'
+                  : confidence >= 0.7    ? '#854F0B'
                   : '#991B1B';
-  const confBg    = confidence >= 0.95 ? '#ECFDF5'
-                  : confidence >= 0.7  ? '#FEF3C7'
+  const confBg    = isRoster              ? '#ECFDF5'
+                  : confidence >= 0.95   ? '#ECFDF5'
+                  : confidence >= 0.7    ? '#FEF3C7'
                   : '#FEE2E2';
+
+  // Source badge label — shown next to the confidence pill so admin
+  // can see at a glance whether the row came from Badria's roster
+  // (deterministic) or fuzzy MOL matching.
+  const sourceBadge = source === 'roster_full' ? 'BADRIA + GOSI'
+                    : source === 'roster_only' ? 'BADRIA ONLY'
+                    : source === 'fuzzy_mol'   ? 'FUZZY'
+                    : null;
 
   return (
     <div
@@ -699,24 +815,34 @@ function MatchRow({ mol, emp, confidence, reason, alternatives, allEmployees, de
           />
         </label>
 
-        {/* MOL side */}
+        {/* MOL / Roster source side */}
         <div style={{ flex: '1 1 240px', minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: 13,
-              color: PALETTE.ink,
-              fontWeight: 700,
-              fontFamily: 'system-ui',
-              direction: 'rtl',
-              lineHeight: 1.3,
-            }}
-          >
-            {mol.arabic_name}
-          </div>
+          {mol.arabic_name ? (
+            <div
+              style={{
+                fontSize: 13,
+                color: PALETTE.ink,
+                fontWeight: 700,
+                fontFamily: 'system-ui',
+                direction: 'rtl',
+                lineHeight: 1.3,
+              }}
+            >
+              {mol.arabic_name}
+            </div>
+          ) : (
+            // Roster-only — no Arabic name available. Show Badria's
+            // Latin name in the same slot so the row isn't blank.
+            <div style={{ fontSize: 13, color: PALETTE.ink, fontWeight: 700, lineHeight: 1.3 }}>
+              {roster?.name || '—'}
+            </div>
+          )}
           <div className="text-[11px] mt-0.5 flex items-center gap-2 flex-wrap" style={{ color: PALETTE.mute, opacity: 0.7 }}>
             <span style={{ fontFamily: 'inherit' }}>{mol.national_id}</span>
             {mol.arabic_profession && <span style={{ fontFamily: 'system-ui', direction: 'rtl' }}>· {mol.arabic_profession}</span>}
             {mol.date_of_birth && <span>· DOB {mol.date_of_birth}</span>}
+            {roster?.location && <span>· {roster.location}</span>}
+            {roster?.department && <span>· {roster.department}</span>}
           </div>
         </div>
 
@@ -726,15 +852,15 @@ function MatchRow({ mol, emp, confidence, reason, alternatives, allEmployees, de
         </div>
 
         {/* Portal side — shows what the row will look like after
-            apply: the new canonical name from the MOL, with the
-            current portal name struck-through if it differs. */}
+            apply: the proposed name (canonical from MOL or Badria),
+            with the current portal name struck-through if different. */}
         <div style={{ flex: '1 1 260px', minWidth: 0 }}>
           {emp ? (
             <>
               <div style={{ fontSize: 13, color: PALETTE.ink, fontWeight: 700, lineHeight: 1.3 }}>
-                {mol.canonical_name || emp.name}
+                {proposedName || mol.canonical_name || emp.name}
               </div>
-              {mol.canonical_name && emp.name && mol.canonical_name !== emp.name && (
+              {(proposedName || mol.canonical_name) && emp.name && (proposedName || mol.canonical_name) !== emp.name && (
                 <div className="text-[10.5px] mt-0.5" style={{ color: PALETTE.mute, opacity: 0.55, textDecoration: 'line-through' }}>
                   was: {emp.name}
                 </div>
@@ -750,8 +876,21 @@ function MatchRow({ mol, emp, confidence, reason, alternatives, allEmployees, de
           )}
         </div>
 
-        {/* Confidence pill */}
-        <div className="flex-shrink-0 flex items-center gap-2" style={{ paddingTop: 2 }}>
+        {/* Confidence pill + source badge */}
+        <div className="flex-shrink-0 flex items-center gap-2 flex-wrap" style={{ paddingTop: 2 }}>
+          {sourceBadge && (
+            <span
+              className="px-1.5 py-0.5 rounded-full text-[9px]"
+              style={{
+                background: isRoster ? '#0F4C2A' : '#F5F5F5',
+                color:      isRoster ? '#FFFFFF' : '#525252',
+                fontWeight: 700,
+                letterSpacing: '0.06em',
+              }}
+            >
+              {sourceBadge}
+            </span>
+          )}
           <span
             className="px-2 py-0.5 rounded-full text-[10px]"
             style={{

@@ -1,0 +1,435 @@
+{
+  "source_file": "Copy of NADEEM.xlsx",
+  "fetched_at": "2026-05-06",
+  "provided_by": "Badria (H94458)",
+  "description": "PSN ↔ National ID roster — bridges portal PSNs to MOL/GOSI Iqamas for deterministic sync",
+  "entries": [
+    {
+      "psn": "062789",
+      "national_id": "2493705525",
+      "name": "CHUNG HSING HO",
+      "location": "DMM",
+      "department": "BIZ"
+    },
+    {
+      "psn": "298143",
+      "national_id": "2623221021",
+      "name": "james  liu",
+      "location": "JED",
+      "department": "BIZ"
+    },
+    {
+      "psn": "H94458",
+      "national_id": "1017745124",
+      "name": "BADRIA MOHAMMED AL HASSAN",
+      "location": "DMM",
+      "department": "SUP"
+    },
+    {
+      "psn": "H94076",
+      "national_id": "2065773299",
+      "name": "P M SADAKATULLAH",
+      "location": "DMM",
+      "department": "BIZ"
+    },
+    {
+      "psn": "H94091",
+      "national_id": "2072642503",
+      "name": "MOHIADEEN THAMBY M ABDUL KADER",
+      "location": "DMM",
+      "department": "CSD"
+    },
+    {
+      "psn": "H94109",
+      "national_id": "2123400158",
+      "name": "MUSA ABDUL RAHEEM",
+      "location": "RYD",
+      "department": "RYD OFFICE"
+    },
+    {
+      "psn": "H94137",
+      "national_id": "2161177320",
+      "name": "KHAJA MUJEEB REHMAN",
+      "location": "DMM",
+      "department": "FIN"
+    },
+    {
+      "psn": "H94152",
+      "national_id": "2191731641",
+      "name": "MOHAMMAD NADEEM NISAR SHAIK",
+      "location": "DMM",
+      "department": "BIZ"
+    },
+    {
+      "psn": "H94178",
+      "national_id": "1040638254",
+      "name": "FAHAD BIN ABDULQADER  MOULAD",
+      "location": "JED",
+      "department": "CSD"
+    },
+    {
+      "psn": "H94180",
+      "national_id": "1014390908",
+      "name": "MAHMOUD AHMED HASAN AL ABBAS",
+      "location": "DMM",
+      "department": "LOG"
+    },
+    {
+      "psn": "H94193",
+      "national_id": "1074575968",
+      "name": "SAAD AL OTHMAN",
+      "location": "RYD",
+      "department": "RYD OFFICE"
+    },
+    {
+      "psn": "H94200",
+      "national_id": "2271973758",
+      "name": "MELVIN ROMULO MANCENIDO",
+      "location": "DMM",
+      "department": "CSD"
+    },
+    {
+      "psn": "H94226",
+      "national_id": "2276658073",
+      "name": "SONNIE BOY TOPNIO HABAL",
+      "location": "JED",
+      "department": "LOG"
+    },
+    {
+      "psn": "H94239",
+      "national_id": "2021984592",
+      "name": "HAITAM HATIM ELTAYEB",
+      "location": "JED",
+      "department": "CSD"
+    },
+    {
+      "psn": "H94282",
+      "national_id": "1049728239",
+      "name": "MOHAMMED ABDULLAH AL SHAIJI",
+      "location": "DMM",
+      "department": "CSD"
+    },
+    {
+      "psn": "H94295",
+      "national_id": "1009008614",
+      "name": "NAWAF ABDUL RAHMAN AL FOZAIYAH",
+      "location": "DMM",
+      "department": "LOG"
+    },
+    {
+      "psn": "H94328",
+      "national_id": "2339734903",
+      "name": "NASIR KHAN MUHAMMAD ANWAR",
+      "location": "DMM",
+      "department": "BIZ"
+    },
+    {
+      "psn": "H94330",
+      "national_id": "1026372472",
+      "name": "JAFFAR ABDULLAH AL DARWEASH",
+      "location": "DMM",
+      "department": "SUP"
+    },
+    {
+      "psn": "H94371",
+      "national_id": "1050218039",
+      "name": "SAHAR ALI ABED",
+      "location": "JED",
+      "department": "CSD"
+    },
+    {
+      "psn": "H94384",
+      "national_id": "1024134833",
+      "name": "MANSOUR ZAKI AHMED AL ABBAS",
+      "location": "DMM",
+      "department": "CSD"
+    },
+    {
+      "psn": "H94397",
+      "national_id": "2387549344",
+      "name": "AHMED ABDEL MONSEF",
+      "location": "JED",
+      "department": "LOG"
+    },
+    {
+      "psn": "H94404",
+      "national_id": "2383233141",
+      "name": "MUHAMMAD RIZWAN ABDUR REHMAN",
+      "location": "DMM",
+      "department": "BIZ"
+    },
+    {
+      "psn": "H94420",
+      "national_id": "2403330802",
+      "name": "SYED NOMAN SADAQAT",
+      "location": "JED",
+      "department": "BIZ"
+    },
+    {
+      "psn": "H94432",
+      "national_id": "2018314076",
+      "name": "ZAHER FARAJ ABU HOSSE",
+      "location": "RYD",
+      "department": "RYD OFFICE"
+    },
+    {
+      "psn": "H94445",
+      "national_id": "2422553103",
+      "name": "MUHAMMAD ABDUL WAHAB RAFIQ",
+      "location": "DMM",
+      "department": "LOG"
+    },
+    {
+      "psn": "H94460",
+      "national_id": "2370259448",
+      "name": "MOHAMMAD SHARIQUE M YAQUB",
+      "location": "DMM",
+      "department": "LOG"
+    },
+    {
+      "psn": "H94499",
+      "national_id": "1009311190",
+      "name": "ABDUL RAHMAN AL GHAMDI",
+      "location": "JED",
+      "department": "LOG"
+    },
+    {
+      "psn": "H94519",
+      "national_id": "1068026556",
+      "name": "AHMED NADMI AHMED AL ABBAS",
+      "location": "DMM",
+      "department": "CSD"
+    },
+    {
+      "psn": "H94534",
+      "national_id": "1098737800",
+      "name": "HASSAN ABDRBALNABI J AL DARWEESH",
+      "location": "DMM",
+      "department": "FIN"
+    },
+    {
+      "psn": "H94550",
+      "national_id": "1105476277",
+      "name": "ALI HUSSAIN NASSIR AL BRAHIM",
+      "location": "DMM",
+      "department": "FIN"
+    },
+    {
+      "psn": "H94562",
+      "national_id": "1092578200",
+      "name": "HAIDER ALI HABIB AL FARDAN",
+      "location": "DMM",
+      "department": "FIN"
+    },
+    {
+      "psn": "H94590",
+      "national_id": "2314408218",
+      "name": "ARIEL SALONGA RICO",
+      "location": "DMM",
+      "department": "BIZ"
+    },
+    {
+      "psn": "H94608",
+      "national_id": "2326749559",
+      "name": "MUSTAF ABDUL KHADER",
+      "location": "DMM",
+      "department": "CSD"
+    },
+    {
+      "psn": "H94610",
+      "national_id": "2403761758",
+      "name": "MOHAMED M YANI ABULHASSAN",
+      "location": "RYD",
+      "department": "RYD OFFICE"
+    },
+    {
+      "psn": "H94651",
+      "national_id": "1102407200",
+      "name": "MOHSIN AHMED BALOBAID",
+      "location": "DMM",
+      "department": "FIN"
+    },
+    {
+      "psn": "H94664",
+      "national_id": "2505922498",
+      "name": "MOHAMMED MAFAZ MOHAMMED BILAL",
+      "location": "DMM",
+      "department": "CSD"
+    },
+    {
+      "psn": "H94692",
+      "national_id": "1014532368",
+      "name": "MOHAMMED AWADH  AL QAHTANI",
+      "location": "DMM",
+      "department": "LOG"
+    },
+    {
+      "psn": "H94725",
+      "national_id": "1091916161",
+      "name": "MUSAAD ABDULH MOHAMMED ALMUAYSIB",
+      "location": "RYD",
+      "department": "RYD OFFICE"
+    },
+    {
+      "psn": "H94712",
+      "national_id": "1087338180",
+      "name": "FAHAD SULAIMAN A RAHMAN ALHUSSAIN",
+      "location": "DMM",
+      "department": "SUP"
+    },
+    {
+      "psn": "H94738",
+      "national_id": "1073164426",
+      "name": "NORAH MOHAMMAD ALRUBAYYI",
+      "location": "DMM",
+      "department": "LOG"
+    },
+    {
+      "psn": "H94740",
+      "national_id": "1031106147",
+      "name": "AREEJ MOHAMMED ABDULLAH ALGHAMDI",
+      "location": "JED",
+      "department": "CSD"
+    },
+    {
+      "psn": "H94753",
+      "national_id": "1097172173",
+      "name": "BEDOR MOHAMMED ALMWALLAD",
+      "location": "JED",
+      "department": "LOG"
+    },
+    {
+      "psn": "H94766",
+      "national_id": "1049096330",
+      "name": "AMINAH AHMED MOHAMMED ABDULLAH",
+      "location": "JED",
+      "department": "CSD"
+    },
+    {
+      "psn": "H94779",
+      "national_id": "1003101688",
+      "name": "JASSIM ABDULLAH AL DOSSERY",
+      "location": "DMM",
+      "department": "LOG"
+    },
+    {
+      "psn": "H94794",
+      "national_id": "1115904169",
+      "name": "ABDULAZIZ JABER AWAJI",
+      "location": "RYD",
+      "department": "RYD OFFICE"
+    },
+    {
+      "psn": "H94801",
+      "national_id": "1127510475",
+      "name": "KHALID ALMUTAIRI",
+      "location": "JED",
+      "department": "LOG"
+    },
+    {
+      "psn": "H94830",
+      "national_id": "1111808687",
+      "name": "BASHAIER ALI ALSUBAIE",
+      "location": "DMM",
+      "department": "SUP"
+    },
+    {
+      "psn": "H94842",
+      "national_id": "1088040553",
+      "name": "BASMAH FOUAD ALYOUSEF",
+      "location": "DMM",
+      "department": "FIN"
+    },
+    {
+      "psn": "H94855",
+      "national_id": "1113771438",
+      "name": "SHAHAD KHALID ALFOHAID",
+      "location": "DMM",
+      "department": "BIZ"
+    },
+    {
+      "psn": "H94868",
+      "national_id": "1105454829",
+      "name": "EBTISAM MESHARI ALQAHTANI",
+      "location": "DMM",
+      "department": "BIZ"
+    },
+    {
+      "psn": "H94870",
+      "national_id": "1105950180",
+      "name": "NOJUD MOHAMMED HAKAMI",
+      "location": "DMM",
+      "department": "CSD"
+    },
+    {
+      "psn": "H94929",
+      "national_id": "1087809164",
+      "name": "MAALI SADEQ ALSHEKH",
+      "location": "JED",
+      "department": "LOG"
+    },
+    {
+      "psn": "H94931",
+      "national_id": "1120776453",
+      "name": "SHABBAB NOOR ALMUTAIRI",
+      "location": "JED",
+      "department": "SUP"
+    },
+    {
+      "psn": "H94944",
+      "national_id": "1064779638",
+      "name": "HAMAD AHMED ALNASHRI",
+      "location": "JED",
+      "department": "CSD"
+    },
+    {
+      "psn": "H94957",
+      "national_id": "1082979483",
+      "name": "FAISAL MUBARK ALAWAD",
+      "location": "DMM",
+      "department": "CSD"
+    },
+    {
+      "psn": "H94960",
+      "national_id": "2131527950",
+      "name": "SYED ISHAQ MOHAMMED",
+      "location": "JED",
+      "department": "BIZ"
+    },
+    {
+      "psn": "H94972",
+      "national_id": "2593213636",
+      "name": "SYED AHMED",
+      "location": "JED",
+      "department": "BIZ"
+    },
+    {
+      "psn": "H94998",
+      "national_id": "2141838853",
+      "name": "LARA KHALID ABIDIN",
+      "location": "JED",
+      "department": "CSD"
+    },
+    {
+      "psn": "H95008",
+      "national_id": "1108624873",
+      "name": "HASSAN ALTASSAN",
+      "location": "JED",
+      "department": "CSD"
+    },
+    {
+      "psn": "H95010",
+      "national_id": "2543030890",
+      "name": "KASHIF MEHMOOD",
+      "location": "JED",
+      "department": "LOG"
+    },
+    {
+      "psn": "H95023",
+      "national_id": "1079375323",
+      "name": "FAHAD FAISAL ALHARBI",
+      "location": "DMM",
+      "department": "LOG"
+    }
+  ]
+}
