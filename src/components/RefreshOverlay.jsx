@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 
 // =============================================================================
@@ -34,9 +34,52 @@ const PAPER       = '#FFFFFF';
 const COPPER      = '#9D6B53';
 const SKY_TINT    = '#F2F2F2';
 
-export default function RefreshOverlay({ open, message = 'Refreshing your dashboard…' }) {
+export default function RefreshOverlay({ open, message = 'Made by the HumbleGenius ✨' }) {
   const [mounted, setMounted] = useState(open);
   const [visible, setVisible] = useState(open);
+
+  // Funny quote pool — Mix of English and Arabic. A fresh random quote
+  // is picked every time the overlay opens (useMemo keyed on `open`),
+  // so each refresh feels different and gives staff a tiny smile while
+  // the ship animation plays. RTL Arabic flips direction at render
+  // time via the `lang` flag.
+  const quote = useMemo(() => {
+    const pool = [
+      // English — light, work-flavoured, never punching down
+      { lang: 'en', text: 'Coffee first. Decisions later. ☕' },
+      { lang: 'en', text: "If at first you don't succeed, hit refresh." },
+      { lang: 'en', text: "I'm not lazy, I'm on energy-saving mode. 🔋" },
+      { lang: 'en', text: 'Behind every great employee is a refresh button.' },
+      { lang: 'en', text: 'Teamwork makes the dream work. 🤝' },
+      { lang: 'en', text: 'Mondays exist so we appreciate Fridays. 📅' },
+      { lang: 'en', text: 'Hard work pays off later. Coffee pays off now. ☕' },
+      { lang: 'en', text: "Out of office. Mostly out of patience. 🌴" },
+      { lang: 'en', text: "You can't spell 'productive' without 'duct tape'." },
+      { lang: 'en', text: 'Reply-all is a cry for help. 📨' },
+      { lang: 'en', text: 'Every spreadsheet is a story waiting to happen. 📊' },
+      { lang: 'en', text: 'The meeting could have been an email. 📧' },
+      { lang: 'en', text: 'Plot twist: the email could have been silence.' },
+      { lang: 'en', text: 'Friday is a feeling. 🎉' },
+      { lang: 'en', text: 'Inbox zero is a myth. So is free time. 📮' },
+      { lang: 'en', text: 'Be the calm in your own inbox. 🌊' },
+
+      // Arabic — same energy, friendly tone
+      { lang: 'ar', text: 'القهوة أولاً، القرارات لاحقاً ☕' },
+      { lang: 'ar', text: 'إذا تعطل الجهاز، اضغط تحديث وادعُ بالخير 🤲' },
+      { lang: 'ar', text: 'العمل عبادة، والقهوة وقود العبادة ☕' },
+      { lang: 'ar', text: 'في الاجتماع: حاضر بالجسد، غائب بالعقل 🧠' },
+      { lang: 'ar', text: 'الإيميلات كثيرة، الأعصاب قليلة 📨' },
+      { lang: 'ar', text: 'أحياناً النجاح يبدأ بضغطة زر تحديث 🔄' },
+      { lang: 'ar', text: 'الجمعة شعور، وليست يوماً 🎉' },
+      { lang: 'ar', text: 'الوقت كالسيف، إن لم تقطعه قطعك بالقهوة ☕' },
+      { lang: 'ar', text: 'كل جدول بيانات قصة تنتظر أن تُروى 📊' },
+      { lang: 'ar', text: 'الاجتماع كان من الممكن أن يكون إيميلاً 📧' },
+      { lang: 'ar', text: 'كن هدوء بريدك الإلكتروني 🌊' },
+    ];
+    return pool[Math.floor(Math.random() * pool.length)];
+    // Re-roll every time the overlay opens — the dependency on `open`
+    // means a closed-then-opened overlay shows a fresh quote.
+  }, [open]);
 
   useEffect(() => {
     if (open) {
@@ -431,20 +474,53 @@ export default function RefreshOverlay({ open, message = 'Refreshing your dashbo
             </g>
           </svg>
 
-          {/* Caption */}
-          <div
-            style={{
-              fontFamily: 'Georgia, serif',
-              fontSize: '22px',
-              color: '#1F1B16',
-              marginTop: '20px',
-              fontStyle: 'italic',
-              fontWeight: 400,
-              letterSpacing: '-0.01em',
-            }}
-          >
-            {message}
-          </div>
+          {/* Main caption — was "Refreshing your dashboard…", now the
+              author credit with a per-letter wave. Per Nadeem:
+              "instead of refreshing your dashboard, mention made by
+              the HumbleGenius". Each letter bobs on a staggered
+              60ms delay so the whole line waves like a flag. */}
+          {(() => {
+            const credit = 'Made by the HumbleGenius ✨';
+            const chars = Array.from(credit);
+            return (
+              <div
+                style={{
+                  marginTop: '20px',
+                  fontSize: '24px',
+                  color: '#0A0A0A',
+                  fontWeight: 700,
+                  letterSpacing: '-0.005em',
+                  fontFamily: 'Georgia, serif',
+                  fontStyle: 'italic',
+                  display: 'inline-flex',
+                  flexWrap: 'wrap',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  gap: '0px',
+                }}
+                aria-label="Made by the HumbleGenius"
+              >
+                {chars.map((ch, i) => {
+                  const isSpace = ch === ' ';
+                  return (
+                    <span
+                      key={i}
+                      aria-hidden="true"
+                      style={{
+                        display: 'inline-block',
+                        whiteSpace: 'pre',
+                        animation: 'esau-credit-wave 1.6s ease-in-out infinite',
+                        animationDelay: `${i * 0.06}s`,
+                        fontSize: ch === '✨' ? '26px' : 'inherit',
+                      }}
+                    >
+                      {isSpace ? '\u00A0' : ch}
+                    </span>
+                  );
+                })}
+              </div>
+            );
+          })()}
 
           {/* Progress dots */}
           <div style={{ marginTop: '14px', display: 'inline-flex', gap: '6px' }}>
@@ -463,74 +539,28 @@ export default function RefreshOverlay({ open, message = 'Refreshing your dashbo
             ))}
           </div>
 
+          {/* Funny quote — random English or Arabic, picked once per
+              overlay open. Per Nadeem: "in bottom make funny quotes
+              to make staff smile, use random english and arabic
+              time to time". */}
           <div
             style={{
-              marginTop: '16px',
-              fontSize: '11px',
+              marginTop: '20px',
+              maxWidth: '440px',
+              fontSize: '13px',
               color: '#1F1B16',
-              opacity: 0.55,
-              letterSpacing: '0.18em',
-              fontWeight: 700,
+              opacity: 0.7,
+              fontStyle: 'italic',
+              fontFamily: quote.lang === 'ar'
+                ? '"Segoe UI", "Tahoma", Georgia, serif'
+                : 'Georgia, serif',
+              direction: quote.lang === 'ar' ? 'rtl' : 'ltr',
+              lineHeight: 1.45,
+              padding: '0 16px',
             }}
           >
-            FETCHING THE LATEST · YOU'RE STILL SIGNED IN
+            "{quote.text}"
           </div>
-
-          {/* Author credit — Nadeem's nickname is HumbleGenius (per
-              the system, also the admin record in the employees
-              table). Each letter bobs up and down on a staggered
-              timing so the whole banner waves like a flag in the
-              breeze. Black ink for legibility against the soft
-              cream backdrop. */}
-          {(() => {
-            const credit = 'Made with 💡 by the HumbleGenius ⚓';
-            const chars = Array.from(credit);
-            return (
-              <div
-                style={{
-                  marginTop: '24px',
-                  fontSize: '13px',
-                  color: '#0A0A0A',
-                  fontWeight: 700,
-                  letterSpacing: '0.02em',
-                  fontFamily: 'Georgia, serif',
-                  fontStyle: 'italic',
-                  display: 'inline-flex',
-                  flexWrap: 'wrap',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  gap: '0px',
-                }}
-                aria-label="Made with care by the HumbleGenius"
-              >
-                {chars.map((ch, i) => {
-                  // Animation delay staggers each letter by 60ms so
-                  // the wave visibly travels across the line. The
-                  // animation runs over 1.6s so each letter completes
-                  // its bob comfortably within one cycle of the
-                  // surrounding ship/wave choreography.
-                  const isSpace = ch === ' ';
-                  return (
-                    <span
-                      key={i}
-                      aria-hidden="true"
-                      style={{
-                        display: 'inline-block',
-                        whiteSpace: 'pre',
-                        animation: 'esau-credit-wave 1.6s ease-in-out infinite',
-                        animationDelay: `${i * 0.06}s`,
-                        // Slightly larger emoji glyphs so they stand
-                        // out within the line without dominating it.
-                        fontSize: ['💡', '⚓'].includes(ch) ? '15px' : 'inherit',
-                      }}
-                    >
-                      {isSpace ? '\u00A0' : ch}
-                    </span>
-                  );
-                })}
-              </div>
-            );
-          })()}
         </div>
       </div>
     </>,
