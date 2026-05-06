@@ -251,3 +251,24 @@ input[type="date"] { color-scheme: light; }
   font-size: 11px; letter-spacing: 0.3em; color: #94a39a;
   z-index: 2;
 }
+
+/* Click-bounce — short, satisfying spring on tap. Per Nadeem:
+   "when the employee name is clicked give a bounce effect".
+   Triggered by adding the `bouncing` modifier class via React
+   (see useClickBounce in useClickBounce.js). The animation fires
+   immediately on click and removes itself after 360ms. */
+@keyframes click-bounce {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(0.94); }
+  60%  { transform: scale(1.04); }
+  100% { transform: scale(1); }
+}
+.click-bounce {
+  cursor: pointer;
+  transition: transform 0.12s ease;
+  display: inline-block;
+}
+.click-bounce.bouncing {
+  animation: click-bounce 0.36s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+

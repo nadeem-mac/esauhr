@@ -1268,14 +1268,37 @@ function GovernmentRecordsPanel({ employee, onSaved }) {
     (employee.nationality && employee.nationality !== 'expat');
 
   const fmt = (v) => v == null || v === '' ? '—' : v;
+  // Timezone-safe date formatter. The naive "new Date('1982-01-01')"
+  // approach parses ISO date strings as UTC midnight, which then
+  // converts to the previous day in any timezone west of UTC. For a
+  // pure DATE field (not a timestamp), we want to display exactly
+  // what's stored — so split the YYYY-MM-DD string directly without
+  // bouncing through Date arithmetic.
   const fmtDateLocal = (s) => {
     if (!s) return '—';
+    const str = String(s).trim();
+    // Match YYYY-MM-DD (or YYYY-MM-DD followed by anything — for
+    // timestamptz strings we just take the date portion)
+    const m = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) {
+      const [, year, month, day] = m;
+      const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const monIdx = parseInt(month, 10) - 1;
+      if (monIdx >= 0 && monIdx < 12) {
+        return `${day} ${monthNames[monIdx]} ${year}`;
+      }
+    }
+    // Fallback for unexpected formats — use Date but in UTC so we
+    // don't shift the displayed day.
     try {
-      const d = new Date(s);
-      if (isNaN(d)) return s;
-      return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+      const d = new Date(str);
+      if (isNaN(d)) return str;
+      return d.toLocaleDateString('en-GB', {
+        day: '2-digit', month: 'short', year: 'numeric',
+        timeZone: 'UTC',
+      });
     } catch {
-      return s;
+      return str;
     }
   };
 
