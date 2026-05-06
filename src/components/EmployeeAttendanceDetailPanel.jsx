@@ -1531,6 +1531,10 @@ function exportAttendanceHtml(employee, range, monthly, summary, leaveRows, leav
     </div>
   `;
 
+  // Combined summary block — used on page 1 only (continuation pages
+  // skip the summary to maximize their row capacity).
+  const summaryTiles = attendanceTilesHtml + leaveTilesHtml;
+
   // ─── Pagination ─────────────────────────────────────────────────
   // Each .page renders at A4 size. Page 1 holds the header + summary
   // tiles + as many month sections as fit. Continuation pages hold
