@@ -410,14 +410,32 @@ export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
           </div>
         </div>
 
-        {/* Body — scrollable. Single attendance view; everything Bashaier
-            needs (calendar, summary tiles, per-leave-type breakdown)
-            lives in this one pane now — no tab switch required. */}
+        {/* Pinned summary band — sits between the staff-name header
+            and the scrollable calendar so the totals stay visible
+            while Bashaier scrolls through months. The band has its
+            own bottom border + tinted background so it reads as a
+            separate region rather than blending into the calendar. */}
+        {attRows !== null && summary && (
+          <div
+            style={{
+              padding: '12px 20px',
+              background: '#FAFAF6',
+              borderBottom: '1px solid #E5E5E5',
+              flexShrink: 0,
+              maxHeight: '38vh',
+              overflowY: 'auto',
+            }}
+          >
+            <AttendanceSummaryPinned summary={summary} />
+          </div>
+        )}
+
+        {/* Body — scrollable. Calendar grids only; the summary
+            stays pinned above. */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '14px 20px 20px' }}>
-          <AttendanceTab
+          <AttendanceCalendarBody
             loading={attRows === null}
             monthly={monthly}
-            summary={summary}
           />
         </div>
 
@@ -616,8 +634,108 @@ function TabButton({ active, onClick, icon, label, count }) {
   );
 }
 
-// ─── AttendanceTab ────────────────────────────────────────────────────
-function AttendanceTab({ loading, monthly, summary }) {
+// ─── AttendanceSummaryPinned ─────────────────────────────────────────
+// The summary tiles that pin to the top of the detail panel — stays
+// visible regardless of how far Bashaier scrolls the calendar below.
+// Two sections of tiles:
+//   • ATTENDANCE — Present / Late / Left early on row 1; second row
+//     for Absent / No clock-in / No clock-out only when any are
+//     non-zero (otherwise hidden to keep the band compact).
+//   • LEAVE      — one tile per leave_type the employee actually
+//     used in the range, hidden entirely if no approved leaves.
+function AttendanceSummaryPinned({ summary }) {
+  if (!summary) return null;
+  const counts = summary;
+  const total  = (counts.present || 0) + (counts.late || 0) +
+                 (counts.short   || 0) + (counts.absent || 0) +
+                 (counts.annual_leave || 0) + (counts.sick_leave || 0) +
+                 (counts.off_day || 0) + (counts.off_roster || 0);
+  if (total === 0 && (!summary.leaveByType || summary.leaveByType.size === 0)) {
+    // Truly empty — let the empty-state in the calendar body cover it
+    return null;
+  }
+  const showQualityRow =
+    (counts.absent || 0) > 0 ||
+    (summary.missedInCount  || 0) > 0 ||
+    (summary.missedOutCount || 0) > 0;
+
+  return (
+    <div>
+      <SectionLabel>ATTENDANCE</SectionLabel>
+      <div className="grid grid-cols-3 gap-2 mb-2">
+        <SummaryTile
+          label="Present"
+          value={counts.present || 0}
+          meta={statusMeta('present')}
+        />
+        <SummaryTile
+          label="Late"
+          value={counts.late || 0}
+          sub={(summary.totalLateMinutes || 0) > 0 ? `${summary.totalLateMinutes} min total` : null}
+          meta={statusMeta('late')}
+        />
+        <SummaryTile
+          label="Left early"
+          value={counts.short || 0}
+          sub={(summary.totalEarlyMinutes || 0) > 0 ? `${summary.totalEarlyMinutes} min total` : null}
+          meta={statusMeta('short')}
+        />
+      </div>
+
+      {showQualityRow && (
+        <div className="grid grid-cols-3 gap-2">
+          <SummaryTile
+            label="Absent"
+            value={counts.absent || 0}
+            meta={statusMeta('absent')}
+            muted={(counts.absent || 0) === 0}
+          />
+          <SummaryTile
+            label="No clock-in"
+            value={summary.missedInCount || 0}
+            meta={{ bg:'#FCE7F3', fg:'#86198F', border:'#F0ABFC' }}
+            muted={(summary.missedInCount || 0) === 0}
+          />
+          <SummaryTile
+            label="No clock-out"
+            value={summary.missedOutCount || 0}
+            meta={{ bg:'#E0E7FF', fg:'#3730A3', border:'#A5B4FC' }}
+            muted={(summary.missedOutCount || 0) === 0}
+          />
+        </div>
+      )}
+
+      {summary.leaveByType && summary.leaveByType.size > 0 && (
+        <>
+          <SectionLabel mt>LEAVE</SectionLabel>
+          <div
+            className="grid gap-2"
+            style={{
+              gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
+            }}
+          >
+            {Array.from(summary.leaveByType.values())
+              .sort((a, b) => b.days - a.days)
+              .map((entry) => (
+                <SummaryTile
+                  key={entry.id}
+                  label={entry.name}
+                  value={entry.days}
+                  sub={`${entry.requests} request${entry.requests === 1 ? '' : 's'}`}
+                  meta={leaveMetaFor(entry)}
+                />
+              ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── AttendanceCalendarBody ──────────────────────────────────────────
+// Just the month-by-month calendar grids. Renders inside the panel's
+// scrollable region; the summary stays pinned above.
+function AttendanceCalendarBody({ loading, monthly }) {
   if (loading) {
     return (
       <div className="flex items-center gap-2 py-8 justify-center text-sm" style={{ color: '#0A0A0A', opacity: 0.6 }}>
@@ -626,112 +744,8 @@ function AttendanceTab({ loading, monthly, summary }) {
     );
   }
 
-  const counts = summary || {};
-  const total = Object.values(counts).reduce((a, b) => a + b, 0);
-
   return (
     <div>
-      {/* Summary tiles — split into two sections so the visual
-          weight reflects the data's structure:
-            • Attendance vitals (the daily-flow signals)
-            • Leave breakdown (one tile per leave type the employee
-              actually used in this range — annual, sick, emergency,
-              unpaid, etc.)
-          The two sections only render when there's data to show. */}
-      {total > 0 && (
-        <div className="mb-4">
-          <SectionLabel>ATTENDANCE</SectionLabel>
-          <div className="grid grid-cols-3 gap-2 mb-2">
-            <SummaryTile
-              label="Present"
-              value={counts.present || 0}
-              meta={statusMeta('present')}
-              delay={0}
-            />
-            <SummaryTile
-              label="Late"
-              value={counts.late || 0}
-              sub={(summary?.totalLateMinutes || 0) > 0 ? `${summary.totalLateMinutes} min total` : null}
-              meta={statusMeta('late')}
-              delay={50}
-            />
-            <SummaryTile
-              label="Left early"
-              value={counts.short || 0}
-              sub={(summary?.totalEarlyMinutes || 0) > 0 ? `${summary.totalEarlyMinutes} min total` : null}
-              meta={statusMeta('short')}
-              delay={100}
-            />
-          </div>
-
-          {/* Second row — only populated chips show. Absent + missed
-              punches are data-quality / process-failure signals; if
-              they're zero we hide the row to avoid visual noise. */}
-          {((counts.absent || 0) > 0 ||
-            (summary?.missedInCount  || 0) > 0 ||
-            (summary?.missedOutCount || 0) > 0) && (
-            <div className="grid grid-cols-3 gap-2">
-              <SummaryTile
-                label="Absent"
-                value={counts.absent || 0}
-                meta={statusMeta('absent')}
-                delay={150}
-                muted={(counts.absent || 0) === 0}
-              />
-              <SummaryTile
-                label="No clock-in"
-                value={summary?.missedInCount || 0}
-                meta={{ bg:'#FCE7F3', fg:'#86198F', border:'#F0ABFC' }}
-                delay={200}
-                muted={(summary?.missedInCount || 0) === 0}
-              />
-              <SummaryTile
-                label="No clock-out"
-                value={summary?.missedOutCount || 0}
-                meta={{ bg:'#E0E7FF', fg:'#3730A3', border:'#A5B4FC' }}
-                delay={250}
-                muted={(summary?.missedOutCount || 0) === 0}
-              />
-            </div>
-          )}
-
-          {/* LEAVE section — one tile per leave type that has approved
-              days in this range. Hidden entirely if no approved leaves
-              exist. The label uses the leave_type's `name` from the
-              DB so it adapts to whatever types are configured (annual
-              leave, sick leave, emergency, unpaid, paternity, hajj,
-              etc. — Bashaier's HR config drives this list). */}
-          {summary?.leaveByType && summary.leaveByType.size > 0 && (
-            <>
-              <SectionLabel mt>LEAVE</SectionLabel>
-              <div
-                className="grid gap-2"
-                style={{
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
-                }}
-              >
-                {Array.from(summary.leaveByType.values())
-                  .sort((a, b) => b.days - a.days)
-                  .map((entry, idx) => {
-                    const meta = leaveMetaFor(entry);
-                    return (
-                      <SummaryTile
-                        key={entry.id}
-                        label={entry.name}
-                        value={entry.days}
-                        sub={`${entry.requests} request${entry.requests === 1 ? '' : 's'}`}
-                        meta={meta}
-                        delay={idx * 50}
-                      />
-                    );
-                  })}
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* Empty state */}
       {monthly.length === 0 && (
         <div
           className="rounded-xl p-5 text-center"
