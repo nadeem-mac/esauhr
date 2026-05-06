@@ -3,7 +3,7 @@ import {
   LayoutDashboard, ClipboardList, Users, Calendar as CalIcon, Settings,
   Plus, LogOut, Activity, ShieldCheck, RefreshCw
 , Clock , BarChart3, UserPlus, Database } from 'lucide-react';
-import { supabase, directGet, directPatch } from '../supabaseClient.js';
+import { supabase, directGet, directPatch, directPost } from '../supabaseClient.js';
 import { loadTemplates as loadEmailTemplates } from '../lib/emailTemplates.js';
 import Dashboard from './Dashboard.jsx';
 import Requests from './Requests.jsx';
@@ -519,28 +519,29 @@ export default function AppShell({ session, me, onRefreshMe }) {
   };
 
   const createRequest = async (payload) => {
-    // The payload now carries: substitute_ids, substitute_decisions, stage='pending_substitutes'.
-    // The DB trigger sync_leave_status_with_stage auto-derives status from stage,
-    // so we don't pass status here.
+    // CRITICAL — use directPost, not supabase.from().insert(). The
+    // supabase-js builder chain silently wedges in this project (see
+    // architectural rule). Same fix applied to PermissionRequestModal —
+    // intermittent silent insert failures meant requests were never
+    // landing in the DB even though the UI said "submitted".
     //
-    // requested_at — stamped explicitly so the row sorts and filters
-    // correctly in MyApplicationsCard (which uses it for the 90-day
-    // visibility window). The DB column may or may not have a DEFAULT
-    // now(); making it explicit guarantees the timestamp regardless of
-    // schema defaults and gives us UTC consistency.
-    const { data, error } = await supabase.from('leave_requests').insert({
+    // The payload carries: substitute_ids, substitute_decisions, stage.
+    // The DB trigger sync_leave_status_with_stage auto-derives status
+    // from stage, so we don't pass status here.
+    const row = {
       ...payload,
       requested_at: new Date().toISOString(),
       requested_by: session.user.email,
-    }).select().single();
-    if (error) throw error;
+    };
+    const created = await directPost('leave_requests', row, { timeoutMs: 12000 });
+    const data = Array.isArray(created) ? created[0] : created;
     const empName = empMap[payload.employee_id]?.name || payload.employee_id;
     const typeName = typeMap[payload.leave_type_id]?.name || payload.leave_type_id;
     logAction(me, 'leave_request_create', {
       targetType: 'leave_request',
       targetId: data?.id,
-      targetLabel: `${empName} · ${typeName} · ${payload.start_date} ÃÂ¢ÃÂÃÂ ${payload.end_date}`,
-      details: { employee_id: payload.employee_id, leave_type_id: payload.leave_type_id, days: payload.days },
+      targetLabel: `${empName} · ${typeName} · ${payload.start_date} → ${payload.end_date}`,
+      details: { employee_id: payload.employee_id, leave_type_id: payload.leave_type_id, days: payload.days, stage: data?.stage || payload.stage },
     });
     // Show success confirmation. Self-submitted requests get a "track
     // your status" pointer; admin/HR submissions on someone else's behalf

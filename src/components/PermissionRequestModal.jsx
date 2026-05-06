@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { supabase, directGet } from '../supabaseClient.js';
+import { supabase, directGet, directPost } from '../supabaseClient.js';
 import { X, AlertTriangle, Sunrise, Sunset, Loader2, History, Clock } from 'lucide-react';
 import { logAction } from '../lib/audit.js';
 import { checkExceeds, summariseMonth, PERMISSION_QUOTA, PERMISSION_TYPES, reasonsFor } from '../lib/permissionLogic.js';
@@ -154,7 +154,16 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
     setBusy(true);
     setError('');
     try {
-      const { data, error } = await supabase.from('permission_requests').insert({
+      // CRITICAL — use directPost, not supabase.from().insert(). The
+      // supabase-js builder chain silently wedges in this project (see
+      // architectural rule). The previous version used the broken path
+      // and rows would intermittently never persist, leaving the staff
+      // member thinking they submitted but no one downstream saw it.
+      // Per Nadeem (2026-05-06): "I made an early leave request from
+      // Bashaier but it still did not appear in Fahad screen" — this
+      // is the fix.
+      const newStage = initialApprovalStage(me, employees);
+      const row = {
         employee_id:     me.id,
         type,
         permission_date: date,
@@ -172,18 +181,19 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
         // Stage routing — managers (anyone with direct reports) skip
         // the manager-approval step and go straight to HR. Non-managers
         // start at 'pending_manager' as usual.
-        stage:           initialApprovalStage(me, employees),
-      }).select().single();
-      if (error) throw error;
+        stage:           newStage,
+      };
+      const created = await directPost('permission_requests', row, { timeoutMs: 10000 });
+      const data = Array.isArray(created) ? created[0] : created;
       logAction(me, 'permission_create', {
         targetType: 'permission_request',
         targetId: data?.id,
         targetLabel: `${cfg.label} · ${date} · ${timeFrom}–${timeTo} (${durationMin}m)${exceeds.willExceed ? ' (FLAGGED)' : ''}`,
-        details: { type, hours, time_from: timeFrom, time_to: timeTo, exceeds_quota: exceeds.willExceed, reason: finalReason },
+        details: { type, hours, time_from: timeFrom, time_to: timeTo, exceeds_quota: exceeds.willExceed, reason: finalReason, stage: newStage },
       });
       onSubmitted?.();
     } catch (err) {
-      setError(err.message);
+      setError(err?.message || 'Could not submit. Please try again.');
     } finally {
       setBusy(false);
     }
