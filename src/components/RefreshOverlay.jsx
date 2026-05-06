@@ -147,6 +147,16 @@ export default function RefreshOverlay({ open, message = 'Refreshing your dashbo
           0%, 100% { transform: translateY(0); }
           50%      { transform: translateY(4px); }
         }
+
+        /* Credit-line wave — each letter bobs up and down on a
+           staggered timing so the whole "Made with ✨ by the
+           HumbleGenius" phrase undulates like a banner in the
+           breeze. The animation-delay is set inline per letter
+           so each one starts at a slightly later offset. */
+        @keyframes esau-credit-wave {
+          0%, 100% { transform: translateY(0); }
+          50%      { transform: translateY(-5px); }
+        }
       `}</style>
 
       <div
@@ -468,31 +478,59 @@ export default function RefreshOverlay({ open, message = 'Refreshing your dashbo
 
           {/* Author credit — Nadeem's nickname is HumbleGenius (per
               the system, also the admin record in the employees
-              table). Keeping it small and subtle at the bottom so
-              it doesn't compete with the ship animation, but visible
-              enough to read during the 2-second hold. Uses
-              brand-green leaves on the sides as inline emojis. */}
-          <div
-            style={{
-              marginTop: '24px',
-              fontSize: '12px',
-              color: BRAND_GREEN,
-              opacity: 0.85,
-              fontWeight: 700,
-              letterSpacing: '0.04em',
-              fontFamily: 'Georgia, serif',
-              fontStyle: 'italic',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '8px',
-            }}
-          >
-            <span aria-hidden="true">🌿</span>
-            <span>Made with</span>
-            <span aria-hidden="true">💚</span>
-            <span>by the HumbleGenius</span>
-            <span aria-hidden="true">⚓</span>
-          </div>
+              table). Each letter bobs up and down on a staggered
+              timing so the whole banner waves like a flag in the
+              breeze. Black ink for legibility against the soft
+              cream backdrop. */}
+          {(() => {
+            const credit = 'Made with 💡 by the HumbleGenius ⚓';
+            const chars = Array.from(credit);
+            return (
+              <div
+                style={{
+                  marginTop: '24px',
+                  fontSize: '13px',
+                  color: '#0A0A0A',
+                  fontWeight: 700,
+                  letterSpacing: '0.02em',
+                  fontFamily: 'Georgia, serif',
+                  fontStyle: 'italic',
+                  display: 'inline-flex',
+                  flexWrap: 'wrap',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  gap: '0px',
+                }}
+                aria-label="Made with care by the HumbleGenius"
+              >
+                {chars.map((ch, i) => {
+                  // Animation delay staggers each letter by 60ms so
+                  // the wave visibly travels across the line. The
+                  // animation runs over 1.6s so each letter completes
+                  // its bob comfortably within one cycle of the
+                  // surrounding ship/wave choreography.
+                  const isSpace = ch === ' ';
+                  return (
+                    <span
+                      key={i}
+                      aria-hidden="true"
+                      style={{
+                        display: 'inline-block',
+                        whiteSpace: 'pre',
+                        animation: 'esau-credit-wave 1.6s ease-in-out infinite',
+                        animationDelay: `${i * 0.06}s`,
+                        // Slightly larger emoji glyphs so they stand
+                        // out within the line without dominating it.
+                        fontSize: ['💡', '⚓'].includes(ch) ? '15px' : 'inherit',
+                      }}
+                    >
+                      {isSpace ? '\u00A0' : ch}
+                    </span>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </div>
       </div>
     </>,
