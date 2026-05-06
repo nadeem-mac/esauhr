@@ -387,9 +387,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
            shows a 3-segment location breakdown (DMM / JED / RYD) with a mini split bar.
            The Your Tasks card is HR-only and scrolls to the Bashaier tasks anchor on click. */}
       <div className={`grid grid-cols-1 sm:grid-cols-2 ${
-            (bashaierMode && canSeePinReqs) ? 'lg:grid-cols-6' :
-            (bashaierMode || canSeePinReqs) ? 'lg:grid-cols-5' :
-            'lg:grid-cols-4'
+            canSeePinReqs ? 'lg:grid-cols-5' : 'lg:grid-cols-4'
           } gap-4`}
            style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
 
@@ -451,17 +449,10 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           </Tile>
         )}
 
-        {/* YOUR TASKS — HR reviewer only */}
-        {bashaierMode && (
-          <Tile label="YOUR TASKS" sublabel="Reports for Mr John" count={3}
-                accentDark="#BE185D" accentTint="#FDF2F8"
-                onClick={() => {
-                  const el = document.getElementById('bashaier-tasks-anchor');
-                  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }}>
-            <div className="text-[20px]">📋</div>
-          </Tile>
-        )}
+        {/* YOUR TASKS tile removed — moved to a REPORTS button in the
+            top header (see AppShell). Per Nadeem: "Remove Reports for
+            Mr John from landing page and put it in button on top as
+            REPORTS." */}
 
       </div>
 

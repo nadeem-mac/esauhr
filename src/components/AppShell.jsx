@@ -673,6 +673,36 @@ export default function AppShell({ session, me, onRefreshMe }) {
                 <div className="text-base font-semibold truncate max-w-[180px]">{session.user.email}</div>
               )}
             </div>
+            {/* REPORTS — HR-reviewer only. Replaces the YOUR TASKS
+                tile previously on the dashboard. Click navigates to
+                the dashboard tab and scrolls to the bashaier-tasks
+                anchor where the report-drafting card lives. */}
+            {isHrReviewer && !isAdmin && (
+              <button
+                onClick={() => {
+                  setTabPersistent('dashboard');
+                  // Wait one frame so the dashboard mounts, then scroll
+                  // to the anchor that BashaierTasksCard is wrapped in.
+                  setTimeout(() => {
+                    const el = document.getElementById('bashaier-tasks-anchor');
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }, 50);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px]"
+                title="Reports — Mr John report drafting"
+                style={{
+                  background: '#FDF2F8',
+                  border: '1px solid #F9A8D4',
+                  color: '#BE185D',
+                  fontWeight: 700,
+                  lineHeight: 1,
+                  cursor: 'pointer',
+                }}
+              >
+                <ClipboardList className="w-3.5 h-3.5" />
+                <span>REPORTS</span>
+              </button>
+            )}
             <button onClick={() => setShowNewRequest(true)}
               className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm"
               style={{ background: 'var(--ink)', color: 'var(--paper)' }}>
