@@ -277,16 +277,32 @@ export default function ReviewerPanel({ me }) {
       setLeave(lr || []);
       setPerms(pr || []);
 
-      // Fetch pending_certificate rows for HR reviewers and admins. Each
-      // such row is a staff sick declaration that hasn't been backed by
-      // a Sehhaty cert yet. PendingSickCertsCard at the top of the
-      // dashboard turns these into the tracker view; row count drives
-      // the visibility of the card itself (hidden when zero pending).
-      // We exclude the reviewer's OWN rows from the list — Bashaier
-      // shouldn't see her own declarations on her HR dashboard for
-      // the same separation-of-duties reason as leave/perm queues.
+      // Sick rows missing certificates — fetch for HR reviewers and
+      // admins. Each such row is a staff sick declaration that hasn't
+      // been backed by a Sehhaty cert yet. PendingSickCertsCard at
+      // the top of the dashboard turns these into the tracker view.
+      //
+      // Per Nadeem (2026-05-06): sick leaves now route through the
+      // manager (ALL STAFF → MANAGER → BASHAIER), so we no longer
+      // gate on stage='pending_certificate'. We instead detect
+      // "missing cert" by the column itself: sehhaty_code IS NULL.
+      // That covers rows at every active stage (pending_manager,
+      // pending_hr, even approved-but-uncertified-yet) without
+      // depending on the legacy holding stage. Cert-exempt rows
+      // (sick_cert_exempt=true) are still excluded.
+      //
+      // We also exclude the reviewer's OWN rows from the list —
+      // Bashaier shouldn't see her own declarations on her HR
+      // dashboard for the same separation-of-duties reason as
+      // leave/perm queues.
       if (isHrReviewer || isAdmin) {
-        const certQs = `select=*&stage=eq.pending_certificate&employee_id=neq.${encodeURIComponent(me.id)}&order=sick_declared_at.desc`;
+        const certQs =
+          'select=*&leave_type_id=eq.sick' +
+          '&sehhaty_code=is.null' +
+          '&sick_cert_exempt=eq.false' +
+          '&stage=in.(pending_certificate,pending_manager,pending_hr)' +
+          `&employee_id=neq.${encodeURIComponent(me.id)}` +
+          '&order=sick_declared_at.desc';
         const cr = await directGet('leave_requests', certQs, { timeoutMs: 10000 }).catch(() => []);
         setPendingCerts(cr || []);
         // Pull every reminder ever sent for the visible declarations.

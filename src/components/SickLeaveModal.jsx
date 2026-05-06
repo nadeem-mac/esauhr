@@ -175,9 +175,21 @@ export default function SickLeaveModal({
     let cancelled = false;
     (async () => {
       try {
+        // Find recent sick row from this employee that's still in flight
+        // and missing a cert — this used to gate on stage='pending_certificate'
+        // but Path A now starts at pending_manager (per "ALL STAFF →
+        // MANAGER → BASHAIER" routing), so we look up by the cert
+        // column instead. This way Path B's "attach to prior" prompt
+        // still finds the right row regardless of which stage it's
+        // sitting at.
         const rows = await directGet(
           'leave_requests',
-          `select=id,start_date,end_date,reason,sick_declared_at&employee_id=eq.${employee.id}&stage=eq.pending_certificate&sick_cert_exempt=eq.false&order=sick_declared_at.desc&limit=1`,
+          `select=id,start_date,end_date,reason,sick_declared_at,stage&employee_id=eq.${employee.id}` +
+          `&leave_type_id=eq.sick` +
+          `&sehhaty_code=is.null` +
+          `&sick_cert_exempt=eq.false` +
+          `&stage=in.(pending_certificate,pending_manager,pending_hr)` +
+          `&order=sick_declared_at.desc&limit=1`,
           { timeoutMs: 8000 }
         );
         if (!cancelled && Array.isArray(rows) && rows.length) {
@@ -283,7 +295,21 @@ export default function SickLeaveModal({
         end_date:           declarationEnd,
         days:               declarationDays,
         is_half_day:        false,
-        stage:              'pending_certificate',
+        // Stage routing — Per Nadeem (2026-05-06): "ALL STAFF →
+        // MANAGER → BASHAIER" applies to sick leave too. The old
+        // 'pending_certificate' holding state was HR-only and skipped
+        // the manager step entirely, so Sadakath had no idea his
+        // staff was sick today. We now route Path A declarations
+        // through the same initialApprovalStage path as everything
+        // else: Nadeem's sick → pending_manager (Sadakath approves
+        // operationally, "yes, X is out today"), Fahad's sick →
+        // pending_hr (Bashaier directly, manager-bypass).
+        //
+        // Cert tracking still works via the sehhaty_code IS NULL
+        // filter — Bashaier sees sick rows missing certs in her
+        // dashboard regardless of stage. The cert reminder system
+        // and extension flow look up rows by the same column.
+        stage:              initialApprovalStage(employee, employees),
         reason:             reasonText,
         requested_at:       nowIso,
         sick_declared_at:   nowIso,
