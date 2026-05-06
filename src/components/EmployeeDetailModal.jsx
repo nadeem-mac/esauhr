@@ -53,6 +53,50 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
     }
   };
 
+  // ─── Header delete-employee state ────────────────────────────────
+  // Per Nadeem: Delete button moves up next to the PIN button at the
+  // top of the modal. Same multi-step confirmation flow as the
+  // previous DangerZone — just triggered from the header now and the
+  // confirm dialog slides down under the header (like the PIN panel).
+  const canDelete = (me?.is_admin || me?.is_hr_reviewer) && me?.id !== employee.id;
+  const [delStage, setDelStage] = useState('idle');
+  // 'idle' | 'confirm' | 'submitting' | 'done' | 'error'
+  const [delTyped, setDelTyped] = useState('');
+  const [delError, setDelError] = useState('');
+  const [delResult, setDelResult] = useState(null);
+  React.useEffect(() => {
+    setDelStage('idle');
+    setDelTyped('');
+    setDelError('');
+    setDelResult(null);
+  }, [employee.id]);
+
+  const submitDelete = async () => {
+    setDelStage('submitting');
+    setDelError('');
+    try {
+      const { data, error } = await supabase.rpc('admin_delete_employee', {
+        target_psn:   employee.id,
+        confirmation: delTyped.trim(),
+      });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'Unknown error');
+      setDelResult(data);
+      setDelStage('done');
+      setTimeout(() => {
+        if (typeof onDeleted === 'function') {
+          try { onDeleted(employee.id, data); } catch (_) { /* swallow */ }
+        }
+        if (typeof onClose === 'function') {
+          onClose();
+        }
+      }, 1100);
+    } catch (e) {
+      setDelError(e?.message || String(e));
+      setDelStage('error');
+    }
+  };
+
   const balByType = useMemo(() => {
     return leaveTypes.map(t => {
       const adj = balances.find(b => b.leave_type_id === t.id && b.year === year) || {};
@@ -152,19 +196,55 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-1 flex-shrink-0">
+            <div className="flex items-center gap-1.5 flex-shrink-0">
               {canResetPin && (
                 <button
-                  onClick={() => setPinOpen(v => !v)}
-                  className="px-2 py-1.5 rounded-full text-[12px] hover:bg-black/5"
-                  style={{ color: pinOpen ? '#0F4C2A' : '#1F1B16', fontWeight: 600, lineHeight: 1 }}
+                  onClick={() => { setPinOpen(v => !v); if (delStage !== 'idle') { setDelStage('idle'); setDelTyped(''); setDelError(''); } }}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px]"
+                  style={{
+                    background: pinOpen ? '#E8F5E9' : '#FFFFFF',
+                    border: '1px solid ' + (pinOpen ? '#A7F3D0' : 'var(--border-soft)'),
+                    color: pinOpen ? '#0F4C2A' : '#1F1B16',
+                    fontWeight: 600,
+                    lineHeight: 1,
+                    cursor: 'pointer',
+                  }}
                   title="Reset PIN for this employee"
-                  aria-label="Reset PIN"
                 >
-                  🔑
+                  <span style={{ fontSize: 13 }} aria-hidden="true">🔑</span>
+                  <span>Reset PIN</span>
                 </button>
               )}
-              <button onClick={onClose} className="p-1.5 rounded-full hover:bg-black/5">
+              {canDelete && (
+                <button
+                  onClick={() => {
+                    if (delStage === 'idle') {
+                      setDelStage('confirm');
+                      setDelTyped('');
+                      setDelError('');
+                      setPinOpen(false);
+                    } else {
+                      setDelStage('idle');
+                      setDelTyped('');
+                      setDelError('');
+                    }
+                  }}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px]"
+                  style={{
+                    background: delStage !== 'idle' ? '#FEE2E2' : '#FFFFFF',
+                    border: '1px solid ' + (delStage !== 'idle' ? '#FCA5A5' : 'var(--border-soft)'),
+                    color: delStage !== 'idle' ? '#991B1B' : '#1F1B16',
+                    fontWeight: 600,
+                    lineHeight: 1,
+                    cursor: 'pointer',
+                  }}
+                  title="Permanently delete this employee"
+                >
+                  <span style={{ fontSize: 13 }} aria-hidden="true">🗑️</span>
+                  <span>Delete</span>
+                </button>
+              )}
+              <button onClick={onClose} className="p-1.5 rounded-full hover:bg-black/5" aria-label="Close" title="Close">
                 <X className="w-4 h-4"/>
               </button>
             </div>
@@ -274,6 +354,114 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                     </div>
                   )}
                 </form>
+              )}
+            </div>
+          )}
+
+          {/* Inline Delete-employee confirm panel — opens when admin
+              clicks the 🗑️ Delete pill. Mirrors the PIN panel's
+              placement (inside the sticky header band, slides down
+              below the title row) so both header-triggered actions
+              surface in the same predictable spot. Multi-step:
+              confirm → submitting → done / error. */}
+          {canDelete && delStage !== 'idle' && (
+            <div className="mt-3 pt-3" style={{ borderTop: '1px dashed #FCA5A5' }}>
+              {delStage === 'done' ? (
+                /* Success — green banner with cleanup counts */
+                <div className="flex items-start gap-2 rounded-lg" style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', padding: '10px 12px', color: '#0F4C2A' }}>
+                  <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <div className="text-[12px]">
+                    <div style={{ fontWeight: 700 }}>{delResult?.name || employee.name} removed</div>
+                    {delResult?.counts && (
+                      <div className="mt-0.5 text-[10.5px]" style={{ opacity: 0.85 }}>
+                        Cleaned up:{' '}
+                        {Object.entries(delResult.counts)
+                          .filter(([, n]) => n > 0)
+                          .map(([k, n]) => `${n} ${k.replace(/_/g, ' ')}`)
+                          .join(', ') || 'no associated records'}.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                /* Confirm / submitting / error — full warning */
+                <div>
+                  <div className="flex items-start gap-2 mb-2">
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#991B1B' }} />
+                    <div>
+                      <div className="text-[11px]" style={{ color: '#991B1B', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase' }}>
+                        Delete {employee.name}?
+                      </div>
+                      <div className="text-[11.5px] mt-1" style={{ color: '#7F1D1D', lineHeight: 1.5 }}>
+                        This <strong>cannot be undone</strong>. All data for this staff member will be deleted: profile, government records, leave requests &amp; balances, attendance records &amp; uploads, shift plans, permissions, and PSN authentication. The deletion is recorded in the activity log under your name.
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Typed-confirmation input + action buttons in one row */}
+                  <div className="flex items-end gap-2 flex-wrap mt-2">
+                    <div className="flex-1" style={{ minWidth: 180 }}>
+                      <label className="block text-[9px] tracking-[0.16em] mb-1" style={{ color: '#7F1D1D', fontWeight: 700 }}>
+                        TYPE <span className="font-mono px-1 py-0.5 rounded" style={{ background: '#FFFFFF', border: '1px solid #FCA5A5', letterSpacing: '0.1em' }}>{employee.id}</span> TO CONFIRM
+                      </label>
+                      <input
+                        type="text"
+                        value={delTyped}
+                        onChange={e => setDelTyped(e.target.value)}
+                        disabled={delStage === 'submitting'}
+                        autoFocus
+                        placeholder={employee.id}
+                        className="w-full px-3 py-1.5 rounded-lg border text-sm font-mono"
+                        style={{
+                          borderColor: delTyped && delTyped.trim() !== employee.id ? '#FCA5A5' : 'var(--border-soft)',
+                          background: '#FFFFFF',
+                          color: '#1F1B16',
+                          letterSpacing: '0.1em',
+                        }}
+                      />
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => { setDelStage('idle'); setDelTyped(''); setDelError(''); }}
+                        disabled={delStage === 'submitting'}
+                        className="text-[11px] px-3 py-1.5 rounded-full"
+                        style={{
+                          background: '#FFFFFF',
+                          border: '1px solid var(--border-soft)',
+                          color: '#0A0A0A',
+                          cursor: delStage === 'submitting' ? 'not-allowed' : 'pointer',
+                          fontWeight: 600,
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={submitDelete}
+                        disabled={delStage === 'submitting' || delTyped.trim() !== employee.id}
+                        className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-full"
+                        style={{
+                          background: '#991B1B',
+                          color: '#FFFFFF',
+                          border: 'none',
+                          cursor: (delStage === 'submitting' || delTyped.trim() !== employee.id) ? 'not-allowed' : 'pointer',
+                          opacity: (delStage === 'submitting' || delTyped.trim() !== employee.id) ? 0.5 : 1,
+                          fontWeight: 700,
+                        }}
+                      >
+                        {delStage === 'submitting'
+                          ? <><Loader2 className="w-3 h-3 animate-spin" /> Deleting…</>
+                          : <><Trash2 className="w-3 h-3" /> Permanently delete</>}
+                      </button>
+                    </div>
+                  </div>
+
+                  {delError && (
+                    <div className="mt-2 flex items-center gap-1.5 px-2 py-1 rounded text-[11px]"
+                      style={{ background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}>
+                      <AlertCircle className="w-3 h-3 flex-shrink-0" /> {delError}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}
@@ -429,22 +617,13 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
               for it". The inline panel opens below the header on
               click. */}
 
-          {/* Danger zone — admin + HR reviewer can permanently delete
-              an employee record. Sits at the bottom of the modal,
-              visually separated, multi-step confirmation required.
-              Per Nadeem: "Admin and Bashaier has the access to delete
-              the staff completely if they wish to, but with warning
-              message that the complete data for that staff will be
-              deleted from records, once they confirm remove that
-              staff from records and make sure all system is safe." */}
-          {(me?.is_admin || me?.is_hr_reviewer) && employee?.id && me?.id !== employee.id && (
-            <DangerZone
-              employee={employee}
-              me={me}
-              onDeleted={onDeleted}
-              onClose={onClose}
-            />
-          )}
+          {/* Danger zone moved to the header too — Nadeem: "suggest
+              keep delete employee button on top next to PIN emoji,
+              use a name tag for the emoji make it appear as a
+              button and after that keep delete button with emoji".
+              The 🗑️ Delete pill in the header corner triggers the
+              same multi-step confirmation flow that used to live
+              here at the bottom. */}
         </div>
       </div>
     </div>
