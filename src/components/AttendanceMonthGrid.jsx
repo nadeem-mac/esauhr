@@ -34,7 +34,7 @@
 // =============================================================================
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, RefreshCcw, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RefreshCcw, Loader2, Search, X } from 'lucide-react';
 import { directGet, supabase } from '../supabaseClient.js';
 
 // Local YYYY-MM-DD without timezone surprises.
@@ -93,6 +93,11 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick }) {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(false);
   const [hoverTip, setHoverTip] = useState(null);
+  // Search filter — Bashaier types a name fragment / PSN / dept and
+  // the grid narrows to matching staff. Empty string = no filter.
+  // Match is case-insensitive, substring across name, id, department,
+  // location, designation — whichever fields the employees row carries.
+  const [search, setSearch] = useState('');
 
   const firstDay = useMemo(() => new Date(year, month, 1), [year, month]);
   const lastDay  = useMemo(() => new Date(year, month + 1, 0), [year, month]);
@@ -161,11 +166,33 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick }) {
   // Otherwise the grid would render every employee in the directory
   // even if Bashaier never uploaded their data — defeats the
   // purpose of an "actively-tracked" view.
+  //
+  // Then narrow further by the search box. The search is broad
+  // (matches against any text field on the employee row) so
+  // Bashaier can find staff by partial name, PSN digits, or
+  // department code without thinking about which to type.
   const tracked = useMemo(() => {
     const have = new Set(records.map(r => r.employee_id));
-    return (employees || [])
+    const all = (employees || [])
       .filter(e => have.has(e.id))
       .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+    const q = search.trim().toLowerCase();
+    if (!q) return all;
+    return all.filter(e => {
+      const haystack = [
+        e.name, e.id, e.department, e.location,
+        e.designation, e.email,
+      ].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [employees, records, search]);
+
+  // Total tracked count (before search filter) — used in the result
+  // counter when search is active so Bashaier sees "12 of 64" not
+  // just "12".
+  const trackedTotalCount = useMemo(() => {
+    const have = new Set(records.map(r => r.employee_id));
+    return (employees || []).filter(e => have.has(e.id)).length;
   }, [employees, records]);
 
   function nav(delta) {
@@ -257,12 +284,113 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick }) {
         </div>
       </div>
 
-      {tracked.length === 0 ? (
+      {/* Search row — lets Bashaier narrow the grid to a specific
+          staffer or department. Sits below the title bar and above
+          the calendar grid so it's visible whether or not the grid
+          is scrolled horizontally. The result counter on the right
+          adapts to whether a search is active:
+            • No search   → "64 staff"
+            • With search → "12 of 64 staff"
+          Empty result is handled in the grid below — same empty
+          state markup, different copy. */}
+      {trackedTotalCount > 0 && (
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <div
+            style={{
+              position: 'relative',
+              flex: '1 1 240px',
+              maxWidth: 360,
+            }}
+          >
+            <Search
+              className="w-3.5 h-3.5"
+              style={{
+                position: 'absolute',
+                left: 10, top: '50%',
+                transform: 'translateY(-50%)',
+                color: '#0A0A0A',
+                opacity: 0.5,
+                pointerEvents: 'none',
+              }}
+            />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by name, PSN, department…"
+              aria-label="Search staff in monthly attendance"
+              style={{
+                width: '100%',
+                padding: '7px 32px 7px 32px',
+                border: '1px solid #D4D4D4',
+                borderRadius: 999,
+                fontSize: 12,
+                fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
+                background: '#FFFFFF',
+                color: '#1F1B16',
+                outline: 'none',
+              }}
+            />
+            {search && (
+              <button
+                onClick={() => setSearch('')}
+                aria-label="Clear search"
+                style={{
+                  position: 'absolute',
+                  right: 6, top: '50%',
+                  transform: 'translateY(-50%)',
+                  width: 22, height: 22,
+                  borderRadius: 999,
+                  border: 'none',
+                  background: '#F5F5F5',
+                  color: '#0A0A0A',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+          <div className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.65 }}>
+            {search
+              ? `${tracked.length} of ${trackedTotalCount} staff`
+              : `${trackedTotalCount} staff`}
+          </div>
+        </div>
+      )}
+
+      {/* When search filters out everything, show a dedicated empty
+          state so Bashaier doesn't see a blank canvas. The "no records
+          this month" empty state below handles the unfiltered case. */}
+      {trackedTotalCount > 0 && tracked.length === 0 && search ? (
+        <div className="text-center py-8" style={{ color: '#0A0A0A', opacity: 0.55 }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>No staff match &ldquo;{search}&rdquo;.</div>
+          <button
+            onClick={() => setSearch('')}
+            className="text-[11px] mt-2 px-3 py-1.5 rounded-full"
+            style={{
+              background: '#FFFFFF',
+              color: '#1F1B16',
+              border: '1px solid #D4D4D4',
+              fontWeight: 600,
+              cursor: 'pointer',
+              fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
+            }}
+          >
+            Clear search
+          </button>
+        </div>
+      ) : null}
+
+      {trackedTotalCount === 0 ? (
         <div className="text-center py-10" style={{ color: '#0A0A0A', opacity: 0.5 }}>
           <div style={{ fontSize: 14, fontWeight: 600 }}>No attendance records yet for {monthLabel}.</div>
           <div className="text-xs mt-1">Upload an attendance file above and the calendar will start filling in.</div>
         </div>
-      ) : (
+      ) : tracked.length === 0 ? null : (
         <div style={{ overflowX: 'auto' }}>
           <div style={{ display: 'grid', gridTemplateColumns: `220px repeat(${days.length}, minmax(28px, 1fr))`, gap: 1, minWidth: 'fit-content' }}>
             {/* Header */}
