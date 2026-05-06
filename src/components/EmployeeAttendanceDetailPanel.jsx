@@ -1102,6 +1102,12 @@ function MonthCalendar({ year, monthIdx, rows }) {
               const isEP = meta.icon === '✓EP';
               if (isLP) tipParts.push('✓ Late arrival covered by approved permission');
               if (isEP) tipParts.push('✓ Early leave covered by approved permission');
+              // Shift-day tooltip line — extract the schedule from
+              // notes so HR sees which shift was assigned on hover.
+              const shiftMatch = typeof r.notes === 'string'
+                ? r.notes.match(/(?:Overnight\s+)?Shift\s*\((\d{2}:\d{2}-\d{2}:\d{2})\)/i)
+                : null;
+              if (shiftMatch) tipParts.push(`🌙 Shift day — ${shiftMatch[1]}`);
               if (missedKind) tipParts.push('⚠ ' + missedKind);
               if (r.status === 'late' && r.late_minutes != null && r.late_minutes > 0)
                 tipParts.push(`${r.late_minutes} min late`);
@@ -1199,6 +1205,10 @@ function MonthCalendar({ year, monthIdx, rows }) {
                         }}
                       >
                         {meta.icon}
+                        {(typeof r.notes === 'string' &&
+                          /(?:^|\s)(?:Overnight\s+)?Shift\s*\(\d{2}:\d{2}-\d{2}:\d{2}\)/i.test(r.notes)) && (
+                          <span aria-hidden style={{ marginLeft: 2, fontSize: 8 }} title="Shift day">🌙</span>
+                        )}
                       </div>
                     </div>
 

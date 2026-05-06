@@ -515,6 +515,16 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick }) {
                     const hasFirst = !!r.first_punch;
                     const hasLast  = !!r.last_punch;
                     const missedPunch = (hasFirst && !hasLast) || (!hasFirst && hasLast);
+                    // Shift-day indicator — moon icon shown alongside
+                    // the status chip when this row was evaluated
+                    // against a manager-assigned shift schedule (the
+                    // notes carry the "Shift (HH:MM-HH:MM)" or
+                    // "Overnight Shift (...)" marker the backfill
+                    // stamps). Per Nadeem (2026-05-06): staff assigned
+                    // a shift during the month should have a small 🌙
+                    // alongside their daily status chip.
+                    const isShiftDay = typeof r.notes === 'string' &&
+                      /(?:^|\s)(?:Overnight\s+)?Shift\s*\(\d{2}:\d{2}-\d{2}:\d{2}\)/i.test(r.notes);
                     return (
                       <div
                         key={dStr}
@@ -549,6 +559,17 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick }) {
                           }}
                         >
                           {sty.label}
+                          {isShiftDay && (
+                            <span
+                              aria-hidden
+                              title="Shift day"
+                              style={{
+                                marginLeft: 2,
+                                fontSize: 8,
+                                lineHeight: 1,
+                              }}
+                            >🌙</span>
+                          )}
                           {missedPunch && (
                             <span
                               aria-hidden
@@ -588,6 +609,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick }) {
           { st: 'sick_leave',   lbl: 'Sick leave' },
           { st: 'off_roster',   lbl: 'Off-roster work' },
           { st: 'off_day',      lbl: 'Off-day' },
+          { st: 'present',      lbl: 'Shift day', overrideStyle: { bg: '#F8FAFC', fg: '#1F2937', border: '#CBD5E1', label: '🌙' } },
         ].map(({ st, lbl, overrideStyle }, idx) => {
           const sty = overrideStyle || styleForStatus(st);
           return (
@@ -644,6 +666,13 @@ function HoverTooltip({ x, yTop, yBottom, record, employee, dateStr, weekday }) 
     : isEarlyPermitted
       ? 'Early leave — covered by approved permission'
       : null;
+  // Shift-day indicator on the tooltip — extracts the schedule
+  // label from the notes so HR can see exactly which shift was
+  // assigned ("Shift (20:00-05:00)") on hover.
+  const shiftMatch = typeof record.notes === 'string'
+    ? record.notes.match(/(?:Overnight\s+)?Shift\s*\((\d{2}:\d{2}-\d{2}:\d{2})\)/i)
+    : null;
+  const shiftLine = shiftMatch ? `🌙 Shift day — ${shiftMatch[1]}` : null;
 
   // Detect missing punches — surfaces the data-quality issue clearly
   // rather than hiding it inside the notes field. A row is "missed
@@ -687,6 +716,7 @@ function HoverTooltip({ x, yTop, yBottom, record, employee, dateStr, weekday }) 
       {missedLine && <div style={{ fontSize: 10.5, color: '#F0ABFC', marginTop: 2, fontWeight: 700 }}>⚠ {missedLine}</div>}
       {minutesLine && <div style={{ fontSize: 10.5, color: '#FCD34D', marginTop: 2 }}>{minutesLine}</div>}
       {coveredLine && <div style={{ fontSize: 10.5, color: '#93C5FD', marginTop: 2, fontWeight: 700 }}>✓ {coveredLine}</div>}
+      {shiftLine && <div style={{ fontSize: 10.5, color: '#CBD5E1', marginTop: 2, fontWeight: 600 }}>{shiftLine}</div>}
       {record.notes && <div style={{ fontSize: 10, opacity: 0.85, marginTop: 4, fontStyle: 'italic' }}>{record.notes}</div>}
     </div>
   );
