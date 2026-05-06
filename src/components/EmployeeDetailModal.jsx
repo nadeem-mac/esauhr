@@ -60,16 +60,17 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
           {/* Government records — Arabic name, National ID, DOB,
               gender, official Arabic profession, GOSI eligibility,
               MOL join date. Populated by the MOL · GOSI sync flow.
-              Only renders when at least one government field has a
-              value, so for unsynced employees the modal layout
-              stays the same as before.
-              Visible to admin and HR reviewer (they administer
-              government correspondence); regular staff see only
-              their OWN government record on the personal dashboard
-              if needed (out of scope for this commit — the modal
-              is mostly used by privileged roles). */}
+              Always renders for admin and HR reviewer (they administer
+              government correspondence) — when empty, the section
+              surfaces a "Pull from MOL · GOSI" button so they can
+              fill it for this one employee without going to the
+              bulk sync tab.
+              Regular staff see only their OWN government record on
+              the personal dashboard if needed (out of scope for
+              this commit — the modal is mostly used by privileged
+              roles). */}
           {(me?.is_admin || me?.is_hr_reviewer) && employee?.id && (
-            <GovernmentRecordsPanel employee={employee} />
+            <GovernmentRecordsPanel employee={employee} onSaved={onSaved} />
           )}
 
           {/* Edit-profile panel — visible only to admin + HR reviewer.
@@ -631,7 +632,125 @@ function MonthlyAttendancePanel({ employee, empMap, me }) {
 //
 // All values rendered as-is: Arabic fields keep their RTL direction
 // and Arabic font, English fields are uppercase per HR convention.
-function GovernmentRecordsPanel({ employee }) {
+function GovernmentRecordsPanel({ employee, onSaved }) {
+  // ─── Per-employee MOL/GOSI pull ─────────────────────────────────
+  // Bulk sync (the MOL · GOSI tab) handles the whole roster at once
+  // but admin needs a per-employee fallback for two cases:
+  //   • The employee was added to the portal AFTER the last bulk
+  //     sync and never got their gov fields populated
+  //   • A specific row failed to apply during the bulk sync (CHECK
+  //     constraint, transient network blip) and admin wants to
+  //     retry just that record
+  // The button below loads the bundled MOL snapshot (which is the
+  // committed copy of Jafar's most recent file), finds the best
+  // matching subscriber for THIS employee using national_id first
+  // (deterministic) then englishNameSimilarity, and offers to apply.
+  const [pullState, setPullState] = useState('idle');
+  // 'idle' | 'preview' | 'applying' | 'done' | 'error'
+  const [pullMatch, setPullMatch] = useState(null);
+  const [pullError, setPullError] = useState(null);
+
+  const findMolMatch = async () => {
+    setPullState('idle');
+    setPullError(null);
+    try {
+      // Lazy-import the snapshot + matcher so the modal doesn't load
+      // them upfront for every employee view.
+      const [snapshotModule, syncLib] = await Promise.all([
+        import('../data/molSnapshot.json'),
+        import('../lib/molSync.js'),
+      ]);
+      const snapshot = snapshotModule.default || snapshotModule;
+      const subs = snapshot.subscribers || [];
+
+      // Phase 1 — National ID match (deterministic). If the employee
+      // already has a national_id set (from a prior partial sync),
+      // use it directly.
+      let matched = null;
+      let confidence = 0;
+      let reason = '';
+      if (employee.national_id) {
+        matched = subs.find(s => String(s.national_id) === String(employee.national_id));
+        if (matched) { confidence = 1.0; reason = 'National ID match'; }
+      }
+
+      // Phase 2 — Best-effort name match. Use canonical-vs-portal-name
+      // similarity, same algorithm as the bulk sync.
+      if (!matched) {
+        let best = { sub: null, score: 0 };
+        for (const s of subs) {
+          if (!s.canonical_name) continue;
+          const score = syncLib.englishNameSimilarity(s.canonical_name, employee.name || '');
+          if (score > best.score) best = { sub: s, score };
+        }
+        if (best.sub && best.score >= 0.3) {
+          matched = best.sub;
+          confidence = best.score;
+          reason = best.score >= 0.7 ? 'Name match' : 'Best-effort name match';
+        }
+      }
+
+      if (matched) {
+        setPullMatch({ sub: matched, confidence, reason });
+        setPullState('preview');
+      } else {
+        setPullError(`No matching MOL/GOSI record found for ${employee.name}. Try the bulk sync tab to upload a fresh MOL file.`);
+        setPullState('error');
+      }
+    } catch (e) {
+      setPullError(String(e?.message || e));
+      setPullState('error');
+    }
+  };
+
+  const applyPull = async () => {
+    if (!pullMatch?.sub) return;
+    setPullState('applying');
+    setPullError(null);
+    try {
+      const m = pullMatch.sub;
+      const patch = {
+        arabic_name:       m.arabic_name || null,
+        national_id:       m.national_id || null,
+        date_of_birth:     m.date_of_birth || null,
+        gender:            m.gender || null,
+        arabic_profession: m.arabic_profession || null,
+        mol_join_date:     m.mol_join_date || null,
+        gosi_eligibility:  m.gosi_eligibility || null,
+        nationality:       m.nationality || null,
+        mol_synced_at:     new Date().toISOString(),
+      };
+      // Overwrite the English name with the canonical transliteration —
+      // matches what the bulk sync does. Per Nadeem: portal name should
+      // appear the same as it does in GOSI's English form. Our
+      // dictionary-driven transliteration is the closest source we have
+      // to that since GOSI's English name field isn't exported in MOL.
+      if (m.canonical_name) {
+        patch.name = m.canonical_name;
+      }
+      const updated = await directPatch(
+        'employees', 'id', employee.id, patch,
+        { timeoutMs: 9000 }
+      );
+      // directPatch returns the updated row (or array of rows); merge
+      // it into the modal's employee state via onSaved so the panel
+      // refreshes immediately without closing.
+      const newEmp = Array.isArray(updated) ? updated[0] : updated;
+      if (onSaved && newEmp) {
+        onSaved({ ...employee, ...newEmp });
+      }
+      setPullState('done');
+      // Auto-collapse the preview after a short success display
+      setTimeout(() => {
+        setPullState('idle');
+        setPullMatch(null);
+      }, 1500);
+    } catch (e) {
+      setPullError(String(e?.message || e));
+      setPullState('error');
+    }
+  };
+
   const hasAny =
     employee.arabic_name ||
     employee.national_id ||
@@ -640,9 +759,7 @@ function GovernmentRecordsPanel({ employee }) {
     employee.arabic_profession ||
     employee.mol_join_date ||
     employee.gosi_eligibility ||
-    (employee.nationality && employee.nationality !== 'expat'); // skip the default
-
-  if (!hasAny) return null;
+    (employee.nationality && employee.nationality !== 'expat');
 
   const fmt = (v) => v == null || v === '' ? '—' : v;
   const fmtDateLocal = (s) => {
@@ -665,13 +782,139 @@ function GovernmentRecordsPanel({ employee }) {
         padding: '14px 16px',
       }}
     >
-      <div className="text-[10px] tracking-[0.25em] mb-3" style={{ color: '#0F4C2A', fontWeight: 700 }}>
-        GOVERNMENT RECORDS
-        <span className="ml-2 px-1.5 py-0.5 rounded-full text-[8.5px]"
-          style={{ background: '#E8F5E9', color: '#0F4C2A', letterSpacing: '0.04em' }}>
-          MOL · GOSI
-        </span>
+      <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
+        <div className="text-[10px] tracking-[0.25em]" style={{ color: '#0F4C2A', fontWeight: 700 }}>
+          GOVERNMENT RECORDS
+          <span className="ml-2 px-1.5 py-0.5 rounded-full text-[8.5px]"
+            style={{ background: '#E8F5E9', color: '#0F4C2A', letterSpacing: '0.04em' }}>
+            MOL · GOSI
+          </span>
+        </div>
+        {/* Per-employee Pull-from-MOL button. Always visible to admin/
+            HR-reviewer (panel-level gate above the panel handles role).
+            When fields are partially populated the button still works
+            — re-pulls the latest snapshot for this employee. */}
+        {pullState !== 'preview' && pullState !== 'applying' && (
+          <button
+            onClick={findMolMatch}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10.5px]"
+            style={{
+              background: hasAny ? '#FFFFFF' : '#0F4C2A',
+              color: hasAny ? '#0F4C2A' : '#FFFFFF',
+              border: hasAny ? '1px solid #A7F3D0' : 'none',
+              fontWeight: 700,
+              cursor: 'pointer',
+              letterSpacing: '0.04em',
+            }}
+            title="Look up this employee in the MOL/GOSI snapshot and fill the government fields"
+          >
+            <FileText className="w-3 h-3" />
+            {hasAny ? 'Re-pull from MOL · GOSI' : 'Pull from MOL · GOSI'}
+          </button>
+        )}
       </div>
+
+      {/* Empty-state hint when nothing has been synced yet for this
+          employee. Tells admin exactly what to do — click the button
+          above. */}
+      {!hasAny && pullState === 'idle' && (
+        <div className="mb-3 p-3 rounded-lg text-[12px]"
+          style={{ background: '#FFFBEB', border: '1px solid #FDE68A', color: '#854F0B' }}>
+          No government data on file yet. Click <strong>Pull from MOL · GOSI</strong> above to fill the National ID, date of birth, profession, and GOSI registration from the latest MOL snapshot.
+        </div>
+      )}
+
+      {/* Preview — admin reviews the matched MOL row before applying */}
+      {pullState === 'preview' && pullMatch && (
+        <div className="mb-3 p-3 rounded-lg text-[12px]"
+          style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', color: '#1F1B16' }}>
+          <div className="flex items-start justify-between gap-2 mb-2 flex-wrap">
+            <div>
+              <div style={{ fontWeight: 700, color: '#0F4C2A' }}>
+                Found a {Math.round(pullMatch.confidence * 100)}% match in MOL · GOSI
+              </div>
+              <div className="text-[10.5px]" style={{ opacity: 0.7 }}>
+                {pullMatch.reason}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => { setPullState('idle'); setPullMatch(null); }}
+                className="px-2.5 py-1 rounded-full text-[10.5px]"
+                style={{ background: '#FFFFFF', color: '#1F1B16', border: '1px solid #D4D4D4', cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={applyPull}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10.5px]"
+                style={{ background: '#0F4C2A', color: '#FFFFFF', border: 'none', fontWeight: 700, cursor: 'pointer' }}
+              >
+                <Save className="w-3 h-3" />
+                Apply to this employee
+              </button>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
+            <div>
+              <span style={{ opacity: 0.7 }}>New name:</span>{' '}
+              <strong>{pullMatch.sub.canonical_name || '—'}</strong>
+              {pullMatch.sub.canonical_name && employee.name && pullMatch.sub.canonical_name !== employee.name && (
+                <div style={{ opacity: 0.55, textDecoration: 'line-through', fontSize: 10 }}>
+                  was: {employee.name}
+                </div>
+              )}
+            </div>
+            <div>
+              <span style={{ opacity: 0.7 }}>National ID:</span>{' '}
+              <strong className="font-mono">{pullMatch.sub.national_id || '—'}</strong>
+            </div>
+            <div className="col-span-2" style={{ direction: 'rtl', fontFamily: 'system-ui' }}>
+              <span style={{ opacity: 0.7 }}>الاسم:</span>{' '}
+              <strong>{pullMatch.sub.arabic_name || '—'}</strong>
+            </div>
+            <div>
+              <span style={{ opacity: 0.7 }}>DOB:</span>{' '}
+              <strong>{fmtDateLocal(pullMatch.sub.date_of_birth)}</strong>
+            </div>
+            <div>
+              <span style={{ opacity: 0.7 }}>GOSI registration:</span>{' '}
+              <strong>{fmtDateLocal(pullMatch.sub.mol_join_date)}</strong>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pullState === 'applying' && (
+        <div className="mb-3 p-3 rounded-lg flex items-center gap-2 text-[12px]"
+          style={{ background: '#F0F9FF', border: '1px solid #BAE6FD', color: '#0C4A6E' }}>
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Applying MOL · GOSI data…
+        </div>
+      )}
+
+      {pullState === 'done' && (
+        <div className="mb-3 p-3 rounded-lg flex items-center gap-2 text-[12px]"
+          style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', color: '#0F4C2A' }}>
+          <CheckCircle2 className="w-4 h-4" />
+          Government records updated for {employee.name}.
+        </div>
+      )}
+
+      {pullState === 'error' && pullError && (
+        <div className="mb-3 p-3 rounded-lg flex items-start gap-2 text-[12px]"
+          style={{ background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B' }}>
+          <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">{pullError}</div>
+          <button
+            onClick={() => { setPullState('idle'); setPullError(null); }}
+            className="text-[10.5px] underline"
+            style={{ background: 'none', border: 'none', color: '#991B1B', cursor: 'pointer' }}
+          >
+            dismiss
+          </button>
+        </div>
+      )}
 
       <div className="grid sm:grid-cols-2 gap-x-6 gap-y-3">
         {/* Arabic name — wide, RTL */}
