@@ -51,6 +51,7 @@ import {
   reevaluateBackfillRows,
 } from '../lib/attendanceBackfill.js';
 import { TimeCardParseError } from '../lib/timeCard.js';
+import { directGet } from '../supabaseClient.js';
 
 // ─── Inline keyframes ────────────────────────────────────────────────
 // Plain ease transitions — bounces removed per Nadeem's feedback.
@@ -125,16 +126,21 @@ export default function AttendanceBackfillPanel({ me, employees, embedded = fals
     setParsing(true);
     try {
       const parsedFile = await parseBackfillXlsx(file);
-      // Fetch shift-worker IDs + Mawani-visit days in parallel with
-      // parsing — both are quick queries. Used by buildBackfillRows
-      // to apply the right policy per employee/date.
-      const [shiftEmployeeIds, mawaniDays] = await Promise.all([
+      // Fetch shift-worker IDs + Mawani-visit days + fresh employee
+      // working-hours-group lookup in parallel with parsing. Fresh
+      // employees fetch is critical — the prop from the parent page
+      // is loaded once on mount, so any SUP designations made via
+      // the WorkingHoursManager since then wouldn't be reflected.
+      // Falls back to the parent prop if the fetch fails.
+      const [shiftEmployeeIds, mawaniDays, freshEmps] = await Promise.all([
         fetchShiftEmployeeIds(),
         fetchMawaniDays(),
+        directGet('employees', 'select=*&order=name', { timeoutMs: 9000 })
+          .catch(() => null),
       ]);
       const built = buildBackfillRows({
         parsedRows: parsedFile.rows,
-        employees,
+        employees: Array.isArray(freshEmps) && freshEmps.length > 0 ? freshEmps : employees,
         recordedBy: me?.id || null,
         shiftEmployeeIds,
         mawaniDays,

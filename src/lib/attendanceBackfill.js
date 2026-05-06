@@ -550,23 +550,26 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
   const shiftSet = await fetchShiftEmployeeIds();
   const mawaniSet = await fetchMawaniDays();
 
-  // Build empPolicyMap: employee_id → policy { startTime, endTime, ... }
-  // Caller can pass `employees` to avoid an extra fetch; otherwise
-  // we look up the working_hours_group column from the employees table.
-  let empById = options?.employees
-    ? new Map((options.employees || []).map(e => [e?.id, e]).filter(([k]) => k))
-    : null;
-  if (!empById) {
-    try {
-      const emps = await directGet(
-        'employees',
-        'select=id,working_hours_group',
-        { timeoutMs: 9000 }
-      );
-      empById = new Map((emps || []).map(e => [e?.id, e]).filter(([k]) => k));
-    } catch {
-      empById = new Map();
-    }
+  // Build empPolicyMap: employee_id → policy. ALWAYS fetch fresh
+  // here — the caller's employees prop may be stale if the user
+  // recently marked staff as SUP (the prop typically comes from a
+  // page-level fetch that runs once on mount, so working_hours_group
+  // changes made via the WorkingHoursManager wouldn't be reflected).
+  // A fresh fetch is cheap (one column from a small table) and
+  // guarantees the latest policy designations are applied. Falls
+  // back to options.employees only if the fetch genuinely fails.
+  let empById = null;
+  try {
+    const emps = await directGet(
+      'employees',
+      'select=id,working_hours_group',
+      { timeoutMs: 9000 }
+    );
+    empById = new Map((emps || []).map(e => [e?.id, e]).filter(([k]) => k));
+  } catch {
+    empById = options?.employees
+      ? new Map((options.employees || []).map(e => [e?.id, e]).filter(([k]) => k))
+      : new Map();
   }
 
   // Phase 2 — fetch all backfill rows. Project only the columns
