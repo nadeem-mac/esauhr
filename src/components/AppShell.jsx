@@ -28,6 +28,7 @@ import HiringView from './HiringView.jsx';
 import PersonalDashboard from './PersonalDashboard.jsx';
 import ManagerDashboard  from './ManagerDashboard.jsx';
 import ReviewerPanel from './ReviewerPanel.jsx';
+import BashaierTasksCard from './BashaierTasksCard.jsx';
 import EvergreenLogo from './EvergreenLogo.jsx';
 import AttendanceView from './AttendanceView.jsx';
 import RefreshOverlay from './RefreshOverlay.jsx';
@@ -90,9 +91,22 @@ function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, isHiringViewe
     base.push({ id: 'diagnostics', label: 'Diagnostics', icon: Activity });
   }
 
+  // Reports — HR-reviewer (Bashaier) only. Replaces the YOUR TASKS
+  // tile that used to live on her dashboard, and the REPORTS button
+  // that briefly lived in the header. Sits between Requests and
+  // Reviews so the queue of "things Bashaier owns end-to-end" reads
+  // left-to-right: Requests (raise), Reports (draft), Reviews
+  // (approve). Admin doesn't see it (Mr John reports are not in
+  // their workflow).
+  if (isHrReviewer && !isAdmin) {
+    base.splice(2, 0, { id: 'reports', label: 'Reports', icon: ClipboardList });
+  }
+
   // Reviews — for reviewers/managers who aren't admin
   if ((isReviewer || isManager) && !isAdmin) {
-    base.splice(2, 0, { id: 'reviews', label: 'Reviews',  icon: ShieldCheck });
+    // Insert after Reports if it exists, otherwise at index 2
+    const reportsIdx = base.findIndex(t => t.id === 'reports');
+    base.splice(reportsIdx >= 0 ? reportsIdx + 1 : 2, 0, { id: 'reviews', label: 'Reviews',  icon: ShieldCheck });
   }
 
   // Shifts — manager-only workspace for assigning per-day hours to direct
@@ -673,36 +687,8 @@ export default function AppShell({ session, me, onRefreshMe }) {
                 <div className="text-base font-semibold truncate max-w-[180px]">{session.user.email}</div>
               )}
             </div>
-            {/* REPORTS — HR-reviewer only. Replaces the YOUR TASKS
-                tile previously on the dashboard. Click navigates to
-                the dashboard tab and scrolls to the bashaier-tasks
-                anchor where the report-drafting card lives. */}
-            {isHrReviewer && !isAdmin && (
-              <button
-                onClick={() => {
-                  setTabPersistent('dashboard');
-                  // Wait one frame so the dashboard mounts, then scroll
-                  // to the anchor that BashaierTasksCard is wrapped in.
-                  setTimeout(() => {
-                    const el = document.getElementById('bashaier-tasks-anchor');
-                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                  }, 50);
-                }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px]"
-                title="Reports — Mr John report drafting"
-                style={{
-                  background: '#FDF2F8',
-                  border: '1px solid #F9A8D4',
-                  color: '#BE185D',
-                  fontWeight: 700,
-                  lineHeight: 1,
-                  cursor: 'pointer',
-                }}
-              >
-                <ClipboardList className="w-3.5 h-3.5" />
-                <span>REPORTS</span>
-              </button>
-            )}
+            {/* REPORTS button removed from header — now lives as a
+                full tab between Requests and Reviews. See buildTabs. */}
             <button onClick={() => setShowNewRequest(true)}
               className="flex items-center gap-2 px-4 py-2.5 rounded-full text-sm"
               style={{ background: 'var(--ink)', color: 'var(--paper)' }}>
@@ -923,6 +909,13 @@ export default function AppShell({ session, me, onRefreshMe }) {
               onOpenNewRequest={() => setShowNewRequest(true)}
             />
           )
+        )}
+        {tab === 'reports' && isHrReviewer && !isAdmin && (
+          /* REPORTS tab — Mr John report drafting card. HR-reviewer
+             only (Bashaier). Replaces the YOUR TASKS tile that used
+             to live on her dashboard, and the brief REPORTS button
+             that lived in the header. */
+          <BashaierTasksCard employees={employees} requests={requests} permissions={permissions} />
         )}
         {tab === 'reviews' && (
           <ReviewerPanel me={me} />

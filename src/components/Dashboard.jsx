@@ -7,8 +7,9 @@ import BashaierTasksCard from './BashaierTasksCard.jsx';
 import PendingShiftApprovalsCard from './PendingShiftApprovalsCard.jsx';
 import HrShiftMonthCard from './HrShiftMonthCard.jsx';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
+import MyApplicationsCard from './MyApplicationsCard.jsx';
 
-export default function Dashboard({ me, employees, requests, typeMap, empMap, permissions, onGoToRequests, onGoToReviews, onNewRequest }) {
+export default function Dashboard({ me, employees, requests, typeMap, empMap, permissions, leaveTypes, onGoToRequests, onGoToReviews, onNewRequest }) {
   // Personalised greeting — fully inline to eliminate any minifier scope issues.
   const _hr = new Date().getHours();
   const _period = _hr < 12 ? 'morning' : _hr < 17 ? 'afternoon' : 'evening';
@@ -698,11 +699,21 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           longer mounted. The HrShiftMonthCard below is the new
           HR-side view for monitoring shifts (read-only, no approvals). */}
 
-      {/* Bashaier's tasks — only for HR reviewer who isn't admin */}
-      {me?.is_hr_reviewer && !me?.is_admin && (
-        <div id="bashaier-tasks-anchor" style={{ scrollMarginTop: '80px' }}>
-          <BashaierTasksCard employees={employees} requests={requests} permissions={permissions} />
-        </div>
+      {/* Bashaier's own applications — HR reviewer can submit her
+          own leave/permission requests like any other employee.
+          Per Nadeem: "Bashaier needs to see her own application
+          status it's not appearing." Mounted on her dashboard so
+          she sees the same card admin/managers see for their own
+          submissions. The BashaierTasksCard (Mr John reports) has
+          moved to its own REPORTS tab. */}
+      {bashaierMode && (
+        <MyApplicationsCard
+          me={me}
+          requests={requests}
+          permissions={permissions}
+          empMap={empMap}
+          leaveTypes={leaveTypes}
+        />
       )}
 
       {/* HR/SUP full-fleet shift overview — month grid, grouped by
