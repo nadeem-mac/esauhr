@@ -1217,41 +1217,61 @@ const REPORT_STYLES = `
 * { box-sizing: border-box; }
 html, body {
   margin: 0; padding: 0;
-  background: #FFFFFF;
+  background: #F0F0F0;
   color: var(--ink);
   /* Calibri throughout — matches what's on screen so the PDF/print
      output looks like a continuation of the in-app panel rather
      than a separate document. */
   font-family: Calibri, 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif;
-  font-size: 13px; line-height: 1.5;
+  font-size: 11px; line-height: 1.45;
   -webkit-font-smoothing: antialiased;
 }
-.page { max-width: 980px; margin: 0 auto; padding: 40px 36px 56px; }
+
+/* A4 page sizing — each .page renders at the size of one A4 sheet
+   in portrait. On screen they're displayed as a stack of "sheets"
+   with a small grey gutter between, mimicking what print preview
+   shows. When printing, @page rules + page-break boundaries put
+   each .page on its own physical sheet so layouts look identical
+   on screen and on paper. */
+@page {
+  size: A4;
+  margin: 12mm 14mm;
+}
+.page {
+  width: 210mm;
+  min-height: 297mm;
+  margin: 12px auto;
+  padding: 14mm 16mm;
+  background: #FFFFFF;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  page-break-after: always;
+}
+.page:last-of-type { page-break-after: auto; margin-bottom: 0; }
 header.report-header {
-  border-bottom: 3px solid var(--green);
-  padding-bottom: 18px;
-  margin-bottom: 28px;
+  border-bottom: 2px solid var(--green);
+  padding-bottom: 10px;
+  margin-bottom: 14px;
 }
 .kicker {
-  font-size: 11px; letter-spacing: 0.28em;
+  font-size: 9px; letter-spacing: 0.24em;
   color: var(--green); font-weight: 700;
-  text-transform: uppercase; margin-bottom: 8px;
+  text-transform: uppercase; margin-bottom: 4px;
 }
 h1 {
   font-family: Calibri, 'Segoe UI', sans-serif;
-  font-size: 30px; line-height: 1.15;
-  margin: 0 0 6px; font-weight: 700; color: var(--ink);
+  font-size: 19px; line-height: 1.15;
+  margin: 0 0 3px; font-weight: 700; color: var(--ink);
   letter-spacing: -0.005em;
 }
-.sub { color: var(--ink-mute); font-size: 13px; }
+.sub { color: var(--ink-mute); font-size: 11px; }
 .meta {
-  display: flex; gap: 18px; flex-wrap: wrap;
-  margin-top: 12px; font-size: 12px; color: var(--ink-mute);
+  display: flex; gap: 14px; flex-wrap: wrap;
+  margin-top: 8px; font-size: 10px; color: var(--ink-mute);
 }
 .meta strong { color: var(--ink); }
 .summary {
   display: grid; grid-template-columns: repeat(4, 1fr);
-  gap: 10px; margin-bottom: 14px;
+  gap: 6px; margin-bottom: 6px;
 }
 /* TILES — palette-driven so the printed report inherits the same
    visual language Bashaier sees on screen. Each tile gets one of
@@ -1260,7 +1280,7 @@ h1 {
    browsers to keep the colors in printed output (most default to
    stripping backgrounds when printing). */
 .tile {
-  border-radius: 10px; padding: 12px;
+  border-radius: 6px; padding: 6px 7px 5px;
   border: 1px solid var(--rule);
   background: var(--cream);
   -webkit-print-color-adjust: exact;
@@ -1268,17 +1288,18 @@ h1 {
 }
 .tile .v {
   font-family: Calibri, 'Segoe UI', sans-serif;
-  font-size: 26px; font-weight: 700;
+  font-size: 17px; font-weight: 700;
   color: inherit; line-height: 1; font-variant-numeric: tabular-nums;
 }
 .tile .l {
-  font-size: 10px; letter-spacing: 0.14em;
+  font-size: 8.5px; letter-spacing: 0.1em;
   font-weight: 700; text-transform: uppercase;
-  margin-top: 6px; opacity: 0.85;
+  margin-top: 3px; opacity: 0.85;
+  line-height: 1.15;
 }
 .tile .s {
-  font-size: 11px;
-  margin-top: 4px;
+  font-size: 9px;
+  margin-top: 1px;
   font-weight: 500;
   opacity: 0.75;
   font-variant-numeric: tabular-nums;
@@ -1308,43 +1329,50 @@ h1 {
 .summary + .summary { margin-top: 0; }
 h2.section-h2 {
   font-family: Calibri, 'Segoe UI', sans-serif;
-  font-size: 14px; font-weight: 700;
-  color: var(--ink); margin: 18px 0 8px; padding-bottom: 6px;
+  font-size: 11px; font-weight: 700;
+  color: var(--ink); margin: 10px 0 4px; padding-bottom: 3px;
   border-bottom: 1px solid var(--rule);
-  letter-spacing: 0.05em; text-transform: uppercase;
+  letter-spacing: 0.08em; text-transform: uppercase;
 }
 section.month {
-  margin-bottom: 22px;
+  margin-bottom: 10px;
   break-inside: avoid;
+  page-break-inside: avoid;
 }
 section.month h2 {
   font-family: Calibri, 'Segoe UI', sans-serif;
-  font-size: 16px; font-weight: 700;
-  color: var(--ink); margin: 0 0 8px;
+  font-size: 13px; font-weight: 700;
+  color: var(--ink); margin: 0 0 4px;
   letter-spacing: -0.005em;
+}
+section.month h2 .count {
+  font-weight: 400; font-size: 10px; color: var(--ink-mute);
+  margin-left: 6px;
 }
 table {
   width: 100%; border-collapse: collapse;
   background: #FFFFFF; border: 1px solid var(--rule);
-  border-radius: 8px; overflow: hidden;
+  border-radius: 6px; overflow: hidden;
+  table-layout: fixed;
 }
 thead th {
   background: var(--green-soft); color: var(--green);
-  font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
-  text-align: left; padding: 8px 10px; font-weight: 700;
+  font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+  text-align: left; padding: 4px 7px; font-weight: 700;
   border-bottom: 1px solid var(--green-mid);
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
 }
 tbody td {
-  padding: 7px 10px; font-size: 12px; border-top: 1px solid var(--rule);
+  padding: 3px 7px; font-size: 10px; border-top: 1px solid var(--rule);
   vertical-align: top;
+  line-height: 1.3;
 }
 tbody tr:first-child td { border-top: none; }
 .chip {
   display: inline-block;
-  padding: 1px 7px; border-radius: 999px;
-  font-size: 10px; font-weight: 700;
+  padding: 0 6px; border-radius: 999px;
+  font-size: 9px; font-weight: 700;
   letter-spacing: 0.04em;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
@@ -1362,14 +1390,23 @@ tbody tr:first-child td { border-top: none; }
 .chip.rejected,
 .chip.declined     { background: #FEE2E2; color: #991B1B; border: 1px solid #FCA5A5; }
 footer.report-footer {
-  margin-top: 40px; padding-top: 16px;
+  margin-top: 14px; padding-top: 8px;
   border-top: 1px solid var(--rule);
-  font-size: 11px; color: var(--ink-mute);
+  font-size: 9px; color: var(--ink-mute);
   display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
 }
+.page-num {
+  font-variant-numeric: tabular-nums;
+}
 @media print {
-  body { background: #FFFFFF; }
-  .page { padding: 16px 0; }
+  html, body { background: #FFFFFF; }
+  .page {
+    margin: 0;
+    box-shadow: none;
+    width: auto;
+    min-height: auto;
+    padding: 0;
+  }
   .no-print { display: none !important; }
 }
 `;
@@ -1381,60 +1418,6 @@ function statusLabelFor(s) {
 function exportAttendanceHtml(employee, range, monthly, summary, leaveRows, leaveTypeName) {
   const counts = summary || {};
   const totalRecords = Object.values(counts).reduce((a, b) => a + b, 0);
-
-  const monthBlocks = monthly.map(g => {
-    const rowsHtml = g.rows.map(r => {
-      const meta = statusMeta(r.status);
-      // Missed-punch detection — same convention as the UI.
-      const hasFirst = !!r.first_punch;
-      const hasLast  = !!r.last_punch;
-      const isMissedIn  = !hasFirst && hasLast;
-      const isMissedOut = hasFirst && !hasLast;
-      const detail = isMissedIn
-        ? '<strong style="color:#86198F">⚠ No clock-in recorded</strong>'
-        : isMissedOut
-          ? '<strong style="color:#3730A3">⚠ No clock-out recorded</strong>'
-          : r.status === 'late' && r.late_minutes > 0
-            ? `${r.late_minutes} min late`
-            : r.status === 'short' && r.early_leave_minutes > 0
-              ? `${r.early_leave_minutes} min early out`
-              : r.status === 'absent'
-                ? 'No punches recorded'
-                : '—';
-      const punch = (hasFirst || hasLast)
-        ? `${hasFirst ? trimTime(r.first_punch) : '<span style="color:#C026D3">—:—</span>'} → ${hasLast ? trimTime(r.last_punch) : '<span style="color:#C026D3">—:—</span>'}`
-        : '—';
-      const sched = (r.expected_start || r.expected_end)
-        ? `${trimTime(r.expected_start) || '?'}–${trimTime(r.expected_end) || '?'}`
-        : '—';
-      return `
-        <tr>
-          <td>${esc(fmtDate(r.attendance_date))}</td>
-          <td><span class="chip ${esc(r.status)}">${esc(statusLabelFor(r.status))}</span></td>
-          <td>${punch}</td>
-          <td>${esc(sched)}</td>
-          <td>${detail}</td>
-        </tr>
-      `;
-    }).join('');
-    return `
-      <section class="month">
-        <h2>${esc(MONTH_NAMES[g.month])} ${g.year} <span style="font-weight:400;font-size:12px;color:var(--ink-mute);margin-left:8px;">${g.rows.length} record${g.rows.length === 1 ? '' : 's'}</span></h2>
-        <table>
-          <thead>
-            <tr>
-              <th style="width:24%">Date</th>
-              <th style="width:14%">Status</th>
-              <th style="width:18%">Punches</th>
-              <th style="width:18%">Schedule</th>
-              <th>Detail</th>
-            </tr>
-          </thead>
-          <tbody>${rowsHtml}</tbody>
-        </table>
-      </section>
-    `;
-  }).join('');
 
   // Tile renderer with optional sub-line for context (e.g. total
   // minutes under a Late count, or "3 requests" under a leave-type
@@ -1534,18 +1517,105 @@ function exportAttendanceHtml(employee, range, monthly, summary, leaveRows, leav
     </div>
   `;
 
-  const summaryTiles = attendanceTilesHtml + leaveTilesHtml;
+  // ─── Pagination ─────────────────────────────────────────────────
+  // Each .page renders at A4 size. Page 1 holds the header + summary
+  // tiles + as many month sections as fit. Continuation pages hold
+  // additional months. We pack month sections into pages by their
+  // approximate row count so each page is full but never overflows.
+  //
+  // Estimated rows-per-A4-page after the header / summary block:
+  //   • Page 1 (with summary header + 6 attendance tiles + 8 leave
+  //     tiles + monthly heading) — about 22 attendance rows fit
+  //   • Continuation pages — about 50 rows fit
+  //
+  // Each "month" section is treated as atomic (page-break-inside:
+  // avoid), so a month with many rows just gets its own page even
+  // if it's not full — better than splitting a calendar month
+  // across two pages.
 
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Attendance Report — ${esc(employee.name || employee.id)}</title>
-<style>${REPORT_STYLES}</style>
-</head>
-<body>
-  <div class="page">
+  const PAGE1_CAPACITY  = 22;
+  const PAGEN_CAPACITY  = 50;
+
+  const monthSections = monthly.map(g => ({
+    g,
+    rowCount: g.rows.length,
+  }));
+
+  // Re-serialize per month — we need them as individual strings, not
+  // one big concatenation, to distribute across pages.
+  const renderMonth = (g) => {
+    const rowsHtml = g.rows.map(r => {
+      const hasFirst = !!r.first_punch;
+      const hasLast  = !!r.last_punch;
+      const isMissedIn  = !hasFirst && hasLast;
+      const isMissedOut = hasFirst && !hasLast;
+      const detail = isMissedIn
+        ? '<strong style="color:#86198F">⚠ No clock-in recorded</strong>'
+        : isMissedOut
+          ? '<strong style="color:#3730A3">⚠ No clock-out recorded</strong>'
+          : r.status === 'late' && r.late_minutes > 0
+            ? `${r.late_minutes} min late`
+            : r.status === 'short' && r.early_leave_minutes > 0
+              ? `${r.early_leave_minutes} min early out`
+              : r.status === 'absent'
+                ? 'No punches recorded'
+                : '—';
+      const punch = (hasFirst || hasLast)
+        ? `${hasFirst ? trimTime(r.first_punch) : '<span style="color:#C026D3">—:—</span>'} → ${hasLast ? trimTime(r.last_punch) : '<span style="color:#C026D3">—:—</span>'}`
+        : '—';
+      const sched = (r.expected_start || r.expected_end)
+        ? `${trimTime(r.expected_start) || '?'}–${trimTime(r.expected_end) || '?'}`
+        : '—';
+      return `
+        <tr>
+          <td>${esc(fmtDate(r.attendance_date))}</td>
+          <td><span class="chip ${esc(r.status)}">${esc(statusLabelFor(r.status))}</span></td>
+          <td>${punch}</td>
+          <td>${esc(sched)}</td>
+          <td>${detail}</td>
+        </tr>
+      `;
+    }).join('');
+    return `
+      <section class="month">
+        <h2>${esc(MONTH_NAMES[g.month])} ${g.year}<span class="count">${g.rows.length} record${g.rows.length === 1 ? '' : 's'}</span></h2>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:24%">Date</th>
+              <th style="width:14%">Status</th>
+              <th style="width:18%">Punches</th>
+              <th style="width:18%">Schedule</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </section>
+    `;
+  };
+
+  // Pack months into pages by row capacity
+  const pages = [];
+  let currentPage = { months: [], used: 0 };
+  let capacity = PAGE1_CAPACITY;
+  for (const sec of monthSections) {
+    // If adding this month would overflow AND the page already has
+    // something, start a new page. Single oversized months still get
+    // their own page (better than dropping them).
+    if (currentPage.months.length > 0 && currentPage.used + sec.rowCount > capacity) {
+      pages.push(currentPage);
+      currentPage = { months: [], used: 0 };
+      capacity = PAGEN_CAPACITY;
+    }
+    currentPage.months.push(sec.g);
+    currentPage.used += sec.rowCount;
+  }
+  if (currentPage.months.length > 0) pages.push(currentPage);
+  if (pages.length === 0) pages.push({ months: [], used: 0 });
+
+  const totalPages = pages.length;
+  const headerHtml = `
     <header class="report-header">
       <div class="kicker">Staff attendance report</div>
       <h1>${esc(employee.name || employee.id)}</h1>
@@ -1556,16 +1626,44 @@ function exportAttendanceHtml(employee, range, monthly, summary, leaveRows, leav
         <span><strong>Generated:</strong> ${esc(new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
       </div>
     </header>
-
-    ${summaryTiles}
-
-    ${monthBlocks || '<p style="color:var(--ink-mute);">No attendance records in this range.</p>'}
-
+  `;
+  const continuationHeaderHtml = `
+    <header class="report-header">
+      <div class="kicker">${esc(employee.name || employee.id)} · ${esc(employee.id)} · ${esc(fmtRangeShort(range.from))} – ${esc(fmtRangeShort(range.to))}</div>
+    </header>
+  `;
+  const footerHtml = (n) => `
     <footer class="report-footer">
       <span>Generated by ESAU HR Portal</span>
-      <span>Confidential — for internal use</span>
+      <span class="page-num">Page ${n} of ${totalPages}</span>
     </footer>
-  </div>
+  `;
+
+  const pagesHtml = pages.map((p, idx) => {
+    const isFirst = idx === 0;
+    const monthsHtml = p.months.length > 0
+      ? p.months.map(renderMonth).join('')
+      : (isFirst ? '<p style="color:var(--ink-mute);">No attendance records in this range.</p>' : '');
+    return `
+      <div class="page">
+        ${isFirst ? headerHtml : continuationHeaderHtml}
+        ${isFirst ? summaryTiles : ''}
+        ${monthsHtml}
+        ${footerHtml(idx + 1)}
+      </div>
+    `;
+  }).join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Attendance Report — ${esc(employee.name || employee.id)}</title>
+<style>${REPORT_STYLES}</style>
+</head>
+<body>
+${pagesHtml}
   <script>setTimeout(() => window.print(), 600);</script>
 </body>
 </html>`;
