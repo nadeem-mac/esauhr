@@ -684,8 +684,10 @@ export default function AppShell({ session, me, onRefreshMe }) {
                 // the latest deployed bundle. Steps:
                 //   1. Show the overlay
                 //   2. Run cleanup (SW + caches) in background
-                //   3. Hold for at least 3 seconds so the user can enjoy
-                //      the ship animation (it's beautiful, give it space)
+                //   3. Hold for at least 2 seconds so the user sees the
+                //      ship animation play out (Nadeem's call — long
+                //      enough to register, short enough not to feel
+                //      sluggish)
                 //   4. Reload with cache bypass
                 if (refreshing) return;
                 setRefreshing(true);
@@ -707,10 +709,12 @@ export default function AppShell({ session, me, onRefreshMe }) {
                   }
                 })();
 
-                // Minimum 3-second hold so the ship animation is visible.
-                const minHold = new Promise(r => setTimeout(r, 3000));
+                // Minimum 2-second hold so the ship animation is visible.
+                // (Was 3s — Nadeem: "the animation should stay for two
+                // seconds".)
+                const minHold = new Promise(r => setTimeout(r, 2000));
 
-                // Wait for whichever finishes LAST — cleanup OR the 3s
+                // Wait for whichever finishes LAST — cleanup OR the 2s
                 // hold — so we never reload before the animation has had
                 // its moment.
                 await Promise.all([cleanup, minHold]);
@@ -722,10 +726,25 @@ export default function AppShell({ session, me, onRefreshMe }) {
                 window.location.replace(url.toString());
               }}
               disabled={refreshing}
-              className="p-2.5 rounded-full border esau-refresh-btn disabled:opacity-60"
+              className={`p-2.5 rounded-full border esau-refresh-btn ${refreshing ? 'esau-refresh-btn-active' : ''}`}
               title="Refresh — reload the latest version of the site"
               aria-label="Refresh"
-              style={{ borderColor: 'var(--border-soft)' }}>
+              style={{
+                /* Default state: subtle warm border, neutral icon.
+                   Active state (refreshing): solid evergreen surface,
+                   white icon, soft pulsing ring around it — clearly
+                   visible to the user that something is happening
+                   and the click registered. Per Nadeem: "The refresh
+                   button on landing page must be clearly seen when
+                   clicked." */
+                background: refreshing ? '#0F4C2A' : 'transparent',
+                borderColor: refreshing ? '#0F4C2A' : 'var(--border-soft)',
+                color: refreshing ? '#FFFFFF' : 'inherit',
+                boxShadow: refreshing
+                  ? '0 0 0 4px rgba(15, 76, 42, 0.18), 0 2px 8px rgba(15, 76, 42, 0.25)'
+                  : 'none',
+                transition: 'all 0.2s ease',
+              }}>
               <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
             </button>
             <button onClick={signOut}
