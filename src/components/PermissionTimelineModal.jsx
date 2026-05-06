@@ -60,11 +60,13 @@ export default function PermissionTimelineModal({ row, employee, requesterIsHr =
   // manager-self both collapse to a 3-step timeline (Submit → one
   // approval → Final). Auto-detect manager-self from the row when
   // explicit flags aren't passed, BUT only when the requester is
-  // not HR. HR-self always wins because the system's HR self-approval
-  // guard finalises Bashaier's rows on the manager step — any
-  // pending_hr row owned by an HR reviewer is a stuck-state bug,
-  // not a legitimate manager-bypass.
-  const requesterIsActuallyHr = requesterIsHr || !!employee?.is_hr_reviewer;
+  // not HR-EXCLUSIVE (Bashaier). The HR-self collapse must mirror
+  // decideLeave/decidePerm exactly: it only applies to is_hr_reviewer
+  // && !is_admin. Nadeem has both flags true, so his requests flow
+  // the normal 4-step path to Bashaier and the timeline shows it.
+  const requesterIsActuallyHr = requesterIsHr || !!(
+    employee?.is_hr_reviewer && !employee?.is_admin
+  );
   const autoDetectedManagerSelf = !requesterIsActuallyHr && (
     (stage === 'pending_hr' || stage === 'rejected_by_hr' || stage === 'approved')
     && !row.manager_decided_at

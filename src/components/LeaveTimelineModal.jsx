@@ -107,9 +107,16 @@ export default function LeaveTimelineModal({ request, empMap = {}, leaveTypes = 
   // step — HR (Bashaier) is the only gate. Drop the manager tile.
   //
   // Auto-detect manager-self from the row when no flag is passed,
-  // BUT only when the requester is not HR. HR-self always wins —
-  // see PermissionTimelineModal for the full rationale.
-  const requesterEffectivelyHr = !!(requesterIsHr || empMap[request.employee_id]?.is_hr_reviewer);
+  // BUT only when the requester is not HR-EXCLUSIVE. The HR-self
+  // collapse must mirror the actual approval-routing rule in
+  // decideLeave/decidePerm exactly: it only applies to Bashaier
+  // (is_hr_reviewer && !is_admin). Nadeem has is_hr_reviewer=true
+  // AND is_admin=true, so his requests flow ALL STAFF → MANAGER →
+  // BASHAIER and the timeline must show all 4 steps.
+  const requesterEffectivelyHr = !!(
+    requesterIsHr ||
+    (empMap[request.employee_id]?.is_hr_reviewer && !empMap[request.employee_id]?.is_admin)
+  );
   const autoDetectedManagerSelf = !requesterEffectivelyHr && (
     (stage === 'pending_hr' || stage === 'rejected_by_hr' || stage === 'approved')
     && !request.manager_decided_at
