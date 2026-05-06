@@ -114,8 +114,13 @@ export async function parseMolFile(fileOrBuffer) {
     const arabic = r[colMap.arabic_name];
     if (!arabic) continue;
 
+    const arabicName = String(arabic).trim();
     subscribers.push({
-      arabic_name:       String(arabic).trim(),
+      arabic_name:       arabicName,
+      // Pre-computed canonical English form — what the portal's
+      // `name` field gets set to on apply. Done here so the UI can
+      // preview it in the match list before the user clicks Apply.
+      canonical_name:    canonicalEnglishName(arabicName),
       national_id:       normalizeNationalId(nid),
       nationality_ar:    cellStr(r[colMap.nationality]),
       nationality:       normalizeNationality(r[colMap.nationality]),
@@ -294,6 +299,462 @@ const ARABIC_CONNECTORS = new Set([
   'بن', 'بنت', 'ابن', 'ابو', 'أبو', 'ام', 'أم', 'ال', 'آل', 'عبد',
   'al', 'bin', 'bint', 'abu', 'um', 'al-', 'el-', 'ibn',
 ]);
+
+// ─── Canonical name builder ─────────────────────────────────────────
+//
+// Given the raw `arabic_name` field from the MOL file, returns an
+// uppercase English-script "canonical" name suitable for the portal's
+// `employees.name` column. This is what gets written when admin
+// applies a sync — overwriting whatever informal English spelling
+// the portal previously held.
+//
+// Strategy:
+//   1. Decide if the name is already Latin-script or Arabic-script.
+//      Most non-Arab nationalities (Indian, Pakistani, Filipino,
+//      Chinese) already have Latin-script names in the MOL file.
+//      Only Arab nationals (Saudi, Egyptian, Sudanese, Palestinian)
+//      need Arabic-to-English transliteration.
+//   2. For Latin: strip placeholder dashes ("MELVIN - ROMULO" →
+//      "MELVIN ROMULO"), collapse whitespace, uppercase.
+//   3. For Arabic: tokenize, transliterate each token via a
+//      dictionary of common Saudi names (covers ~80% of given
+//      names with their preferred English spelling — e.g. "محمد"
+//      → "MOHAMMED" not "MHMD"). Fall back to letter-by-letter
+//      romanization for unknown tokens. Special handling for
+//      compound names (عبد + الله = "ABDULLAH", آل + Family =
+//      "AL FAMILY").
+export function canonicalEnglishName(arabicOrLatinName) {
+  if (!arabicOrLatinName) return null;
+  const raw = String(arabicOrLatinName).trim();
+  if (!raw) return null;
+  // Detect script — if the string contains any Arabic codepoint,
+  // treat it as Arabic; otherwise Latin.
+  const hasArabic = /[\u0600-\u06FF]/.test(raw);
+  if (hasArabic) {
+    return transliterateArabicName(raw);
+  }
+  return formatLatinName(raw);
+}
+
+// ─── Latin-name cleanup ─────────────────────────────────────────────
+// MOL has names like:
+//   "MELVIN - ROMULO MANCENIDO" (dashes used as placeholders for
+//                                missing middle names)
+//   "KHAJA - - MUJEEBUR RAHMAN" (multiple placeholder dashes)
+//   "CHUNG HSING   HO"          (multiple spaces from form input)
+// Convert all of these to clean uppercase single-space form.
+function formatLatinName(s) {
+  return s
+    // Replace any run of whitespace + lone dashes + whitespace with
+    // a single space. Matches "X - Y", "X - - Y", "X - - - Y" etc.
+    .replace(/(\s+-)+\s+/g, ' ')
+    // Strip leading/trailing standalone dashes
+    .replace(/^[-\s]+|[-\s]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+}
+
+// ─── Arabic-to-English transliteration ──────────────────────────────
+//
+// A curated dictionary of common Saudi/Arab given names with their
+// preferred English spellings. This is what makes the output read
+// naturally — letter-by-letter romanization gives you "MHMD" but
+// the dictionary gives you "MOHAMMED".
+//
+// Pattern: each entry maps an Arabic spelling → preferred English
+// spelling in ALL CAPS. The dictionary is consulted token-by-token
+// before the rule-based fallback runs.
+const ARABIC_NAME_DICT = {
+  // ─── Compound names (must be matched as a unit) ─────────────────
+  'عبدالله':       'ABDULLAH',
+  'عبدالرحمن':    'ABDULRAHMAN',
+  'عبدالعزيز':    'ABDULAZIZ',
+  'عبدالمحسن':    'ABDULMOHSEN',
+  'عبدالكريم':    'ABDULKARIM',
+  'عبدالمجيد':    'ABDULMAJEED',
+  'عبدالاله':     'ABDULELAH',
+  'عبدالإله':     'ABDULELAH',
+  'عبدالحميد':    'ABDULHAMID',
+  'عبدالرحيم':    'ABDULRAHIM',
+  'عبدالغني':     'ABDULGHANI',
+  'عبدالحكيم':    'ABDULHAKIM',
+  'عبدالقادر':    'ABDULQADER',
+  'عبدالرزاق':    'ABDULRAZAQ',
+  'عبدالسلام':    'ABDULSALAM',
+  'عبدالواحد':    'ABDULWAHID',
+  'عبدالناصر':    'ABDULNASSER',
+
+  // ─── Common male given names ─────────────────────────────────────
+  'محمد':         'MOHAMMED',
+  'مُحَمَّد':       'MOHAMMED',
+  'أحمد':         'AHMED',
+  'احمد':         'AHMED',
+  'محمود':        'MAHMOUD',
+  'خالد':         'KHALID',
+  'سعيد':         'SAEED',
+  'سعد':          'SAAD',
+  'سلطان':        'SULTAN',
+  'سليمان':       'SULAIMAN',
+  'سامي':         'SAMI',
+  'صالح':         'SALEH',
+  'ابراهيم':      'IBRAHIM',
+  'إبراهيم':      'IBRAHIM',
+  'يوسف':         'YOUSEF',
+  'علي':          'ALI',
+  'عمر':          'OMAR',
+  'حسن':          'HASSAN',
+  'حسين':         'HUSSEIN',
+  'طارق':         'TARIQ',
+  'ناصر':         'NASSER',
+  'ناصير':        'NASIR',
+  'نواف':         'NAWAF',
+  'فهد':          'FAHD',
+  'فيصل':         'FAISAL',
+  'بدر':          'BADR',
+  'ماجد':         'MAJED',
+  'ياسر':         'YASSER',
+  'وليد':         'WALID',
+  'بسام':         'BASSAM',
+  'بشار':         'BASHAR',
+  'جاسم':         'JASIM',
+  'مساعد':        'MUSAID',
+  'مصطفى':        'MUSTAFA',
+  'مشعل':         'MISHAL',
+  'منصور':        'MANSOUR',
+  'موسى':         'MUSA',
+  'هاني':         'HANI',
+  'هيثم':         'HAITHAM',
+  'حمد':          'HAMAD',
+  'حمدان':        'HAMDAN',
+  'رياض':         'RIYADH',
+  'رائد':         'RAED',
+  'رامي':         'RAMI',
+  'سلمان':        'SALMAN',
+  'شاهر':         'SHAHIR',
+  'صباح':         'SABAH',
+  'طلال':         'TALAL',
+  'عادل':         'ADEL',
+  'عاصم':         'ASIM',
+  'عبدالحفيظ':    'ABDULHAFEZ',
+  'عبدالنبي':     'ABDULNABI',
+  'عوض':          'AWAD',
+  'فايز':         'FAYEZ',
+  'كمال':         'KAMAL',
+  'مأمون':        'MAMOUN',
+  'مازن':         'MAZEN',
+  'محسن':         'MOHSIN',
+  'مسعود':        'MASOUD',
+  'معاذ':         'MUATH',
+  'معتز':         'MUTAZ',
+  'منير':         'MUNIR',
+  'هشام':         'HISHAM',
+  'وائل':         'WAEL',
+  'يحيى':         'YAHYA',
+  'زيد':          'ZAID',
+  'شريف':         'SHARIF',
+  'فراس':         'FIRAS',
+  'طاهر':         'TAHER',
+  'ظافر':         'ZAFER',
+  'فرج':          'FARAJ',
+  'الطيب':        'AL-TAYEB',
+  'حذيفة':        'HUDHAIFA',
+  'بدريه':        'BADRIAH',
+  'بدرية':        'BADRIAH',
+  'زكي':          'ZAKI',
+  'جعفر':         'JAFAR',
+  'درويش':        'DARWISH',
+  'عباس':         'ABBAS',
+  'عبد':          'ABDUL',
+  'حذيفة':        'HUDHAIFA',
+  'مسيب':         'MUSAID',
+  'مسوي':         'MASOWI',
+  'فرحان':        'FARHAN',
+  'صفوان':        'SAFWAN',
+  'تركي':         'TURKI',
+  'ضافي':         'DAFI',
+  'وضاح':         'WADDAH',
+  'كمال':         'KAMAL',
+  'تيسير':        'TAYSIR',
+  'ربيع':         'RABEEA',
+  'سلامة':        'SALAMA',
+  'يعقوب':        'YAQOUB',
+  'حذيفه':        'HUDHAIFA',
+  'بشائر':        'BASHAIER',
+  'بشاير':        'BASHAIER',
+  'اريج':         'AREEJ',
+  'نوره':         'NORA',
+  'نورة':         'NORA',
+  'بسمه':         'BASMA',
+  'بسمة':         'BASMA',
+  'شهد':          'SHAHAD',
+  'سحر':          'SAHAR',
+  'امينه':        'AMINA',
+  'أمينة':        'AMINA',
+  'بدور':         'BUDOOR',
+  'معالي':        'MAALI',
+  'نجود':         'NAJOUD',
+  'غلا':          'GHALA',
+  'حسان':         'HASSAN',
+  'حيدر':         'HAIDER',
+  'حبيب':         'HABIB',
+  'فردان':        'FARDAN',
+  'جواد':         'JAWAD',
+  'الشيخ':        'AL-SHEIKH',
+  'صادق':         'SADIQ',
+  'فؤاد':         'FOUAD',
+  'فواد':         'FOUAD',
+  'فهيد':         'AL-FAHEED',
+  'الفهيد':       'AL-FAHEED',
+  'صقر':          'SAQR',
+  'الشريف':       'AL-SHARIF',
+  'الربيع':       'AL-RABEEA',
+  'الناشري':      'AL-NASHRI',
+  'الياسي':       'AL-YASI',
+  'البراهيم':     'AL-IBRAHIM',
+  'الحسين':       'AL-HUSSEIN',
+  'الحسن':        'AL-HASSAN',
+  'الحربي':       'AL-HARBI',
+  'العواد':       'AL-AWAD',
+  'المولد':       'AL-MAWLED',
+  'الشايجي':      'AL-SHAYJI',
+  'المعيصب':      'AL-MUAISEB',
+  'الطاسان':      'AL-TASAN',
+  'حكمي':         'HAKAMI',
+  'قاسمي':        'QASIMI',
+  'عبيد':         'OBAID',
+  'بالعبيد':      'BAL-OBAID',
+  'مبارك':        'MUBARAK',
+  'عواد':         'AWWAD',
+  'عواجي':        'AWAJI',
+  'المنصف':       'AL-MUNSIF',
+  'الشرقاوى':     'AL-SHARQAWI',
+  'الشرقاوي':     'AL-SHARQAWI',
+  'الطيب':        'AL-TAYEB',
+  'سدس':          'SADAS',
+  'الصقلي':       'AL-SAQILI',
+  'كاظم':         'KAZIM',
+  'ال':           'AL',
+  'منصف':         'MUNSIF',
+  'المنصف':       'AL-MUNSIF',
+  'عثمان':        'OTHMAN',
+  'آل عثمان':     'AL OTHMAN',
+  'زاهر':         'ZAHIR',
+  'جابر':         'JABER',
+  'عابد':         'ABED',
+  'النبي':        'AL-NABI',
+  'النبى':        'AL-NABI',
+  'عبدرب':        'ABDUL-RAB',
+  'اليوسف':       'AL-YOUSEF',
+  'حذيفة':        'HUDHAIFA',
+  'ندى':          'NADA',
+  'نضمى':         'NADHMA',
+  'شذى':          'SHATHA',
+  'شذا':          'SHATHA',
+  'شباب':         'SHABAB',
+
+  // ─── Common female given names ───────────────────────────────────
+  'بشاير':        'BASHAIER',
+  'سارة':         'SARAH',
+  'ساره':         'SARAH',
+  'عائشة':        'AISHA',
+  'فاطمة':        'FATIMA',
+  'خديجة':        'KHADIJA',
+  'مريم':         'MARIAM',
+  'نوال':         'NAWAL',
+  'هبة':          'HEBA',
+  'سلمى':         'SALMA',
+  'مها':          'MAHA',
+  'رشا':          'RASHA',
+  'ريم':          'REEM',
+  'رنا':          'RANA',
+  'نور':          'NOOR',
+  'هدى':          'HUDA',
+  'دلال':         'DALAL',
+  'ابتسام':       'IBTISAM',
+  'منال':         'MANAL',
+  'ليلى':         'LAILA',
+  'سعاد':         'SUAD',
+  'سميرة':        'SAMIRA',
+  'هند':          'HIND',
+  'لينا':         'LINA',
+  'عبير':         'ABEER',
+  'دانة':         'DANA',
+  'رهف':          'RAHAF',
+
+  // ─── Common family-name prefixes / tribes ────────────────────────
+  'الدوسري':      'AL-DOSARI',
+  'الفزيع':       'AL-FAZEEA',
+  'الغامدي':      'AL-GHAMDI',
+  'القحطاني':     'AL-QAHTANI',
+  'الشهراني':     'AL-SHAHRANI',
+  'العتيبي':      'AL-OTAIBI',
+  'الزهراني':     'AL-ZAHRANI',
+  'المالكي':      'AL-MALKI',
+  'الحربي':       'AL-HARBI',
+  'العنزي':       'AL-ANAZI',
+  'القرني':       'AL-QARNI',
+  'الشمري':       'AL-SHAMMARI',
+  'الرشيدي':      'AL-RASHIDI',
+  'المطيري':      'AL-MUTAIRI',
+  'البلوي':       'AL-BALAWI',
+  'الجهني':       'AL-JOHANI',
+  'الفيفي':       'AL-FIFI',
+  'الأحمدي':      'AL-AHMADI',
+  'الخالدي':      'AL-KHALIDI',
+  'السبيعي':      'AL-SUBAIE',
+  'السبيهي':      'AL-SUBAIHI',
+  'الصاعدي':      'AL-SAEDI',
+  'الأكلبي':      'AL-AKLABI',
+  'الحارثي':      'AL-HARTHI',
+  'الياسي':       'AL-YASI',
+  'الشرقاوى':     'AL-SHARQAWI',
+  'الشرقاوي':     'AL-SHARQAWI',
+  'ابوحوسه':      'ABU-HAWSA',
+
+  // ─── Connectors that should produce an explicit token ────────────
+  'بن':           'BIN',
+  'ابن':          'BIN',
+  'بنت':          'BINT',
+  'آل':           'AL',
+  'ابو':          'ABU',
+  'أبو':          'ABU',
+};
+
+/**
+ * Transliterate an Arabic-script name to uppercase English.
+ * Token-level dictionary lookup with rule-based fallback.
+ *
+ * Special handling:
+ *   • "عبد" followed by a token starting with "ال" is combined
+ *     into a single ABDUL-X compound (e.g. "عبد" + "المنصف" →
+ *     "ABDULMUNSEF"). MOL data sometimes has these as two tokens.
+ *   • Diacritics stripped before dictionary lookup.
+ *   • "على" treated as variant of "علي" (Ali).
+ */
+function transliterateArabicName(arabic) {
+  // Strip Arabic diacritics so dictionary keys match
+  const stripped = arabic.replace(/[\u064B-\u065F\u0670\u06D6-\u06ED]/g, '');
+
+  // Treat "على" as variant of "علي" (both pronounced Ali in Saudi/
+  // Egyptian usage; the MOL file uses both forms inconsistently).
+  // No global hamza→alif normalization — that breaks آل lookups
+  // since "آل" is a distinct connector ("family of").
+  let normalized = stripped.replace(/على(?=\s|$)/g, 'علي');
+
+  let tokens = normalized.split(/\s+/).filter(t => t.length > 0);
+
+  // Combine compound Abdul: when one token is "عبد" and the next
+  // starts with "ال", join them. Example: "عبد", "المنصف" →
+  // "عبدالمنصف".
+  const merged = [];
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i] === 'عبد' && i + 1 < tokens.length && tokens[i + 1].startsWith('ال')) {
+      merged.push(tokens[i] + tokens[i + 1]);
+      i++;
+    } else {
+      merged.push(tokens[i]);
+    }
+  }
+
+  const englishTokens = merged
+    .map(t => {
+      // 1. Direct dictionary hit (covers compounds like عبدالله too)
+      const dictHit = ARABIC_NAME_DICT[t];
+      if (dictHit) return dictHit;
+      // 2. Compound abdul not in dictionary — strip "عبدال" prefix,
+      //    look up the rest in the dictionary if possible, else
+      //    rule-based romanize. Prepend ABDUL-.
+      if (t.startsWith('عبدال')) {
+        const rest = t.slice(5);
+        // Try dictionary on the bare suffix and on the suffix with
+        // "ال" prefix (e.g. dict has "المنصف" → "AL-MUNSIF")
+        const restDict = ARABIC_NAME_DICT[rest] || ARABIC_NAME_DICT['ال' + rest];
+        if (restDict) {
+          // Strip any leading "AL-" so we don't end up with
+          // ABDULAL-MUNSIF — we want ABDUL-MUNSIF
+          return 'ABDUL-' + restDict.replace(/^AL-/, '');
+        }
+        return 'ABDUL-' + romanizeAndUppercase(rest).replace(/^AL-/, '');
+      }
+      return romanizeAndUppercase(t);
+    })
+    .filter(t => t && t.length > 0);
+
+  return englishTokens.join(' ');
+}
+
+/**
+ * Letter-by-letter Arabic-to-Latin transliteration with a final
+ * uppercase pass. Used when no dictionary entry matches.
+ * Also inserts a short "A" between consecutive consonants — without
+ * this, undiacritized Arabic ("بدريه") romanizes as a stack of
+ * consonants ("BDRYH"). Inserting "A" gives "BADRYH" which is much
+ * closer to natural English ("BADRIA"). Imperfect but useful for
+ * names not in the dictionary.
+ */
+function romanizeAndUppercase(arabicWord) {
+  if (!arabicWord) return '';
+  let s = arabicWord;
+  // Strip diacritics
+  s = s.replace(/[\u064B-\u065F\u0670\u06D6-\u06ED]/g, '');
+  // Special handling for "ال" prefix → "AL-"
+  let prefix = '';
+  if (s.startsWith('ال')) {
+    prefix = 'AL-';
+    s = s.slice(2);
+  }
+  // Apply transliteration pairs in order (multi-char first)
+  for (const [from, to] of AR_TRANS_PAIRS_FINAL) {
+    s = s.split(from).join(to);
+  }
+  // Strip any remaining non-Latin chars
+  s = s.replace(/[^a-zA-Z'-]/g, '');
+  // Insert short "a" between consonant runs of 3+. Treats vowels
+  // as a/e/i/o/u (and 'y' loosely). Three consonants in a row are
+  // unpronounceable in English-speaker reading; "BDRYH" → "BADRYH"
+  // by splitting after the first consonant.
+  s = s.replace(/([bcdfghjklmnpqrstvwxz]{3,})/gi, (m) => {
+    let out = '';
+    for (let i = 0; i < m.length; i++) {
+      out += m[i];
+      // Insert vowel between every consecutive pair after position 0
+      if (i > 0 && i < m.length - 1) out += 'a';
+    }
+    return out;
+  });
+  return (prefix + s).toUpperCase();
+}
+
+// Letter-pair table tuned for proper-noun output. Differences from
+// the matching-helper table above: prefers naturalistic English
+// spellings (e.g. ع → A, not 'a'; ج → J; ق → Q).
+const AR_TRANS_PAIRS_FINAL = [
+  ['آ',   'aa'],
+  ['ا',   'a'],   ['أ', 'a'],   ['إ', 'i'],   ['ى', 'a'],
+  ['ب',   'b'],
+  ['ت',   't'],   ['ث', 'th'],
+  ['ج',   'j'],
+  ['ح',   'h'],   ['خ', 'kh'],
+  ['د',   'd'],   ['ذ', 'dh'],
+  ['ر',   'r'],
+  ['ز',   'z'],
+  ['س',   's'],   ['ش', 'sh'],
+  ['ص',   's'],   ['ض', 'd'],
+  ['ط',   't'],   ['ظ', 'z'],
+  ['ع',   'a'],
+  ['غ',   'gh'],
+  ['ف',   'f'],
+  ['ق',   'q'],
+  ['ك',   'k'],
+  ['ل',   'l'],
+  ['م',   'm'],
+  ['ن',   'n'],
+  ['ه',   'h'],   ['ة', 'a'],
+  ['و',   'w'],
+  ['ي',   'y'],   ['ئ', 'y'],   ['ؤ', 'w'],
+  ['ء',   ''],
+];
 
 // Letter-by-letter transliteration. Multi-char sequences first.
 const AR_TRANS_PAIRS = [

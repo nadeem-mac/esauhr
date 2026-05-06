@@ -138,10 +138,14 @@ export default function GovernmentDataSync({ me }) {
   }, []);
 
   // ─── Apply confirmed matches ───────────────────────────────────
-  const applyDecisions = useCallback(async () => {
+  const applyDecisions = useCallback(async (overrideDecisions) => {
     if (!reconciliation) return;
+    // Allow callers to pass an explicit decisions snapshot (used by
+    // autoSync below — React state hasn't committed in time for a
+    // chained read).
+    const decisionsToUse = overrideDecisions || decisions;
     const toApply = reconciliation.matches.filter(m => {
-      const d = decisions[m.mol.national_id];
+      const d = decisionsToUse[m.mol.national_id];
       return d?.action === 'apply' && d?.employeeId;
     });
     if (toApply.length === 0) {
@@ -156,24 +160,34 @@ export default function GovernmentDataSync({ me }) {
     const now = new Date().toISOString();
 
     for (const m of toApply) {
-      const d = decisions[m.mol.national_id];
+      const d = decisionsToUse[m.mol.national_id];
       const empId = d.employeeId;
       try {
+        // Build the patch. The English `name` field gets overwritten
+        // with the canonical transliteration of the Arabic name —
+        // this is what Nadeem asked for: "system should automatically
+        // change Arabic to English… and update their data". The
+        // canonical name is computed at parse time so what gets
+        // shown in the preview row is exactly what gets written.
+        const patch = {
+          arabic_name:       m.mol.arabic_name || null,
+          national_id:       m.mol.national_id || null,
+          date_of_birth:     m.mol.date_of_birth || null,
+          gender:            m.mol.gender || null,
+          arabic_profession: m.mol.arabic_profession || null,
+          mol_join_date:     m.mol.mol_join_date || null,
+          gosi_eligibility:  m.mol.gosi_eligibility || null,
+          nationality:       m.mol.nationality || null,
+          mol_synced_at:     now,
+        };
+        // Only overwrite `name` if we have a non-empty canonical
+        // form. Defensive — better to keep existing name than
+        // blank it out if transliteration somehow returned empty.
+        if (m.mol.canonical_name) {
+          patch.name = m.mol.canonical_name;
+        }
         await directPatch(
-          'employees',
-          'id',
-          empId,
-          {
-            arabic_name:       m.mol.arabic_name || null,
-            national_id:       m.mol.national_id || null,
-            date_of_birth:     m.mol.date_of_birth || null,
-            gender:            m.mol.gender || null,
-            arabic_profession: m.mol.arabic_profession || null,
-            mol_join_date:     m.mol.mol_join_date || null,
-            gosi_eligibility:  m.mol.gosi_eligibility || null,
-            nationality:       m.mol.nationality || null,
-            mol_synced_at:     now,
-          },
+          'employees', 'id', empId, patch,
           { timeoutMs: 9000 }
         );
         ok++;
@@ -198,7 +212,33 @@ export default function GovernmentDataSync({ me }) {
         });
       } catch {}
     }
-  }, [reconciliation, decisions, loadEmployees, me?.id]);
+  }, [reconciliation, decisions, loadEmployees, me]);
+
+  // ─── Auto-sync — applies all confident matches in one click ──
+  // "Confident" means:
+  //   • National ID match (perfect — confidence === 1.0). After
+  //     the first sync these dominate, since national_id is then
+  //     populated for all already-synced staff and future MOL
+  //     uploads match deterministically on that column.
+  //   • Name match with confidence >= 0.7 (token overlap is high
+  //     enough that the Arabic name almost certainly identifies
+  //     this portal employee).
+  // Lower-confidence rows still need manual review via the per-
+  // row checkbox.
+  const autoSyncConfident = useCallback(() => {
+    if (!reconciliation) return;
+    const next = {};
+    for (const m of reconciliation.matches) {
+      next[m.mol.national_id] = {
+        action: m.confidence >= 0.7 ? 'apply' : 'skip',
+        employeeId: m.employeeId,
+      };
+    }
+    setDecisions(next);
+    // Pass the fresh decisions snapshot directly so we don't have to
+    // wait for React to commit state before calling apply.
+    applyDecisions(next);
+  }, [reconciliation, applyDecisions]);
 
   // ─── Filtered display ─────────────────────────────────────────
   const filteredMatches = useMemo(() => {
@@ -339,6 +379,55 @@ export default function GovernmentDataSync({ me }) {
           <CountTile label="Will apply" value={counts.willApply} bg="#E0E7FF" fg="#3730A3" border="#A5B4FC" />
         </div>
       )}
+
+      {/* Auto-sync banner — the one-click path. Per Nadeem's request:
+          "Every time I upload the file… system should automatically
+          change Arabic to English and check which name belongs to
+          which ID and update their data." This button does exactly
+          that for all confident matches in a single click. Uncertain
+          matches (<70% confidence) still need per-row review and are
+          left for manual handling below. */}
+      {counts && counts.matched > 0 && (() => {
+        const confidentCount = reconciliation.matches.filter(m => m.confidence >= 0.7).length;
+        const uncertainCount = counts.matched - confidentCount;
+        return (
+          <div
+            className="mb-4 p-3 rounded-lg flex items-center gap-3 flex-wrap"
+            style={{
+              background: 'linear-gradient(135deg, #ECFDF5 0%, #DCFCE7 100%)',
+              border: '1px solid #A7F3D0',
+            }}
+          >
+            <CheckCircle2 className="w-5 h-5 flex-shrink-0" style={{ color: PALETTE.green }} />
+            <div style={{ flex: '1 1 240px', minWidth: 0 }}>
+              <div className="text-[12px]" style={{ color: PALETTE.green, fontWeight: 700 }}>
+                Auto-sync confident matches
+              </div>
+              <div className="text-[11px] mt-0.5" style={{ color: PALETTE.green, opacity: 0.85 }}>
+                Apply {confidentCount} match{confidentCount === 1 ? '' : 'es'} in one click — overwrites English name with the official transliteration, fills in National ID, DOB, profession, and GOSI status.
+                {uncertainCount > 0 && ` ${uncertainCount} uncertain match${uncertainCount === 1 ? '' : 'es'} left for manual review below.`}
+              </div>
+            </div>
+            <button
+              onClick={autoSyncConfident}
+              disabled={applying || confidentCount === 0}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-[12px] flex-shrink-0"
+              style={{
+                background: applying || confidentCount === 0 ? '#A3A3A3' : PALETTE.green,
+                color: '#FFFFFF',
+                border: 'none',
+                fontWeight: 700,
+                cursor: applying || confidentCount === 0 ? 'not-allowed' : 'pointer',
+                boxShadow: confidentCount > 0 && !applying ? '0 2px 6px rgba(15,76,42,0.18)' : 'none',
+                fontFamily: 'inherit',
+              }}
+            >
+              {applying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              Sync {confidentCount} now
+            </button>
+          </div>
+        );
+      })()}
 
       {/* Search */}
       {reconciliation && (
@@ -636,13 +725,20 @@ function MatchRow({ mol, emp, confidence, reason, alternatives, allEmployees, de
           →
         </div>
 
-        {/* Portal side */}
-        <div style={{ flex: '1 1 240px', minWidth: 0 }}>
+        {/* Portal side — shows what the row will look like after
+            apply: the new canonical name from the MOL, with the
+            current portal name struck-through if it differs. */}
+        <div style={{ flex: '1 1 260px', minWidth: 0 }}>
           {emp ? (
             <>
               <div style={{ fontSize: 13, color: PALETTE.ink, fontWeight: 700, lineHeight: 1.3 }}>
-                {emp.name}
+                {mol.canonical_name || emp.name}
               </div>
+              {mol.canonical_name && emp.name && mol.canonical_name !== emp.name && (
+                <div className="text-[10.5px] mt-0.5" style={{ color: PALETTE.mute, opacity: 0.55, textDecoration: 'line-through' }}>
+                  was: {emp.name}
+                </div>
+              )}
               <div className="text-[11px] mt-0.5" style={{ color: PALETTE.mute, opacity: 0.7 }}>
                 {emp.id} · {emp.department}{emp.location ? ` · ${emp.location}` : ''}
               </div>
