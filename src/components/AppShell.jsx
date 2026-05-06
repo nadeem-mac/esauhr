@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   LayoutDashboard, ClipboardList, Users, Calendar as CalIcon, Settings,
   Plus, LogOut, Activity, ShieldCheck, RefreshCw
-, Clock , BarChart3, UserPlus } from 'lucide-react';
+, Clock , BarChart3, UserPlus, Database } from 'lucide-react';
 import { supabase, directGet, directPatch } from '../supabaseClient.js';
 import { loadTemplates as loadEmailTemplates } from '../lib/emailTemplates.js';
 import Dashboard from './Dashboard.jsx';
@@ -31,6 +31,7 @@ import ReviewerPanel from './ReviewerPanel.jsx';
 import EvergreenLogo from './EvergreenLogo.jsx';
 import AttendanceView from './AttendanceView.jsx';
 import RefreshOverlay from './RefreshOverlay.jsx';
+import GovernmentDataSync from './GovernmentDataSync.jsx';
 import { logAction } from '../lib/audit.js';
 import { fmtDate } from '../lib/leaveLogic.js';
 
@@ -73,6 +74,15 @@ function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, isHiringViewe
   // Insights — admin and HR reviewer (Bashaier) only — full reports + exports
   if (isAdmin || isHrReviewer) {
     base.push({ id: 'insights', label: 'Insights', icon: BarChart3 });
+  }
+
+  // MOL · GOSI — government data sync. Admin (Nadeem) and HR reviewer
+  // (Bashaier) both manage the periodic MOL/GOSI subscriber-list
+  // reconciliation, so both roles get this tab. The label uses the
+  // dot separator to mirror the way Saudi government documents
+  // typically reference the two systems together.
+  if (isAdmin || isHrReviewer) {
+    base.push({ id: 'mol_sync', label: 'MOL · GOSI', icon: Database });
   }
 
   // Diagnostics — admin only (Bashaier and staff don't see it)
@@ -941,6 +951,9 @@ export default function AppShell({ session, me, onRefreshMe }) {
         )}
         {tab === 'diagnostics' && isAdmin && (
           <ConnectivityTest />
+        )}
+        {tab === 'mol_sync' && (isAdmin || isHrReviewer) && (
+          <GovernmentDataSync me={me} />
         )}
         {tab === 'admin' && isAdmin && (
           <AdminPanel session={session} me={me} onRefreshMe={onRefreshMe} />
