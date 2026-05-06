@@ -338,15 +338,16 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
 
   // Normalize both shift sets. shiftSet (employee-level) is kept as a
   // fallback / legacy path — but the primary check is the date-aware
-  // shiftDateSet keyed `${empId}|${YYYY-MM-DD}`. A staffer is treated
-  // as "on shift today" only if their employee_shifts row matches
-  // THIS specific date.
+  // shiftDateMap keyed `${empId}|${YYYY-MM-DD}` → { start, end, status }.
+  // A staffer is treated as "on shift today" only if there's a Map
+  // entry for THIS specific date; the entry's times drive the
+  // late/early evaluation against the manager-assigned schedule.
   const shiftSet = (shiftEmployeeIds instanceof Set)
     ? shiftEmployeeIds
     : new Set(shiftEmployeeIds || []);
-  const shiftDateSet = (shiftAssignmentDates instanceof Set)
+  const shiftDateSet = (shiftAssignmentDates instanceof Map)
     ? shiftAssignmentDates
-    : new Set(shiftAssignmentDates || []);
+    : new Map();
 
   // Mawani-visit set keyed as `${empId}|${YYYY-MM-DD}` so a single
   // .has() call answers "is this employee on Mawani duty this date?"
@@ -719,7 +720,7 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
   // We need the date range to scope the fetch — derive from the
   // existing rows we're about to re-evaluate. Done after the
   // attendance_daily fetch below to keep the query tight.
-  let shiftDateSet = new Set();
+  let shiftDateSet = new Map();
 
   // Build empPolicyMap: employee_id → policy. ALWAYS fetch fresh
   // here — the caller's employees prop may be stale if the user
