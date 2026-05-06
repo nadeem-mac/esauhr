@@ -465,6 +465,34 @@ export default function RefreshOverlay({ open, message = 'Refreshing your dashbo
           >
             FETCHING THE LATEST · YOU'RE STILL SIGNED IN
           </div>
+
+          {/* Author credit — Nadeem's nickname is HumbleGenius (per
+              the system, also the admin record in the employees
+              table). Keeping it small and subtle at the bottom so
+              it doesn't compete with the ship animation, but visible
+              enough to read during the 2-second hold. Uses
+              brand-green leaves on the sides as inline emojis. */}
+          <div
+            style={{
+              marginTop: '24px',
+              fontSize: '12px',
+              color: BRAND_GREEN,
+              opacity: 0.85,
+              fontWeight: 700,
+              letterSpacing: '0.04em',
+              fontFamily: 'Georgia, serif',
+              fontStyle: 'italic',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+            }}
+          >
+            <span aria-hidden="true">🌿</span>
+            <span>Made with</span>
+            <span aria-hidden="true">💚</span>
+            <span>by the HumbleGenius</span>
+            <span aria-hidden="true">⚓</span>
+          </div>
         </div>
       </div>
     </>,
