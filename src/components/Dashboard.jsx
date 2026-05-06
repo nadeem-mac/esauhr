@@ -699,14 +699,15 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           longer mounted. The HrShiftMonthCard below is the new
           HR-side view for monitoring shifts (read-only, no approvals). */}
 
-      {/* Bashaier's own applications — HR reviewer can submit her
-          own leave/permission requests like any other employee.
-          Per Nadeem: "Bashaier needs to see her own application
-          status it's not appearing." Mounted on her dashboard so
-          she sees the same card admin/managers see for their own
-          submissions. The BashaierTasksCard (Mr John reports) has
-          moved to its own REPORTS tab. */}
-      {bashaierMode && (
+      {/* Personal applications card — shown to anyone viewing this
+          dashboard (admin Nadeem, HR reviewer Bashaier). Both submit
+          their own leaves/permissions just like regular staff and
+          need to see their own application status here. Per Nadeem:
+          "I also need to see the status of my own application, it's
+          not appearing in my dashboard." MyApplicationsCard auto-
+          hides itself when the viewer has no applications, so it
+          doesn't clutter Nadeem's screen when he's empty-handed. */}
+      {(bashaierMode || me?.is_admin) && (
         <MyApplicationsCard
           me={me}
           requests={requests}
