@@ -692,7 +692,14 @@ export default function AppShell({ session, me, onRefreshMe }) {
                 if (refreshing) return;
                 setRefreshing(true);
 
-                // Cleanup runs in parallel with the 3-second hold.
+                // Per Nadeem: "when you refresh, it should go straight
+                // to the landing page with the most updated version".
+                // The active tab is persisted in sessionStorage to
+                // survive reloads — clear it so the next mount falls
+                // back to 'dashboard' (the default landing tab).
+                try { sessionStorage.removeItem('esauhr.tab'); } catch {}
+
+                // Cleanup runs in parallel with the 2-second hold.
                 // Failures are non-blocking — the reload below still runs.
                 const cleanup = (async () => {
                   if ('serviceWorker' in navigator) {
@@ -709,9 +716,10 @@ export default function AppShell({ session, me, onRefreshMe }) {
                   }
                 })();
 
-                // Minimum 2-second hold so the ship animation is visible.
-                // (Was 3s — Nadeem: "the animation should stay for two
-                // seconds".)
+                //   3. Hold for at least 2 seconds so the user sees the
+                //      ship animation play out (Nadeem's call — long
+                //      enough to register, short enough not to feel
+                //      sluggish)
                 const minHold = new Promise(r => setTimeout(r, 2000));
 
                 // Wait for whichever finishes LAST — cleanup OR the 2s
@@ -720,32 +728,39 @@ export default function AppShell({ session, me, onRefreshMe }) {
                 await Promise.all([cleanup, minHold]);
 
                 // Cache-bust query so the browser must re-fetch index.html
-                // and pull the newest hashed asset bundles.
-                const url = new URL(window.location.href);
-                url.searchParams.set('_r', Date.now().toString());
-                window.location.replace(url.toString());
+                // and pull the newest hashed asset bundles. Strip any
+                // existing query params first so we land on the bare home
+                // URL (with just the cache-buster) — keeps the post-reload
+                // route clean.
+                const base = window.location.origin + window.location.pathname.replace(/[?#].*$/, '');
+                const fresh = `${base}?_r=${Date.now()}`;
+                window.location.replace(fresh);
               }}
               disabled={refreshing}
-              className={`p-2.5 rounded-full border esau-refresh-btn ${refreshing ? 'esau-refresh-btn-active' : ''}`}
-              title="Refresh — reload the latest version of the site"
-              aria-label="Refresh"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border esau-refresh-btn text-[12px]"
+              title="Set sail again ⚓ — reload the freshest version of the portal"
+              aria-label="Refresh the portal"
               style={{
-                /* Default state: subtle warm border, neutral icon.
+                /* Default state: brand-green tinted pill so the button
+                   reads as an action, not just chrome. Bumped from a
+                   tiny icon-only button to a labeled pill per Nadeem:
+                   "The refresh button needs to be seen clearly".
                    Active state (refreshing): solid evergreen surface,
-                   white icon, soft pulsing ring around it — clearly
-                   visible to the user that something is happening
-                   and the click registered. Per Nadeem: "The refresh
-                   button on landing page must be clearly seen when
-                   clicked." */
-                background: refreshing ? '#0F4C2A' : 'transparent',
-                borderColor: refreshing ? '#0F4C2A' : 'var(--border-soft)',
-                color: refreshing ? '#FFFFFF' : 'inherit',
+                   white icon + label, soft pulsing ring around it —
+                   unmistakable that the click registered. */
+                background: refreshing ? '#0F4C2A' : '#ECFDF5',
+                borderColor: refreshing ? '#0F4C2A' : '#A7F3D0',
+                color: refreshing ? '#FFFFFF' : '#0F4C2A',
+                fontWeight: 700,
+                lineHeight: 1,
                 boxShadow: refreshing
                   ? '0 0 0 4px rgba(15, 76, 42, 0.18), 0 2px 8px rgba(15, 76, 42, 0.25)'
                   : 'none',
                 transition: 'all 0.2s ease',
+                cursor: refreshing ? 'wait' : 'pointer',
               }}>
-              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+              <span>{refreshing ? 'Setting sail…' : 'Refresh'}</span>
             </button>
             <button onClick={signOut}
               className="p-2.5 rounded-full border"
