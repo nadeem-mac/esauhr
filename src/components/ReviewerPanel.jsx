@@ -277,34 +277,47 @@ export default function ReviewerPanel({ me }) {
       setLeave(lr || []);
       setPerms(pr || []);
 
-      // Sick rows missing certificates — fetch for HR reviewers and
-      // admins. Each such row is a staff sick declaration that hasn't
-      // been backed by a Sehhaty cert yet. PendingSickCertsCard at
-      // the top of the dashboard turns these into the tracker view.
+      // Sick rows needing cert follow-up — TWO buckets:
       //
-      // Per Nadeem (2026-05-06): sick leaves now route through the
-      // manager (ALL STAFF → MANAGER → BASHAIER), so we no longer
-      // gate on stage='pending_certificate'. We instead detect
-      // "missing cert" by the column itself: sehhaty_code IS NULL.
-      // That covers rows at every active stage (pending_manager,
-      // pending_hr, even approved-but-uncertified-yet) without
-      // depending on the legacy holding stage. Cert-exempt rows
-      // (sick_cert_exempt=true) are still excluded.
+      //   1. Pre-approval: still in active review (pending_manager,
+      //      pending_hr, pending_certificate) + missing cert. These
+      //      need the cert before HR can finalise.
       //
-      // We also exclude the reviewer's OWN rows from the list —
-      // Bashaier shouldn't see her own declarations on her HR
-      // dashboard for the same separation-of-duties reason as
-      // leave/perm queues.
+      //   2. Post-approval: already approved as CERT-EXEMPT (manager
+      //      approved + Bashaier provisionally approved without cert)
+      //      but the staff still owes the Sehhaty cert when they
+      //      return to office. These need cert chase-up via email +
+      //      upload to close the case fully.
+      //
+      // Per Nadeem (2026-05-06): "Bashaier also need to have the
+      // sehhaty certificate from the staff the next day he comes
+      // from duty … Bashaier needs to get a reminder in her landing
+      // page that the sehhaty certificate is pending for the staff
+      // she approved." Both buckets surface in PendingSickCertsCard
+      // so she sees the full obligation list at a glance.
+      //
+      // Cert-exempt rows where sehhaty_code IS already populated are
+      // EXCLUDED — those are fully resolved (cert was provided after
+      // approval and verified). The card auto-clears as cert arrives.
       if (isHrReviewer || isAdmin) {
         const certQs =
           'select=*&leave_type_id=eq.sick' +
           '&sehhaty_code=is.null' +
-          '&sick_cert_exempt=eq.false' +
-          '&stage=in.(pending_certificate,pending_manager,pending_hr)' +
+          '&stage=in.(pending_certificate,pending_manager,pending_hr,approved)' +
           `&employee_id=neq.${encodeURIComponent(me.id)}` +
           '&order=sick_declared_at.desc';
         const cr = await directGet('leave_requests', certQs, { timeoutMs: 10000 }).catch(() => []);
-        setPendingCerts(cr || []);
+        // Filter client-side: include rows that are either
+        //   - active stages with cert NOT exempted (pre-approval), OR
+        //   - approved + cert-exempt (post-approval cert obligation)
+        // Drop rows that are approved with sick_cert_exempt=false
+        // because those have been verified (sehhaty_code populated
+        // is the auto-resolution signal — already filtered above).
+        const filteredCr = (cr || []).filter(r => {
+          if (r.stage === 'approved') return r.sick_cert_exempt === true;
+          return r.sick_cert_exempt !== true;
+        });
+        setPendingCerts(filteredCr);
         // Pull every reminder ever sent for the visible declarations.
         // Cheap query — sick_reminders has at most a handful of rows
         // per declaration (3-5 tiers × small staff). PendingSickCertsCard

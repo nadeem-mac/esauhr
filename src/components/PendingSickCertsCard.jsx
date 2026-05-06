@@ -58,13 +58,46 @@
 // =============================================================================
 
 import React, { useState, useMemo } from 'react';
-import { HeartPulse, ChevronRight, ShieldCheck, Loader2, Inbox, Bell, AlertTriangle, Send } from 'lucide-react';
+import { HeartPulse, ChevronRight, ShieldCheck, Loader2, Inbox, Bell, AlertTriangle, Send, Mail, FileText } from 'lucide-react';
 import { classifyPressure, PRESSURE_LABELS, formatDeclarationRange } from '../lib/sickDeclaration.js';
 import { reminderStatus, reminderKindLabel } from '../lib/sickReminderEmail.js';
 import { groupViolationsBySource, findStaffNeedingDigest, AUTO_UNMARK_WINDOW_DAYS } from '../lib/sickHardPressure.js';
+import { directPatch } from '../supabaseClient.js';
+import { logAction } from '../lib/audit.js';
 import CertExemptModal from './CertExemptModal.jsx';
 import SendReminderModal from './SendReminderModal.jsx';
 import UnauthorizedDigestModal from './UnauthorizedDigestModal.jsx';
+
+// Build a cert-request email draft for staff who have a sick leave
+// already approved (cert-exempt) but haven't submitted the Sehhaty
+// certificate yet. Per Nadeem (2026-05-06): "we want staff to reply
+// by email with attachment of the sick leave". Bashaier opens this
+// in her email client, the staff replies with the PDF, she uploads
+// via the Add Cert button to close the case.
+function buildCertRequestEmail({ employee, request }) {
+  const empName = employee?.name || 'colleague';
+  const startStr = request?.start_date || '';
+  const endStr = request?.end_date || '';
+  const dateRange = startStr === endStr || !endStr
+    ? startStr
+    : `${startStr} to ${endStr}`;
+  const subject = `Sehhaty certificate required — sick leave on ${dateRange}`;
+  const body =
+`Dear ${empName},
+
+Your sick leave on ${dateRange} has been approved by your manager and HR (cert-exempt) so the day off is on the books.
+
+To close the case in our HR records, please reply to this email with your Sehhaty certificate attached as a PDF. Once received, your sick leave record will be fully verified.
+
+If a Sehhaty certificate was not issued for this absence, please reply confirming so I can mark the case as closed.
+
+Thank you,
+HR — Evergreen Shipping Agency Saudi Co.`;
+  const to = encodeURIComponent(employee?.email || '');
+  const subj = encodeURIComponent(subject);
+  const bod  = encodeURIComponent(body);
+  return `mailto:${to}?subject=${subj}&body=${bod}`;
+}
 
 // Sort key: overdue first (hard > soft), then by declaration date desc.
 // Returns a numeric sort value; lower = appears earlier (we want
@@ -104,6 +137,11 @@ export default function PendingSickCertsCard({
   // Modal targets — at most one modal open at a time.
   const [exemptingReq,  setExemptingReq]  = useState(null);
   const [remindingReq,  setRemindingReq]  = useState(null);
+  // Add-cert form — opens when Bashaier clicks ADD CERT on a
+  // post-approval row (stage='approved' && sick_cert_exempt=true).
+  // She types the service code from the email reply / cert PDF and
+  // we patch the row, marking the case closed.
+  const [addingCertReq, setAddingCertReq] = useState(null);
   // Digest modal — true when the "Send weekly digest" CTA is clicked.
   // The modal lists every staff with active unauthorized_absence rows
   // that haven't been notified yet (email_sent_at IS NULL).
@@ -349,6 +387,21 @@ export default function PendingSickCertsCard({
                       <span className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.85 }}>
                         Declared: {formatDeclarationRange(req)}
                       </span>
+                      {/* POST-APPROVAL — surfaces when manager AND HR
+                          have already approved this row as cert-exempt.
+                          The day off is on the books; the only thing
+                          outstanding is the Sehhaty cert from the staff.
+                          Higher visual priority than pressure pill since
+                          this means "case is open, not yet closed". */}
+                      {req.stage === 'approved' && req.sick_cert_exempt && (
+                        <span
+                          className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider"
+                          style={{ background: '#DBEAFE', color: '#1E3A8A', border: '1px solid #93C5FD' }}
+                          title="Manager + HR approved cert-exempt; staff still owes the Sehhaty cert"
+                        >
+                          POST-APPROVAL · CERT DUE
+                        </span>
+                      )}
                       <span
                         className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider"
                         style={{ background: pressureMeta.bg, color: pressureMeta.fg }}
@@ -429,26 +482,66 @@ export default function PendingSickCertsCard({
                 {!!me?.is_hr_reviewer && (
                   <div className="flex flex-col border-l divide-y"
                        style={{ borderColor: tint.border }}>
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); setRemindingReq(req); }}
-                      className="px-3 py-1.5 flex items-center gap-1 text-[10px] tracking-wider opacity-70 hover:opacity-100"
-                      style={{ color: '#0A0A0A', borderColor: tint.border }}
-                      title="Send a Sehhaty cert reminder email to this employee"
-                    >
-                      <Bell className="w-3.5 h-3.5" />
-                      REMIND
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); setExemptingReq(req); }}
-                      className="px-3 py-1.5 flex items-center gap-1 text-[10px] tracking-wider opacity-70 hover:opacity-100"
-                      style={{ color: '#0A0A0A', borderColor: tint.border }}
-                      title="Mark this declaration as cert-exempt (skip the Sehhaty requirement)"
-                    >
-                      <ShieldCheck className="w-3.5 h-3.5" />
-                      EXEMPT
-                    </button>
+                    {req.stage === 'approved' && req.sick_cert_exempt ? (
+                      // POST-APPROVAL row — manager and HR have already
+                      // approved the day off (cert-exempt). The case
+                      // stays open until staff returns with the cert.
+                      // Two actions:
+                      //   EMAIL    — opens mailto draft asking staff to
+                      //              reply with cert PDF attached
+                      //   ADD CERT — opens inline form for Bashaier to
+                      //              type the service code (from email
+                      //              reply or from staff's portal upload)
+                      // The exempt button is hidden — already exempted.
+                      // Reminder button is replaced by EMAIL for clarity.
+                      <>
+                        <a
+                          href={buildCertRequestEmail({ employee: emp, request: req })}
+                          onClick={(e) => e.stopPropagation()}
+                          className="px-3 py-1.5 flex items-center gap-1 text-[10px] tracking-wider opacity-70 hover:opacity-100"
+                          style={{ color: '#0A0A0A', borderColor: tint.border, textDecoration: 'none' }}
+                          title="Compose an email asking the staff to reply with their Sehhaty cert PDF"
+                        >
+                          <Mail className="w-3.5 h-3.5" />
+                          EMAIL
+                        </a>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setAddingCertReq(req); }}
+                          className="px-3 py-1.5 flex items-center gap-1 text-[10px] tracking-wider opacity-70 hover:opacity-100"
+                          style={{ color: '#0A0A0A', borderColor: tint.border }}
+                          title="Add the Sehhaty service code to close this case"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          ADD CERT
+                        </button>
+                      </>
+                    ) : (
+                      // PRE-APPROVAL row — sick declaration without cert
+                      // still in active review. REMIND + EXEMPT as before.
+                      <>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setRemindingReq(req); }}
+                          className="px-3 py-1.5 flex items-center gap-1 text-[10px] tracking-wider opacity-70 hover:opacity-100"
+                          style={{ color: '#0A0A0A', borderColor: tint.border }}
+                          title="Send a Sehhaty cert reminder email to this employee"
+                        >
+                          <Bell className="w-3.5 h-3.5" />
+                          REMIND
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setExemptingReq(req); }}
+                          className="px-3 py-1.5 flex items-center gap-1 text-[10px] tracking-wider opacity-70 hover:opacity-100"
+                          style={{ color: '#0A0A0A', borderColor: tint.border }}
+                          title="Mark this declaration as cert-exempt (skip the Sehhaty requirement)"
+                        >
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                          EXEMPT
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
               </li>
@@ -508,13 +601,161 @@ export default function PendingSickCertsCard({
           me={me}
           onClose={() => setDigestOpen(false)}
           onSent={() => {
-            // The digest modal manages its own per-target send loop;
-            // we re-fetch on close so the parent's view updates with
-            // the freshly-stamped email_sent_at values.
+            onChanged?.();
+          }}
+        />
+      )}
+
+      {/* Add-cert form — Bashaier types the Sehhaty service code from
+          the staff's email reply (or from a manual lookup) and we
+          patch the row to mark the case closed. */}
+      {addingCertReq && (
+        <AddCertModal
+          request={addingCertReq}
+          employee={empMap?.[addingCertReq.employee_id] || null}
+          me={me}
+          onClose={() => setAddingCertReq(null)}
+          onSaved={() => {
+            setAddingCertReq(null);
             onChanged?.();
           }}
         />
       )}
     </section>
+  );
+}
+
+// ─── AddCertModal ────────────────────────────────────────────────────────
+// Inline form for Bashaier to record the Sehhaty cert details from
+// staff's email reply. Patches the existing approved row — no new row
+// is created. Once saved:
+//   • sehhaty_code populated → row drops out of the cert-tracking query
+//   • sick_cert_exempt → false (cert is now actually verified, not exempt)
+//   • sehhaty_verified_at + sehhaty_verified_by stamped
+// Per Nadeem (2026-05-06): "once bashaier sees that and verifies the
+// case must be closed".
+function AddCertModal({ request, employee, me, onClose, onSaved }) {
+  const [code, setCode] = useState('');
+  const [issueDate, setIssueDate] = useState('');
+  const [note, setNote] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  const canSubmit = code.trim().length >= 3 && !submitting;
+
+  const submit = async () => {
+    if (!canSubmit) return;
+    setSubmitting(true);
+    setError('');
+    try {
+      const now = new Date().toISOString();
+      const patch = {
+        sehhaty_code: code.trim(),
+        sehhaty_issue_date: issueDate || null,
+        sehhaty_verified_at: now,
+        sehhaty_verified_by: me?.id || null,
+        sehhaty_verification_note: note.trim() || 'Cert received via email reply and verified.',
+        // Cert is now provided + verified — clear the exempt flag so
+        // the row's status reflects "fully approved with cert" rather
+        // than "cert-exempt".
+        sick_cert_exempt: false,
+      };
+      await directPatch('leave_requests', 'id', request.id, patch, { timeoutMs: 12000 });
+      try {
+        logAction(me, 'sick_cert_added_post_approval', {
+          targetType: 'leave_request',
+          targetId: request.id,
+          targetLabel: `${employee?.name || request.employee_id} · sick · ${request.start_date}`,
+          details: { sehhaty_code: code.trim(), via: 'manual_entry' },
+        });
+      } catch { /* audit best-effort */ }
+      onSaved?.();
+    } catch (err) {
+      setError(err?.message || String(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4"
+         style={{ background: 'rgba(15,31,26,0.55)' }}
+         onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bg-paper rounded-t-2xl sm:rounded-2xl w-full max-w-md fade-in"
+        style={{ boxShadow: '0 12px 40px rgba(31,27,22,0.2)' }}>
+        <div className="px-5 py-4 border-b" style={{ borderColor: 'var(--border-soft)' }}>
+          <div className="text-[10px] tracking-[0.25em] font-bold mb-1" style={{ color: '#0F4C2A' }}>
+            ADD SEHHATY CERTIFICATE
+          </div>
+          <h3 className="text-lg" style={{ fontFamily: 'Georgia, serif', color: '#0A0A0A', fontWeight: 500 }}>
+            Close the case
+          </h3>
+          <div className="text-[11px] mt-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+            {employee?.name} ({request.employee_id}) · sick · {request.start_date}
+            {request.end_date && request.end_date !== request.start_date && ` → ${request.end_date}`}
+          </div>
+        </div>
+
+        <div className="px-5 py-4 space-y-3">
+          <div>
+            <label className="text-[10px] tracking-wider font-bold mb-1 block" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+              SEHHATY SERVICE CODE <span style={{ color: '#B91C1C' }}>*</span>
+            </label>
+            <input value={code} onChange={e => setCode(e.target.value)}
+              placeholder="e.g. PHC1234567"
+              autoFocus
+              className="w-full px-3 py-2 rounded-lg border text-sm bg-transparent focus:outline-none font-mono"
+              style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}/>
+            <div className="text-[10px] mt-1" style={{ color: '#0A0A0A', opacity: 0.55 }}>
+              The reference printed on the Sehhaty PDF. Required.
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] tracking-wider font-bold mb-1 block" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+              ISSUE DATE <span className="opacity-60 font-normal">(optional)</span>
+            </label>
+            <input type="date" value={issueDate} onChange={e => setIssueDate(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border text-sm bg-transparent focus:outline-none"
+              style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}/>
+          </div>
+          <div>
+            <label className="text-[10px] tracking-wider font-bold mb-1 block" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+              VERIFICATION NOTE <span className="opacity-60 font-normal">(optional)</span>
+            </label>
+            <textarea value={note} onChange={e => setNote(e.target.value)}
+              rows={2}
+              placeholder="e.g. Cert received via email on 08 May, matches request"
+              className="w-full px-3 py-2 rounded-lg border text-sm bg-transparent focus:outline-none resize-none"
+              style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}/>
+          </div>
+          {error && (
+            <div className="text-[11px] px-3 py-2 rounded"
+              style={{ background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}>
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-3 border-t flex justify-end gap-2"
+          style={{ borderColor: 'var(--border-soft)' }}>
+          <button onClick={onClose}
+            disabled={submitting}
+            className="text-[11px] px-3 py-1.5 rounded-full border"
+            style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', color: '#0A0A0A', fontWeight: 600 }}>
+            Cancel
+          </button>
+          <button onClick={submit} disabled={!canSubmit}
+            className="inline-flex items-center gap-1.5 text-[11px] px-4 py-1.5 rounded-full"
+            style={{
+              background: canSubmit ? '#0F4C2A' : '#9CA3AF',
+              color: '#FFFFFF',
+              fontWeight: 700,
+              cursor: canSubmit ? 'pointer' : 'not-allowed',
+            }}>
+            {submitting ? 'Saving…' : '✓ Save & close case'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
