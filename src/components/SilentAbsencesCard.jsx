@@ -136,6 +136,12 @@ export default function SilentAbsencesCard({ silentAbsences, empById }) {
                     <li key={emp.id} className="text-[11px] flex items-baseline gap-2">
                       <span style={{ color: '#0A0A0A' }}>{emp.name}</span>
                       <span style={{ color: '#7A7A7A', fontFamily: 'monospace' }}>{emp.id}</span>
+                      {emp.isHalfDay && (
+                        <span className="text-[9px] px-1 py-px rounded"
+                          style={{ background: '#FAEEDA', color: '#854F0B', fontWeight: 600 }}>
+                          ½ day {emp.halfDayPeriod || ''}
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ul>

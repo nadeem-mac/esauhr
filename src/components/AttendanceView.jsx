@@ -1678,7 +1678,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     (async () => {
       try {
         const data = await directGet(
-          'leave_requests?select=id,employee_id,start_date,end_date,status,leave_type_id&status=eq.approved&start_date=lte.' + csvDate + '&end_date=gte.' + windowStart
+          'leave_requests?select=id,employee_id,start_date,end_date,status,leave_type_id,is_half_day,half_day_period&status=eq.approved&start_date=lte.' + csvDate + '&end_date=gte.' + windowStart
         );
         if (!cancelled) setApprovedLeaves(data || []);
       } catch (e) {
@@ -1949,6 +1949,25 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       && l.start_date <= dateStr
       && l.end_date   >= dateStr
     );
+  }, [approvedLeaves]);
+
+  // Half-day leave lookup. Returns the matching leave row when the
+  // employee is on HALF-day leave for this date — null otherwise.
+  // Used to relax late/early/missed evaluations on half-day staff:
+  //   • morning leave  → punches expected only in the afternoon (~13:00–17:00)
+  //   • afternoon leave → punches expected only in the morning   (~08:00–12:00)
+  // Without this, a staff on morning leave who punches in at 13:00
+  // would be flagged as "late by 5 hours" — clearly wrong since the
+  // morning was approved leave.
+  const halfDayLeaveOnDate = useCallback((empId, dateStr) => {
+    if (!dateStr) return null;
+    const row = approvedLeaves.find(l =>
+      String(l.employee_id) === String(empId)
+      && l.start_date <= dateStr
+      && l.end_date   >= dateStr
+      && l.is_half_day === true
+    );
+    return row || null;
   }, [approvedLeaves]);
 
   // P4: fast lookup of accepted-shift override for the current csvDate, keyed
@@ -2304,13 +2323,26 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         out.unknownEmp.push({ id: 'row-' + idx, row, empId, csvName: row['First Name'] || '', dateLabel: rowDate });
         return;
       }
-      // Skip if on approved leave for THAT specific date.
+      // Skip if on approved leave for THAT specific date. Half-day
+      // leaves still skip the row from late/early/missed checks (a
+      // half-day staff who punches IN at 13:30 because they had a
+      // morning leave should not be flagged as 5 hours late), but the
+      // entry carries the half-day metadata so downstream consumers
+      // (report cards, calendar tooltips) can label them correctly.
+      // Future improvement: split into a separate halfDayLeave bucket
+      // and run a relaxed-cutoff late/early check using only the
+      // working half of the day. For now the minimum-viable behaviour
+      // is "fully suppress flags on half-day leave dates" — same as
+      // full-day leave — which avoids false positives.
+      const halfDay = halfDayLeaveOnDate(emp.id, rowDate);
       if (onLeaveOnDate(emp.id, rowDate)) {
-        // De-dup across days: if an employee is on leave both today AND
-        // yesterday, only show once. The shared bucket holds one entry
-        // per employee regardless of date.
         if (!out.onLeave.some(x => x.employee?.id === emp.id)) {
-          out.onLeave.push({ id: 'row-' + idx, employee: emp });
+          out.onLeave.push({
+            id: 'row-' + idx,
+            employee: emp,
+            isHalfDay: !!halfDay,
+            halfDayPeriod: halfDay?.half_day_period || null,
+          });
         }
         return;
       }
@@ -2880,7 +2912,12 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
 
       // Approved leave covers today?
       if (onLeaveOnDate(emp.id, csvDate)) {
-        out.onLeave.push(emp);
+        const halfDay = halfDayLeaveOnDate(emp.id, csvDate);
+        out.onLeave.push({
+          ...emp,
+          isHalfDay: !!halfDay,
+          halfDayPeriod: halfDay?.half_day_period || null,
+        });
         return;
       }
 
@@ -2902,7 +2939,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     out.onMawani.sort(byName);
     out.unexplained.sort(byName);
     return out;
-  }, [csvDate, csvIsWeekend, empById, parsed.rows, onLeaveOnDate, mawaniDays]);
+  }, [csvDate, csvIsWeekend, empById, parsed.rows, onLeaveOnDate, halfDayLeaveOnDate, mawaniDays]);
 
   // ─── Persist daily attendance to attendance_daily ──────────────────
   // Every successful parse triggers a write of one row per
