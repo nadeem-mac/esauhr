@@ -622,7 +622,7 @@ function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, schedul
     'Dear ' + greetName + ',\n\n' +
     'HR\u2019s daily attendance review for ' + dateLong + ' shows your ' + punchPhrase + ' at ' + punchInStr + ', ' + minutesLate + ' minutes past the 15-minute grace period and with no approved permission on file. This is recorded as a late-arrival violation.' + shiftContext + '\n\n' +
     assignmentPara +
-    (isCustomShift ? buildAssignedShiftsBlock(assignedShifts, violationDate, divider) : '') +
+    buildAssignedShiftsBlock(assignedShifts, violationDate, divider) +
     'As a reminder, according to the ESAU attendance policy:\n\n' +
     divider + '\n' +
     policyBullets.join('\n') + '\n' +
@@ -693,7 +693,7 @@ function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd,
     'Dear ' + greetName + ',\n\n' +
     'HR\u2019s daily attendance review for ' + dateLong + ' shows your ' + punchPhrase + ' at ' + punchOutStr + ', ' + minutesEarly + ' minutes before your scheduled ' + endStr12h + (isCustomShift ? ' shift end' : ' clock-out time') + ' and with no approved permission on file. This is recorded as an early-departure violation.' + shiftContext + '\n\n' +
     assignmentPara +
-    (isCustomShift ? buildAssignedShiftsBlock(assignedShifts, violationDate, divider) : '') +
+    buildAssignedShiftsBlock(assignedShifts, violationDate, divider) +
     'As a reminder, according to the ESAU attendance policy:\n\n' +
     divider + '\n' +
     policyBullets.join('\n') + '\n' +
@@ -802,7 +802,7 @@ function missedPunchEmailContent({ employee, dateLong, missingType, isCustomShif
     'Dear ' + greetName + ',\n\n' +
     'HR\u2019s daily attendance review for ' + dateLong + ' shows ' + missingPhrase + ' missing from the time card. This leaves the day\u2019s record incomplete and cannot be processed for payroll until corrected.' + shiftContext + '\n\n' +
     assignmentPara +
-    (isCustomShift ? buildAssignedShiftsBlock(assignedShifts, violationDate, divider) : '') +
+    buildAssignedShiftsBlock(assignedShifts, violationDate, divider) +
     'As a reminder, according to the ESAU attendance policy:\n\n' +
     divider + '\n' +
     policyBullets.join('\n') + '\n' +
@@ -885,7 +885,7 @@ function lateEmailContentTemp({ employee, dateLong, punchInStr, minutesLate, sch
     'Dear ' + greetName + ',\n\n' +
     'HR\u2019s daily attendance review for ' + dateLong + ' shows your ' + punchPhrase + ' at ' + punchInStr + ', ' + minutesLate + ' minutes past the 15-minute grace period and with no approved permission on file. This is recorded as a late-arrival violation.' + shiftContext + '\n\n' +
     assignmentPara +
-    (isCustomShift ? buildAssignedShiftsBlock(assignedShifts, violationDate, divider) : '') +
+    buildAssignedShiftsBlock(assignedShifts, violationDate, divider) +
     'As a reminder, according to the ESAU attendance policy:\n\n' +
     divider + '\n' +
     policyBullets.join('\n') + '\n' +
@@ -939,7 +939,7 @@ function earlyLeaveEmailContentTemp({ employee, dateLong, punchOutStr, scheduled
     'Dear ' + greetName + ',\n\n' +
     'HR\u2019s daily attendance review for ' + dateLong + ' shows your ' + punchPhrase + ' at ' + punchOutStr + ', ' + minutesEarly + ' minutes before your scheduled ' + endStr12h + (isCustomShift ? ' shift end' : ' clock-out time') + ' and with no approved permission on file. This is recorded as an early-departure violation.' + shiftContext + '\n\n' +
     assignmentPara +
-    (isCustomShift ? buildAssignedShiftsBlock(assignedShifts, violationDate, divider) : '') +
+    buildAssignedShiftsBlock(assignedShifts, violationDate, divider) +
     'As a reminder, according to the ESAU attendance policy:\n\n' +
     divider + '\n' +
     policyBullets.join('\n') + '\n' +
@@ -2541,9 +2541,13 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
       managerName: entry.assignedBy ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
-      assignedShifts: entry.isCustomShift
-        ? (monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [])
-        : [],
+      // Always pass the staff's full month roster — buildAssignedShiftsBlock
+      // returns '' when empty, so office staff get nothing extra. Per Nadeem
+      // (2026-05-07): shift staff should see their assigned roster even if
+      // the violation row itself wasn't classified as a shift day (e.g. a
+      // missed-OUT on a date the manager hadn't yet assigned, or any row
+      // where override detection didn't fire).
+      assignedShifts: monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [],
       violationDate: entry.dateLabel || csvDate,
     });
     const cc = [getManagerEmail(entry.employee), ...FIXED_CC].filter(Boolean);
@@ -2581,9 +2585,13 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
       managerName: entry.assignedBy ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
-      assignedShifts: entry.isCustomShift
-        ? (monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [])
-        : [],
+      // Always pass the staff's full month roster — buildAssignedShiftsBlock
+      // returns '' when empty, so office staff get nothing extra. Per Nadeem
+      // (2026-05-07): shift staff should see their assigned roster even if
+      // the violation row itself wasn't classified as a shift day (e.g. a
+      // missed-OUT on a date the manager hadn't yet assigned, or any row
+      // where override detection didn't fire).
+      assignedShifts: monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [],
       violationDate: entry.dateLabel || csvDate,
     });
     const cc = [getManagerEmail(entry.employee), ...FIXED_CC].filter(Boolean);
@@ -2619,9 +2627,13 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
       managerName: entry.assignedBy ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
-      assignedShifts: entry.isCustomShift
-        ? (monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [])
-        : [],
+      // Always pass the staff's full month roster — buildAssignedShiftsBlock
+      // returns '' when empty, so office staff get nothing extra. Per Nadeem
+      // (2026-05-07): shift staff should see their assigned roster even if
+      // the violation row itself wasn't classified as a shift day (e.g. a
+      // missed-OUT on a date the manager hadn't yet assigned, or any row
+      // where override detection didn't fire).
+      assignedShifts: monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [],
       violationDate: entry.dateLabel || csvDate,
     });
     const cc = [getManagerEmail(entry.employee), ...FIXED_CC].filter(Boolean);
@@ -5445,7 +5457,7 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, empById, monthly
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
       managerName: (entry.assignedBy && empById) ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
-      assignedShifts: (entry.isCustomShift && monthlyShiftsByEmp)
+      assignedShifts: monthlyShiftsByEmp
         ? (monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [])
         : [],
       violationDate: entry.dateLabel || csvDate,
@@ -5466,7 +5478,7 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, empById, monthly
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
       managerName: (entry.assignedBy && empById) ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
-      assignedShifts: (entry.isCustomShift && monthlyShiftsByEmp)
+      assignedShifts: monthlyShiftsByEmp
         ? (monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [])
         : [],
       violationDate: entry.dateLabel || csvDate,
@@ -5486,7 +5498,7 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, empById, monthly
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
       managerName: (entry.assignedBy && empById) ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
-      assignedShifts: (entry.isCustomShift && monthlyShiftsByEmp)
+      assignedShifts: monthlyShiftsByEmp
         ? (monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [])
         : [],
       violationDate: entry.dateLabel || csvDate,
