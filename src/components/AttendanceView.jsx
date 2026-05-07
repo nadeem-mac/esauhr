@@ -1297,6 +1297,11 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // caused a TDZ error: "can't access lexical declaration 'g' before
   // initialization" (where 'g' was the minified calendarRefreshTick).
   const [lastUploadAt, setLastUploadAt] = useState(null);
+  // Tracks the most recent successful daily-reeval cron run. Surfaces
+  // in the system-health pill tooltip so Bashaier can verify the
+  // overnight job ran. Pulled from cron_runs (see migration_cron_
+  // reevaluate.sql). Refreshes alongside lastUploadAt.
+  const [lastCronAt, setLastCronAt] = useState(null);
 
   // Which notification chip is currently expanded (string id or null).
   // Used by the notifications row next to the system health pill —
@@ -1315,6 +1320,16 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           setLastUploadAt(rows[0].uploaded_at);
         }
       } catch { /* non-fatal */ }
+      try {
+        const cronRows = await directGet(
+          'cron_runs',
+          'select=finished_at,status,rows_updated&job_name=eq.daily-reeval&status=in.(success,no_op)&order=finished_at.desc&limit=1',
+          { timeoutMs: 6000 }
+        );
+        if (!cancelled && Array.isArray(cronRows) && cronRows[0]?.finished_at) {
+          setLastCronAt(cronRows[0]);
+        }
+      } catch { /* non-fatal — table may not exist yet pre-migration */ }
     })();
     return () => { cancelled = true; };
   }, [calendarRefreshTick]);
@@ -4662,9 +4677,13 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             if (hrs < 24) return `${hrs} h ago`;
             return `${Math.floor(hrs / 24)} d ago`;
           };
+          const cronMs = lastCronAt?.finished_at ? (now - new Date(lastCronAt.finished_at).getTime()) : null;
           const tooltipParts = [
             `Last upload: ${fmtRel(uploadMs)}`,
             `Last re-evaluation: ${fmtRel(reevalMs)}`,
+            cronMs != null
+              ? `Last overnight cron: ${fmtRel(cronMs)}${lastCronAt?.rows_updated ? ` (${lastCronAt.rows_updated} rows updated)` : ''}`
+              : null,
             healthState === 'stale' ? 'Upload today\'s time card to refresh.' : null,
             healthState === 'aging' ? 'Consider uploading a fresh time card.' : null,
           ].filter(Boolean);
