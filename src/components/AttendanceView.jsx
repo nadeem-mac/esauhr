@@ -1622,6 +1622,92 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     return m;
   }, [acceptedShifts]);
 
+
+  // ── Night-shift bridge ────────────────────────────────────────────
+  // Maps the END day of a night shift back to its START day. Keyed
+  // by `${employee}|${endDate}` where endDate = startDate + 1 day,
+  // valued by the original night shift { startDate, startStr, endStr }.
+  //
+  // Why this exists: the fingerprint export aggregates punches by
+  // calendar day. A staff member working 23:00 → 07:00 next day
+  // shows up in the export as TWO single-punch rows:
+  //
+  //   Day 1 (start day): First Punch 23:00, Last Punch 23:00 (or empty)
+  //   Day 2 (end day):   First Punch 07:00, Last Punch 07:00 (or empty)
+  //
+  // Without bridging, both rows look like missed-punch days. With the
+  // bridge index, detection can recognise the END-day row as the
+  // second half of yesterday's night shift and score the punch-out
+  // against yesterday's end_time — and conversely, recognise the
+  // START-day row as a night-shift-start and score the punch-in
+  // against tonight's start_time.
+  const nightShiftBridge = useMemo(() => {
+    const m = {};
+    Object.entries(shiftOverrideById).forEach(([key, ov]) => {
+      if (!ov?.startStr || !ov?.endStr) return;
+      // Night shift = start time later than end time (e.g. 23:00 > 07:00)
+      if (ov.startStr <= ov.endStr) return;
+      const [empKey, startDate] = key.split('|');
+      // Compute next-day date string (locally — no UTC drift)
+      const [y, mo, d] = startDate.split('-').map(Number);
+      const nextDt = new Date(y, mo - 1, d + 1);
+      const yy = nextDt.getFullYear();
+      const mm = String(nextDt.getMonth() + 1).padStart(2, '0');
+      const dd = String(nextDt.getDate()).padStart(2, '0');
+      const endDate = `${yy}-${mm}-${dd}`;
+      m[`${empKey}|${endDate}`] = {
+        startDate,
+        startStr: ov.startStr,
+        endStr:   ov.endStr,
+        setBy:    ov.setBy || null,
+        assignedAt: ov.assignedAt || null,
+      };
+    });
+    return m;
+  }, [shiftOverrideById]);
+
+  // Build employee lookup by ID (PSN) and name
+  // Build employee lookup. Three indices, each robust to a different
+  // failure mode in the data:
+  //   • empById: exact-string match on id/psn (preserved for backward
+  //     compat — fastest, catches the well-formed cases)
+  //   • empByDigits: digits-only canonical key (strips H prefix, leading
+  //     zeros, any non-digit). The Time Card xlsx omits the H prefix
+  //     and may also omit leading zeros — e.g. file shows '4458' for
+  //     Badria whose directory id is 'H04458' (or sometimes 'H4458').
+  //     Digits-only matching collapses both to '4458' and matches.
+  // Detection below tries empById first (preserves the strict path),
+  // then falls back to empByDigits which always wins when the digit
+  // sequences agree.
+  const psnDigits = (s) => {
+    const digits = String(s || '').replace(/[^0-9]/g, '');
+    // Strip leading zeros so '04458' and '4458' compare equal.
+    return digits.replace(/^0+/, '') || '0';
+  };
+  const empById = useMemo(() => {
+    const m = {};
+    (employees || []).forEach(e => {
+      if (e.id) m[String(e.id).toUpperCase()] = e;
+      if (e.psn) m[String(e.psn).toUpperCase()] = e;
+    });
+    return m;
+  }, [employees]);
+  const empByDigits = useMemo(() => {
+    const m = {};
+    (employees || []).forEach(e => {
+      const k = psnDigits(e.id || e.psn);
+      if (k) m[k] = e;
+    });
+    return m;
+  }, [employees]);
+
+  // Manager email lookup — given an employee, return their direct manager's email
+  const getManagerEmail = useCallback((emp) => {
+    if (!emp || !emp.manager_id) return null;
+    const mgr = empById[String(emp.manager_id).toUpperCase()];
+    return mgr?.email || null;
+  }, [empById]);
+
   // ── Roster gap detection (#2 — Phase 1) ──────────────────────────
   // Surfaces working days for shift staff where the manager has not
   // assigned a shift in employee_shifts. The point: convert silent
@@ -1722,91 +1808,6 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     const totalStaff = Object.keys(staffGaps).length;
     return { totalGaps, totalStaff, byManager };
   }, [csvDate, shiftStaffThisMonth, shiftOverrideById, empById, mawaniDays, onLeaveOnDate]);
-
-  // ── Night-shift bridge ────────────────────────────────────────────
-  // Maps the END day of a night shift back to its START day. Keyed
-  // by `${employee}|${endDate}` where endDate = startDate + 1 day,
-  // valued by the original night shift { startDate, startStr, endStr }.
-  //
-  // Why this exists: the fingerprint export aggregates punches by
-  // calendar day. A staff member working 23:00 → 07:00 next day
-  // shows up in the export as TWO single-punch rows:
-  //
-  //   Day 1 (start day): First Punch 23:00, Last Punch 23:00 (or empty)
-  //   Day 2 (end day):   First Punch 07:00, Last Punch 07:00 (or empty)
-  //
-  // Without bridging, both rows look like missed-punch days. With the
-  // bridge index, detection can recognise the END-day row as the
-  // second half of yesterday's night shift and score the punch-out
-  // against yesterday's end_time — and conversely, recognise the
-  // START-day row as a night-shift-start and score the punch-in
-  // against tonight's start_time.
-  const nightShiftBridge = useMemo(() => {
-    const m = {};
-    Object.entries(shiftOverrideById).forEach(([key, ov]) => {
-      if (!ov?.startStr || !ov?.endStr) return;
-      // Night shift = start time later than end time (e.g. 23:00 > 07:00)
-      if (ov.startStr <= ov.endStr) return;
-      const [empKey, startDate] = key.split('|');
-      // Compute next-day date string (locally — no UTC drift)
-      const [y, mo, d] = startDate.split('-').map(Number);
-      const nextDt = new Date(y, mo - 1, d + 1);
-      const yy = nextDt.getFullYear();
-      const mm = String(nextDt.getMonth() + 1).padStart(2, '0');
-      const dd = String(nextDt.getDate()).padStart(2, '0');
-      const endDate = `${yy}-${mm}-${dd}`;
-      m[`${empKey}|${endDate}`] = {
-        startDate,
-        startStr: ov.startStr,
-        endStr:   ov.endStr,
-        setBy:    ov.setBy || null,
-        assignedAt: ov.assignedAt || null,
-      };
-    });
-    return m;
-  }, [shiftOverrideById]);
-
-  // Build employee lookup by ID (PSN) and name
-  // Build employee lookup. Three indices, each robust to a different
-  // failure mode in the data:
-  //   • empById: exact-string match on id/psn (preserved for backward
-  //     compat — fastest, catches the well-formed cases)
-  //   • empByDigits: digits-only canonical key (strips H prefix, leading
-  //     zeros, any non-digit). The Time Card xlsx omits the H prefix
-  //     and may also omit leading zeros — e.g. file shows '4458' for
-  //     Badria whose directory id is 'H04458' (or sometimes 'H4458').
-  //     Digits-only matching collapses both to '4458' and matches.
-  // Detection below tries empById first (preserves the strict path),
-  // then falls back to empByDigits which always wins when the digit
-  // sequences agree.
-  const psnDigits = (s) => {
-    const digits = String(s || '').replace(/[^0-9]/g, '');
-    // Strip leading zeros so '04458' and '4458' compare equal.
-    return digits.replace(/^0+/, '') || '0';
-  };
-  const empById = useMemo(() => {
-    const m = {};
-    (employees || []).forEach(e => {
-      if (e.id) m[String(e.id).toUpperCase()] = e;
-      if (e.psn) m[String(e.psn).toUpperCase()] = e;
-    });
-    return m;
-  }, [employees]);
-  const empByDigits = useMemo(() => {
-    const m = {};
-    (employees || []).forEach(e => {
-      const k = psnDigits(e.id || e.psn);
-      if (k) m[k] = e;
-    });
-    return m;
-  }, [employees]);
-
-  // Manager email lookup — given an employee, return their direct manager's email
-  const getManagerEmail = useCallback((emp) => {
-    if (!emp || !emp.manager_id) return null;
-    const mgr = empById[String(emp.manager_id).toUpperCase()];
-    return mgr?.email || null;
-  }, [empById]);
 
   // Index approved permissions by employee+type for O(1) lookup during
   // detection. The cross-reference layer turns a late/early flag into
