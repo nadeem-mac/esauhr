@@ -82,15 +82,15 @@ function styleForStatus(status, notes) {
     case 'sick_leave':
       return { bg: '#EDE9FE', fg: '#5B21B6', border: '#C4B5FD', label: 'SL' };
     case 'maternity_leave':
-      return { bg: '#FCE7F3', fg: '#9D174D', border: '#F9A8D4', label: '✓ML' };
+      return { bg: '#FCE7F3', fg: '#9D174D', border: '#F9A8D4', label: '✓', sub: 'ML' };
     case 'paternity_leave':
-      return { bg: '#E0F2FE', fg: '#075985', border: '#7DD3FC', label: '✓PL' };
+      return { bg: '#E0F2FE', fg: '#075985', border: '#7DD3FC', label: '✓', sub: 'PL' };
     case 'hajj_leave':
-      return { bg: '#FEF3C7', fg: '#854F0B', border: '#FCD34D', label: '✓HJ' };
+      return { bg: '#FEF3C7', fg: '#854F0B', border: '#FCD34D', label: '✓', sub: 'HJ' };
     case 'emergency_leave':
-      return { bg: '#FEE2E2', fg: '#7F1D1D', border: '#FCA5A5', label: '✓EL' };
+      return { bg: '#FEE2E2', fg: '#7F1D1D', border: '#FCA5A5', label: '✓', sub: 'EL' };
     case 'unpaid_leave':
-      return { bg: '#F3F4F6', fg: '#374151', border: '#D1D5DB', label: '✓UL' };
+      return { bg: '#F3F4F6', fg: '#374151', border: '#D1D5DB', label: '✓', sub: 'UL' };
     case 'off_roster':
       return { bg: '#DBEAFE', fg: '#1E3A8A', border: '#93C5FD', label: 'OR' };
     case 'off_day':
@@ -207,19 +207,15 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
     return idx;
   }, [records]);
 
-  // Filter to employees who have at least one record this month.
-  // Otherwise the grid would render every employee in the directory
-  // even if Bashaier never uploaded their data — defeats the
-  // purpose of an "actively-tracked" view.
-  //
-  // Then narrow further by the search box. The search is broad
-  // (matches against any text field on the employee row) so
-  // Bashaier can find staff by partial name, PSN digits, or
-  // department code without thinking about which to type.
+  // Include ALL active staff — not just those with records this
+  // month. Staff on long-term leave or new hires who haven't been
+  // in any time-card upload yet would otherwise disappear from the
+  // grid, making the count diverge from the directory and from the
+  // export report. Showing them with empty cells (or leave-seeded
+  // chips) keeps the on-screen view authoritative.
   const tracked = useMemo(() => {
-    const have = new Set(records.map(r => r.employee_id));
     const all = (employees || [])
-      .filter(e => have.has(e.id))
+      .filter(e => e?.id && !e.terminated && e.is_active !== false && e.status !== 'inactive')
       .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
     const q = search.trim().toLowerCase();
     if (!q) return all;
@@ -230,15 +226,15 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
       ].filter(Boolean).join(' ').toLowerCase();
       return haystack.includes(q);
     });
-  }, [employees, records, search]);
+  }, [employees, search]);
 
-  // Total tracked count (before search filter) — used in the result
-  // counter when search is active so Bashaier sees "12 of 64" not
-  // just "12".
+  // Total tracked count (before search filter) — all active staff in
+  // the directory. Used in the result counter when search is active.
   const trackedTotalCount = useMemo(() => {
-    const have = new Set(records.map(r => r.employee_id));
-    return (employees || []).filter(e => have.has(e.id)).length;
-  }, [employees, records]);
+    return (employees || []).filter(e =>
+      e?.id && !e.terminated && e.is_active !== false && e.status !== 'inactive'
+    ).length;
+  }, [employees]);
 
   function nav(delta) {
     let m = month + delta;
@@ -439,8 +435,14 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
           <div className="text-xs mt-1">Upload an attendance file above and the calendar will start filling in.</div>
         </div>
       ) : tracked.length === 0 ? null : (
-        <div style={{ overflowX: 'auto' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: `220px repeat(${days.length}, minmax(28px, 1fr))`, gap: 1, minWidth: 'fit-content' }}>
+        <div style={{ overflowX: 'auto', maxWidth: '100%' }}>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: `170px repeat(${days.length}, minmax(20px, 1fr))`,
+            gap: 1,
+            width: '100%',
+            minWidth: 'fit-content',
+          }}>
             {/* Header */}
             <div style={{ background: '#FAFAFA', padding: '6px 8px', fontSize: 10, fontWeight: 700, color: '#0A0A0A', letterSpacing: '0.05em' }}>
               EMPLOYEE
@@ -583,13 +585,20 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
                             fontSize: 9,
                             fontWeight: 700,
                             display: 'flex',
+                            flexDirection: sty.sub ? 'column' : 'row',
                             alignItems: 'center',
                             justifyContent: 'center',
                             letterSpacing: '0.04em',
                             cursor: 'default',
+                            lineHeight: sty.sub ? 1.05 : undefined,
                           }}
                         >
                           {sty.label}
+                          {sty.sub && (
+                            <span style={{ fontSize: 8, fontWeight: 700, marginTop: 1, letterSpacing: '0.06em' }}>
+                              {sty.sub}
+                            </span>
+                          )}
                           {isShiftDay && (
                             <span
                               aria-hidden

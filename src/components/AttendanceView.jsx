@@ -1619,11 +1619,11 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       absent:         { bg: '#FEE2E2', fg: '#991B1B', border: '#FCA5A5', label: 'AB' },
       annual_leave:   { bg: '#CCFBF1', fg: '#115E59', border: '#5EEAD4', label: 'AL' },
       sick_leave:     { bg: '#EDE9FE', fg: '#5B21B6', border: '#C4B5FD', label: 'SL' },
-      maternity_leave:{ bg: '#FCE7F3', fg: '#9D174D', border: '#F9A8D4', label: '\u2713ML' },
-      paternity_leave:{ bg: '#E0F2FE', fg: '#075985', border: '#7DD3FC', label: '\u2713PL' },
-      hajj_leave:     { bg: '#FEF3C7', fg: '#854F0B', border: '#FCD34D', label: '\u2713HJ' },
-      emergency_leave:{ bg: '#FEE2E2', fg: '#7F1D1D', border: '#FCA5A5', label: '\u2713EL' },
-      unpaid_leave:   { bg: '#F3F4F6', fg: '#374151', border: '#D1D5DB', label: '\u2713UL' },
+      maternity_leave:{ bg: '#FCE7F3', fg: '#9D174D', border: '#F9A8D4', label: '\u2713', sub: 'ML' },
+      paternity_leave:{ bg: '#E0F2FE', fg: '#075985', border: '#7DD3FC', label: '\u2713', sub: 'PL' },
+      hajj_leave:     { bg: '#FEF3C7', fg: '#854F0B', border: '#FCD34D', label: '\u2713', sub: 'HJ' },
+      emergency_leave:{ bg: '#FEE2E2', fg: '#7F1D1D', border: '#FCA5A5', label: '\u2713', sub: 'EL' },
+      unpaid_leave:   { bg: '#F3F4F6', fg: '#374151', border: '#D1D5DB', label: '\u2713', sub: 'UL' },
       off_roster:     { bg: '#DBEAFE', fg: '#1E3A8A', border: '#93C5FD', label: 'OR' },
       off_day:        { bg: '#EEF0FA', fg: '#3B4279', border: '#C7CFE5', label: 'OF' },
     };
@@ -1753,8 +1753,9 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           + ';color:' + palette.fg
           + ';border:1px solid ' + palette.border + '">'
           + '<div class="chip-label">' + escapeHtml(mainLabel) + '</div>'
-          + (fp ? '<div class="chip-time">' + escapeHtml(fp) + '</div>' : '')
-          + (showLp ? '<div class="chip-time">' + escapeHtml(lp) + '</div>' : '')
+          + (palette.sub ? '<div class="chip-sub">' + escapeHtml(palette.sub) + '</div>' : '')
+          + (fp && !palette.sub ? '<div class="chip-time">' + escapeHtml(fp) + '</div>' : '')
+          + (showLp && !palette.sub ? '<div class="chip-time">' + escapeHtml(lp) + '</div>' : '')
           + '</div></td>';
       }).join('');
 
@@ -1839,7 +1840,9 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
 + '.chip { display: flex; flex-direction: column; align-items: center; '
 + '  justify-content: center; padding: 2px 1px; border-radius: 3px; height: 100%; '
 + '  line-height: 1.05; }'
-+ '.chip-label { font-size: 8px; font-weight: 700; }'
++ '.chip-label { font-size: 9px; font-weight: 700; }'
++ '.chip-sub   { font-size: 7px; font-weight: 700; letter-spacing: 0.06em; '
++ '  margin-top: 1px; }'
 + '.chip-time  { font-size: 6.5px; opacity: 0.85; '
 + '  font-family: "SFMono-Regular", monospace; }'
 + '.print-btn { position: fixed; bottom: 12px; right: 12px; padding: 8px 16px; '
@@ -5594,38 +5597,21 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         </div>
       )}
 
-      {!hasFile ? (
-        <div
-          onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-          onDragLeave={() => setIsDragging(false)}
-          onDrop={onDrop}
-          onClick={() => fileInputRef.current?.click()}
-          className="rounded-xl border-2 border-dashed px-4 py-3 cursor-pointer transition-colors flex items-center gap-3"
-          style={{
-            borderColor: isDragging ? '#10B981' : '#D4D4D4',
-            background: isDragging ? '#ECFDF5' : '#F7F7F7',
-          }}>
-          <Upload className="w-5 h-5 flex-shrink-0" style={{ color: '#1F1B16' }}/>
-          <div className="flex-1 min-w-0">
-            <div style={{ fontFamily: 'inherit', fontSize: '13px', color: '#1F1B16', fontWeight: 600 }}>
-              Drop your Time Card .xlsx here, or <span style={{ color: '#047857', textDecoration: 'underline' }}>click to browse</span>
-            </div>
-            <div className="text-[10px] mt-0.5" style={{ color: '#0A0A0A', opacity: 0.7 }}>
-              Expected columns: Employee ID · First Name · Date · Times · Time. Only the .xlsx export from the fingerprint device is accepted.
-            </div>
-          </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            className="hidden"
-            onChange={onPick}
-          />
-          {parseError && (
-            <div className="text-sm px-3 py-2 rounded-md text-left" style={{ color: '#BE123C', background: '#FEF2F2', maxWidth: '320px' }}>{parseError}</div>
-          )}
-        </div>
-      ) : windowMismatch ? (
+      {/* Hidden file input — controlled by the Upload button in the
+          Monthly Overview header (below). Stays mounted at this
+          location so existing onPick / parseError plumbing keeps
+          working unchanged. */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        className="hidden"
+        onChange={onPick}
+      />
+      {!hasFile && parseError && (
+        <div className="text-sm px-3 py-2 mb-3 rounded-md" style={{ color: '#BE123C', background: '#FEF2F2', maxWidth: '480px' }}>{parseError}</div>
+      )}
+      {!hasFile ? null : windowMismatch ? (
         <>
           <WindowMismatchBanner
             mismatch={windowMismatch}
@@ -5821,7 +5807,16 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           scrolls down to confirm the calendar reflects the day's
           work. The 24-line spacer keeps the visual handoff clear
           between "action" (above) and "memory" (below). */}
-      <div style={{ marginTop: 32 }}>
+      <div style={{
+        marginTop: 32,
+        // Break out of the parent's max-w-7xl so the calendar can use
+        // the full viewport width — necessary to fit all 31 day
+        // columns without horizontal scroll.
+        marginLeft:  'calc(50% - 50vw + 12px)',
+        marginRight: 'calc(50% - 50vw + 12px)',
+        paddingLeft: 16,
+        paddingRight: 16,
+      }}>
         {/* Re-eval status row — sits above the calendar so the
             "last updated" signal is visible without scrolling
             inside the grid. Manual button gives Bashaier explicit
@@ -5857,13 +5852,27 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             )}
             <button
               type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1.5"
+              style={{
+                background: '#0F4C2A',
+                color: '#FFFFFF',
+                fontWeight: 600,
+                border: '1px solid #0F4C2A',
+              }}
+              title="Upload the Time Card .xlsx export from the fingerprint device."
+            >
+              ⬆ Upload Time Card
+            </button>
+            <button
+              type="button"
               onClick={() => triggerReevaluation({ silent: false })}
               disabled={reevalState.running}
-              className="text-[11px] px-3 py-1.5 rounded-full border flex items-center gap-1.5"
+              className="text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1.5"
               style={{
-                borderColor: '#D4D4D4',
-                color: reevalState.running ? '#A1A1AA' : '#1F1B16',
-                background: reevalState.running ? '#F4F4EE' : '#FFFFFF',
+                background: reevalState.running ? '#F4F4EE' : '#1E40AF',
+                color: reevalState.running ? '#A1A1AA' : '#FFFFFF',
+                border: '1px solid ' + (reevalState.running ? '#D4D4D4' : '#1E40AF'),
                 cursor: reevalState.running ? 'wait' : 'pointer',
                 fontWeight: 600,
               }}
@@ -5908,11 +5917,11 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
                 })();
               }}
               disabled={reevalState.running}
-              className="text-[11px] px-3 py-1.5 rounded-full border flex items-center gap-1.5"
+              className="text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1.5"
               style={{
-                borderColor: '#D4D4D4',
-                color: reevalState.running ? '#A1A1AA' : '#1F1B16',
-                background: reevalState.running ? '#F4F4EE' : '#FFFFFF',
+                background: reevalState.running ? '#F4F4EE' : '#7C3AED',
+                color: reevalState.running ? '#A1A1AA' : '#FFFFFF',
+                border: '1px solid ' + (reevalState.running ? '#D4D4D4' : '#7C3AED'),
                 cursor: reevalState.running ? 'wait' : 'pointer',
                 fontWeight: 600,
               }}
@@ -5929,11 +5938,11 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             <button
               type="button"
               onClick={exportMonthReport}
-              className="text-[11px] px-3 py-1.5 rounded-full border flex items-center gap-1.5"
+              className="text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1.5"
               style={{
-                borderColor: '#D4D4D4',
-                color: '#1F1B16',
-                background: '#FFFFFF',
+                background: '#854F0B',
+                color: '#FFFFFF',
+                border: '1px solid #854F0B',
                 fontWeight: 600,
               }}
               title="Generate a printable A4 report of the monthly attendance grid as it appears on screen."
