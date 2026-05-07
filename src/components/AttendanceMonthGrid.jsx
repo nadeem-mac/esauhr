@@ -280,16 +280,21 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
 
   return (
     <div className="rounded-2xl border bg-white p-3 sm:p-5" style={{ borderColor: '#D4D4D4' }}>
-      <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
         <div>
-          <div className="text-[10px] mb-1" style={{ color: '#1F1B16', letterSpacing: '0.25em', fontWeight: 700 }}>
-            MONTHLY ATTENDANCE
-          </div>
-          <div style={{ fontFamily: 'inherit', fontSize: 20, color: '#1F1B16' }}>
-            {monthLabel}
-          </div>
-          <div className="text-xs mt-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>
-            Live record built from your attendance uploads. Each cell shows that day's status; hover for punch times and details.
+          <div className="flex items-baseline gap-3">
+            <span style={{
+              fontFamily: 'inherit',
+              fontSize: 22,
+              fontWeight: 700,
+              color: '#1F1B16',
+              letterSpacing: '-0.01em',
+            }}>
+              {monthLabel}
+            </span>
+            <span className="text-[10px]" style={{ color: '#7A7A7A', letterSpacing: '0.18em', fontWeight: 700, textTransform: 'uppercase' }}>
+              Monthly attendance
+            </span>
           </div>
         </div>
         <div className="flex items-center gap-1.5">
@@ -435,6 +440,53 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
           <div className="text-xs mt-1">Upload an attendance file above and the calendar will start filling in.</div>
         </div>
       ) : tracked.length === 0 ? null : (
+        <>
+        {/* Legend — sits above the grid so the chip codes are always
+            visible while reading rows. Compact horizontal strip. */}
+        <div className="text-[11px] mb-3 flex flex-wrap gap-2 items-center"
+          style={{
+            color: '#0A0A0A',
+            padding: '8px 10px',
+            background: '#FAFAF9',
+            border: '1px solid #EEEAE0',
+            borderRadius: 8,
+          }}>
+          {[
+            { st: 'present',      lbl: 'Present' },
+            { st: 'present',      lbl: 'Late — permitted', overrideStyle: { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: '✓LP' } },
+            { st: 'present',      lbl: 'Early — permitted', overrideStyle: { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: '✓EP' } },
+            { st: 'late',         lbl: 'Late' },
+            { st: 'short',        lbl: 'Short' },
+            { st: 'absent',       lbl: 'Absent' },
+            { st: 'annual_leave', lbl: 'Annual leave' },
+            { st: 'sick_leave',   lbl: 'Sick leave' },
+            { st: 'maternity_leave', lbl: 'Maternity' },
+            { st: 'paternity_leave', lbl: 'Paternity' },
+            { st: 'hajj_leave',      lbl: 'Hajj' },
+            { st: 'emergency_leave', lbl: 'Emergency' },
+            { st: 'unpaid_leave',    lbl: 'Unpaid' },
+            { st: 'off_roster',   lbl: 'Off-roster' },
+            { st: 'off_day',      lbl: 'Off-day' },
+            { st: 'present',      lbl: 'Shift day', overrideStyle: { bg: '#F8FAFC', fg: '#1F2937', border: '#CBD5E1', label: '🌙' } },
+          ].map(({ st, lbl, overrideStyle }, idx) => {
+            const sty = overrideStyle || styleForStatus(st);
+            return (
+              <span key={`${st}-${idx}`} className="inline-flex items-center gap-1">
+                <span style={{
+                  background: sty.bg,
+                  color: sty.fg,
+                  border: `1px solid ${sty.border}`,
+                  borderRadius: 3,
+                  fontSize: 9,
+                  padding: '1px 5px',
+                  fontWeight: 700,
+                  letterSpacing: '0.04em',
+                }}>{sty.label}</span>
+                <span style={{ fontSize: 10, color: '#0A0A0A' }}>{lbl}</span>
+              </span>
+            );
+          })}
+        </div>
         <div style={{ overflowX: 'auto', maxWidth: '100%' }}>
           <div style={{
             display: 'grid',
@@ -640,46 +692,8 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
             })}
           </div>
         </div>
+        </>
       )}
-
-      {/* Legend */}
-      <div className="text-[11px] mt-4 flex flex-wrap gap-2.5 items-center" style={{ color: '#0A0A0A', opacity: 0.85 }}>
-        {[
-          { st: 'present',      lbl: 'Present' },
-          { st: 'present',      lbl: 'Late — permitted', overrideStyle: { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: '✓LP' } },
-          { st: 'present',      lbl: 'Early — permitted', overrideStyle: { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: '✓EP' } },
-          { st: 'late',         lbl: 'Late' },
-          { st: 'short',        lbl: 'Short' },
-          { st: 'absent',       lbl: 'Absent' },
-          { st: 'annual_leave', lbl: 'Annual leave' },
-          { st: 'sick_leave',   lbl: 'Sick leave' },
-          { st: 'maternity_leave', lbl: 'Maternity' },
-          { st: 'paternity_leave', lbl: 'Paternity' },
-          { st: 'hajj_leave',      lbl: 'Hajj' },
-          { st: 'emergency_leave', lbl: 'Emergency' },
-          { st: 'unpaid_leave',    lbl: 'Unpaid' },
-          { st: 'off_roster',   lbl: 'Off-roster work' },
-          { st: 'off_day',      lbl: 'Off-day' },
-          { st: 'present',      lbl: 'Shift day', overrideStyle: { bg: '#F8FAFC', fg: '#1F2937', border: '#CBD5E1', label: '🌙' } },
-        ].map(({ st, lbl, overrideStyle }, idx) => {
-          const sty = overrideStyle || styleForStatus(st);
-          return (
-            <span key={`${st}-${idx}`} className="inline-flex items-center gap-1.5">
-              <span style={{
-                background: sty.bg,
-                color: sty.fg,
-                border: `1px solid ${sty.border}`,
-                borderRadius: 3,
-                fontSize: 9,
-                padding: '1px 5px',
-                fontWeight: 700,
-                letterSpacing: '0.04em',
-              }}>{sty.label}</span>
-              {lbl}
-            </span>
-          );
-        })}
-      </div>
 
       {/* Hover tooltip */}
       {hoverTip && <HoverTooltip {...hoverTip} />}
