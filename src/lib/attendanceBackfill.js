@@ -999,12 +999,24 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
   const sourceFilter = scope === 'backfill'
     ? '&source=eq.backfill'
     : '';  // 'all' — no filter
+  // Date-range bounds (Phase A — Decision #1: 7-day post-upload re-eval).
+  // When startDate / endDate are supplied, the scan is constrained to
+  // that window. This is the on-upload trigger path — re-evaluating the
+  // last N days catches late-arriving permissions, manager-confirmed
+  // corrections, and retroactive leave updates without rescanning the
+  // whole table on every daily save. When both bounds are omitted, the
+  // function behaves as before (full scan), preserving the existing
+  // backfill-time behaviour.
+  const dateFilter =
+    (options?.startDate ? `&attendance_date=gte.${options.startDate}` : '') +
+    (options?.endDate   ? `&attendance_date=lte.${options.endDate}`   : '');
   const existing = await directGet(
     'attendance_daily',
     'select=id,employee_id,attendance_date,first_punch,last_punch,status,' +
     'late_minutes,early_leave_minutes,expected_start,expected_end,punch_count,' +
     'leave_request_id,recorded_by,source' +
     sourceFilter +
+    dateFilter +
     '&order=attendance_date.asc',
     { timeoutMs: 45000 }
   ) || [];
@@ -1280,3 +1292,68 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
 
 // Re-export so consumers can format dates consistently.
 export const __utils = { ymd, toTime, isoDate };
+
+/**
+ * reevaluateDateRange — Phase A re-evaluation entry point.
+ *
+ * Thin wrapper over reevaluateBackfillRows that applies a tight date
+ * window (defaults to the last 7 days inclusive of `endDate`). Built
+ * specifically for the post-upload trigger and the nightly cron — both
+ * cases want to scan a bounded window for changes from late-arriving
+ * permissions, manager-confirmed corrections, and retroactive leave
+ * approvals, without rescanning the whole attendance_daily table.
+ *
+ * Decision context (2026-05-07):
+ *   • Re-eval scope: 7 days (Decision #1 / option A) — matches the
+ *     "manager replies within 2 working days" policy plus weekend
+ *     buffer.
+ *   • Trigger points: on Save & Close after each daily upload, and a
+ *     midnight cron (Decision #5 / option C — both).
+ *
+ * @param {string} startDate  YYYY-MM-DD inclusive lower bound
+ * @param {string} endDate    YYYY-MM-DD inclusive upper bound
+ * @param {function} [onProgress]  passed straight through
+ * @param {object} [extra]    extra options merged into the underlying call
+ * @returns the same { scanned, changed, lateCount, shortCount,
+ *   presentCount, mawaniDayCount } shape as reevaluateBackfillRows
+ */
+export async function reevaluateDateRange(startDate, endDate, onProgress, extra = {}) {
+  if (!startDate || !endDate) {
+    throw new Error('reevaluateDateRange: startDate and endDate are required');
+  }
+  if (startDate > endDate) {
+    throw new Error('reevaluateDateRange: startDate must be <= endDate');
+  }
+  return reevaluateBackfillRows(onProgress, {
+    ...extra,
+    scope: extra.scope || 'all',
+    startDate,
+    endDate,
+  });
+}
+
+/**
+ * reevaluateLastNDays — convenience helper for the most common case.
+ *
+ * Re-evaluates the last `days` calendar days inclusive of today
+ * (defaults to 7). Today is computed in local time so the window
+ * matches Bashaier's perception of "this week" rather than UTC days.
+ */
+export async function reevaluateLastNDays(days = 7, onProgress, extra = {}) {
+  if (!Number.isFinite(days) || days <= 0) {
+    throw new Error('reevaluateLastNDays: days must be a positive number');
+  }
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm   = String(today.getMonth() + 1).padStart(2, '0');
+  const dd   = String(today.getDate()).padStart(2, '0');
+  const endDate = `${yyyy}-${mm}-${dd}`;
+  // Subtract (days - 1) so a 7-day window includes today + 6 prior days.
+  const past = new Date(today);
+  past.setDate(past.getDate() - (days - 1));
+  const py = past.getFullYear();
+  const pm = String(past.getMonth() + 1).padStart(2, '0');
+  const pd = String(past.getDate()).padStart(2, '0');
+  const startDate = `${py}-${pm}-${pd}`;
+  return reevaluateDateRange(startDate, endDate, onProgress, extra);
+}
