@@ -1593,147 +1593,283 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   const csvIsWeekend  = todayIsWeekend;
 
   // ─── Export monthly report ─────────────────────────────────────────
-  // Generates a printable A4 HTML report of the on-screen month grid.
-  // Clones the calendar's rendered DOM (so the report mirrors exactly
-  // what Bashaier sees), inlines all current document stylesheets so
-  // the new window doesn't depend on Vite's CSS bundle, and adds @page
-  // A4 + print-orientation rules. The new window auto-prompts the
-  // print dialog so it's one click from button to PDF/paper.
+  // Generates a printable A4 HTML report of the month's attendance.
+  // Pulls fresh data from attendance_daily for the relevant month,
+  // sorts staff by location → name (so the printed report groups
+  // rows by office naturally), and renders each row as a table of
+  // status chips that mirror the on-screen calendar's visual
+  // language. The report is fully self-contained — no CSS bundle
+  // dependency — and is opened in a new window with @page A4 print
+  // rules. The print dialog auto-prompts so it's one click from
+  // button to PDF/paper.
   //
-  // Cross-origin protected stylesheets are skipped silently — if the
-  // report ends up missing a font or color, that's why. The portal's
-  // CSS is same-origin so this is fine in practice.
-  const exportMonthReport = useCallback(() => {
-    const target = document.querySelector('[data-month-export-target]');
-    if (!target) {
-      alert('Calendar not loaded yet — give it a moment and try again.');
-      return;
+  // Why we don't clone the on-screen DOM: the grid uses horizontal
+  // scrolling, fixed-position tooltips, and React-rendered names
+  // that can be off-screen — a screenshot-style clone misses cells
+  // and labels. Re-rendering from data is more work but produces a
+  // complete, correctly-sorted, identically-styled report.
+  const exportMonthReport = useCallback(async () => {
+    // Status palette (mirrors AttendanceMonthGrid's styleForStatus).
+    // Kept in sync visually — if that file changes its colours,
+    // update here too.
+    const STATUS = {
+      present:      { bg: '#ECFDF5', fg: '#0F4C2A', border: '#A7F3D0', label: '\u2713' },
+      late:         { bg: '#FEF3C7', fg: '#854F0B', border: '#FCD34D', label: 'LT' },
+      short:        { bg: '#FED7AA', fg: '#7C2D12', border: '#FB923C', label: 'SH' },
+      absent:       { bg: '#FEE2E2', fg: '#991B1B', border: '#FCA5A5', label: 'AB' },
+      annual_leave: { bg: '#CCFBF1', fg: '#115E59', border: '#5EEAD4', label: 'AL' },
+      sick_leave:   { bg: '#EDE9FE', fg: '#5B21B6', border: '#C4B5FD', label: 'SL' },
+      off_roster:   { bg: '#DBEAFE', fg: '#1E3A8A', border: '#93C5FD', label: 'OR' },
+      off_day:      { bg: '#EEF0FA', fg: '#3B4279', border: '#C7CFE5', label: 'OF' },
+    };
+    const presentLP = { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: '\u2713LP' };
+    const presentEP = { bg: '#EFF6FF', fg: '#1E40AF', border: '#93C5FD', label: '\u2713EP' };
+
+    function ymd(d) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+    }
+    function pickStyle(status, notes) {
+      if (status === 'present' && typeof notes === 'string') {
+        if (/late arrival covered by approved permission/i.test(notes)) return presentLP;
+        if (/early leave covered by approved permission/i.test(notes))  return presentEP;
+      }
+      return STATUS[status] || { bg: '#F5F5F5', fg: '#525252', border: '#D4D4D4', label: '?' };
     }
 
-    // Pull every CSS rule reachable from this document. CORS-blocked
-    // sheets (Google Fonts, etc.) throw on cssRules access — skip
-    // silently so a single bad sheet doesn't block the whole export.
-    let css = '';
-    try {
-      for (const sheet of document.styleSheets) {
-        try {
-          const rules = Array.from(sheet.cssRules || []);
-          css += rules.map(r => r.cssText).join('\n') + '\n';
-        } catch { /* CORS — skip */ }
-      }
-    } catch { /* defensive */ }
-
-    const monthLabel = (csvDate ? new Date(csvDate + 'T00:00:00') : new Date())
-      .toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+    // Resolve target month — anchored to csvDate (the file being
+    // worked on) so "Export" always reflects the month Bashaier is
+    // looking at, not whatever month the calendar's nav state is on.
+    const ref = csvDate ? new Date(csvDate + 'T00:00:00') : new Date();
+    const year = ref.getFullYear();
+    const month = ref.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay  = new Date(year, month + 1, 0);
+    const monthLabel = firstDay.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
     const generatedAt = new Date().toLocaleString('en-GB', {
       day: '2-digit', month: 'short', year: 'numeric',
       hour: '2-digit', minute: '2-digit',
     });
 
-    const win = window.open('', '_blank', 'width=1200,height=900');
-    if (!win) {
-      alert('Pop-up blocked — allow pop-ups for this site to use the export feature.');
+    // Pull the same shape AttendanceMonthGrid uses so this report
+    // shows identical content. The fetch is small (1 month × ~150
+    // staff = ~3000 rows tops) so we don't need pagination here.
+    let records = [];
+    try {
+      records = await directGet(
+        'attendance_daily',
+        'select=employee_id,attendance_date,status,first_punch,last_punch,'
+        + 'expected_start,expected_end,late_minutes,early_leave_minutes,notes'
+        + '&attendance_date=gte.' + ymd(firstDay)
+        + '&attendance_date=lte.' + ymd(lastDay)
+        + '&order=attendance_date.asc',
+        { timeoutMs: 15000 }
+      );
+    } catch (e) {
+      alert('Could not load this month\u2019s data — ' + (e?.message || e));
       return;
     }
 
-    win.document.open();
-    win.document.write(`<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Monthly Attendance — ${monthLabel}</title>
-  <style>${css}</style>
-  <style>
-    /* Print-specific overrides. A4 landscape gives the best fit for
-       the wide month grid; portrait would force horizontal scroll and
-       compress unreadably. */
-    @page { size: A4 landscape; margin: 1cm; }
-    html, body {
-      background: #FFFFFF !important;
-      margin: 0;
-      padding: 0;
-      font-family: Calibri, 'Segoe UI', Arial, sans-serif;
+    // Filter the directory to staff who appear in the month's
+    // records, then sort by location → name. Empty location strings
+    // sort to the end (so "Unknown" shows up after named offices).
+    const have = new Set((records || []).map(r => r.employee_id));
+    const sortedEmps = (employees || [])
+      .filter(e => have.has(e.id))
+      .sort((a, b) => {
+        const locA = String(a.location || '\uFFFF').toLowerCase();
+        const locB = String(b.location || '\uFFFF').toLowerCase();
+        if (locA !== locB) return locA.localeCompare(locB);
+        return String(a.name || '').localeCompare(String(b.name || ''));
+      });
+
+    if (sortedEmps.length === 0) {
+      alert('No attendance data on file for ' + monthLabel + ' yet.');
+      return;
     }
-    body { padding: 16px 20px; }
-    .esau-export-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-end;
-      margin-bottom: 12px;
-      padding-bottom: 8px;
-      border-bottom: 2px solid #0F4C2A;
-    }
-    .esau-export-title {
-      font-size: 22px;
-      font-weight: 700;
-      color: #0F4C2A;
-      margin: 0;
-    }
-    .esau-export-subtitle {
-      font-size: 12px;
-      color: #5F5E5A;
-      margin: 4px 0 0;
-    }
-    .esau-export-meta {
-      font-size: 10px;
-      color: #5F5E5A;
-      text-align: right;
-    }
-    .esau-export-print-btn {
-      position: fixed;
-      bottom: 16px;
-      right: 16px;
-      padding: 10px 20px;
-      background: #0F4C2A;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    }
-    @media print {
-      .esau-export-print-btn { display: none !important; }
-      .esau-export-header { page-break-after: avoid; }
-    }
-  </style>
-</head>
-<body>
-  <div class="esau-export-header">
-    <div>
-      <h1 class="esau-export-title">Monthly Attendance — ${monthLabel}</h1>
-      <p class="esau-export-subtitle">Evergreen Shipping Agency Saudi Co. (L.L.C) · ESAU HR Portal</p>
-    </div>
-    <div class="esau-export-meta">
-      Generated ${generatedAt}<br/>
-      ESAU HR Department
-    </div>
-  </div>
-  <div id="esau-report-body"></div>
-  <button class="esau-export-print-btn" onclick="window.print()">🖨 Print / Save as PDF</button>
-  <script>
-    // Auto-trigger the print dialog once the page is settled. The
-    // user can cancel and still see the on-screen preview.
-    window.addEventListener('load', () => {
-      setTimeout(() => { try { window.print(); } catch (e) {} }, 600);
+
+    // records[empId][dateStr] → record. Lookup table for cell render.
+    const byEmp = {};
+    (records || []).forEach(r => {
+      if (!byEmp[r.employee_id]) byEmp[r.employee_id] = {};
+      byEmp[r.employee_id][r.attendance_date] = r;
     });
-  </script>
-</body>
-</html>`);
+
+    // Build day list for the month, including weekday labels.
+    const days = [];
+    for (let d = 1; d <= lastDay.getDate(); d++) {
+      const dt = new Date(year, month, d);
+      days.push({
+        date: dt,
+        dateStr: ymd(dt),
+        dayNum: d,
+        dow: dt.getDay(),
+        dowLabel: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dt.getDay()],
+        isWeekend: dt.getDay() === 5 || dt.getDay() === 6,  // KSA Fri/Sat
+      });
+    }
+
+    // Build rows. Each cell is a small chip showing the status label
+    // plus first/last punch. Empty cells stay blank (no record).
+    // Weekends are tinted so the visual rhythm matches on-screen.
+    const tbody = sortedEmps.map(emp => {
+      const cells = days.map(day => {
+        const rec = byEmp[emp.id]?.[day.dateStr];
+        const weekendStyle = day.isWeekend
+          ? 'background:#FAF6E8;'
+          : '';
+        if (!rec) {
+          return '<td class="cell" style="' + weekendStyle + '"></td>';
+        }
+        const palette = pickStyle(rec.status, rec.notes);
+        let mainLabel = palette.label;
+        if (rec.status === 'late' && rec.late_minutes) {
+          mainLabel = '+' + rec.late_minutes + 'm';
+        } else if (rec.status === 'short' && rec.early_leave_minutes) {
+          mainLabel = '\u2212' + rec.early_leave_minutes + 'm';
+        }
+        const fp = rec.first_punch ? String(rec.first_punch).slice(0, 5) : '';
+        const lp = rec.last_punch  ? String(rec.last_punch).slice(0, 5)  : '';
+        const showLp = lp && lp !== fp;
+        return '<td class="cell">'
+          + '<div class="chip" style="background:' + palette.bg
+          + ';color:' + palette.fg
+          + ';border:1px solid ' + palette.border + '">'
+          + '<div class="chip-label">' + escapeHtml(mainLabel) + '</div>'
+          + (fp ? '<div class="chip-time">' + escapeHtml(fp) + '</div>' : '')
+          + (showLp ? '<div class="chip-time">' + escapeHtml(lp) + '</div>' : '')
+          + '</div></td>';
+      }).join('');
+
+      return '<tr>'
+        + '<th class="emp-cell">'
+        +   '<div class="emp-name">' + escapeHtml(emp.name || '') + '</div>'
+        +   '<div class="emp-meta">' + escapeHtml(emp.id || '')
+        +     (emp.department ? ' \u00b7 ' + escapeHtml(emp.department) : '')
+        +     '</div>'
+        +   (emp.location ? '<div class="emp-loc">' + escapeHtml(emp.location) + '</div>' : '')
+        + '</th>'
+        + cells
+        + '</tr>';
+    }).join('');
+
+    // Day-header columns. Two rows: weekday label + day number,
+    // weekends tinted. Format mirrors the on-screen month grid.
+    const dayHeader = days.map(day => {
+      const tint = day.isWeekend ? 'background:#FAF6E8;' : '';
+      return '<th class="day-head" style="' + tint + '">'
+        + '<div class="dow">' + day.dowLabel + '</div>'
+        + '<div class="dnum">' + day.dayNum + '</div>'
+        + '</th>';
+    }).join('');
+
+    // Group-by-location summary banner. Shows how many staff per
+    // location. Helps the print reader orient quickly.
+    const locCounts = {};
+    sortedEmps.forEach(e => {
+      const loc = e.location || 'Unspecified';
+      locCounts[loc] = (locCounts[loc] || 0) + 1;
+    });
+    const locSummary = Object.entries(locCounts)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([loc, n]) => '<span class="loc-pill">' + escapeHtml(loc) + ' \u00b7 ' + n + '</span>')
+      .join('');
+
+    const html = '<!DOCTYPE html>\n'
++ '<html><head><meta charset="utf-8">'
++ '<title>Monthly Attendance \u2014 ' + escapeHtml(monthLabel) + '</title>'
++ '<style>'
++ '@page { size: A4 landscape; margin: 0.8cm; }'
++ 'html, body { background: #FFFFFF; margin: 0; padding: 0; '
++ '  font-family: Calibri, "Segoe UI", Arial, sans-serif; color: #1F1B16; }'
++ 'body { padding: 14px 16px; }'
++ '.export-header { display: flex; justify-content: space-between; align-items: flex-end; '
++ '  margin-bottom: 10px; padding-bottom: 8px; border-bottom: 2px solid #0F4C2A; }'
++ '.export-title { font-size: 20px; font-weight: 700; color: #0F4C2A; margin: 0; }'
++ '.export-subtitle { font-size: 10px; color: #5F5E5A; margin: 3px 0 0; }'
++ '.export-meta { font-size: 9px; color: #5F5E5A; text-align: right; line-height: 1.4; }'
++ '.loc-bar { margin: 6px 0 10px; font-size: 9px; color: #5F5E5A; }'
++ '.loc-pill { display: inline-block; padding: 2px 8px; margin: 0 4px 3px 0; '
++ '  border: 1px solid #E5E5E5; border-radius: 999px; background: #FAFAF9; }'
++ 'table.grid { border-collapse: collapse; width: 100%; table-layout: fixed; '
++ '  font-size: 8px; }'
++ 'table.grid th, table.grid td { border: 1px solid #EEEAE0; padding: 0; '
++ '  vertical-align: middle; }'
++ '.emp-cell { width: 130px; padding: 4px 6px !important; text-align: left; '
++ '  background: #FAFAF9; vertical-align: middle; }'
++ '.emp-name { font-size: 9px; font-weight: 600; color: #0A0A0A; line-height: 1.2; }'
++ '.emp-meta { font-size: 7.5px; color: #6B6B6B; line-height: 1.2; margin-top: 1px; '
++ '  font-family: "SFMono-Regular", monospace; }'
++ '.emp-loc  { font-size: 7.5px; color: #0F4C2A; line-height: 1.2; margin-top: 1px; '
++ '  font-style: italic; }'
++ '.day-head { font-size: 7.5px; padding: 2px 0 !important; text-align: center; '
++ '  background: #FAFAF9; }'
++ '.dow { color: #6B6B6B; font-weight: 500; }'
++ '.dnum { color: #0A0A0A; font-weight: 700; font-size: 9px; }'
++ '.cell { width: auto; height: 28px; padding: 1px !important; text-align: center; }'
++ '.chip { display: flex; flex-direction: column; align-items: center; '
++ '  justify-content: center; padding: 2px 1px; border-radius: 3px; height: 100%; '
++ '  line-height: 1.05; }'
++ '.chip-label { font-size: 8px; font-weight: 700; }'
++ '.chip-time  { font-size: 6.5px; opacity: 0.85; '
++ '  font-family: "SFMono-Regular", monospace; }'
++ '.legend { margin-top: 12px; font-size: 8px; color: #6B6B6B; line-height: 1.6; }'
++ '.legend .ll { display: inline-block; padding: 1px 6px; margin: 0 6px 4px 0; '
++ '  border-radius: 3px; font-weight: 700; }'
++ '.print-btn { position: fixed; bottom: 12px; right: 12px; padding: 8px 16px; '
++ '  background: #0F4C2A; color: white; border: none; border-radius: 6px; '
++ '  font-size: 12px; font-weight: 600; cursor: pointer; '
++ '  box-shadow: 0 2px 8px rgba(0,0,0,0.2); }'
++ '@media print { .print-btn { display: none !important; } '
++ '  .export-header { page-break-after: avoid; } '
++ '  tr { page-break-inside: avoid; } }'
++ '</style></head><body>'
++ '<div class="export-header">'
++   '<div>'
++     '<h1 class="export-title">Monthly Attendance \u2014 ' + escapeHtml(monthLabel) + '</h1>'
++     '<div class="export-subtitle">Evergreen Shipping Agency Saudi Co. (L.L.C) \u00b7 ESAU HR Portal</div>'
++   '</div>'
++   '<div class="export-meta">'
++     'Generated ' + escapeHtml(generatedAt) + '<br>'
++     'ESAU HR Department<br>'
++     sortedEmps.length + ' staff \u00b7 sorted by location \u2192 name'
++   '</div>'
++ '</div>'
++ '<div class="loc-bar">' + locSummary + '</div>'
++ '<table class="grid">'
++   '<thead><tr><th class="emp-cell">Employee</th>' + dayHeader + '</tr></thead>'
++   '<tbody>' + tbody + '</tbody>'
++ '</table>'
++ '<div class="legend">'
++   '<span class="ll" style="background:#ECFDF5;color:#0F4C2A">\u2713 Present</span>'
++   '<span class="ll" style="background:#EFF6FF;color:#1E40AF">\u2713LP / \u2713EP Permission-covered</span>'
++   '<span class="ll" style="background:#FEF3C7;color:#854F0B">LT Late</span>'
++   '<span class="ll" style="background:#FED7AA;color:#7C2D12">SH Short</span>'
++   '<span class="ll" style="background:#FEE2E2;color:#991B1B">AB Absent</span>'
++   '<span class="ll" style="background:#CCFBF1;color:#115E59">AL Annual leave</span>'
++   '<span class="ll" style="background:#EDE9FE;color:#5B21B6">SL Sick leave</span>'
++   '<span class="ll" style="background:#DBEAFE;color:#1E3A8A">OR Off-roster</span>'
++   '<span class="ll" style="background:#EEF0FA;color:#3B4279">OF Off-day</span>'
++ '</div>'
++ '<button class="print-btn" onclick="window.print()">\ud83d\udda8 Print / Save as PDF</button>'
++ '<script>window.addEventListener("load", () => setTimeout(() => { try { window.print(); } catch (e) {} }, 600));</script>'
++ '</body></html>';
+
+    const win = window.open('', '_blank', 'width=1400,height=900');
+    if (!win) {
+      alert('Pop-up blocked \u2014 allow pop-ups for this site to use the export feature.');
+      return;
+    }
+    win.document.open();
+    win.document.write(html);
     win.document.close();
-    // Insert the calendar clone after the document is ready. Doing
-    // this via DOM (not innerHTML in document.write) avoids React
-    // event-listener issues and preserves any inline canvas state.
-    const cloned = target.cloneNode(true);
-    // Strip interactive controls — buttons inside the calendar are
-    // useless on paper and add visual noise.
-    cloned.querySelectorAll('button').forEach(b => b.remove());
-    setTimeout(() => {
-      const body = win.document.getElementById('esau-report-body');
-      if (body) body.appendChild(cloned);
-    }, 50);
-  }, [csvDate]);
+  }, [csvDate, employees]);
 
   // Window-mismatch validation. Returns null when the file matches
   // the strict today+yesterday requirement; otherwise returns an
