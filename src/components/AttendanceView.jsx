@@ -90,8 +90,8 @@ class AttendanceErrorBoundary extends React.Component {
 //   • Active item: solid ink-dark background, white text.
 //   • Idle items: muted text on transparent bg, light hover.
 //   • Each item has a tiny icon + the label.
-function AttendanceSidebar({ activeView, setActiveView }) {
-  const items = [
+function AttendanceSidebar({ activeView, setActiveView, setupComplete, escapeHatchActive }) {
+  const allItems = [
     // Phase B (Decision #6 / option A): the previously-separate
     // "Monthly overview" and "Daily upload" entries are merged into a
     // single "Attendance" workspace. Calendar memory and daily action
@@ -102,8 +102,16 @@ function AttendanceSidebar({ activeView, setActiveView }) {
     { id: 'attendance', icon: <Calendar className="w-4 h-4" />,        label: 'Attendance',           hint: 'Calendar + daily upload' },
     { id: 'schedules',  icon: <Clock className="w-4 h-4" />,            label: 'Working hours',        hint: 'SUP / standard hours' },
     { id: 'mawani',     icon: <Anchor className="w-4 h-4" />,           label: 'Mawani visits',        hint: 'Duty-visit log' },
-    { id: 'backfill',   icon: <FileSpreadsheet className="w-4 h-4" />,  label: 'Historical backfill',  hint: 'One-shot multi-month import' },
+    // Phase D / Decision #2 option A — backfill is hidden once setup
+    // is complete (i.e., daily uploads have begun). The escape hatch
+    // (?admin=backfill or visiting once via URL) re-exposes the entry
+    // for the current session so admins can run a corrective backfill
+    // without modifying database state. Without the hatch, the entry
+    // stays out of the sidebar to avoid accidental re-runs.
+    { id: 'backfill',   icon: <FileSpreadsheet className="w-4 h-4" />,  label: 'Historical backfill',  hint: 'One-shot multi-month import',
+      hidden: setupComplete && !escapeHatchActive },
   ];
+  const items = allItems.filter(it => !it.hidden);
   return (
     <nav
       aria-label="Attendance sections"
@@ -1131,6 +1139,65 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // deep links or saved bookmarks.
   const [activeView, setActiveView] = useState('attendance');
 
+  // Phase D (Decision #2 / option A) — Setup-complete gate.
+  //
+  // The "Historical backfill" page is meant for first-time data
+  // import. Once Bashaier has begun running daily uploads, backfill
+  // is no longer the right tool — running it after live operation
+  // could overwrite real evaluated rows with re-derived values. We
+  // detect the transition from setup-mode to live-mode and hide the
+  // backfill sidebar entry once it's crossed.
+  //
+  // Detection rule: setup is complete when at least one row exists
+  // in attendance_uploads. That table only gets a row when Bashaier
+  // acts on a daily-flow file (the lazy upload-recorded write fires
+  // on first violation log, not on parse). It's a clean signal:
+  //   • zero rows → never started daily flow → backfill is the right tool
+  //   • ≥1 row    → daily flow is in use → backfill should be hidden
+  //
+  // Escape hatch: visiting the page with `?admin=backfill` in the
+  // URL re-exposes the sidebar entry for the current session. Useful
+  // for one-off corrective backfills after setup. The flag is held
+  // in component state and cleared on next reload — so no permanent
+  // override, no UI change for end users, no DB writes.
+  const [setupComplete, setSetupComplete] = useState(false);
+  const [escapeHatchActive, setEscapeHatchActive] = useState(false);
+
+  // Setup-complete probe — one-time check on mount. Cheap query
+  // (count-only, limit 1). Failure is non-fatal: we default to false
+  // (= sidebar shows backfill), which is the safe direction. The
+  // worst case of a stale read is "backfill is visible when it
+  // shouldn't be" — recoverable. The opposite ("hidden when it
+  // should be visible") would block first-time setup, which is
+  // unacceptable.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await directGet('attendance_uploads', 'select=id&limit=1', { timeoutMs: 6000 });
+        if (!cancelled) setSetupComplete(Array.isArray(rows) && rows.length > 0);
+      } catch {
+        if (!cancelled) setSetupComplete(false); // safe default
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Escape-hatch detection — on mount, parse the URL for
+  // `?admin=backfill` and flip the flag. Not persisted; a fresh tab
+  // without the param goes back to the locked-down view.
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get('admin') === 'backfill') {
+        setEscapeHatchActive(true);
+        // Auto-route into the backfill view so the admin doesn't have
+        // to click around looking for the (now-visible) entry.
+        setActiveView('backfill');
+      }
+    } catch {}
+  }, []);
+
   // Phase C (Decisions #3 + #5 — calendar refresh + re-eval triggers).
   //   • calendarRefreshTick — bumped after every successful re-eval
   //     so the AttendanceMonthGrid can refetch its rows. Single
@@ -1147,6 +1214,17 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     summary: null,
     error: null,
   });
+
+  // Phase D — if the user lands on `activeView === 'backfill'` (e.g.
+  // via a stale bookmark or a reload) but setup is complete and the
+  // escape hatch isn't active, kick them back to the main Attendance
+  // workspace. Without this, the backfill panel would render with no
+  // sidebar entry to navigate away from — a dead-end UI state.
+  useEffect(() => {
+    if (activeView === 'backfill' && setupComplete && !escapeHatchActive) {
+      setActiveView('attendance');
+    }
+  }, [activeView, setupComplete, escapeHatchActive]);
 
   // Re-eval trigger — central function called by:
   //   • Save & Close on the daily upload (Decision #4 / option C)
@@ -4444,7 +4522,12 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           flexWrap: 'wrap',
         }}
       >
-        <AttendanceSidebar activeView={activeView} setActiveView={setActiveView} />
+        <AttendanceSidebar
+          activeView={activeView}
+          setActiveView={setActiveView}
+          setupComplete={setupComplete}
+          escapeHatchActive={escapeHatchActive}
+        />
 
         <div style={{ flex: '1 1 0', minWidth: 0 }}>
 
@@ -4953,6 +5036,34 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
 
       {activeView === 'backfill' && (
         <AttendanceErrorBoundary label="Historical backfill">
+          {/* Setup-complete warning banner — Phase D / Decision #2.
+              When backfill is opened on a system that's already in
+              live operation (i.e., daily uploads have happened), warn
+              the admin loudly that running backfill here may overwrite
+              real evaluated rows. Only renders when the escape hatch
+              brought them here, since that's the only path into the
+              page once setup is complete. */}
+          {setupComplete && escapeHatchActive && (
+            <div className="rounded-2xl border-2 p-4 sm:p-5 mb-4 flex gap-3"
+                 style={{ background: '#FEF2F2', borderColor: '#991B1B' }}>
+              <div className="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center"
+                   style={{ background: '#DC2626' }}>
+                <AlertTriangle className="w-5 h-5" style={{ color: '#FFFFFF' }}/>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-[10px] tracking-[0.25em] mb-1" style={{ fontWeight: 700, color: '#0A0A0A' }}>
+                  ESCAPE HATCH · ADMIN ACCESS
+                </div>
+                <div className="text-[13px]" style={{ color: '#0A0A0A', lineHeight: 1.5 }}>
+                  This system is already in live operation — daily uploads have started.
+                  The backfill page is normally hidden after setup is complete.
+                  Re-running backfill from here may overwrite live attendance rows
+                  with re-derived values. Proceed only if you intend to import a
+                  historical period that pre-dates current operation.
+                </div>
+              </div>
+            </div>
+          )}
           <AttendanceBackfillPanel me={me} employees={employees} embedded />
         </AttendanceErrorBoundary>
       )}
