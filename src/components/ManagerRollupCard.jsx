@@ -28,11 +28,12 @@ const ISSUE_TYPE_LABELS = {
 
 // Build the per-manager rollup from detection arrays. Returns an array
 // sorted by total issues desc, then manager name. Each row collects
-// every issue for that manager's direct reports plus a roll-up total.
-function buildRollup(detection, empById) {
+// every issue for that manager's direct reports plus a roll-up total
+// and a count of how many already have an email logged.
+function buildRollup(detection, empById, loggedMarkers) {
   if (!detection) return [];
 
-  const buckets = new Map();  // managerId -> { managerName, issuesByEmp: Map, totalIssues, types: {...} }
+  const buckets = new Map();  // managerId -> { managerName, issuesByEmp: Map, totalIssues, types: {...}, emailedCount }
 
   const addEntry = (entry, type) => {
     if (!entry?.employee?.id) return;
@@ -46,6 +47,7 @@ function buildRollup(detection, empById) {
         managerName: manager?.name || (managerId === 'UNASSIGNED' ? 'Unassigned' : managerId),
         issuesByEmp: new Map(),
         totalIssues: 0,
+        emailedCount: 0,
         types: { late: 0, early: 0, missedIn: 0, missedOut: 0, shiftAbsent: 0 },
       });
     }
@@ -57,9 +59,19 @@ function buildRollup(detection, empById) {
         issues: [],
       });
     }
-    bucket.issuesByEmp.get(empId).issues.push({ type, entry });
+    // Translate detection 'type' (early, missedIn, etc.) into the
+    // attendance_violations 'violation_type' key used by loggedMarkers.
+    const violationType = type === 'early' ? 'early_leave'
+                        : type === 'missedIn' ? 'missed_in'
+                        : type === 'missedOut' || type === 'shiftAbsent' ? 'missed_out'
+                        : type;  // 'late' stays as-is
+    const markerKey = empId + ':' + violationType;
+    const isEmailed = !!loggedMarkers?.[markerKey];
+
+    bucket.issuesByEmp.get(empId).issues.push({ type, entry, isEmailed });
     bucket.totalIssues += 1;
     bucket.types[type] = (bucket.types[type] || 0) + 1;
+    if (isEmailed) bucket.emailedCount += 1;
   };
 
   (detection.late || []).forEach(e => addEntry(e, 'late'));
@@ -88,11 +100,11 @@ function fmtTypes(types) {
   return parts.join(' \u00b7 ');
 }
 
-export default function ManagerRollupCard({ detection, empById }) {
+export default function ManagerRollupCard({ detection, empById, loggedMarkers }) {
   const [expanded, setExpanded] = useState({}); // managerId -> bool
   const [collapsed, setCollapsed] = useState(false);
 
-  const rollup = useMemo(() => buildRollup(detection, empById), [detection, empById]);
+  const rollup = useMemo(() => buildRollup(detection, empById, loggedMarkers), [detection, empById, loggedMarkers]);
 
   if (rollup.length === 0) return null;
 
@@ -137,11 +149,25 @@ export default function ManagerRollupCard({ detection, empById }) {
                 <div className="flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-[#FAFAF9]"
                   onClick={() => setExpanded(prev => ({ ...prev, [row.managerId]: !prev[row.managerId] }))}>
                   <div className="flex-1 min-w-0">
-                    <div className="text-[12px]" style={{ color: '#0A0A0A', fontWeight: 600 }}>
-                      {row.managerName}
-                      <span className="ml-2 text-[10px]" style={{ color: '#7A7A7A', fontFamily: 'monospace', fontWeight: 400 }}>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[12px]" style={{ color: '#0A0A0A', fontWeight: 600 }}>
+                        {row.managerName}
+                      </span>
+                      <span className="text-[10px]" style={{ color: '#7A7A7A', fontFamily: 'monospace', fontWeight: 400 }}>
                         {row.managerId !== 'UNASSIGNED' ? row.managerId : ''}
                       </span>
+                      {row.emailedCount > 0 && (
+                        <span className="text-[10px] px-1.5 py-px rounded"
+                          style={{
+                            background: row.emailedCount === row.totalIssues ? '#E1F5EE' : '#FAEEDA',
+                            color:      row.emailedCount === row.totalIssues ? '#0F6E56' : '#854F0B',
+                            fontWeight: 600,
+                          }}>
+                          {row.emailedCount === row.totalIssues
+                            ? '\u2713 all sent'
+                            : `${row.emailedCount}/${row.totalIssues} sent`}
+                        </span>
+                      )}
                     </div>
                     <div className="text-[10px] mt-0.5" style={{ color: '#0A0A0A' }}>
                       <strong style={{ fontWeight: 600 }}>{row.totalIssues} {row.totalIssues === 1 ? 'issue' : 'issues'}</strong>
@@ -173,6 +199,9 @@ export default function ManagerRollupCard({ detection, empById }) {
                                 )}
                                 {typeof iss.entry?.minutesEarly === 'number' && iss.entry.minutesEarly > 0 && (
                                   <span style={{ color: '#7A7A7A' }}> ({iss.entry.minutesEarly}m)</span>
+                                )}
+                                {iss.isEmailed && (
+                                  <span style={{ color: '#0F6E56', marginLeft: '4px' }}>{'\u2713'}</span>
                                 )}
                               </span>
                             ))}

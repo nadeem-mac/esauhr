@@ -5347,6 +5347,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           <ManagerRollupCard
             detection={detection}
             empById={empById}
+            loggedMarkers={loggedMarkers}
           />
           <SilentAbsencesCard
             silentAbsences={silentAbsences}
