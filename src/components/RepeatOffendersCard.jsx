@@ -170,10 +170,6 @@ export default function RepeatOffendersCard({
 
   useEffect(() => { load(); }, [load, refreshTick]);
 
-  // Hide entirely when empty — no point taking page space for "no
-  // repeat offenders this month" since the absence is the good case.
-  if (!loading && offenders.length === 0 && !error) return null;
-
   const counts = useMemo(() => {
     const c = { pattern: 0, repeat: 0, critical: 0 };
     for (const o of offenders) {
@@ -181,6 +177,14 @@ export default function RepeatOffendersCard({
     }
     return c;
   }, [offenders]);
+
+  // Hide entirely when empty — no point taking page space for "no
+  // repeat offenders this month" since the absence is the good case.
+  // The useMemo above MUST be declared before this early return,
+  // otherwise the hook count differs between empty and non-empty
+  // renders → React error #310 ("Rendered more hooks than during
+  // the previous render").
+  if (!loading && offenders.length === 0 && !error) return null;
 
   return (
     <div className="rounded-xl mb-4"

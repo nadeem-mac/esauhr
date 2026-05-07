@@ -55,7 +55,12 @@ class AttendanceErrorBoundary extends React.Component {
       error,
       info,
     });
-    this.setState({ sessionId });
+    // Pull the first ~600 chars of the component stack so we can
+    // surface WHICH component is throwing (especially useful for
+    // hook-order errors like #310 where the inner component is the
+    // culprit but the boundary label is generic).
+    const componentStack = (info?.componentStack || '').split('\n').slice(0, 8).join('\n');
+    this.setState({ sessionId, componentStack });
   }
   render() {
     if (this.state.error) {
@@ -68,6 +73,12 @@ class AttendanceErrorBoundary extends React.Component {
           <div className="text-xs font-mono break-all">
             {String(this.state.error?.message || this.state.error)}
           </div>
+          {this.state.componentStack && (
+            <pre className="text-[10px] mt-2 p-2 rounded font-mono whitespace-pre-wrap"
+              style={{ background: '#FFFFFF', border: '1px solid #FCA5A5', color: '#7F1D1D', maxHeight: 200, overflow: 'auto' }}>
+              {this.state.componentStack}
+            </pre>
+          )}
           <div className="text-[10px] mt-2 opacity-70">
             Open the browser DevTools console for the full stack trace. The rest of the page remains usable.
             {this.state.sessionId && (
@@ -75,7 +86,7 @@ class AttendanceErrorBoundary extends React.Component {
             )}
           </div>
           <button
-            onClick={() => this.setState({ error: null, sessionId: null })}
+            onClick={() => this.setState({ error: null, sessionId: null, componentStack: null })}
             className="text-[11px] mt-2 px-3 py-1 rounded-full"
             style={{ background: '#991B1B', color: '#FFFFFF', fontWeight: 600 }}
           >
@@ -5610,11 +5621,13 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           schedule, comparison, permission, classification) so disputes
           can be settled in one place. */}
       {explainPayload && (
-        <EvaluationExplainModal
-          entry={explainPayload.entry}
-          kind={explainPayload.kind}
-          onClose={() => setExplainPayload(null)}
-        />
+        <AttendanceErrorBoundary label="Explain modal">
+          <EvaluationExplainModal
+            entry={explainPayload.entry}
+            kind={explainPayload.kind}
+            onClose={() => setExplainPayload(null)}
+          />
+        </AttendanceErrorBoundary>
       )}
 
       {/* Historical backfill modal — opens on "📚 Historical backfill"
@@ -5700,6 +5713,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           work. The 24-line spacer keeps the visual handoff clear
           between "action" (above) and "memory" (below). */}
       <div style={{ marginTop: 0 }}>
+        <AttendanceErrorBoundary label="Action bar">
         {/* Single-row layout: action buttons (centered) with the
             compact status pill as the leading item. Everything sits
             on one line. */}
@@ -5855,6 +5869,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
               📄 Export report
             </button>
         </div>
+        </AttendanceErrorBoundary>
         <AttendanceErrorBoundary label="Monthly attendance calendar">
           <div data-month-export-target>
           <AttendanceMonthGrid

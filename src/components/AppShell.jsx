@@ -717,6 +717,19 @@ export default function AppShell({ session, me, onRefreshMe }) {
           </div>
 
           <div className="flex items-center gap-4">
+            <div
+              className="hidden md:inline-flex items-center text-[9px] px-2 py-0.5 rounded"
+              style={{
+                background: '#F4F4EE',
+                color: '#7A7A7A',
+                border: '1px solid #E5E5DD',
+                letterSpacing: '0.05em',
+                fontFamily: 'monospace',
+              }}
+              title="Frontend build timestamp — verifies you have the latest deploy after a push"
+            >
+              build {typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : '—'}
+            </div>
             <div className="text-right hidden md:block">
               <div className="text-[11px] tracking-[0.2em] opacity-70 font-bold">TODAY</div>
               <div className="serif text-base font-semibold">{fmtDate(new Date())}</div>
