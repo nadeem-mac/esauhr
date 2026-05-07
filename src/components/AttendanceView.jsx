@@ -18,6 +18,7 @@ import AttendanceMonthGrid from './AttendanceMonthGrid.jsx';
 import AttendanceBackfillPanel from './AttendanceBackfillPanel.jsx';
 import WorkingHoursManager from './WorkingHoursManager.jsx';
 import EmployeeAttendanceDetailPanel from './EmployeeAttendanceDetailPanel.jsx';
+import RepeatOffendersCard from './RepeatOffendersCard.jsx';
 
 // ─── Error Boundary for AttendanceView sections ───────────────────────
 // Without this, a render-time exception anywhere in the tree under
@@ -5081,12 +5082,19 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           )}
         </>
       ) : (
-        <FileSummary
-          fileName={xlsxFileName}
-          csvDate={csvDate}
-          isWeekend={csvIsWeekend}
-          totalRows={parsed.rows.length}
-          offDateCount={parsed.offDateCount}
+        <>
+          <RepeatOffendersCard
+            empById={empById}
+            refreshTick={calendarRefreshTick}
+            hrSignature={HR_SIGNATURE}
+            fixedCc={FIXED_CC}
+          />
+          <FileSummary
+            fileName={xlsxFileName}
+            csvDate={csvDate}
+            isWeekend={csvIsWeekend}
+            totalRows={parsed.rows.length}
+            offDateCount={parsed.offDateCount}
           counts={{
             late:           detection.late.filter(e => !e.isCustomShift).length,
             missedIn:       detection.missedIn.filter(e => !e.isCustomShift).length,
@@ -5126,6 +5134,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           onSaveAndClose={handleSaveAndClose}
           savingClose={reevalState.running}
         />
+        </>
       )}
 
       {/* INTEGRITY BANNERS — surface upload sanity issues prominently
