@@ -30,6 +30,7 @@
 
 import { parseTimeCardXlsx } from './timeCard.js';
 import { directPost, directGet } from '../supabaseClient.js';
+import { addDaysIso as addDaysIsoCentral } from './dateUtils.js';
 
 // Local YYYY-MM-DD without timezone surprises.
 function ymd(d) {
@@ -278,6 +279,38 @@ function applyPermissionCoverage({ status, lateMin, earlyMin, firstPunch, lastPu
       }
     }
   }
+  // Tier 1 fix (#3 / item 1): permission coverage for missed-punch.
+  //
+  // Two scenarios where a permission can soften a missed-punch row:
+  //   (a) missed_in + last_punch present + late_arrival permission
+  //       → staff was clearly there at end of day; the missing IN
+  //         punch is most likely a terminal miss, and the approved
+  //         late permission tells us they expected to be late. Treat
+  //         as 'present' with a permission-coverage note.
+  //   (b) missed_out + first_punch present + early_leave permission
+  //       → staff was clearly there at start of day; the missing OUT
+  //         punch is most likely a terminal miss, and the approved
+  //         early permission tells us they expected to leave early.
+  //         Treat as 'present' with a permission-coverage note.
+  //
+  // The strict rule: BOTH the punch presence AND the matching permission
+  // must hold. We don't auto-cover when both punches are missing — that
+  // case is genuinely ambiguous (could be a true absence) and stays
+  // flagged for manager review even if a permission exists.
+  if (status === 'missed_in' && lastPunch) {
+    const perm = perms?.get?.(`${empId}|${dateIso}|late_arrival`);
+    if (perm && perm.time_to) {
+      coveredNote = `missing IN punch covered by approved late-arrival permission (${(perm.time_from||'').slice(0,5)}–${(perm.time_to||'').slice(0,5)}); end-of-day OUT punch on file confirms presence`;
+      return { status: 'present', lateMin: 0, earlyMin, coveredNote };
+    }
+  }
+  if (status === 'missed_out' && firstPunch) {
+    const perm = perms?.get?.(`${empId}|${dateIso}|early_leave`);
+    if (perm && perm.time_from) {
+      coveredNote = `missing OUT punch covered by approved early-leave permission (${(perm.time_from||'').slice(0,5)}–${(perm.time_to||'').slice(0,5)}); start-of-day IN punch on file confirms presence`;
+      return { status: 'present', lateMin, earlyMin: 0, coveredNote };
+    }
+  }
   return { status, lateMin, earlyMin, coveredNote: null };
 }
 
@@ -508,13 +541,13 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
     });
   }
 
-  // Add N days to a YYYY-MM-DD string. Used to look up tomorrow's
-  // punch row when evaluating an overnight shift.
+  // Add N days to a YYYY-MM-DD string. Tier 1 fix (#2 / item 1):
+  // delegate to the centralised local-time helper so the date math
+  // is timezone-consistent across the codebase. The original UTC
+  // round-trip was safe in isolation but inconsistent with the rest
+  // of the attendance pipeline, which now uses local time.
   function addDaysIso(iso, days) {
-    const [y, m, d] = iso.split('-').map(n => parseInt(n, 10));
-    const dt = new Date(Date.UTC(y, m - 1, d));
-    dt.setUTCDate(dt.getUTCDate() + days);
-    return dt.toISOString().slice(0, 10);
+    return addDaysIsoCentral(iso, days);
   }
 
   // Detect overnight schedule — start time after end time numerically.
@@ -1044,11 +1077,10 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
     });
   }
 
+  // Tier 1 fix (#2 / item 1): delegate to centralised local-time
+  // helper for timezone consistency.
   function reevalAddDaysIso(iso, days) {
-    const [y, m, d] = iso.split('-').map(n => parseInt(n, 10));
-    const dt = new Date(Date.UTC(y, m - 1, d));
-    dt.setUTCDate(dt.getUTCDate() + days);
-    return dt.toISOString().slice(0, 10);
+    return addDaysIsoCentral(iso, days);
   }
   function reevalIsOvernightShift(shift) {
     const sm = timeToMinutes(shift?.startTime);

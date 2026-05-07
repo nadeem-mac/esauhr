@@ -13,6 +13,7 @@ import { buildAttendanceRows, recordAttendanceRows } from '../lib/attendanceReco
 // page; this helper bounds the scan to a tight 7-day window so the
 // daily flow's re-eval is fast and predictable.
 import { reevaluateLastNDays } from '../lib/attendanceBackfill.js';
+import { localDateString, todayLocal, monthStart as monthStartIso, monthEnd as monthEndIso, addDaysIso } from '../lib/dateUtils.js';
 import AttendanceMonthGrid from './AttendanceMonthGrid.jsx';
 import AttendanceBackfillPanel from './AttendanceBackfillPanel.jsx';
 import WorkingHoursManager from './WorkingHoursManager.jsx';
@@ -1273,8 +1274,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // sent. The success path emits a transient toast and bumps the
   // calendar refresh tick. Called from the FileSummary header button.
   // Phase B+C / Decision #4 option C.
-  const handleSaveAndClose = useCallback(async () => {
-    if (reevalState.running) return;
+  const handleSaveAndClose = useCallback(async () => {    if (reevalState.running) return;
     const summary = await triggerReevaluation({ silent: false });
     if (summary) {
       try {
@@ -1706,8 +1706,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       try {
         // Bound by the calendar month containing csvDate.
         const d = new Date(csvDate);
-        const monthStart = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
-        const monthEnd   = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().slice(0, 10);
+        // Tier 1 fix (#2 / item 1 — UTC drift): use local-time helpers
+        // so month bounds match Bashaier's local view of the month.
+        const monthStart = monthStartIso(csvDate);
+        const monthEnd   = monthEndIso(csvDate);
         const rows = await directGet(
           'attendance_violations?select=employee_id,violation_type,violation_date'
           + '&violation_date=gte.' + monthStart
@@ -2658,7 +2660,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         const d = new Date(start);
         d.setDate(start.getDate() + i);
         if (d > end) break;
-        const k = `${l.employee_id}|${d.toISOString().slice(0, 10)}`;
+        const k = `${l.employee_id}|${localDateString(d)}`;
         m.set(k, { type: typeName, requestId: l.id });
       }
     });
@@ -2995,6 +2997,40 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     }
   }, [csvDate, me]);
 
+  // ── Tier 1 fix (#4 / item 1): Email idempotency guard ──────────────
+  //
+  // Prevents accidental double-sends from rapid clicks, network hangs
+  // that prompt a retry, or bulk-send race conditions. Each violation
+  // entry+mode pair has a 5-minute cooldown after the first send.
+  // Within the window, subsequent send attempts no-op and surface a
+  // brief toast so the user knows the request was deliberately
+  // ignored.
+  //
+  // State lives in a useRef Map (in-memory, session-scoped) keyed by
+  // `${entry.id}|${mode}`. Reloading the page clears it — that's fine,
+  // a fresh session can legitimately re-send. The cooldown protects
+  // against double-clicks within the same session.
+  const emailSendCooldownRef = useRef(new Map());
+  const EMAIL_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+  const checkEmailCooldown = useCallback((entryId, mode) => {
+    const key = `${entryId}|${mode}`;
+    const lastAt = emailSendCooldownRef.current.get(key);
+    const now = Date.now();
+    if (lastAt && (now - lastAt) < EMAIL_COOLDOWN_MS) {
+      const minsAgo = Math.max(1, Math.floor((now - lastAt) / 60000));
+      try {
+        window.dispatchEvent(new CustomEvent('esauhr_toast', { detail: {
+          kind: 'warning',
+          title: 'Email already sent',
+          body: `This notice was sent ${minsAgo} ${minsAgo === 1 ? 'minute' : 'minutes'} ago. Wait 5 minutes before re-sending if needed.`,
+        }}));
+      } catch {}
+      return false; // blocked
+    }
+    emailSendCooldownRef.current.set(key, now);
+    return true; // ok to send
+  }, []);
+
   // mode: 'live' (production wording, references the ESAU HR Portal)
   //     | 'test' (pre-launch wording, drops portal references and asks
   //               for an email-reply explanation instead)
@@ -3002,6 +3038,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // the production behaviour. The per-row Test buttons explicitly pass
   // mode='test'.
   const handleEmailLate = (entry, mode = 'live') => {
+    if (!checkEmailCooldown(entry.id, mode)) return;
     // Use the entry's own date label so the email correctly says
     // "today" or "yesterday" relative to the event, not the file's
     // primary date. Late entries always come from today, but
@@ -3020,7 +3057,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       isNightShiftStart: !!entry.isNightShiftStart,
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
-      managerName: entry.assignedBy ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
+      managerName: (entry.assignedBy
+        && String(entry.assignedBy).toUpperCase() === String(entry.employee?.manager_id || '').toUpperCase())
+        ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null)
+        : null,
       // staffHasShifts — true when the staff member is on the monthly
       // shift roster, even if THIS specific date was not assigned a
       // shift. Lets the email apply shift-aware wording, bullets, and
@@ -3053,6 +3093,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   };
 
   const handleEmailEarly = (entry, mode = 'live') => {
+    if (!checkEmailCooldown(entry.id, mode)) return;
     // Early-departure entries come from YESTERDAY's data in the
     // 2-day workflow. Use entry.dateLabel so the email correctly
     // references the day the staff actually left early on.
@@ -3070,7 +3111,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       scheduledStart: entry.scheduledStart,
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
-      managerName: entry.assignedBy ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
+      managerName: (entry.assignedBy
+        && String(entry.assignedBy).toUpperCase() === String(entry.employee?.manager_id || '').toUpperCase())
+        ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null)
+        : null,
       // staffHasShifts — true when the staff member is on the monthly
       // shift roster, even if THIS specific date was not assigned a
       // shift. Lets the email apply shift-aware wording, bullets, and
@@ -3100,6 +3144,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   };
 
   const handleEmailMissed = (entry, mode = 'live') => {
+    if (!checkEmailCooldown(entry.id, mode)) return;
     // Missed-punch entries come from EITHER day in the 2-day flow:
     //   • missedIn  → today  (no clock-in by file pull time)
     //   • missedOut → yesterday (no clock-out by EOD)
@@ -3119,7 +3164,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       isNightShiftEnd:   !!entry.isNightShiftEnd,
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
-      managerName: entry.assignedBy ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
+      managerName: (entry.assignedBy
+        && String(entry.assignedBy).toUpperCase() === String(entry.employee?.manager_id || '').toUpperCase())
+        ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null)
+        : null,
       // staffHasShifts — true when the staff member is on the monthly
       // shift roster, even if THIS specific date was not assigned a
       // shift. Lets the email apply shift-aware wording, bullets, and
@@ -3165,7 +3213,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   //              wrong export or device clock drift
   const dateSanity = useMemo(() => {
     if (!csvDate) return null;
-    const todayIso = new Date().toISOString().slice(0, 10);
+    const todayIso = todayLocal();
     if (csvDate > todayIso) return { kind: 'FUTURE', label: 'Future-dated file' };
     if (csvDate === todayIso) return { kind: 'TODAY', label: 'Today\'s data' };
     const ageMs = new Date(todayIso).getTime() - new Date(csvDate).getTime();
@@ -3220,7 +3268,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     let cancelled = false;
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 14);
-    const cutoffIso = cutoff.toISOString().slice(0, 10);
+    const cutoffIso = localDateString(cutoff);
     directGet(
       'attendance_review_log?select=review_date,morning_at,eod_at'
         + '&review_date=gte.' + cutoffIso
@@ -3229,7 +3277,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     )
       .then(rows => {
         if (cancelled) return;
-        const today = new Date().toISOString().slice(0, 10);
+        const today = todayLocal();
         // Pending = morning was logged, EOD wasn't, AND the review_date
         // is at least one calendar day in the past. We deliberately
         // don't flag today's morning pass — it's normal for her to be
@@ -6507,7 +6555,10 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, empById, monthly
       isNightShiftStart: !!entry.isNightShiftStart,
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
-      managerName: (entry.assignedBy && empById) ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
+      managerName: (entry.assignedBy && empById
+        && String(entry.assignedBy).toUpperCase() === String(entry.employee?.manager_id || '').toUpperCase())
+        ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null)
+        : null,
       staffHasShifts: !!entry.staffHasShifts,
       assignedShifts: monthlyShiftsByEmp
         ? (monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [])
@@ -6529,7 +6580,10 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, empById, monthly
       scheduledStart: entry.scheduledStart,
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
-      managerName: (entry.assignedBy && empById) ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
+      managerName: (entry.assignedBy && empById
+        && String(entry.assignedBy).toUpperCase() === String(entry.employee?.manager_id || '').toUpperCase())
+        ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null)
+        : null,
       staffHasShifts: !!entry.staffHasShifts,
       assignedShifts: monthlyShiftsByEmp
         ? (monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [])
@@ -6551,7 +6605,10 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, empById, monthly
       isNightShiftEnd:   !!entry.isNightShiftEnd,
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
-      managerName: (entry.assignedBy && empById) ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
+      managerName: (entry.assignedBy && empById
+        && String(entry.assignedBy).toUpperCase() === String(entry.employee?.manager_id || '').toUpperCase())
+        ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null)
+        : null,
       staffHasShifts: !!entry.staffHasShifts,
       assignedShifts: monthlyShiftsByEmp
         ? (monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [])
