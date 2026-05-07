@@ -1551,6 +1551,14 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // button in the Monthly Overview header. Wraps AttendanceBackfillPanel
   // with a date-window banner so Bashaier knows the allowed range.
   const [backfillModalOpen, setBackfillModalOpen] = useState(false);
+
+  // Daily-review modal — opens automatically when a time card finishes
+  // parsing and shows the entire detection workspace (action tiles, file
+  // summary, banners) overlaid on the calendar so Bashaier can act on
+  // the day's findings without losing the calendar context. She can
+  // close anytime; reopen via the "📋 Today's review" button that
+  // appears once a file is parsed.
+  const [dailyReviewOpen, setDailyReviewOpen] = useState(false);
   // Pending-EOD-review tracker. Populated from attendance_review_log on
   // mount and after each file-load mode-log. Each entry: { review_date,
   // morning_at, eod_at }. eod_at is null by definition for everything
@@ -3842,6 +3850,17 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // ─── Render ────────────────────────────────────────────────────────────
   const hasFile = !!xlsxFileName;
 
+  // Auto-open the daily-review modal as soon as a file is parsed.
+  // Triggered on the transition from no-file to has-file so we don't
+  // re-open if Bashaier has already closed it.
+  const lastHasFileRef = useRef(false);
+  useEffect(() => {
+    if (hasFile && !lastHasFileRef.current) {
+      setDailyReviewOpen(true);
+    }
+    lastHasFileRef.current = hasFile;
+  }, [hasFile]);
+
   // Date sanity flags — surface as a banner above the count summary.
   // These detect the most common upload mistakes:
   //   • TODAY  — file is for today's date; staff haven't punched out
@@ -5450,9 +5469,8 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       )}
 
       {/* Hidden file input — controlled by the Upload button in the
-          Monthly Overview header (below). Stays mounted at this
-          location so existing onPick / parseError plumbing keeps
-          working unchanged. */}
+          Monthly Overview header. Stays mounted at root level so the
+          input is always available regardless of modal state. */}
       <input
         ref={fileInputRef}
         type="file"
@@ -5463,7 +5481,49 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       {!hasFile && parseError && (
         <div className="text-sm px-3 py-2 mb-3 rounded-md" style={{ color: '#BE123C', background: '#FEF2F2', maxWidth: '480px' }}>{parseError}</div>
       )}
-      {!hasFile ? null : windowMismatch ? (
+
+      {/* ═══════════════════════════════════════════════════════════════
+          DAILY REVIEW MODAL — overlay that wraps the entire daily-detection
+          workspace (action tiles, file summary, banners). Opens
+          automatically on first parse, closes via the X button or "Save
+          & Close". The calendar stays in the background; closing the
+          modal returns Bashaier to it without losing the parsed file —
+          she can reopen via the "📋 Today's review" button.
+          ═══════════════════════════════════════════════════════════════ */}
+      {hasFile && dailyReviewOpen && (
+        <div className="fixed inset-0 z-40 flex items-start justify-center p-2 sm:p-4 overflow-y-auto"
+          style={{ background: 'rgba(31,27,22,0.55)' }}
+          onClick={() => setDailyReviewOpen(false)}>
+          <div className="rounded-xl shadow-lg w-full max-w-7xl my-4 overflow-hidden flex flex-col"
+            style={{ background: '#FFFFFF', border: '1px solid #EEEAE0', maxHeight: 'calc(100vh - 32px)' }}
+            onClick={(e) => e.stopPropagation()}>
+            {/* Modal header */}
+            <div className="px-5 py-3 flex items-center justify-between flex-shrink-0"
+              style={{ borderBottom: '1px solid #EEEAE0', background: '#FAFAF9' }}>
+              <div>
+                <div className="text-[10px]" style={{ color: '#0F4C2A', letterSpacing: '0.18em', fontWeight: 700 }}>
+                  📋 DAILY REVIEW
+                </div>
+                <div className="text-[15px] mt-0.5" style={{ color: '#0A0A0A', fontWeight: 700 }}>
+                  {csvDate ? formatDateLong(csvDate) : 'Today\u2019s file'}
+                  {xlsxFileName && (
+                    <span className="text-[11px] ml-2" style={{ color: '#7A7A7A', fontWeight: 500 }}>
+                      · {xlsxFileName}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button onClick={() => setDailyReviewOpen(false)}
+                className="p-1.5 rounded hover:bg-[#EEEAE0] flex-shrink-0"
+                style={{ color: '#1F1B16' }}
+                title="Close — your data stays loaded; reopen via the calendar header.">
+                <X className="w-4 h-4"/>
+              </button>
+            </div>
+            {/* Modal body — scrollable */}
+            <div className="p-4 sm:p-5 overflow-y-auto flex-1" style={{ background: '#FFFFFF' }}>
+
+      {windowMismatch ? (
         <>
           <WindowMismatchBanner
             mismatch={windowMismatch}
@@ -5587,6 +5647,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         </div>
       )}
 
+            </div>{/* end modal body */}
+          </div>{/* end modal card */}
+        </div>
+      )}{/* end daily review modal */}
 
       {/* Confirm-before-send modal — every email button routes through
           here for an extra check. The mailto: link only fires after
@@ -5769,6 +5833,22 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             >
               ⬆ Upload Time Card
             </button>
+            {hasFile && !dailyReviewOpen && (
+              <button
+                type="button"
+                onClick={() => setDailyReviewOpen(true)}
+                className="text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1.5"
+                style={{
+                  background: '#FEF3C7',
+                  color: '#854F0B',
+                  fontWeight: 600,
+                  border: '1px solid #FCD34D',
+                }}
+                title="Reopen the daily review for the loaded time card."
+              >
+                📋 Today's review · {csvDate ? new Date(csvDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : ''}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => triggerReevaluation({ silent: false })}
