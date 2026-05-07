@@ -5262,16 +5262,9 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           return (
             <div className="mt-3">
               <div className="flex items-center gap-2 flex-wrap">
-                <div className="inline-flex items-center gap-2 text-[11px] px-3 py-1.5 rounded-full"
-                     style={{ background: bg, border: `1px solid ${border}`, color: fg, fontWeight: 600 }}
-                     title={tooltipParts.join('\n')}>
-                  <span className="inline-block w-2 h-2 rounded-full" style={{ background: dotColor }} />
-                  <span>{healthLabel}</span>
-                  <span style={{ opacity: 0.7, fontWeight: 500 }}>
-                    &middot; upload {fmtRel(uploadMs)}
-                    {reevalState.lastRunAt && <> &middot; re-eval {fmtRel(reevalMs)}</>}
-                  </span>
-                </div>
+                {/* Standalone health pill removed — the same status now
+                    appears inline in the Monthly Overview buttons row
+                    (more compact, single update line). */}
                 {notifications.map(n => {
                   const t = toneStyles[n.tone];
                   const isOpen = openNotice === n.id;
@@ -5706,37 +5699,63 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           scrolls down to confirm the calendar reflects the day's
           work. The 24-line spacer keeps the visual handoff clear
           between "action" (above) and "memory" (below). */}
-      <div style={{ marginTop: 32 }}>
-        {/* Re-eval status row — sits above the calendar so the
-            "last updated" signal is visible without scrolling
-            inside the grid. Manual button gives Bashaier explicit
-            control when she wants to force a fresh pass (e.g. after
-            approving a permission outside the upload flow). */}
-        <div className="flex items-center justify-end mb-3" style={{ flexWrap: 'wrap', gap: 8 }}>
-          <div className="flex items-center gap-3" style={{ flexWrap: 'wrap' }}>
-            {reevalState.lastRunAt && (
-              <span className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.65 }}>
-                Last re-evaluated {(() => {
-                  const ms = Date.now() - new Date(reevalState.lastRunAt).getTime();
-                  const mins = Math.floor(ms / 60000);
-                  if (mins < 1) return 'just now';
-                  if (mins < 60) return `${mins} min ago`;
-                  const hrs = Math.floor(mins / 60);
-                  if (hrs < 24) return `${hrs} h ago`;
-                  return `${Math.floor(hrs / 24)} d ago`;
-                })()}
-                {reevalState.summary && (
-                  <span style={{ marginLeft: 6, opacity: 0.85 }}>
-                    &middot; {reevalState.summary.changed || 0} {(reevalState.summary.changed === 1) ? 'row' : 'rows'} updated
-                  </span>
+      <div style={{
+        marginTop: 32,
+        // Use full viewport width — break out of the parent's max-w-7xl
+        // so all 31 day columns fit without horizontal scroll. Safe now
+        // that the sidebar is removed (no overlap concern).
+        marginLeft:  'calc(50% - 50vw + 12px)',
+        marginRight: 'calc(50% - 50vw + 12px)',
+        paddingLeft: 16,
+        paddingRight: 16,
+      }}>
+        {/* Status + buttons row.
+            • Left: compact "Updated 1d ago · re-eval 1h" pill
+            • Right: action buttons (Upload, Re-eval, Backfill, Export)
+            One line, justify-between. */}
+        <div className="flex items-center justify-between mb-3" style={{ flexWrap: 'wrap', gap: 8 }}>
+          {/* Compact status — small dot + brief text. Replaces the
+              previous verbose health pill above. */}
+          {(() => {
+            const now = Date.now();
+            const uploadMs = lastUploadAt ? (now - new Date(lastUploadAt).getTime()) : null;
+            const reevalMs = reevalState.lastRunAt ? (now - new Date(reevalState.lastRunAt).getTime()) : null;
+            const dayMs = 24 * 60 * 60 * 1000;
+            const dot =
+              uploadMs == null ? '#9CA3AF' :
+              uploadMs <= dayMs ? '#10B981' :
+              uploadMs <= 3 * dayMs ? '#F59E0B' : '#DC2626';
+            const fmt = (ms) => {
+              if (ms == null) return '—';
+              const mins = Math.floor(ms / 60000);
+              if (mins < 1)  return 'now';
+              if (mins < 60) return `${mins}m`;
+              const hrs = Math.floor(mins / 60);
+              if (hrs < 24)  return `${hrs}h`;
+              return `${Math.floor(hrs / 24)}d`;
+            };
+            return (
+              <div className="inline-flex items-center gap-1.5 text-[11px]"
+                style={{ color: '#0A0A0A', fontWeight: 500 }}
+                title={[
+                  lastUploadAt ? `Last upload: ${new Date(lastUploadAt).toLocaleString('en-GB')}` : 'No uploads yet',
+                  reevalState.lastRunAt ? `Last re-eval: ${new Date(reevalState.lastRunAt).toLocaleString('en-GB')}` : null,
+                ].filter(Boolean).join('\n')}>
+                <span className="inline-block w-2 h-2 rounded-full" style={{ background: dot }} />
+                <span style={{ opacity: 0.85 }}>
+                  {uploadMs == null ? 'No uploads yet' : `Uploaded ${fmt(uploadMs)} ago`}
+                  {reevalMs != null && <span style={{ opacity: 0.6 }}> · re-eval {fmt(reevalMs)}</span>}
+                  {reevalState.summary && reevalState.summary.changed > 0 && (
+                    <span style={{ opacity: 0.6 }}> · {reevalState.summary.changed} updated</span>
+                  )}
+                </span>
+                {reevalState.error && (
+                  <span style={{ color: '#991B1B', marginLeft: 6 }}>· failed</span>
                 )}
-              </span>
-            )}
-            {reevalState.error && (
-              <span className="text-[11px]" style={{ color: '#991B1B' }}>
-                Re-eval failed — {reevalState.error}
-              </span>
-            )}
+              </div>
+            );
+          })()}
+          <div className="flex items-center gap-3" style={{ flexWrap: 'wrap' }}>
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}

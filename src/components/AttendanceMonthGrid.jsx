@@ -492,13 +492,12 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
             );
           })}
         </div>
-        <div style={{ overflowX: 'auto', maxWidth: '100%' }}>
+        <div style={{ overflowX: 'hidden', maxWidth: '100%' }}>
           <div style={{
             display: 'grid',
-            gridTemplateColumns: `210px repeat(${days.length}, minmax(40px, 1fr))`,
+            gridTemplateColumns: `200px repeat(${days.length}, 1fr)`,
             gap: 3,
             width: '100%',
-            minWidth: 'fit-content',
           }}>
             {/* Header */}
             <div style={{ background: '#FAFAFA', padding: '6px 8px', fontSize: 10, fontWeight: 700, color: '#0A0A0A', letterSpacing: '0.05em' }}>
@@ -570,11 +569,11 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
                       fontWeight: 600,
                       color: '#0A0A0A',
                       lineHeight: 1.2,
-                      // Allow up to 2 lines for long names — many staff
-                      // here have 3-4 word names that don't fit in a
-                      // single line at 200px. Wrapping is cleaner than
-                      // truncating with ellipsis.
-                      wordBreak: 'break-word',
+                      // Single-line — truncate with ellipsis instead of
+                      // wrapping. Full name available on hover via title.
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
                       textDecoration: onEmployeeClick ? 'underline' : 'none',
                       textDecorationColor: 'rgba(15,76,42,0.25)',
                       textUnderlineOffset: 2,
@@ -652,17 +651,17 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
                             background: sty.bg,
                             color: sty.fg,
                             border: `1px solid ${sty.border}`,
-                            borderRadius: 5,
+                            borderRadius: 4,
                             width: '100%',
-                            minHeight: 30,
-                            padding: '4px 5px',
-                            fontSize: 11,
+                            minHeight: 28,
+                            padding: '3px 3px',
+                            fontSize: 10,
                             fontWeight: 700,
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            gap: 3,
-                            letterSpacing: '0.03em',
+                            gap: 2,
+                            letterSpacing: '0.02em',
                             cursor: 'default',
                           }}
                         >
