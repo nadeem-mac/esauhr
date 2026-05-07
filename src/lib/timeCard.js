@@ -40,6 +40,7 @@
 // =============================================================================
 
 import * as XLSX from 'xlsx';
+import { applyPsnAlias } from './psnAliases.js';
 
 // Policy constants — single source of truth. Late/early thresholds.
 // Override per-employee if shift schedule differs (handled at the
@@ -203,7 +204,13 @@ export async function parseTimeCardXlsx(input) {
 export function normalisePsn(idCell) {
   const digits = String(idCell || '').replace(/[^0-9]/g, '');
   if (!digits) return null;
-  return 'H' + digits.padStart(5, '0');
+  const raw = 'H' + digits.padStart(5, '0');
+  // Apply biometric → master PSN alias if one is registered. See
+  // src/lib/psnAliases.js for the table and rationale (typically
+  // staff whose biometric device emits a different ID than what
+  // their employees-table record uses, and we don't want to lose
+  // their logs while IT fixes the device config).
+  return applyPsnAlias(raw);
 }
 
 export function normaliseName(name) {
