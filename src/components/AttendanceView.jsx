@@ -668,8 +668,19 @@ function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, schedul
   // explains to the staff why their email looks office-style even
   // though they're a shift worker, and points them at the roster
   // block to verify their schedule.
-  const noAssignmentNote = (staffHasShifts && !isCustomShift && Array.isArray(assignedShifts) && assignedShifts.length > 0)
-    ? 'Note: you are on the shift roster for this month (see the schedule below). However, no specific shift was assigned for ' + dateLong + ' in the ESAU HR Portal, so the punches for this date were evaluated against the standard office-hours window. If a shift should have been assigned for this date, please raise it with your line manager so the schedule can be corrected.\n\n'
+  // No-assignment clarifier — fires when the staff is on a shift
+  // roster (staffHasShifts) but the SPECIFIC date had no shift on
+  // file. Two sub-cases:
+  //   (a) staff has OTHER shifts in the month → ask them to verify
+  //       with their manager and reference the roster block below
+  //   (b) staff is on monthly_shift_plans roster but NO specific
+  //       per-date entries yet → ask them to chase their manager
+  //       to enter the schedule (Jasim's case, 2026-05-07)
+  const hasAnyMonthShifts = Array.isArray(assignedShifts) && assignedShifts.length > 0;
+  const noAssignmentNote = (staffHasShifts && !isCustomShift)
+    ? (hasAnyMonthShifts
+        ? 'Note: you are on the shift roster for this month (see the schedule below). However, no specific shift was assigned for ' + dateLong + ' in the ESAU HR Portal, so the punches for this date were evaluated against the standard office-hours window. If a shift should have been assigned for this date, please raise it with your line manager so the schedule can be corrected.\n\n'
+        : 'Note: you are flagged as a shift worker on this month\u2019s roster, but your line manager has not yet entered specific shift dates and times for you in the ESAU HR Portal. Without an entered schedule, the system cannot evaluate your punches against your actual shift hours \u2014 please coordinate with your line manager so the schedule can be entered, after which the attendance log can be re-evaluated.\n\n')
     : '';
   const body =
     'Dear ' + greetName + ',\n\n' +
@@ -752,8 +763,19 @@ function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd,
   // explains to the staff why their email looks office-style even
   // though they're a shift worker, and points them at the roster
   // block to verify their schedule.
-  const noAssignmentNote = (staffHasShifts && !isCustomShift && Array.isArray(assignedShifts) && assignedShifts.length > 0)
-    ? 'Note: you are on the shift roster for this month (see the schedule below). However, no specific shift was assigned for ' + dateLong + ' in the ESAU HR Portal, so the punches for this date were evaluated against the standard office-hours window. If a shift should have been assigned for this date, please raise it with your line manager so the schedule can be corrected.\n\n'
+  // No-assignment clarifier — fires when the staff is on a shift
+  // roster (staffHasShifts) but the SPECIFIC date had no shift on
+  // file. Two sub-cases:
+  //   (a) staff has OTHER shifts in the month → ask them to verify
+  //       with their manager and reference the roster block below
+  //   (b) staff is on monthly_shift_plans roster but NO specific
+  //       per-date entries yet → ask them to chase their manager
+  //       to enter the schedule (Jasim's case, 2026-05-07)
+  const hasAnyMonthShifts = Array.isArray(assignedShifts) && assignedShifts.length > 0;
+  const noAssignmentNote = (staffHasShifts && !isCustomShift)
+    ? (hasAnyMonthShifts
+        ? 'Note: you are on the shift roster for this month (see the schedule below). However, no specific shift was assigned for ' + dateLong + ' in the ESAU HR Portal, so the punches for this date were evaluated against the standard office-hours window. If a shift should have been assigned for this date, please raise it with your line manager so the schedule can be corrected.\n\n'
+        : 'Note: you are flagged as a shift worker on this month\u2019s roster, but your line manager has not yet entered specific shift dates and times for you in the ESAU HR Portal. Without an entered schedule, the system cannot evaluate your punches against your actual shift hours \u2014 please coordinate with your line manager so the schedule can be entered, after which the attendance log can be re-evaluated.\n\n')
     : '';
   const body =
     'Dear ' + greetName + ',\n\n' +
@@ -859,8 +881,19 @@ function missedPunchEmailContent({ employee, dateLong, missingType, isCustomShif
   // explains to the staff why their email looks office-style even
   // though they're a shift worker, and points them at the roster
   // block to verify their schedule.
-  const noAssignmentNote = (staffHasShifts && !isCustomShift && Array.isArray(assignedShifts) && assignedShifts.length > 0)
-    ? 'Note: you are on the shift roster for this month (see the schedule below). However, no specific shift was assigned for ' + dateLong + ' in the ESAU HR Portal, so the punches for this date were evaluated against the standard office-hours window. If a shift should have been assigned for this date, please raise it with your line manager so the schedule can be corrected.\n\n'
+  // No-assignment clarifier — fires when the staff is on a shift
+  // roster (staffHasShifts) but the SPECIFIC date had no shift on
+  // file. Two sub-cases:
+  //   (a) staff has OTHER shifts in the month → ask them to verify
+  //       with their manager and reference the roster block below
+  //   (b) staff is on monthly_shift_plans roster but NO specific
+  //       per-date entries yet → ask them to chase their manager
+  //       to enter the schedule (Jasim's case, 2026-05-07)
+  const hasAnyMonthShifts = Array.isArray(assignedShifts) && assignedShifts.length > 0;
+  const noAssignmentNote = (staffHasShifts && !isCustomShift)
+    ? (hasAnyMonthShifts
+        ? 'Note: you are on the shift roster for this month (see the schedule below). However, no specific shift was assigned for ' + dateLong + ' in the ESAU HR Portal, so the punches for this date were evaluated against the standard office-hours window. If a shift should have been assigned for this date, please raise it with your line manager so the schedule can be corrected.\n\n'
+        : 'Note: you are flagged as a shift worker on this month\u2019s roster, but your line manager has not yet entered specific shift dates and times for you in the ESAU HR Portal. Without an entered schedule, the system cannot evaluate your punches against your actual shift hours \u2014 please coordinate with your line manager so the schedule can be entered, after which the attendance log can be re-evaluated.\n\n')
     : '';
 
   // Shift context line — reinforces in the opening paragraph that
@@ -994,8 +1027,19 @@ function lateEmailContentTemp({ employee, dateLong, punchInStr, minutesLate, sch
   // explains to the staff why their email looks office-style even
   // though they're a shift worker, and points them at the roster
   // block to verify their schedule.
-  const noAssignmentNote = (staffHasShifts && !isCustomShift && Array.isArray(assignedShifts) && assignedShifts.length > 0)
-    ? 'Note: you are on the shift roster for this month (see the schedule below). However, no specific shift was assigned for ' + dateLong + ' in the ESAU HR Portal, so the punches for this date were evaluated against the standard office-hours window. If a shift should have been assigned for this date, please raise it with your line manager so the schedule can be corrected.\n\n'
+  // No-assignment clarifier — fires when the staff is on a shift
+  // roster (staffHasShifts) but the SPECIFIC date had no shift on
+  // file. Two sub-cases:
+  //   (a) staff has OTHER shifts in the month → ask them to verify
+  //       with their manager and reference the roster block below
+  //   (b) staff is on monthly_shift_plans roster but NO specific
+  //       per-date entries yet → ask them to chase their manager
+  //       to enter the schedule (Jasim's case, 2026-05-07)
+  const hasAnyMonthShifts = Array.isArray(assignedShifts) && assignedShifts.length > 0;
+  const noAssignmentNote = (staffHasShifts && !isCustomShift)
+    ? (hasAnyMonthShifts
+        ? 'Note: you are on the shift roster for this month (see the schedule below). However, no specific shift was assigned for ' + dateLong + ' in the ESAU HR Portal, so the punches for this date were evaluated against the standard office-hours window. If a shift should have been assigned for this date, please raise it with your line manager so the schedule can be corrected.\n\n'
+        : 'Note: you are flagged as a shift worker on this month\u2019s roster, but your line manager has not yet entered specific shift dates and times for you in the ESAU HR Portal. Without an entered schedule, the system cannot evaluate your punches against your actual shift hours \u2014 please coordinate with your line manager so the schedule can be entered, after which the attendance log can be re-evaluated.\n\n')
     : '';
   const body =
     'Dear ' + greetName + ',\n\n' +
@@ -1061,8 +1105,19 @@ function earlyLeaveEmailContentTemp({ employee, dateLong, punchOutStr, scheduled
   // explains to the staff why their email looks office-style even
   // though they're a shift worker, and points them at the roster
   // block to verify their schedule.
-  const noAssignmentNote = (staffHasShifts && !isCustomShift && Array.isArray(assignedShifts) && assignedShifts.length > 0)
-    ? 'Note: you are on the shift roster for this month (see the schedule below). However, no specific shift was assigned for ' + dateLong + ' in the ESAU HR Portal, so the punches for this date were evaluated against the standard office-hours window. If a shift should have been assigned for this date, please raise it with your line manager so the schedule can be corrected.\n\n'
+  // No-assignment clarifier — fires when the staff is on a shift
+  // roster (staffHasShifts) but the SPECIFIC date had no shift on
+  // file. Two sub-cases:
+  //   (a) staff has OTHER shifts in the month → ask them to verify
+  //       with their manager and reference the roster block below
+  //   (b) staff is on monthly_shift_plans roster but NO specific
+  //       per-date entries yet → ask them to chase their manager
+  //       to enter the schedule (Jasim's case, 2026-05-07)
+  const hasAnyMonthShifts = Array.isArray(assignedShifts) && assignedShifts.length > 0;
+  const noAssignmentNote = (staffHasShifts && !isCustomShift)
+    ? (hasAnyMonthShifts
+        ? 'Note: you are on the shift roster for this month (see the schedule below). However, no specific shift was assigned for ' + dateLong + ' in the ESAU HR Portal, so the punches for this date were evaluated against the standard office-hours window. If a shift should have been assigned for this date, please raise it with your line manager so the schedule can be corrected.\n\n'
+        : 'Note: you are flagged as a shift worker on this month\u2019s roster, but your line manager has not yet entered specific shift dates and times for you in the ESAU HR Portal. Without an entered schedule, the system cannot evaluate your punches against your actual shift hours \u2014 please coordinate with your line manager so the schedule can be entered, after which the attendance log can be re-evaluated.\n\n')
     : '';
   const body =
     'Dear ' + greetName + ',\n\n' +
@@ -1692,8 +1747,13 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         const lastDay = new Date(yy, mm, 0).getDate();
         const monthEnd = `${yy}-${String(mm).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
+        // Note: column is `set_at` (not `created_at`) — the latter
+        // doesn't exist on employee_shifts. PostgREST silently returns
+        // null for missing columns, which had the assignment-attribution
+        // line in emails dropping the date. Confirmed against the
+        // information_schema (2026-05-07).
         const data = await directGet(
-          `employee_shifts?select=employee_id,shift_date,start_time,end_time,status,set_by,created_at` +
+          `employee_shifts?select=employee_id,shift_date,start_time,end_time,status,set_by,set_at` +
           `&status=in.(pending,accepted)` +
           `&shift_date=gte.${monthStart}&shift_date=lte.${monthEnd}`
         );
@@ -1705,6 +1765,42 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     })();
     return () => { cancelled = true; };
   }, [csvDate, yesterdayDate]);
+
+  // Roster-level shift plan fetch — captures staff who are flagged
+  // as "shift-eligible" for the month in monthly_shift_plans, even
+  // when their manager hasn't yet created specific per-date entries
+  // in employee_shifts. Without this, a night-shift staff whose
+  // manager hasn't entered the daily schedule looks like office
+  // staff to the email engine — generic policy bullets, no shift
+  // mention, no manager attribution. Combining both sources ensures
+  // we treat them as shift-flow as soon as they're on any month's
+  // roster (Nadeem 2026-05-07: "the email does not mention his
+  // staff time" for Jasim was caused by exactly this gap).
+  const [shiftRosterStaff, setShiftRosterStaff] = useState(new Set());
+  useEffect(() => {
+    if (!csvDate) { setShiftRosterStaff(new Set()); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const [yy, mm] = csvDate.split('-').map(Number);
+        const planMonth = `${yy}-${String(mm).padStart(2, '0')}-01`;
+        const data = await directGet(
+          `monthly_shift_plans?select=employee_id&plan_month=eq.${planMonth}&shifts_count=gt.0`
+        );
+        if (!cancelled) {
+          const s = new Set();
+          (data || []).forEach(r => {
+            if (r?.employee_id) s.add(String(r.employee_id).toUpperCase());
+          });
+          setShiftRosterStaff(s);
+        }
+      } catch (e) {
+        console.warn('Could not fetch monthly shift roster:', e);
+        if (!cancelled) setShiftRosterStaff(new Set());
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [csvDate]);
 
   // Mawani visits for the CSV's month. The classifier short-circuits
   // any (employee, date) pair that's a logged Mawani visit — the
@@ -1853,7 +1949,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         // (2026-05-06): "remind the staff this manager has assigned
         // the days and time".
         setBy:    s.set_by || null,
-        assignedAt: s.created_at || null,
+        assignedAt: s.set_at || null,
       };
     });
     return m;
@@ -1871,11 +1967,20 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // single pass populates it.
   const shiftStaffThisMonth = useMemo(() => {
     const s = new Set();
+    // Source A: staff with at least one specific shift entry in
+    // employee_shifts (any status not declined/cancelled).
     (acceptedShifts || []).forEach(row => {
       if (row?.employee_id) s.add(String(row.employee_id).toUpperCase());
     });
+    // Source B: staff flagged on the monthly_shift_plans roster
+    // for the month, even if the manager hasn't yet created daily
+    // shift entries. Critical for early-month uploads or weeks
+    // where shifts get assigned only when needed — without B, the
+    // email engine wrongly treats them as office staff and skips
+    // shift-aware wording.
+    shiftRosterStaff.forEach(empKey => s.add(empKey));
     return s;
-  }, [acceptedShifts]);
+  }, [acceptedShifts, shiftRosterStaff]);
 
   // Per-employee monthly shift list — used by the off-roster
   // diagnostic to show, for each employee in the off-roster
