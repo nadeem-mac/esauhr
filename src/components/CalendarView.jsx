@@ -293,16 +293,16 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
         {/* Day-of-week header — slight evergreen tint so it stands
             apart from the cells below. Bolder labels with brand
             colour anchor the whole grid visually. */}
-        <div className="grid grid-cols-7 text-[10px] tracking-widest"
+        <div className="grid grid-cols-7 text-[10px] tracking-wider"
              style={{
-               background: '#F4EFDC',
-               borderBottom: '1px solid #E8DEC4',
-               color: '#0F4C2A',
-               fontWeight: 700,
+               background: '#FFFFFF',
+               borderBottom: '1px solid #EEEAE0',
+               color: '#7A7A7A',
+               fontWeight: 500,
              }}>
           {['SUN','MON','TUE','WED','THU','FRI','SAT'].map((d, i) => (
             <div key={d} className="px-2 py-2.5 text-center"
-              style={{ borderRight: i < 6 ? '1px solid #E8DEC4' : 'none' }}>
+              style={{ borderRight: i < 6 ? '1px solid #EEEAE0' : 'none' }}>
               {d}
             </div>
           ))}
@@ -320,29 +320,61 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
             const totalEvents = leaves.length + perms.length + dayShifts.length;
             const hasEvents = totalEvents > 0 || !!holiday;
 
-            // Cell background — layered logic so today, holidays,
-            // weekends, and empty-fill cells each have a distinct
-            // identity. Today wins, then holiday, then weekend, then
-            // a neutral cream for filled days.
+            // Cell background — minimal palette so the data does the
+            // talking. Today gets a subtle green wash; everything else
+            // is plain white. Holidays and weekends are signalled
+            // through text colour, not background fill, which keeps
+            // the grid feeling calm even on a busy month.
             let bg = '#FFFFFF';
-            let topAccent = null;
-            if (!d) {
-              // Out-of-month placeholder — keep nearly invisible so
-              // attention stays on the actual month. Previously
-              // '#F8F1DD' read as a heavy cream block at the top of
-              // the grid; this softer shade fades into the chrome.
-              bg = '#FBF6E8';
-            } else if (isToday) {
-              bg = '#F0F9F4'; // soft brand-green tint — today pops
-              topAccent = '#0F4C2A';
-            } else if (holiday) {
-              bg = '#FEF3E0'; // warm copper-cream for holidays
-              topAccent = '#B45309';
-            } else if (isWeekend) {
-              bg = '#FAF5E8'; // distinctly tinted weekend
+            if (isToday) {
+              bg = '#F1FBF7'; // very soft brand-green wash
             }
+            // Out-of-month cells stay #FFFFFF so they vanish into the
+            // grid chrome instead of forming a beige block at the top
+            // or bottom of the month.
 
             const isSelected = selectedISO === iso;
+
+            // Build event chips — text chips with the staff member's
+            // first name + a context bit (shift time / leave type /
+            // permission kind). Two chips visible inline; everything
+            // else collapses to "+N more". Reads instantly compared to
+            // colour-only dots, and the modal still shows full detail.
+            const chips = [];
+            for (const r of leaves) {
+              const emp = empMap[r.employee_id];
+              const tp  = typeMap[r.leave_type_id];
+              if (!emp) continue;
+              chips.push({
+                key: 'l-' + r.id,
+                label: emp.name.split(' ')[0],
+                bg: '#FAECE7', fg: '#993C1D',
+              });
+            }
+            for (const s of dayShifts) {
+              const emp = empMap[s.employee_id];
+              if (!emp) continue;
+              const t = s.start_time
+                ? ' · ' + String(s.start_time).slice(0, 5)
+                : '';
+              chips.push({
+                key: 's-' + s.id,
+                label: emp.name.split(' ')[0] + t,
+                bg: '#EEEDFE', fg: '#534AB7',
+              });
+            }
+            for (const p of perms) {
+              const emp = empMap[p.employee_id];
+              if (!emp) continue;
+              chips.push({
+                key: 'p-' + p.id,
+                label: emp.name.split(' ')[0],
+                bg: '#FAEEDA', fg: '#854F0B',
+              });
+            }
+            const VISIBLE_CHIPS = 2;
+            const visibleChips = chips.slice(0, VISIBLE_CHIPS);
+            const chipOverflow = chips.length - visibleChips.length;
 
             return (
               <div key={i}
@@ -350,133 +382,78 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
                 onMouseLeave={() => setHoveredISO(prev => prev === iso ? null : prev)}
                 onClick={() => {
                   if (!d) return;
-                  // Always remember which day was clicked for the
-                  // persistent highlight; only open the modal when
-                  // there's something to show.
                   setSelectedISO(iso);
                   if (hasEvents) setClickedISO(iso);
                 }}
-                className={"min-h-[64px] sm:min-h-[78px] p-1.5 relative transition-all duration-150 " +
-                  (d && hasEvents ? "cursor-pointer hover:shadow-md hover:z-10" : d ? "cursor-default" : "")}
+                className={"min-h-[78px] sm:min-h-[88px] p-2 relative transition-all duration-150 " +
+                  (d && hasEvents ? "cursor-pointer hover:bg-[#FAFAF9]" : d ? "cursor-default" : "")}
                 style={{
-                  borderRight:  dow < 6 ? '1px solid #E8DEC4' : 'none',
-                  borderBottom: '1px solid #E8DEC4',
+                  borderRight:  dow < 6 ? '1px solid #EEEAE0' : 'none',
+                  borderBottom: '1px solid #EEEAE0',
                   background: bg,
-                  // Persistent highlight on the last-clicked cell —
-                  // an inset ring in brand green. Survives modal
-                  // close so Bashaier can see which day she just
-                  // reviewed when scanning sequentially.
+                  // Selected cell — subtle 1px accent on the left edge
+                  // instead of a heavy 2px inset ring. Still visible
+                  // when scanning sequentially but doesn't dominate.
                   boxShadow: isSelected
-                    ? 'inset 0 0 0 2px #0F4C2A'
+                    ? 'inset 2px 0 0 0 #0F4C2A'
                     : undefined,
-                  zIndex: isSelected ? 5 : undefined,
                 }}>
-                {/* Top accent stripe — coloured bar at the top of the
-                    cell when it's today or a holiday. Quick visual
-                    cue without taking vertical space from event chips. */}
-                {topAccent && (
-                  <div aria-hidden style={{
-                    position: 'absolute', top: 0, left: 0, right: 0, height: '3px',
-                    background: topAccent,
-                  }}/>
-                )}
                 {d && (
                   <>
-                    <div className="flex items-center justify-between gap-1">
-                      {/* Date number — circular for today; coloured for
-                          weekend/holiday. Tighter sizing for the smaller
-                          cell footprint. */}
-                      {isToday ? (
-                        <div className="flex items-center justify-center w-6 h-6 rounded-full text-[11px]"
-                          style={{
-                            background: 'linear-gradient(135deg, #0F4C2A 0%, #047857 100%)',
-                            color: '#FFFFFF', fontWeight: 700,
-                            boxShadow: '0 2px 4px rgba(15,76,42,0.3)',
-                          }}>
-                          {d}
-                        </div>
-                      ) : (
-                        <div className="text-[12px]" style={{
-                          fontWeight: holiday ? 700 : isWeekend ? 600 : 500,
-                          color: holiday ? '#B45309' : isWeekend ? '#7C5E2E' : '#0A0A0A',
-                        }}>{d}</div>
+                    {/* Date number row — today gets a small green dot
+                        before the number; weekends and out-of-month
+                        days get a dimmer colour. No circular badge,
+                        no event-count pill — chips below carry that
+                        signal naturally. */}
+                    <div className="flex items-center gap-1.5">
+                      {isToday && (
+                        <span aria-hidden style={{
+                          width: '6px', height: '6px', borderRadius: '50%',
+                          background: '#0F6E56', flexShrink: 0,
+                        }}/>
                       )}
-                      {totalEvents > 0 && (
-                        <span className="text-[9px] px-1.5 rounded-full font-bold leading-tight"
-                          style={{
-                            background: '#0F4C2A', color: '#FFFFFF',
-                            minWidth: '16px', textAlign: 'center', paddingTop: '2px', paddingBottom: '2px',
-                          }}
-                          title={`${totalEvents} event${totalEvents === 1 ? '' : 's'}`}>
-                          {totalEvents}
-                        </span>
-                      )}
+                      <span className="text-[12px]" style={{
+                        fontWeight: isToday ? 600 : 500,
+                        color: holiday
+                          ? '#854F0B'
+                          : isToday
+                          ? '#0F6E56'
+                          : isWeekend
+                          ? '#A8A29A'
+                          : '#0A0A0A',
+                      }}>{d}</span>
                     </div>
 
-                    {/* Colour-density dot strip — single row, capped
-                        at MAX_DOTS so the cell stays scannable even on
-                        busy days. Overflow collapses to "+N". Dots are
-                        ordered leaves → permissions → shifts so the
-                        colour grouping reads left-to-right. Same
-                        palette as the filter chips so they cross-
-                        reference at a glance. */}
-                    {(leaves.length + perms.length + dayShifts.length) > 0 && (() => {
-                      const MAX_DOTS = 5;
-                      const items = [
-                        ...leaves.map(r => ({ key: 'l-' + r.id, color: typeMap[r.leave_type_id]?.color || '#0F4C2A' })),
-                        ...perms.map(p => ({ key: 'p-' + p.id, color: p.type === 'late_arrival' ? '#1D4ED8' : '#D97706' })),
-                        ...dayShifts.map(s => ({ key: 's-' + s.id, color: '#9333EA' })),
-                      ];
-                      const visible = items.slice(0, MAX_DOTS);
-                      const overflow = items.length - visible.length;
-                      return (
-                        <div className="flex items-center gap-[3px] mt-1">
-                          {visible.map(it => (
-                            <span key={it.key}
-                              className="inline-block w-1.5 h-1.5 rounded-full"
-                              style={{ background: it.color }}/>
-                          ))}
-                          {overflow > 0 && (
-                            <span className="text-[8px] leading-none ml-0.5"
-                              style={{ color: '#0A0A0A', opacity: 0.55, fontWeight: 600 }}>
-                              +{overflow}
-                            </span>
-                          )}
-                        </div>
-                      );
-                    })()}
-
-                    {/* Holiday label — compact one-line copper text */}
+                    {/* Holiday name — small amber text, no bg, no bold
+                        so it sits quietly under the date. */}
                     {holiday && (
-                      <div className="text-[9px] leading-tight mt-1 truncate"
-                        style={{ color: '#B45309', fontWeight: 700 }}>
+                      <div className="text-[10px] leading-tight mt-1 truncate"
+                        style={{ color: '#854F0B', fontWeight: 500 }}>
                         {holiday.name}
                       </div>
                     )}
 
-                    {/* One leave chip max in compact view — solid
-                        colour with white text. The rest collapse to
-                        a small +N indicator. Click cell for full list. */}
-                    {leaves.length > 0 && (
-                      <div className="mt-1">
-                        {leaves.slice(0, 1).map(r => {
-                          const emp = empMap[r.employee_id]; const tp = typeMap[r.leave_type_id];
-                          if (!emp) return null;
-                          const tpColor = tp?.color || '#0F4C2A';
-                          return (
-                            <div key={r.id}
-                              className="text-[9px] px-1.5 py-0.5 rounded truncate"
-                              style={{
-                                background: tpColor,
-                                color: '#FFFFFF',
-                                fontWeight: 600,
-                                boxShadow: '0 1px 2px rgba(0,0,0,0.08)',
-                              }}>
-                              {emp.name.split(' ')[0]}
-                              {leaves.length > 1 && <span style={{ opacity: 0.85 }}> +{leaves.length - 1}</span>}
-                            </div>
-                          );
-                        })}
+                    {/* Event chips — one per row, name + brief context.
+                        Truncates with ellipsis so even long names stay
+                        on a single line. */}
+                    {visibleChips.length > 0 && (
+                      <div className="mt-1.5 space-y-0.5">
+                        {visibleChips.map(c => (
+                          <div key={c.key}
+                            className="text-[10px] px-1.5 py-px rounded truncate"
+                            style={{
+                              background: c.bg, color: c.fg,
+                              fontWeight: 500, lineHeight: '1.4',
+                            }}>
+                            {c.label}
+                          </div>
+                        ))}
+                        {chipOverflow > 0 && (
+                          <div className="text-[10px] leading-tight"
+                            style={{ color: '#7A7A7A', fontWeight: 500 }}>
+                            +{chipOverflow} more
+                          </div>
+                        )}
                       </div>
                     )}
 
