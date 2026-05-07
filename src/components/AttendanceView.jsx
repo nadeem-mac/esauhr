@@ -1535,6 +1535,11 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // row, we stash { entry, kind } here and render the modal.
   // Single-instance — only one explain open at a time.
   const [explainPayload, setExplainPayload] = useState(null);
+
+  // Historical-backfill modal — opened by the "Historical backfill"
+  // button in the Monthly Overview header. Wraps AttendanceBackfillPanel
+  // with a date-window banner so Bashaier knows the allowed range.
+  const [backfillModalOpen, setBackfillModalOpen] = useState(false);
   // Pending-EOD-review tracker. Populated from attendance_review_log on
   // mount and after each file-load mode-log. Each entry: { review_date,
   // morning_at, eod_at }. eod_at is null by definition for everything
@@ -5327,37 +5332,26 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           time instead of scrolling past everything to find what she
           needs. The sidebar collapses to a horizontal pill bar on
           narrow viewports. */}
-      <div
-        style={{
-          display: 'flex',
-          gap: 16,
-          alignItems: 'flex-start',
-          flexWrap: 'wrap',
-        }}
-      >
-        <AttendanceSidebar
-          activeView={activeView}
-          setActiveView={setActiveView}
-          setupComplete={setupComplete}
-          escapeHatchActive={escapeHatchActive}
-        />
+      {/* Sidebar removed — we're already on the attendance page so a
+          sidebar entry that just says "Attendance" was redundant.
+          Historical backfill moved to a button in the header below. */}
+      <div style={{ flex: '1 1 0', minWidth: 0 }}>
 
-        <div style={{ flex: '1 1 0', minWidth: 0 }}>
+      {/* UNIFIED ATTENDANCE VIEW — daily upload workflow + monthly
+          calendar on a single page. */}
+      <></>{/* gate kept for diff stability */}
+      <></>
 
-      {/* UNIFIED ATTENDANCE VIEW (Phase B — Decision #6 / option A)
-          Renders both the daily-upload workflow AND the monthly
-          calendar on a single page. Two zones, top-to-bottom:
-            1. Daily upload (the existing "Zone 2" block) — upload
-               bar, file summary tile, action panels, banners.
-            2. Monthly calendar — read-only overview, refreshes on
-               re-eval (Phase C).
-          The legacy 'calendar' and 'daily' nav ids are accepted as
-          aliases so any saved deep-links keep working. */}
-      {(activeView === 'attendance' || activeView === 'calendar' || activeView === 'daily') && (<></>)}{/* daily content rendered below the gate */}
-      {(activeView === 'attendance' || activeView === 'calendar' || activeView === 'daily') && (<></>)}
-
-      {activeView === 'daily' && (<></>)}{/* Zone 2 content rendered below the gate */}
-      {(activeView === 'attendance' || activeView === 'calendar' || activeView === 'daily') && (<>
+      <></>{/* daily zone */}
+      <></>
+      <></>
+      <></>
+      <></>
+      <></>
+      <></>
+      <></>
+      <></>
+      <></>{/* end unified attendance view */}
 
       {/* ─── Pending end-of-day review banner ───────────────────────────
           Surfaces dates where the morning pass was completed but the
@@ -5630,6 +5624,57 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         />
       )}
 
+      {/* Historical backfill modal — opens on "📚 Historical backfill"
+          click. Allowed date range is Sep 1 of last year through today;
+          a banner inside reminds the user of that window. The actual
+          per-file upload UI is the existing AttendanceBackfillPanel,
+          rendered inside the modal so it inherits the same styling. */}
+      {backfillModalOpen && (() => {
+        const today = new Date();
+        const allowedStart = `${today.getFullYear() - 1}-09-01`;
+        const allowedEnd   = today.toISOString().slice(0, 10);
+        return (
+          <div className="fixed inset-0 z-50 flex items-start justify-center p-4 overflow-y-auto"
+            style={{ background: 'rgba(31,27,22,0.5)' }}
+            onClick={() => setBackfillModalOpen(false)}>
+            <div className="rounded-xl shadow-lg w-full max-w-5xl my-8 overflow-hidden"
+              style={{ background: '#FFFFFF', border: '1px solid #EEEAE0' }}
+              onClick={(e) => e.stopPropagation()}>
+              <div className="px-5 py-4 flex items-start justify-between"
+                style={{ borderBottom: '1px solid #EEEAE0' }}>
+                <div>
+                  <div className="text-[10px]" style={{ color: '#5B21B6', letterSpacing: '0.08em', fontWeight: 700 }}>
+                    📚 HISTORICAL BACKFILL
+                  </div>
+                  <div className="text-[15px] mt-0.5" style={{ color: '#0A0A0A', fontWeight: 700 }}>
+                    Bulk import past attendance
+                  </div>
+                  <div className="text-[11px] mt-1" style={{ color: '#7A7A7A' }}>
+                    Allowed window: <strong style={{ color: '#0A0A0A' }}>{allowedStart}</strong> → <strong style={{ color: '#0A0A0A' }}>{allowedEnd}</strong> (Sep 1 last year through today). Files outside this window will be rejected.
+                  </div>
+                </div>
+                <button onClick={() => setBackfillModalOpen(false)}
+                  className="p-1.5 rounded hover:bg-[#FAFAF9] flex-shrink-0"
+                  style={{ color: '#7A7A7A' }}>
+                  <X className="w-4 h-4"/>
+                </button>
+              </div>
+              <div className="p-5 max-h-[75vh] overflow-y-auto">
+                <AttendanceErrorBoundary label="Historical backfill">
+                  <AttendanceBackfillPanel
+                    me={me}
+                    employees={employees}
+                    embedded
+                    allowedStart={allowedStart}
+                    allowedEnd={allowedEnd}
+                  />
+                </AttendanceErrorBoundary>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {bulkSession && (
         <BulkActionModal
           session={bulkSession}
@@ -5771,6 +5816,20 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             >
               {reevalState.running ? '…' : '↻ Re-evaluate this month'}
             </button>
+            <button
+              type="button"
+              onClick={() => setBackfillModalOpen(true)}
+              className="text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1.5"
+              style={{
+                background: '#5B21B6',
+                color: '#FFFFFF',
+                border: '1px solid #5B21B6',
+                fontWeight: 600,
+              }}
+              title="Import historical attendance — Sep 1 last year through today. One-shot bulk import for catching up on past months."
+            >
+              📚 Historical backfill
+            </button>
             {/* Export to HTML — print-friendly report of the on-screen
                 month grid. Clones the calendar's DOM, inlines all
                 stylesheets, and opens in a new window with @page A4
@@ -5804,68 +5863,14 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         </AttendanceErrorBoundary>
       </div>
 
-      </>)}{/* end unified attendance view */}
+      {/* end unified attendance view */}
 
-      {activeView === 'schedules' && (
-        <AttendanceErrorBoundary label="Working hours">
-          <WorkingHoursManager
-            me={me}
-            employees={employees}
-            canEdit={!!me?.id}
-            embedded
-            activeTab="hours"
-          />
-        </AttendanceErrorBoundary>
-      )}
-
-      {activeView === 'mawani' && (
-        <AttendanceErrorBoundary label="Mawani visits">
-          <WorkingHoursManager
-            me={me}
-            employees={employees}
-            canEdit={!!me?.id}
-            embedded
-            activeTab="mawani"
-          />
-        </AttendanceErrorBoundary>
-      )}
-
-      {activeView === 'backfill' && (
-        <AttendanceErrorBoundary label="Historical backfill">
-          {/* Setup-complete warning banner — Phase D / Decision #2.
-              When backfill is opened on a system that's already in
-              live operation (i.e., daily uploads have happened), warn
-              the admin loudly that running backfill here may overwrite
-              real evaluated rows. Only renders when the escape hatch
-              brought them here, since that's the only path into the
-              page once setup is complete. */}
-          {setupComplete && escapeHatchActive && (
-            <div className="rounded-2xl border-2 p-4 sm:p-5 mb-4 flex gap-3"
-                 style={{ background: '#FEF2F2', borderColor: '#991B1B' }}>
-              <div className="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center"
-                   style={{ background: '#DC2626' }}>
-                <AlertTriangle className="w-5 h-5" style={{ color: '#FFFFFF' }}/>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-[10px] tracking-[0.25em] mb-1" style={{ fontWeight: 700, color: '#0A0A0A' }}>
-                  ESCAPE HATCH · ADMIN ACCESS
-                </div>
-                <div className="text-[13px]" style={{ color: '#0A0A0A', lineHeight: 1.5 }}>
-                  This system is already in live operation — daily uploads have started.
-                  The backfill page is normally hidden after setup is complete.
-                  Re-running backfill from here may overwrite live attendance rows
-                  with re-derived values. Proceed only if you intend to import a
-                  historical period that pre-dates current operation.
-                </div>
-              </div>
-            </div>
-          )}
-          <AttendanceBackfillPanel me={me} employees={employees} embedded />
-        </AttendanceErrorBoundary>
-      )}
+      {/* schedules / mawani views removed from here — moving to
+          per-employee context (employee detail card) in a follow-up.
+          Historical backfill is opened via a modal triggered by the
+          button in the header. */}
 
         </div>{/* end content pane */}
-      </div>{/* end master/detail flex */}
 
       {/* Slide-in detail drawer — opens when an employee row in the
           Monthly Overview calendar is clicked. Rendered at the root

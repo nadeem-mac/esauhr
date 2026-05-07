@@ -441,15 +441,20 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
         </div>
       ) : tracked.length === 0 ? null : (
         <>
-        {/* Legend — sits above the grid so the chip codes are always
-            visible while reading rows. Compact horizontal strip. */}
-        <div className="text-[11px] mb-3 flex flex-wrap gap-2 items-center"
+        {/* Legend — sits above the grid in a single horizontal line.
+            Set to nowrap so all items stay on one row; if the viewport
+            is too narrow, horizontal scroll appears (cleaner than
+            wrapping into multiple rows). */}
+        <div className="text-[11px] mb-3 flex gap-2 items-center"
           style={{
             color: '#0A0A0A',
-            padding: '8px 10px',
+            padding: '8px 12px',
             background: '#FAFAF9',
             border: '1px solid #EEEAE0',
             borderRadius: 8,
+            overflowX: 'auto',
+            whiteSpace: 'nowrap',
+            flexWrap: 'nowrap',
           }}>
           {[
             { st: 'present',      lbl: 'Present' },
@@ -471,7 +476,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
           ].map(({ st, lbl, overrideStyle }, idx) => {
             const sty = overrideStyle || styleForStatus(st);
             return (
-              <span key={`${st}-${idx}`} className="inline-flex items-center gap-1">
+              <span key={`${st}-${idx}`} className="inline-flex items-center gap-1" style={{ flex: '0 0 auto' }}>
                 <span style={{
                   background: sty.bg,
                   color: sty.fg,
@@ -490,8 +495,8 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
         <div style={{ overflowX: 'auto', maxWidth: '100%' }}>
           <div style={{
             display: 'grid',
-            gridTemplateColumns: `200px repeat(${days.length}, minmax(34px, 1fr))`,
-            gap: 2,
+            gridTemplateColumns: `210px repeat(${days.length}, minmax(40px, 1fr))`,
+            gap: 3,
             width: '100%',
             minWidth: 'fit-content',
           }}>
@@ -508,16 +513,21 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
                 <div
                   key={dStr}
                   style={{
-                    background: isToday ? 'rgba(15,76,42,0.10)' : isWeekend ? '#F5F5F5' : '#FAFAFA',
+                    background: isToday
+                      ? 'rgba(15,76,42,0.10)'
+                      : isWeekend
+                        ? '#FEF3C7'  // amber-50 — clearly distinguishable from working days
+                        : '#FAFAFA',
                     padding: '4px 0',
                     fontSize: 9,
                     fontWeight: 700,
-                    color: '#0A0A0A',
+                    color: isWeekend ? '#854F0B' : '#0A0A0A',
                     textAlign: 'center',
-                    borderTop: isToday ? '2px solid #0F4C2A' : '1px solid transparent',
+                    borderTop: isToday ? '2px solid #0F4C2A' : (isWeekend ? '2px solid #FCD34D' : '1px solid transparent'),
+                    borderBottom: isWeekend ? '1px solid #FCD34D' : 'none',
                   }}
                 >
-                  <div style={{ fontSize: 8, opacity: 0.6 }}>
+                  <div style={{ fontSize: 8, opacity: isWeekend ? 0.95 : 0.6, fontWeight: isWeekend ? 700 : 600, letterSpacing: isWeekend ? '0.05em' : 0 }}>
                     {['Su','Mo','Tu','We','Th','Fr','Sa'][dow]}
                   </div>
                   <div>{d.getDate()}</div>
@@ -591,7 +601,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
                     const r = recordIndex.get(`${emp.id}|${dStr}`);
                     const cellBg = isToday ? 'rgba(15,76,42,0.04)'
                                  : isFuture ? '#FAFAFA'
-                                 : isWeekend ? '#F5F5F5' : 'transparent';
+                                 : isWeekend ? '#FEF8E1' : 'transparent';
                     if (!r) {
                       return (
                         <div
