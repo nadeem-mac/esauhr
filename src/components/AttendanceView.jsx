@@ -1806,7 +1806,18 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
 
     const totalGaps  = byManager.reduce((sum, g) => sum + g.totalGaps, 0);
     const totalStaff = Object.keys(staffGaps).length;
-    return { totalGaps, totalStaff, byManager };
+    // totalShiftStaff = how many staff are on the shift roster this
+    // month (regardless of whether they have gaps). Used by the card
+    // to decide whether to show at all — when there are zero shift
+    // staff for the month, the card is meaningless and stays hidden.
+    let totalShiftStaff = 0;
+    shiftStaffThisMonth.forEach(empKey => {
+      const emp = empById[empKey];
+      if (!emp) return;
+      const isSup = String(emp.department || '').toUpperCase() === 'SUP';
+      if (!isSup) totalShiftStaff++;
+    });
+    return { totalGaps, totalStaff, totalShiftStaff, byManager };
   }, [csvDate, shiftStaffThisMonth, shiftOverrideById, empById, mawaniDays, onLeaveOnDate]);
 
   // Index approved permissions by employee+type for O(1) lookup during
@@ -4881,8 +4892,9 @@ function HelpTile({ id, label, sub, icon, accent, tint, isActive, onClick }) {
 // Click the card header to expand. Each manager group then shows the
 // staff under them with the specific gap dates listed compactly.
 function RosterGapsCard({ rosterGaps, empById, isOpen, onToggle }) {
-  if (!rosterGaps || !rosterGaps.totalGaps) return null;
-  const { totalGaps, totalStaff, byManager } = rosterGaps;
+  if (!rosterGaps) return null;
+  const { totalGaps, totalStaff, totalShiftStaff, byManager } = rosterGaps;
+  const isAllAssigned = totalGaps === 0;
 
   const fmtDate = (iso) => {
     if (!iso) return '';
@@ -4890,11 +4902,18 @@ function RosterGapsCard({ rosterGaps, empById, isOpen, onToggle }) {
     return new Date(y, m - 1, d).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
   };
 
+  // Colour state — amber when gaps exist, green when fully assigned.
+  // Both are calm, neither is alarming — this is an operational
+  // dashboard signal, not a violation flag.
+  const palette = isAllAssigned
+    ? { bg: '#F0FDF4', border: '#BBF7D0', accentBg: '#86EFAC', accentFg: '#064E3B', icon: '✓' }
+    : { bg: '#FFFBEB', border: '#FDE68A', accentBg: '#FCD34D', accentFg: '#78350F', icon: '📋' };
+
   return (
     <div
       style={{
-        background: '#FFFBEB',
-        border: '1px solid #FDE68A',
+        background: palette.bg,
+        border: `1px solid ${palette.border}`,
         borderRadius: 10,
         padding: 0,
         overflow: 'hidden',
@@ -4902,7 +4921,8 @@ function RosterGapsCard({ rosterGaps, empById, isOpen, onToggle }) {
     >
       <button
         type="button"
-        onClick={onToggle}
+        onClick={isAllAssigned ? undefined : onToggle}
+        disabled={isAllAssigned}
         style={{
           width: '100%',
           display: 'flex',
@@ -4912,33 +4932,38 @@ function RosterGapsCard({ rosterGaps, empById, isOpen, onToggle }) {
           background: 'transparent',
           border: 'none',
           textAlign: 'left',
-          cursor: 'pointer',
+          cursor: isAllAssigned ? 'default' : 'pointer',
         }}
       >
         <div className="flex items-center gap-3" style={{ minWidth: 0 }}>
-          <span style={{ fontSize: 18 }} aria-hidden>📋</span>
+          <span style={{ fontSize: 18 }} aria-hidden>{palette.icon}</span>
           <div style={{ minWidth: 0 }}>
             <div className="text-[10px] tracking-[0.25em]" style={{ fontWeight: 700, color: '#0A0A0A' }}>
-              ROSTER GAPS
+              ROSTER {isAllAssigned ? 'COMPLETE' : 'GAPS'}
             </div>
             <div className="text-[12px] mt-0.5" style={{ color: '#0A0A0A' }}>
-              <strong>{totalGaps}</strong> unassigned working {totalGaps === 1 ? 'day' : 'days'} across <strong>{totalStaff}</strong> shift {totalStaff === 1 ? 'staff' : 'staff'} this month
+              {isAllAssigned
+                ? <>All <strong>{totalShiftStaff}</strong> shift {totalShiftStaff === 1 ? 'staff member has' : 'staff have'} their roster assigned through today.</>
+                : <><strong>{totalGaps}</strong> unassigned working {totalGaps === 1 ? 'day' : 'days'} across <strong>{totalStaff}</strong> shift {totalStaff === 1 ? 'staff' : 'staff'} this month</>
+              }
             </div>
           </div>
         </div>
-        <span style={{ fontSize: 18, color: '#0A0A0A', opacity: 0.5 }}>{isOpen ? '−' : '+'}</span>
+        {!isAllAssigned && (
+          <span style={{ fontSize: 18, color: '#0A0A0A', opacity: 0.5 }}>{isOpen ? '−' : '+'}</span>
+        )}
       </button>
 
-      {isOpen && (
-        <div style={{ borderTop: '1px solid #FDE68A', padding: '8px 16px 14px' }}>
+      {isOpen && !isAllAssigned && (
+        <div style={{ borderTop: `1px solid ${palette.border}`, padding: '8px 16px 14px' }}>
           {byManager.map((g) => {
             const mgrInitial = (g.managerName || '?').charAt(0).toUpperCase();
             return (
-              <div key={g.managerId || '__unassigned__'} style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed #FDE68A' }}>
+              <div key={g.managerId || '__unassigned__'} style={{ marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${palette.border}` }}>
                 <div className="flex items-baseline gap-2 mb-2">
                   <div style={{
                     width: 22, height: 22, borderRadius: '50%',
-                    background: '#FCD34D', color: '#78350F',
+                    background: palette.accentBg, color: palette.accentFg,
                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                     fontSize: 11, fontWeight: 700,
                   }}>
@@ -5124,9 +5149,14 @@ function FileSummary({
               into a visible roster-completion signal. Per Nadeem's
               brief, this is grouped by manager so each line manager
               sees their own gap count, click-through to the dates and
-              staff. Hidden when there are no gaps to keep the
-              dashboard clean. */}
-          {rosterGaps && rosterGaps.totalGaps > 0 && (
+              staff. The card surfaces whenever there's at least one
+              shift staff member on the monthly roster — when zero
+              gaps are found, it shows a confirming "all assigned"
+              state so HR has explicit evidence the system has run
+              and the roster is complete (silent absence of a card
+              would leave Bashaier unsure whether nothing was checked
+              or everything was fine). */}
+          {rosterGaps && rosterGaps.totalShiftStaff > 0 && (
             <RosterGapsCard
               rosterGaps={rosterGaps}
               empById={empById}
