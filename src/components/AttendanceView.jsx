@@ -3556,6 +3556,112 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     return null;
   }, [parsedData.sheetName, csvDate]);
 
+  // File-volume sanity — biometric hardware occasionally has partial
+  // outages (cards not registering, terminal restarts mid-day, network
+  // issues uploading some staff's punches). When this happens the file
+  // arrives looking normal in shape but with 30-50% fewer rows than a
+  // healthy day for the same weekday. Without a check, the system
+  // would generate dozens of "missed punch" violations against staff
+  // whose terminals just didn't record. Bashaier could end up emailing
+  // half the company for someone else's IT problem.
+  //
+  // The check compares THIS file's unique-staff count (number of staff
+  // with at least one punch) to the median of the last 4 same-weekday
+  // uploads. We use median (not mean) so a single previous outage
+  // doesn't drag the baseline down. Threshold: <60% of baseline = red
+  // flag, 60-80% = amber, >=80% = OK.
+  //
+  // Skip the check on weekends (low-volume by design) and when there
+  // aren't enough prior uploads to establish a baseline.
+  const [fileVolumeSanity, setFileVolumeSanity] = useState(null);
+  useEffect(() => {
+    if (!csvDate || csvIsWeekend || !parsedData?.rows?.length) {
+      setFileVolumeSanity(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        // Today's unique-staff count.
+        const todayStaff = new Set(parsedData.rows.map(r => r.psn).filter(Boolean)).size;
+        if (todayStaff === 0) { setFileVolumeSanity(null); return; }
+
+        // Compute the same weekday across the last 5 weeks (so we have
+        // up to 5 same-DOW samples, take the most recent 4 with row
+        // count > 0). PostgreSQL DATE arithmetic isn't available via
+        // PostgREST query string, so we filter client-side.
+        const todayMs = new Date(csvDate + 'T00:00:00Z').getTime();
+        const dow     = new Date(csvDate + 'T00:00:00Z').getUTCDay();
+        const since = new Date(todayMs - 35 * 86_400_000).toISOString().slice(0, 10);
+
+        const recent = await directGet(
+          'attendance_uploads',
+          'select=data_date,row_count'
+            + '&data_date=gte.' + since
+            + '&data_date=lt.'  + csvDate
+            + '&order=data_date.desc&limit=20',
+          { timeoutMs: 6000 }
+        );
+        if (cancelled) return;
+
+        const sameDow = (recent || [])
+          .filter(r => r?.data_date && typeof r.row_count === 'number' && r.row_count > 0)
+          .filter(r => new Date(r.data_date + 'T00:00:00Z').getUTCDay() === dow)
+          .map(r => r.row_count)
+          .slice(0, 4);
+
+        if (sameDow.length < 2) {
+          // Not enough history to make a reliable comparison.
+          setFileVolumeSanity(null);
+          return;
+        }
+
+        // Median of the historical samples (order-statistic, not mean).
+        const sorted = [...sameDow].sort((a, b) => a - b);
+        const baseline = sorted.length % 2 === 1
+          ? sorted[(sorted.length - 1) / 2]
+          : Math.round((sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2);
+
+        // Today's file's row_count (parser-level — equivalent to what
+        // attendance_uploads.row_count will store on commit).
+        const todayRows = parsedData.rows.length;
+        const ratio = baseline > 0 ? todayRows / baseline : 1;
+
+        if (ratio < 0.6) {
+          setFileVolumeSanity({
+            kind: 'PARTIAL_OUTAGE',
+            ratio,
+            todayRows,
+            baseline,
+            sampleCount: sameDow.length,
+            message: `This file has ${todayRows} rows for ${todayStaff} staff. The recent ` +
+                     `${sameDow.length}-${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dow]} median is ${baseline}. ` +
+                     `That's ${Math.round(ratio * 100)}% of the typical volume — likely a partial biometric outage. ` +
+                     `Verify with the device admin before sending any missed-punch emails; many "missed" punches may be ` +
+                     `unrecorded due to the outage rather than real absences.`,
+          });
+        } else if (ratio < 0.8) {
+          setFileVolumeSanity({
+            kind: 'LOW_VOLUME',
+            ratio,
+            todayRows,
+            baseline,
+            sampleCount: sameDow.length,
+            message: `This file has ${todayRows} rows. The recent ` +
+                     `${sameDow.length}-${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dow]} median is ${baseline} ` +
+                     `(${Math.round(ratio * 100)}%). The shortfall could be a normal low-attendance day or a partial ` +
+                     `biometric issue — review counts before bulk-emailing.`,
+          });
+        } else {
+          setFileVolumeSanity(null);
+        }
+      } catch (e) {
+        if (!cancelled) setFileVolumeSanity(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [csvDate, csvIsWeekend, parsedData]);
+
   // Read-only / preview mode. By default actions are enabled. When
   // the duplicate-upload banner shows (existingUpload != null) we
   // auto-flip to read-only — the same file was processed before and
@@ -4725,6 +4831,17 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
               tone: sheetSanity.kind === 'SHEET_BEFORE_DATA' ? 'red' : 'amber',
               title: sheetSanity.kind === 'SHEET_BEFORE_DATA' ? 'Sheet name pre-dates the data.' : 'Sheet name far from data date.',
               body: sheetSanity.message,
+            });
+          }
+          if (hasFile && fileVolumeSanity) {
+            notifications.push({
+              id: 'volume',
+              label: fileVolumeSanity.kind === 'PARTIAL_OUTAGE' ? 'Possible outage' : 'Low volume',
+              tone: fileVolumeSanity.kind === 'PARTIAL_OUTAGE' ? 'red' : 'amber',
+              title: fileVolumeSanity.kind === 'PARTIAL_OUTAGE'
+                ? 'Possible biometric outage detected.'
+                : 'File volume below typical.',
+              body: fileVolumeSanity.message,
             });
           }
 
