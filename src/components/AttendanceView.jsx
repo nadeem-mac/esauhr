@@ -1619,11 +1619,11 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       absent:         { bg: '#FEE2E2', fg: '#991B1B', border: '#FCA5A5', label: 'AB' },
       annual_leave:   { bg: '#CCFBF1', fg: '#115E59', border: '#5EEAD4', label: 'AL' },
       sick_leave:     { bg: '#EDE9FE', fg: '#5B21B6', border: '#C4B5FD', label: 'SL' },
-      maternity_leave:{ bg: '#FCE7F3', fg: '#9D174D', border: '#F9A8D4', label: '\u2713', sub: 'ML' },
-      paternity_leave:{ bg: '#E0F2FE', fg: '#075985', border: '#7DD3FC', label: '\u2713', sub: 'PL' },
-      hajj_leave:     { bg: '#FEF3C7', fg: '#854F0B', border: '#FCD34D', label: '\u2713', sub: 'HJ' },
-      emergency_leave:{ bg: '#FEE2E2', fg: '#7F1D1D', border: '#FCA5A5', label: '\u2713', sub: 'EL' },
-      unpaid_leave:   { bg: '#F3F4F6', fg: '#374151', border: '#D1D5DB', label: '\u2713', sub: 'UL' },
+      maternity_leave:{ bg: '#FCE7F3', fg: '#9D174D', border: '#F9A8D4', label: '\u2713ML' },
+      paternity_leave:{ bg: '#E0F2FE', fg: '#075985', border: '#7DD3FC', label: '\u2713PL' },
+      hajj_leave:     { bg: '#FEF3C7', fg: '#854F0B', border: '#FCD34D', label: '\u2713HJ' },
+      emergency_leave:{ bg: '#FEE2E2', fg: '#7F1D1D', border: '#FCA5A5', label: '\u2713EL' },
+      unpaid_leave:   { bg: '#F3F4F6', fg: '#374151', border: '#D1D5DB', label: '\u2713UL' },
       off_roster:     { bg: '#DBEAFE', fg: '#1E3A8A', border: '#93C5FD', label: 'OR' },
       off_day:        { bg: '#EEF0FA', fg: '#3B4279', border: '#C7CFE5', label: 'OF' },
     };
@@ -1753,9 +1753,8 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           + ';color:' + palette.fg
           + ';border:1px solid ' + palette.border + '">'
           + '<div class="chip-label">' + escapeHtml(mainLabel) + '</div>'
-          + (palette.sub ? '<div class="chip-sub">' + escapeHtml(palette.sub) + '</div>' : '')
-          + (fp && !palette.sub ? '<div class="chip-time">' + escapeHtml(fp) + '</div>' : '')
-          + (showLp && !palette.sub ? '<div class="chip-time">' + escapeHtml(lp) + '</div>' : '')
+          + (fp ? '<div class="chip-time">' + escapeHtml(fp) + '</div>' : '')
+          + (showLp ? '<div class="chip-time">' + escapeHtml(lp) + '</div>' : '')
           + '</div></td>';
       }).join('');
 
@@ -1840,9 +1839,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
 + '.chip { display: flex; flex-direction: column; align-items: center; '
 + '  justify-content: center; padding: 2px 1px; border-radius: 3px; height: 100%; '
 + '  line-height: 1.05; }'
-+ '.chip-label { font-size: 9px; font-weight: 700; }'
-+ '.chip-sub   { font-size: 7px; font-weight: 700; letter-spacing: 0.06em; '
-+ '  margin-top: 1px; }'
++ '.chip-label { font-size: 8px; font-weight: 700; }'
 + '.chip-time  { font-size: 6.5px; opacity: 0.85; '
 + '  font-family: "SFMono-Regular", monospace; }'
 + '.print-btn { position: fixed; bottom: 12px; right: 12px; padding: 8px 16px; '
@@ -5807,16 +5804,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           scrolls down to confirm the calendar reflects the day's
           work. The 24-line spacer keeps the visual handoff clear
           between "action" (above) and "memory" (below). */}
-      <div style={{
-        marginTop: 32,
-        // Break out of the parent's max-w-7xl so the calendar can use
-        // the full viewport width — necessary to fit all 31 day
-        // columns without horizontal scroll.
-        marginLeft:  'calc(50% - 50vw + 12px)',
-        marginRight: 'calc(50% - 50vw + 12px)',
-        paddingLeft: 16,
-        paddingRight: 16,
-      }}>
+      <div style={{ marginTop: 32 }}>
         {/* Re-eval status row — sits above the calendar so the
             "last updated" signal is visible without scrolling
             inside the grid. Manual button gives Bashaier explicit

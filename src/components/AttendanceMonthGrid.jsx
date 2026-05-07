@@ -82,15 +82,15 @@ function styleForStatus(status, notes) {
     case 'sick_leave':
       return { bg: '#EDE9FE', fg: '#5B21B6', border: '#C4B5FD', label: 'SL' };
     case 'maternity_leave':
-      return { bg: '#FCE7F3', fg: '#9D174D', border: '#F9A8D4', label: '✓', sub: 'ML' };
+      return { bg: '#FCE7F3', fg: '#9D174D', border: '#F9A8D4', label: '✓ML' };
     case 'paternity_leave':
-      return { bg: '#E0F2FE', fg: '#075985', border: '#7DD3FC', label: '✓', sub: 'PL' };
+      return { bg: '#E0F2FE', fg: '#075985', border: '#7DD3FC', label: '✓PL' };
     case 'hajj_leave':
-      return { bg: '#FEF3C7', fg: '#854F0B', border: '#FCD34D', label: '✓', sub: 'HJ' };
+      return { bg: '#FEF3C7', fg: '#854F0B', border: '#FCD34D', label: '✓HJ' };
     case 'emergency_leave':
-      return { bg: '#FEE2E2', fg: '#7F1D1D', border: '#FCA5A5', label: '✓', sub: 'EL' };
+      return { bg: '#FEE2E2', fg: '#7F1D1D', border: '#FCA5A5', label: '✓EL' };
     case 'unpaid_leave':
-      return { bg: '#F3F4F6', fg: '#374151', border: '#D1D5DB', label: '✓', sub: 'UL' };
+      return { bg: '#F3F4F6', fg: '#374151', border: '#D1D5DB', label: '✓UL' };
     case 'off_roster':
       return { bg: '#DBEAFE', fg: '#1E3A8A', border: '#93C5FD', label: 'OR' };
     case 'off_day':
@@ -438,7 +438,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
         <div style={{ overflowX: 'auto', maxWidth: '100%' }}>
           <div style={{
             display: 'grid',
-            gridTemplateColumns: `170px repeat(${days.length}, minmax(20px, 1fr))`,
+            gridTemplateColumns: `200px repeat(${days.length}, minmax(22px, 1fr))`,
             gap: 1,
             width: '100%',
             minWidth: 'fit-content',
@@ -503,9 +503,20 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
                       if (onEmployeeClick) e.currentTarget.style.background = '#FFFFFF';
                     }}
                   >
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#0A0A0A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                  textDecoration: onEmployeeClick ? 'underline' : 'none', textDecorationColor: 'rgba(15,76,42,0.25)',
-                                  textUnderlineOffset: 2 }}>
+                    <div style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: '#0A0A0A',
+                      lineHeight: 1.2,
+                      // Allow up to 2 lines for long names — many staff
+                      // here have 3-4 word names that don't fit in a
+                      // single line at 200px. Wrapping is cleaner than
+                      // truncating with ellipsis.
+                      wordBreak: 'break-word',
+                      textDecoration: onEmployeeClick ? 'underline' : 'none',
+                      textDecorationColor: 'rgba(15,76,42,0.25)',
+                      textUnderlineOffset: 2,
+                    }}>
                       {emp.name || emp.id}
                     </div>
                     <div style={{ fontSize: 9, color: '#0A0A0A', opacity: 0.6, marginTop: 1 }}>
@@ -585,20 +596,13 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
                             fontSize: 9,
                             fontWeight: 700,
                             display: 'flex',
-                            flexDirection: sty.sub ? 'column' : 'row',
                             alignItems: 'center',
                             justifyContent: 'center',
                             letterSpacing: '0.04em',
                             cursor: 'default',
-                            lineHeight: sty.sub ? 1.05 : undefined,
                           }}
                         >
                           {sty.label}
-                          {sty.sub && (
-                            <span style={{ fontSize: 8, fontWeight: 700, marginTop: 1, letterSpacing: '0.06em' }}>
-                              {sty.sub}
-                            </span>
-                          )}
                           {isShiftDay && (
                             <span
                               aria-hidden
