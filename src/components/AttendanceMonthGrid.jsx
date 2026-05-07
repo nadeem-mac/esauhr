@@ -33,38 +33,29 @@
 //   grid immediately.
 // =============================================================================
 
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, RefreshCcw, Loader2, Search, X } from 'lucide-react';
 import { directGet, supabase } from '../supabaseClient.js';
 
-// Auto-fit text helper. Renders a span that shrinks its font-size on
-// mount / text change until the content fits within the parent's width.
-// Used for employee names so the full name is always visible — no
-// ellipsis truncation. Down to a sensible floor (8px) below which we
-// stop shrinking and let the browser show whatever fits; very long
-// names are rare enough that the floor isn't usually hit.
-function FitText({ text, maxFontSize = 12, minFontSize = 8.5, style = {}, className }) {
-  const ref = useRef(null);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    let size = maxFontSize;
-    el.style.fontSize = size + 'px';
-    // Shrink in 0.5px steps until the text fits or we hit the floor.
-    // scrollWidth > clientWidth means overflow; we keep shrinking
-    // until they're equal (or close enough) or we bottom out.
-    let guard = 50;
-    while (el.scrollWidth > el.clientWidth + 0.5 && size > minFontSize && guard-- > 0) {
-      size -= 0.5;
-      el.style.fontSize = size + 'px';
-    }
-  }, [text, maxFontSize, minFontSize]);
+// Auto-fit text helper — CSS-only. No hooks. Uses container queries
+// + clamp on font-size based on text length to shrink long names so
+// they fit on a single line without ellipsis truncation. Conservative
+// floor at 9px so it stays legible.
+function FitText({ text, style = {}, className }) {
+  const length = (text || '').length;
+  // Heuristic font size: longer names get smaller font.
+  // 200px column ≈ ~22 chars at 11px, ~30 chars at 9px.
+  const fontSize =
+    length <= 16 ? 12 :
+    length <= 20 ? 11 :
+    length <= 24 ? 10 :
+    length <= 28 ? 9.5 : 9;
   return (
     <div
-      ref={ref}
       className={className}
       style={{
         ...style,
+        fontSize,
         whiteSpace: 'nowrap',
         overflow: 'hidden',
       }}
@@ -602,8 +593,6 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
                   >
                     <FitText
                       text={emp.name || emp.id}
-                      maxFontSize={12}
-                      minFontSize={8.5}
                       style={{
                         fontWeight: 600,
                         color: '#0A0A0A',
