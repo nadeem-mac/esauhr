@@ -707,8 +707,10 @@ export default function AppShell({ session, me, onRefreshMe }) {
           so the overlay's lifecycle exactly matches the data fetch. */}
       <RefreshOverlay open={refreshing} />
 
-      {/* Header */}
-      <header className="border-b" style={{ borderColor: 'var(--border-soft)', background: 'var(--paper)' }}>
+      {/* Header — sticky so the top brand + tab nav stays visible while
+          long pages (Attendance grid, calendar, request lists) are
+          scrolled. z-index above page content but below modals. */}
+      <header className="border-b sticky top-0 z-30" style={{ borderColor: 'var(--border-soft)', background: 'var(--paper)' }}>
         <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <EvergreenLogo variant="full" size="md" />

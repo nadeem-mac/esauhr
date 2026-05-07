@@ -33,9 +33,47 @@
 //   grid immediately.
 // =============================================================================
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, RefreshCcw, Loader2, Search, X } from 'lucide-react';
 import { directGet, supabase } from '../supabaseClient.js';
+
+// Auto-fit text helper. Renders a span that shrinks its font-size on
+// mount / text change until the content fits within the parent's width.
+// Used for employee names so the full name is always visible — no
+// ellipsis truncation. Down to a sensible floor (8px) below which we
+// stop shrinking and let the browser show whatever fits; very long
+// names are rare enough that the floor isn't usually hit.
+function FitText({ text, maxFontSize = 12, minFontSize = 8.5, style = {}, className }) {
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let size = maxFontSize;
+    el.style.fontSize = size + 'px';
+    // Shrink in 0.5px steps until the text fits or we hit the floor.
+    // scrollWidth > clientWidth means overflow; we keep shrinking
+    // until they're equal (or close enough) or we bottom out.
+    let guard = 50;
+    while (el.scrollWidth > el.clientWidth + 0.5 && size > minFontSize && guard-- > 0) {
+      size -= 0.5;
+      el.style.fontSize = size + 'px';
+    }
+  }, [text, maxFontSize, minFontSize]);
+  return (
+    <div
+      ref={ref}
+      className={className}
+      style={{
+        ...style,
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+      }}
+      title={text}
+    >
+      {text}
+    </div>
+  );
+}
 
 // Local YYYY-MM-DD without timezone surprises.
 function ymd(d) {
@@ -564,22 +602,19 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
                       if (onEmployeeClick) e.currentTarget.style.background = '#FFFFFF';
                     }}
                   >
-                    <div style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: '#0A0A0A',
-                      lineHeight: 1.2,
-                      // Single-line — truncate with ellipsis instead of
-                      // wrapping. Full name available on hover via title.
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      textDecoration: onEmployeeClick ? 'underline' : 'none',
-                      textDecorationColor: 'rgba(15,76,42,0.25)',
-                      textUnderlineOffset: 2,
-                    }}>
-                      {emp.name || emp.id}
-                    </div>
+                    <FitText
+                      text={emp.name || emp.id}
+                      maxFontSize={12}
+                      minFontSize={8.5}
+                      style={{
+                        fontWeight: 600,
+                        color: '#0A0A0A',
+                        lineHeight: 1.2,
+                        textDecoration: onEmployeeClick ? 'underline' : 'none',
+                        textDecorationColor: 'rgba(15,76,42,0.25)',
+                        textUnderlineOffset: 2,
+                      }}
+                    />
                     <div style={{ fontSize: 9, color: '#0A0A0A', opacity: 0.6, marginTop: 1 }}>
                       {emp.id} · {emp.department || '—'}
                     </div>

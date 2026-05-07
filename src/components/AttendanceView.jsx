@@ -5700,22 +5700,20 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           work. The 24-line spacer keeps the visual handoff clear
           between "action" (above) and "memory" (below). */}
       <div style={{
-        marginTop: 32,
+        marginTop: 12,
         // Use full viewport width — break out of the parent's max-w-7xl
-        // so all 31 day columns fit without horizontal scroll. Safe now
-        // that the sidebar is removed (no overlap concern).
-        marginLeft:  'calc(50% - 50vw + 12px)',
-        marginRight: 'calc(50% - 50vw + 12px)',
-        paddingLeft: 16,
-        paddingRight: 16,
+        // so all 31 day columns fit. Increased side padding so the rightmost
+        // column doesn't graze the page edge.
+        marginLeft:  'calc(50% - 50vw + 16px)',
+        marginRight: 'calc(50% - 50vw + 16px)',
+        paddingLeft: 24,
+        paddingRight: 24,
       }}>
-        {/* Status + buttons row.
-            • Left: compact "Updated 1d ago · re-eval 1h" pill
-            • Right: action buttons (Upload, Re-eval, Backfill, Export)
-            One line, justify-between. */}
-        <div className="flex items-center justify-between mb-3" style={{ flexWrap: 'wrap', gap: 8 }}>
-          {/* Compact status — small dot + brief text. Replaces the
-              previous verbose health pill above. */}
+        {/* Status (small, centered) + action buttons (centered row).
+            Status sits above the buttons in a tight stack — both
+            horizontally centered. */}
+        <div className="flex flex-col items-center mb-3" style={{ gap: 6 }}>
+          {/* Compact status — small dot + brief text. */}
           {(() => {
             const now = Date.now();
             const uploadMs = lastUploadAt ? (now - new Date(lastUploadAt).getTime()) : null;
@@ -5755,7 +5753,8 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
               </div>
             );
           })()}
-          <div className="flex items-center gap-3" style={{ flexWrap: 'wrap' }}>
+          {/* Action buttons — centered horizontal row. */}
+          <div className="flex items-center justify-center gap-3" style={{ flexWrap: 'wrap' }}>
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
