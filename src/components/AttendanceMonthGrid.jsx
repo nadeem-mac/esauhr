@@ -103,7 +103,13 @@ function readableStatus(status) {
   })[status] || status;
 }
 
-export default function AttendanceMonthGrid({ employees, onEmployeeClick }) {
+// Phase B + C: external refresh trigger.
+//   • refreshTick — integer that bumps externally (from AttendanceView)
+//     after a re-evaluation completes, so the grid refetches its rows
+//     without the user having to navigate away and back. Per Decision
+//     #3 / option A: single refetch at session end, no live updates
+//     during the upload to avoid scroll/flicker.
+export default function AttendanceMonthGrid({ employees, onEmployeeClick, refreshTick = 0 }) {
   const today = useMemo(() => new Date(), []);
   const [year, setYear]   = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
@@ -146,6 +152,13 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick }) {
     }
   }, [firstDay, lastDay]);
   useEffect(() => { refetch(); }, [refetch]);
+
+  // External refresh — bumps when AttendanceView's re-evaluation
+  // pipeline completes. Skips the initial mount (refetch above
+  // already covers that) by gating on tick > 0.
+  useEffect(() => {
+    if (refreshTick > 0) refetch();
+  }, [refreshTick, refetch]);
 
   // Debounced realtime — bursts of upserts during an upload settle
   // into a single refetch.

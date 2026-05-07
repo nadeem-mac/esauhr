@@ -7,6 +7,12 @@ import {
 import { directGet, directPost } from '../supabaseClient.js';
 import { parseTimeCardXlsx, TimeCardParseError } from '../lib/timeCard.js';
 import { buildAttendanceRows, recordAttendanceRows } from '../lib/attendanceRecorder.js';
+// Phase A re-eval entry point — used by Phase C for the post-upload
+// trigger, the manual "re-evaluate last 7 days" button, and the
+// stale-check on mount. The full backfill pipeline stays on its own
+// page; this helper bounds the scan to a tight 7-day window so the
+// daily flow's re-eval is fast and predictable.
+import { reevaluateLastNDays } from '../lib/attendanceBackfill.js';
 import AttendanceMonthGrid from './AttendanceMonthGrid.jsx';
 import AttendanceBackfillPanel from './AttendanceBackfillPanel.jsx';
 import WorkingHoursManager from './WorkingHoursManager.jsx';
@@ -86,11 +92,17 @@ class AttendanceErrorBoundary extends React.Component {
 //   • Each item has a tiny icon + the label.
 function AttendanceSidebar({ activeView, setActiveView }) {
   const items = [
-    { id: 'calendar',  icon: <Calendar className="w-4 h-4" />,         label: 'Monthly overview',     hint: 'See the calendar' },
-    { id: 'daily',     icon: <Upload className="w-4 h-4" />,           label: 'Daily upload',         hint: 'Today\u2019s xlsx import' },
-    { id: 'schedules', icon: <Clock className="w-4 h-4" />,            label: 'Working hours',        hint: 'SUP / standard hours' },
-    { id: 'mawani',    icon: <Anchor className="w-4 h-4" />,           label: 'Mawani visits',        hint: 'Duty-visit log' },
-    { id: 'backfill',  icon: <FileSpreadsheet className="w-4 h-4" />,  label: 'Historical backfill',  hint: 'One-shot multi-month import' },
+    // Phase B (Decision #6 / option A): the previously-separate
+    // "Monthly overview" and "Daily upload" entries are merged into a
+    // single "Attendance" workspace. Calendar memory and daily action
+    // now live on the same page — top: upload bar, middle: action
+    // dashboard, bottom: calendar. Maintains a single sidebar id of
+    // 'attendance' (the legacy 'calendar' and 'daily' ids both route
+    // here for back-compat with deep links).
+    { id: 'attendance', icon: <Calendar className="w-4 h-4" />,        label: 'Attendance',           hint: 'Calendar + daily upload' },
+    { id: 'schedules',  icon: <Clock className="w-4 h-4" />,            label: 'Working hours',        hint: 'SUP / standard hours' },
+    { id: 'mawani',     icon: <Anchor className="w-4 h-4" />,           label: 'Mawani visits',        hint: 'Duty-visit log' },
+    { id: 'backfill',   icon: <FileSpreadsheet className="w-4 h-4" />,  label: 'Historical backfill',  hint: 'One-shot multi-month import' },
   ];
   return (
     <nav
@@ -1113,7 +1125,94 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // lists the discrete functions and the right pane shows whichever
   // one Bashaier clicked. Lands on 'calendar' (Monthly Overview) by
   // default — that's the most-glance-worthy summary.
-  const [activeView, setActiveView] = useState('calendar');
+  // Phase B (Decision #6 / option A): unified attendance workspace.
+  // Old 'calendar' and 'daily' both map to 'attendance'. Legacy ids
+  // remain accepted by the dispatch below for back-compat with any
+  // deep links or saved bookmarks.
+  const [activeView, setActiveView] = useState('attendance');
+
+  // Phase C (Decisions #3 + #5 — calendar refresh + re-eval triggers).
+  //   • calendarRefreshTick — bumped after every successful re-eval
+  //     so the AttendanceMonthGrid can refetch its rows. Single
+  //     integer tick is the cheapest cross-component signal.
+  //   • reevalState — surfaces the in-progress / last-completed state
+  //     of the re-eval pipeline so the manual button + status pill
+  //     can render consistently. Shape:
+  //       { running: bool, lastRunAt: ISO | null, summary: object | null,
+  //         error: string | null }
+  const [calendarRefreshTick, setCalendarRefreshTick] = useState(0);
+  const [reevalState, setReevalState] = useState({
+    running: false,
+    lastRunAt: null,
+    summary: null,
+    error: null,
+  });
+
+  // Re-eval trigger — central function called by:
+  //   • Save & Close on the daily upload (Decision #4 / option C)
+  //   • Stale-check on mount (Decision #5 / option C — the "B"
+  //     leg, implemented as a localStorage-gated app-load trigger
+  //     rather than an external cron, to avoid the infrastructure
+  //     overhead for a small ops team)
+  //   • Manual "Re-evaluate last 7 days" button on the page header
+  //
+  // Window: last 7 calendar days inclusive of today (Decision #1 /
+  // option A). The reevaluateLastNDays helper handles the date math
+  // in local time so the window matches Bashaier's perception of
+  // "this week" rather than UTC days.
+  const triggerReevaluation = useCallback(async (opts = {}) => {
+    const { silent = false, days = 7 } = opts;
+    if (reevalState.running) return null; // already running — bail
+    setReevalState(s => ({ ...s, running: true, error: null }));
+    try {
+      const summary = await reevaluateLastNDays(days);
+      const nowIso = new Date().toISOString();
+      // Persist the timestamp so the stale-check on next load knows
+      // when re-eval last completed. localStorage is per-browser,
+      // which is fine for the single-HR-reviewer model — Bashaier
+      // is the only one running re-evals in practice.
+      try { localStorage.setItem('esauhr_last_reeval_at', nowIso); } catch {}
+      setReevalState({ running: false, lastRunAt: nowIso, summary, error: null });
+      // Bump the calendar's refresh tick so it picks up the changes
+      // (Decision #3 / option A — single refetch after session ends,
+      // no live updates during the upload flow to avoid scroll
+      // disruption).
+      setCalendarRefreshTick(t => t + 1);
+      return summary;
+    } catch (err) {
+      const msg = err?.message || 'Re-evaluation failed';
+      setReevalState(s => ({ ...s, running: false, error: msg }));
+      if (!silent) {
+        try { console.error('Re-eval failed:', err); } catch {}
+      }
+      return null;
+    }
+  }, [reevalState.running]);
+
+  // Stale-check on mount (Decision #5 / option C — the "B" leg).
+  // If the last successful re-eval was more than 24h ago (or never),
+  // fire a silent re-eval so the calendar reflects late-arriving
+  // permissions and corrections that landed since Bashaier's last
+  // visit. This replaces the "midnight cron" idea with a cheaper
+  // app-load trigger that doesn't require external infrastructure.
+  // Runs once per page load. Silent — errors don't surface unless
+  // the user opens DevTools.
+  useEffect(() => {
+    let lastIso = null;
+    try { lastIso = localStorage.getItem('esauhr_last_reeval_at'); } catch {}
+    const STALE_MS = 24 * 60 * 60 * 1000; // 24h
+    const isStale = !lastIso || (Date.now() - new Date(lastIso).getTime() > STALE_MS);
+    if (isStale) {
+      // Defer slightly so the page can render first — re-eval kicks
+      // off after the initial paint, doesn't block first interaction.
+      const t = setTimeout(() => { triggerReevaluation({ silent: true }); }, 1500);
+      return () => clearTimeout(t);
+    }
+    // Hydrate the lastRunAt state from localStorage so the manual
+    // button shows the correct "last ran X minutes ago" pill on
+    // first paint, even when no re-eval was triggered this session.
+    setReevalState(s => ({ ...s, lastRunAt: lastIso }));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [parsedData, setParsedData]     = useState({ rows: [], dataDate: null, sheetName: null });
   const [parseError, setParseError]     = useState(null);
 
@@ -2653,7 +2752,20 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     if (f) handleFile(f);
   }, [handleFile]);
 
+  // Phase C (Decision #4 / option C + Decision #5 / option C):
+  //   • reset() is the close action that ends the upload session.
+  //     Before clearing parse state, snapshot whether there was a
+  //     csvDate (i.e. an actual file was loaded) so we know whether
+  //     to fire re-eval. We don't trigger on a "reset before any
+  //     file uploaded" — that's just clearing the picker.
+  //   • Re-eval runs in the background (fire-and-forget). The user's
+  //     close action is instant; the re-eval pipeline does its work
+  //     asynchronously and updates the calendar via the refresh tick
+  //     when it finishes. Decision #4 / option C: "saves are durable
+  //     and incremental, but the close action is the clear handoff
+  //     that triggers re-evaluation + calendar refresh".
   const reset = () => {
+    const hadActiveSession = !!csvDate;
     setParsedData({ rows: [], dataDate: null, sheetName: null });
     setXlsxFileName('');
     setParseError(null);
@@ -2664,6 +2776,12 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     setUploadId(null);
     setConfirmEntry(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
+    if (hadActiveSession) {
+      // Fire-and-forget — UI doesn't block on this. Errors are
+      // captured in reevalState for surfacing later. The calendar
+      // refresh tick bumps when the pipeline returns.
+      triggerReevaluation({ silent: true });
+    }
   };
 
   const markSent = (rowId) => setSentMarkers(prev => ({ ...prev, [rowId]: true }));
@@ -4309,14 +4427,20 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
 
         <div style={{ flex: '1 1 0', minWidth: 0 }}>
 
-      {activeView === 'calendar' && (
-        <AttendanceErrorBoundary label="Monthly attendance calendar">
-          <AttendanceMonthGrid employees={employees} onEmployeeClick={setDetailEmployee} />
-        </AttendanceErrorBoundary>
-      )}
+      {/* UNIFIED ATTENDANCE VIEW (Phase B — Decision #6 / option A)
+          Renders both the daily-upload workflow AND the monthly
+          calendar on a single page. Two zones, top-to-bottom:
+            1. Daily upload (the existing "Zone 2" block) — upload
+               bar, file summary tile, action panels, banners.
+            2. Monthly calendar — read-only overview, refreshes on
+               re-eval (Phase C).
+          The legacy 'calendar' and 'daily' nav ids are accepted as
+          aliases so any saved deep-links keep working. */}
+      {(activeView === 'attendance' || activeView === 'calendar' || activeView === 'daily') && (<></>)}{/* daily content rendered below the gate */}
+      {(activeView === 'attendance' || activeView === 'calendar' || activeView === 'daily') && (<></>)}
 
       {activeView === 'daily' && (<></>)}{/* Zone 2 content rendered below the gate */}
-      {activeView === 'daily' && (<>
+      {(activeView === 'attendance' || activeView === 'calendar' || activeView === 'daily') && (<>
 
       {/* ─── Pending end-of-day review banner ───────────────────────────
           Surfaces dates where the morning pass was completed but the
@@ -4660,7 +4784,76 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         />
       )}
 
-      </>)}{/* end activeView === 'daily' */}
+      {/* MONTHLY CALENDAR — anchors the bottom of the unified
+          attendance workspace. Read-only overview that picks up
+          changes whenever the daily upload's re-evaluation completes
+          (Phase C wires this). Sits below the daily action zone so
+          Bashaier finishes her uploads at the top of the page and
+          scrolls down to confirm the calendar reflects the day's
+          work. The 24-line spacer keeps the visual handoff clear
+          between "action" (above) and "memory" (below). */}
+      <div style={{ marginTop: 32 }}>
+        {/* Re-eval status row — sits above the calendar so the
+            "last updated" signal is visible without scrolling
+            inside the grid. Manual button gives Bashaier explicit
+            control when she wants to force a fresh pass (e.g. after
+            approving a permission outside the upload flow). */}
+        <div className="flex items-center justify-between mb-3" style={{ flexWrap: 'wrap', gap: 8 }}>
+          <div className="text-[10px] tracking-[0.25em]" style={{ fontWeight: 700, color: '#0A0A0A' }}>
+            MONTHLY OVERVIEW
+          </div>
+          <div className="flex items-center gap-3" style={{ flexWrap: 'wrap' }}>
+            {reevalState.lastRunAt && (
+              <span className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.65 }}>
+                Last re-evaluated {(() => {
+                  const ms = Date.now() - new Date(reevalState.lastRunAt).getTime();
+                  const mins = Math.floor(ms / 60000);
+                  if (mins < 1) return 'just now';
+                  if (mins < 60) return `${mins} min ago`;
+                  const hrs = Math.floor(mins / 60);
+                  if (hrs < 24) return `${hrs} h ago`;
+                  return `${Math.floor(hrs / 24)} d ago`;
+                })()}
+                {reevalState.summary && (
+                  <span style={{ marginLeft: 6, opacity: 0.85 }}>
+                    &middot; {reevalState.summary.changed || 0} {(reevalState.summary.changed === 1) ? 'row' : 'rows'} updated
+                  </span>
+                )}
+              </span>
+            )}
+            {reevalState.error && (
+              <span className="text-[11px]" style={{ color: '#991B1B' }}>
+                Re-eval failed — {reevalState.error}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => triggerReevaluation({ silent: false })}
+              disabled={reevalState.running}
+              className="text-[11px] px-3 py-1.5 rounded-full border flex items-center gap-1.5"
+              style={{
+                borderColor: '#D4D4D4',
+                color: reevalState.running ? '#A1A1AA' : '#1F1B16',
+                background: reevalState.running ? '#F4F4EE' : '#FFFFFF',
+                cursor: reevalState.running ? 'wait' : 'pointer',
+                fontWeight: 600,
+              }}
+              title="Re-scan the last 7 days against current permissions, leaves, and shift assignments. Catches retroactive corrections."
+            >
+              {reevalState.running ? 'Re-evaluating…' : '↻ Re-evaluate last 7 days'}
+            </button>
+          </div>
+        </div>
+        <AttendanceErrorBoundary label="Monthly attendance calendar">
+          <AttendanceMonthGrid
+            employees={employees}
+            onEmployeeClick={setDetailEmployee}
+            refreshTick={calendarRefreshTick}
+          />
+        </AttendanceErrorBoundary>
+      </div>
+
+      </>)}{/* end unified attendance view */}
 
       {activeView === 'schedules' && (
         <AttendanceErrorBoundary label="Working hours">
