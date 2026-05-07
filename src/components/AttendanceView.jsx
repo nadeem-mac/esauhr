@@ -21,6 +21,7 @@ import EmployeeAttendanceDetailPanel from './EmployeeAttendanceDetailPanel.jsx';
 import RepeatOffendersCard from './RepeatOffendersCard.jsx';
 import ManagerRollupCard from './ManagerRollupCard.jsx';
 import EvaluationExplainModal from './EvaluationExplainModal.jsx';
+import SilentAbsencesCard from './SilentAbsencesCard.jsx';
 
 // ─── Error Boundary for AttendanceView sections ───────────────────────
 // Without this, a render-time exception anywhere in the tree under
@@ -2834,6 +2835,75 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     return out;
   }, [parsed.rows, parsed.weekendRows, csvDate, yesterdayDate, empById, empByDigits, onLeaveOnDate, shiftOverrideById, shiftStaffThisMonth, nightShiftBridge, permIndex, mawaniDays]);
 
+  // ─── Silent absences ───────────────────────────────────────────────
+  // Staff who are NOT in today's file at all (zero punches, no row)
+  // but who exist in the employee directory. Gets categorized into:
+  //   - onLeave    — approved leave covers today (no action needed)
+  //   - onMawani   — Mawani visit on today (no action needed)
+  //   - unexplained — neither, so the absence has no excuse on file
+  //
+  // Without this view, a staff member who simply never punched today
+  // is silently invisible — no row in any detection bucket. Bashaier
+  // could only catch them by manually cross-referencing employees vs
+  // the file, which isn't scalable. The unexplained list surfaces
+  // them so they can be investigated (genuine absence? sick? not
+  // enrolled in biometric?) before payroll runs.
+  //
+  // Limited to today (csvDate). Yesterday's silent absences are also
+  // useful but already partially covered by the "no punch in by EOD"
+  // missed-out detection on shift staff and the on-leave reconciliation
+  // pass; expanding this to yesterday adds noise without much gain.
+  const silentAbsences = useMemo(() => {
+    const out = { onLeave: [], onMawani: [], unexplained: [] };
+    if (!csvDate || csvIsWeekend || !empById) return out;
+
+    // Build the set of staff who have ANY row for today, regardless
+    // of whether their punches were complete. Anyone in this set is
+    // not silent — they're already in another detection bucket.
+    const punchedToday = new Set();
+    (parsed.rows || []).forEach(r => {
+      if (r.date !== csvDate) return;
+      const idRaw = r['Employee ID'] || r.employee_id || r.EmployeeID || r.ID || '';
+      const id    = String(idRaw).trim().toUpperCase();
+      if (!id) return;
+      const norm = id.startsWith('H') ? id : 'H' + id;
+      punchedToday.add(norm);
+    });
+
+    // Iterate the employee directory. Skip terminated/inactive flags
+    // if present on the record so we don't surface ex-employees.
+    Object.values(empById).forEach(emp => {
+      if (!emp?.id) return;
+      if (emp.terminated || emp.is_active === false || emp.status === 'inactive') return;
+      const empId = String(emp.id).toUpperCase();
+      if (punchedToday.has(empId)) return;
+
+      // Approved leave covers today?
+      if (onLeaveOnDate(emp.id, csvDate)) {
+        out.onLeave.push(emp);
+        return;
+      }
+
+      // Mawani visit on today? mawaniDays is keyed by 'EMPID|DATE'.
+      if (mawaniDays && mawaniDays.has(empId + '|' + csvDate)) {
+        out.onMawani.push(emp);
+        return;
+      }
+
+      // Otherwise — unexplained. Could be: sick (no leave logged),
+      // not enrolled in biometric, terminated but still on roster,
+      // or a genuine no-show. Bashaier reviews and decides.
+      out.unexplained.push(emp);
+    });
+
+    // Stable sort by name so the list is consistent across renders.
+    const byName = (a, b) => String(a.name || '').localeCompare(String(b.name || ''));
+    out.onLeave.sort(byName);
+    out.onMawani.sort(byName);
+    out.unexplained.sort(byName);
+    return out;
+  }, [csvDate, csvIsWeekend, empById, parsed.rows, onLeaveOnDate, mawaniDays]);
+
   // ─── Persist daily attendance to attendance_daily ──────────────────
   // Every successful parse triggers a write of one row per
   // (employee, date) to attendance_daily. Re-uploads upsert on the
@@ -5239,6 +5309,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           />
           <ManagerRollupCard
             detection={detection}
+            empById={empById}
+          />
+          <SilentAbsencesCard
+            silentAbsences={silentAbsences}
             empById={empById}
           />
           <FileSummary
