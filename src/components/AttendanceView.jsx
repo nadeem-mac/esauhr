@@ -20,6 +20,7 @@ import WorkingHoursManager from './WorkingHoursManager.jsx';
 import EmployeeAttendanceDetailPanel from './EmployeeAttendanceDetailPanel.jsx';
 import RepeatOffendersCard from './RepeatOffendersCard.jsx';
 import ManagerRollupCard from './ManagerRollupCard.jsx';
+import EvaluationExplainModal from './EvaluationExplainModal.jsx';
 
 // ─── Error Boundary for AttendanceView sections ───────────────────────
 // Without this, a render-time exception anywhere in the tree under
@@ -1533,6 +1534,11 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   const [mawaniDays, setMawaniDays]               = useState(() => new Set());
   const [sentMarkers, setSentMarkers]             = useState({}); // key: row.id → true
   const [loggedMarkers, setLoggedMarkers]         = useState({}); // key: 'empId:type' → true
+
+  // Explain-modal state — when a user clicks "Why?" on any violation
+  // row, we stash { entry, kind } here and render the modal.
+  // Single-instance — only one explain open at a time.
+  const [explainPayload, setExplainPayload] = useState(null);
   // Pending-EOD-review tracker. Populated from attendance_review_log on
   // mount and after each file-load mode-log. Each entry: { review_date,
   // morning_at, eod_at }. eod_at is null by definition for everything
@@ -3735,6 +3741,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       barFrom="#FB7185" barTo="#BE123C"
       empty={shiftMode ? 'No shift staff flagged for late shift-IN.' : 'Nobody arrived late today — well done team.'}
       onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'late', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
+      onExplain={(entry) => setExplainPayload({ entry, kind: 'late' })}
       entries={filteredEntries.map(e => {
         const baseDetail = 'Punched in at ' + e.punchInStr + ' — '
           + e.minutesLate + ' min after grace period'
@@ -3806,6 +3813,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       barFrom="#818CF8" barTo="#4338CA"
       empty="Every staff member has a punch-in on record for today."
       onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'missedIn', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
+      onExplain={(entry) => setExplainPayload({ entry, kind: 'missedIn' })}
       entries={detection.missedIn.map(e => {
         const types = e.missingType === 'both' ? ['missed_in', 'missed_out'] : ['missed_in'];
         const allLogged = types.every(t => loggedMarkers[e.employee.id + ':' + t]);
@@ -3858,6 +3866,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       barFrom="#F87171" barTo="#991B1B"
       empty="No shift absences flagged."
       onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'shiftAbsent', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
+      onExplain={(entry) => setExplainPayload({ entry, kind: 'shiftAbsent' })}
       entries={detection.shiftAbsent.map(e => {
         const types = ['missed_in', 'missed_out'];
         const allLogged = types.every(t => loggedMarkers[e.employee.id + ':' + t]);
@@ -3907,6 +3916,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       barFrom="#FACC15" barTo="#A16207"
       empty={shiftMode ? 'No shift staff flagged for early shift-OUT.' : 'Nobody left early yesterday — full day attendance recorded.'}
       onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'early', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
+      onExplain={(entry) => setExplainPayload({ entry, kind: 'early' })}
       entries={filteredEntries.map(e => {
         const baseDetail = 'Punched out at ' + e.punchOutStr + ' — '
           + e.minutesEarly + ' min before scheduled ' + e.scheduledEnd
@@ -3971,6 +3981,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       barFrom="#C084FC" barTo="#7E22CE"
       empty="Every staff member has a punch-out on record for yesterday."
       onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'missedOut', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
+      onExplain={(entry) => setExplainPayload({ entry, kind: 'missedOut' })}
       entries={detection.missedOut.map(e => {
         const types = e.missingType === 'both' ? ['missed_in', 'missed_out'] : ['missed_out'];
         const allLogged = types.every(t => loggedMarkers[e.employee.id + ':' + t]);
@@ -5347,14 +5358,25 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           Mode toggle (Live/Test) lives inside the modal — the parent
           just passes the current session and updates `mode` when
           the toggle is clicked. */}
+      {/* Explain modal — opens when any FlaggedSection's "Why?"
+          button is clicked. Shows the full evaluation chain (punches,
+          schedule, comparison, permission, classification) so disputes
+          can be settled in one place. */}
+      {explainPayload && (
+        <EvaluationExplainModal
+          entry={explainPayload.entry}
+          kind={explainPayload.kind}
+          onClose={() => setExplainPayload(null)}
+        />
+      )}
+
       {bulkSession && (
         <BulkActionModal
           session={bulkSession}
           csvDate={csvDate}
           getManagerEmail={getManagerEmail}
           onClose={() => setBulkSession(null)}
-          onSetMode={(nextMode) => setBulkSession(prev => prev ? { ...prev, mode: nextMode } : prev)}
-          onOpenDraft={(entry) => {
+          onSetMode={(nextMode) => setBulkSession(prev => prev ? { ...prev, mode: nextMode } : prev)}          onOpenDraft={(entry) => {
             const k = bulkSession.kind;
             const m = bulkSession.mode || 'live';
             if (k === 'late')   handleEmailLate(entry, m);
@@ -6726,7 +6748,7 @@ function RosterDiagnostic({ empKey, flaggedDate, monthShifts }) {
 }
 
 
-function FlaggedSection({ title, kicker, iconColor, barFrom, barTo, entries, empty, renderButton, onBulk }) {
+function FlaggedSection({ title, kicker, iconColor, barFrom, barTo, entries, empty, renderButton, onBulk, onExplain }) {
   if (!entries.length) {
     return (
       <div className="rounded-2xl border bg-white p-3 sm:p-5" style={{ borderColor: '#D4D4D4' }}>
@@ -6850,6 +6872,18 @@ function FlaggedSection({ title, kicker, iconColor, barFrom, barTo, entries, emp
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                {onExplain && (
+                  <button onClick={() => onExplain(entry)}
+                    className="text-[10px] px-2 py-1 rounded inline-flex items-center gap-1 hover:bg-[#FAFAF9]"
+                    style={{
+                      border: '1px solid #EEEAE0',
+                      color: '#7A7A7A',
+                      background: '#FFFFFF',
+                    }}
+                    title="Show the full evaluation chain — punches, schedule, comparison, permission lookup, classification.">
+                    Why?
+                  </button>
+                )}
                 {renderButton(entry)}
               </div>
             </div>
