@@ -1198,31 +1198,6 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     return () => { cancelled = true; };
   }, []);
 
-  // Tier 2 fix (#7) — System health: track when the most recent
-  // attendance upload landed, so the health pill can tell Bashaier at
-  // a glance whether the system is "fresh" (uploaded today) or stale
-  // (no upload in days). Combined with reevalState.lastRunAt, gives
-  // her a quick read on whether the data she's looking at is current.
-  // Refreshes whenever the calendar refresh tick bumps so it stays
-  // current after Save & Close.
-  const [lastUploadAt, setLastUploadAt] = useState(null);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const rows = await directGet(
-          'attendance_uploads',
-          'select=uploaded_at&order=uploaded_at.desc&limit=1',
-          { timeoutMs: 6000 }
-        );
-        if (!cancelled && Array.isArray(rows) && rows[0]?.uploaded_at) {
-          setLastUploadAt(rows[0].uploaded_at);
-        }
-      } catch { /* non-fatal */ }
-    })();
-    return () => { cancelled = true; };
-  }, [calendarRefreshTick]);
-
   // Escape-hatch detection — on mount, parse the URL for
   // `?admin=backfill` and flip the flag. Not persisted; a fresh tab
   // without the param goes back to the locked-down view.
@@ -1254,6 +1229,34 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     summary: null,
     error: null,
   });
+
+  // Tier 2 fix (#7) — System health: track when the most recent
+  // attendance upload landed, so the health pill can tell Bashaier at
+  // a glance whether the system is "fresh" (uploaded today) or stale
+  // (no upload in days). Combined with reevalState.lastRunAt, gives
+  // her a quick read on whether the data she's looking at is current.
+  // Refreshes whenever the calendar refresh tick bumps so it stays
+  // current after Save & Close. Declared AFTER calendarRefreshTick
+  // because the deps array references it — declaring it earlier
+  // caused a TDZ error: "can't access lexical declaration 'g' before
+  // initialization" (where 'g' was the minified calendarRefreshTick).
+  const [lastUploadAt, setLastUploadAt] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await directGet(
+          'attendance_uploads',
+          'select=uploaded_at&order=uploaded_at.desc&limit=1',
+          { timeoutMs: 6000 }
+        );
+        if (!cancelled && Array.isArray(rows) && rows[0]?.uploaded_at) {
+          setLastUploadAt(rows[0].uploaded_at);
+        }
+      } catch { /* non-fatal */ }
+    })();
+    return () => { cancelled = true; };
+  }, [calendarRefreshTick]);
 
   // Phase D — if the user lands on `activeView === 'backfill'` (e.g.
   // via a stale bookmark or a reload) but setup is complete and the
