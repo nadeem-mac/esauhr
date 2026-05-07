@@ -563,7 +563,7 @@ function buildAssignedShiftsBlock(shifts, violationDate, divider) {
     + divider + '\n\n';
 }
 
-function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, scheduledStart, lateCutoff, isCustomShift, scheduleLabel, isNightShiftStart, assignedBy, assignedAt, managerName, assignedShifts, violationDate }) {
+function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, scheduledStart, lateCutoff, isCustomShift, scheduleLabel, isNightShiftStart, assignedBy, assignedAt, managerName, assignedShifts, violationDate, staffHasShifts }) {
   const psn = String(employee.id || employee.psn || '').toUpperCase();
   const fullName = String(employee.name || '').toUpperCase();
   // Shift staff get a distinct subject prefix so the inbox makes
@@ -571,7 +571,14 @@ function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, schedul
   // standard 8 AM office one. Per Nadeem (2026-05-06): shift staff
   // need the same email mechanism as office staff but with their
   // own title.
-  const subjectPrefix = isCustomShift
+  // Treat the staff as on shift-flow when EITHER the specific row was
+  // evaluated as a shift OR they are on the monthly shift roster (so
+  // shift workers feel acknowledged even on dates the manager hadn'''t
+  // explicitly assigned). Wording that describes what was actually
+  // measured (shift-IN vs punch-in, 8:00 AM bullet) stays gated on
+  // the narrower isCustomShift.
+  const isShiftFlow = !!(isCustomShift || staffHasShifts);
+  const subjectPrefix = isShiftFlow
     ? (isNightShiftStart ? 'Shift Late Arrival Notice (Night Shift)' : 'Shift Late Arrival Notice')
     : 'Late Arrival Notice';
   const subject = subjectPrefix + ' — ' + psn + ' ' + fullName + ' — ' + dateLong;
@@ -618,10 +625,22 @@ function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, schedul
       + (assignedAt ? ' on ' + new Date(assignedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '')
       + ' through the ESAU HR Portal. Your acknowledgment of the shift is on file in the same system.\n\n'
     : '';
+
+  // No-assignment clarifier — only fires when the staff is on the
+  // monthly shift roster (staffHasShifts) but the SPECIFIC date in
+  // question had no shift on file (so isCustomShift came through
+  // false and the row fell back to office-hours evaluation). This
+  // explains to the staff why their email looks office-style even
+  // though they're a shift worker, and points them at the roster
+  // block to verify their schedule.
+  const noAssignmentNote = (staffHasShifts && !isCustomShift && Array.isArray(assignedShifts) && assignedShifts.length > 0)
+    ? 'Note: you are on the shift roster for this month (see the schedule below). However, no specific shift was assigned for ' + dateLong + ' in the ESAU HR Portal, so the punches for this date were evaluated against the standard office-hours window. If a shift should have been assigned for this date, please raise it with your line manager so the schedule can be corrected.\n\n'
+    : '';
   const body =
     'Dear ' + greetName + ',\n\n' +
     'HR\u2019s daily attendance review for ' + dateLong + ' shows your ' + punchPhrase + ' at ' + punchInStr + ', ' + minutesLate + ' minutes past the 15-minute grace period and with no approved permission on file. This is recorded as a late-arrival violation.' + shiftContext + '\n\n' +
     assignmentPara +
+    noAssignmentNote +
     buildAssignedShiftsBlock(assignedShifts, violationDate, divider) +
     'As a reminder, according to the ESAU attendance policy:\n\n' +
     divider + '\n' +
@@ -633,10 +652,11 @@ function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, schedul
   return { subject, body };
 }
 
-function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd, minutesEarly, isCustomShift, scheduleLabel, isNightShiftEnd, scheduledStart, assignedBy, assignedAt, managerName, assignedShifts, violationDate }) {
+function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd, minutesEarly, isCustomShift, scheduleLabel, isNightShiftEnd, scheduledStart, assignedBy, assignedAt, managerName, assignedShifts, violationDate, staffHasShifts }) {
   const psn = String(employee.id || employee.psn || '').toUpperCase();
   const fullName = String(employee.name || '').toUpperCase();
-  const subjectPrefix = isCustomShift
+  const isShiftFlow = !!(isCustomShift || staffHasShifts);
+  const subjectPrefix = isShiftFlow
     ? (isNightShiftEnd ? 'Shift Early Departure Notice (Night Shift)' : 'Shift Early Departure Notice')
     : 'Early Departure Notice';
   const subject = subjectPrefix + ' — ' + psn + ' ' + fullName + ' — ' + dateLong;
@@ -689,10 +709,22 @@ function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd,
       + (assignedAt ? ' on ' + new Date(assignedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '')
       + ' through the ESAU HR Portal. Your acknowledgment of the shift is on file in the same system.\n\n'
     : '';
+
+  // No-assignment clarifier — only fires when the staff is on the
+  // monthly shift roster (staffHasShifts) but the SPECIFIC date in
+  // question had no shift on file (so isCustomShift came through
+  // false and the row fell back to office-hours evaluation). This
+  // explains to the staff why their email looks office-style even
+  // though they're a shift worker, and points them at the roster
+  // block to verify their schedule.
+  const noAssignmentNote = (staffHasShifts && !isCustomShift && Array.isArray(assignedShifts) && assignedShifts.length > 0)
+    ? 'Note: you are on the shift roster for this month (see the schedule below). However, no specific shift was assigned for ' + dateLong + ' in the ESAU HR Portal, so the punches for this date were evaluated against the standard office-hours window. If a shift should have been assigned for this date, please raise it with your line manager so the schedule can be corrected.\n\n'
+    : '';
   const body =
     'Dear ' + greetName + ',\n\n' +
     'HR\u2019s daily attendance review for ' + dateLong + ' shows your ' + punchPhrase + ' at ' + punchOutStr + ', ' + minutesEarly + ' minutes before your scheduled ' + endStr12h + (isCustomShift ? ' shift end' : ' clock-out time') + ' and with no approved permission on file. This is recorded as an early-departure violation.' + shiftContext + '\n\n' +
     assignmentPara +
+    noAssignmentNote +
     buildAssignedShiftsBlock(assignedShifts, violationDate, divider) +
     'As a reminder, according to the ESAU attendance policy:\n\n' +
     divider + '\n' +
@@ -704,7 +736,7 @@ function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd,
   return { subject, body };
 }
 
-function missedPunchEmailContent({ employee, dateLong, missingType, isCustomShift, scheduleLabel, scheduledStart, scheduledEnd, isNightShiftStart, isNightShiftEnd, assignedBy, assignedAt, managerName, assignedShifts, violationDate }) {
+function missedPunchEmailContent({ employee, dateLong, missingType, isCustomShift, scheduleLabel, scheduledStart, scheduledEnd, isNightShiftStart, isNightShiftEnd, assignedBy, assignedAt, managerName, assignedShifts, violationDate, staffHasShifts }) {
   // missingType: 'in' | 'out' | 'both'
   // Wording variants for the violation summary line and the action
   // paragraph. Both have to agree on which punch(es) are missing —
@@ -729,7 +761,8 @@ function missedPunchEmailContent({ employee, dateLong, missingType, isCustomShif
   const fullName = String(employee.name || '').toUpperCase();
   // Shift staff get a distinct subject prefix so the inbox makes
   // it obvious this is a shift-attendance issue.
-  const subjectPrefix = isCustomShift
+  const isShiftFlow = !!(isCustomShift || staffHasShifts);
+  const subjectPrefix = isShiftFlow
     ? ((isNightShiftStart || isNightShiftEnd) ? 'Shift Missing Punch Notice (Night Shift)' : 'Shift Missing Punch Notice')
     : 'Missing Punch Notice';
   const subject = subjectPrefix + ' — ' + psn + ' ' + fullName + ' — ' + dateLong;
@@ -778,6 +811,17 @@ function missedPunchEmailContent({ employee, dateLong, missingType, isCustomShif
       + ' through the ESAU HR Portal. Your acknowledgment of the shift is on file in the same system.\n\n'
     : '';
 
+  // No-assignment clarifier — only fires when the staff is on the
+  // monthly shift roster (staffHasShifts) but the SPECIFIC date in
+  // question had no shift on file (so isCustomShift came through
+  // false and the row fell back to office-hours evaluation). This
+  // explains to the staff why their email looks office-style even
+  // though they're a shift worker, and points them at the roster
+  // block to verify their schedule.
+  const noAssignmentNote = (staffHasShifts && !isCustomShift && Array.isArray(assignedShifts) && assignedShifts.length > 0)
+    ? 'Note: you are on the shift roster for this month (see the schedule below). However, no specific shift was assigned for ' + dateLong + ' in the ESAU HR Portal, so the punches for this date were evaluated against the standard office-hours window. If a shift should have been assigned for this date, please raise it with your line manager so the schedule can be corrected.\n\n'
+    : '';
+
   // Shift context line — reinforces in the opening paragraph that
   // the missed punches relate to a specific assigned shift, not a
   // generic working day.
@@ -802,6 +846,7 @@ function missedPunchEmailContent({ employee, dateLong, missingType, isCustomShif
     'Dear ' + greetName + ',\n\n' +
     'HR\u2019s daily attendance review for ' + dateLong + ' shows ' + missingPhrase + ' missing from the time card. This leaves the day\u2019s record incomplete and cannot be processed for payroll until corrected.' + shiftContext + '\n\n' +
     assignmentPara +
+    noAssignmentNote +
     buildAssignedShiftsBlock(assignedShifts, violationDate, divider) +
     'As a reminder, according to the ESAU attendance policy:\n\n' +
     divider + '\n' +
@@ -843,10 +888,17 @@ function missedPunchEmailContent({ employee, dateLong, missingType, isCustomShif
 //      the UI plumbing treats all three violation types uniformly.
 // ─────────────────────────────────────────────────────────────────────────
 
-function lateEmailContentTemp({ employee, dateLong, punchInStr, minutesLate, scheduledStart, lateCutoff, isCustomShift, scheduleLabel, isNightShiftStart, assignedBy, assignedAt, managerName, assignedShifts, violationDate }) {
+function lateEmailContentTemp({ employee, dateLong, punchInStr, minutesLate, scheduledStart, lateCutoff, isCustomShift, scheduleLabel, isNightShiftStart, assignedBy, assignedAt, managerName, assignedShifts, violationDate, staffHasShifts }) {
   const psn = String(employee.id || employee.psn || '').toUpperCase();
   const fullName = String(employee.name || '').toUpperCase();
-  const subjectPrefix = isCustomShift
+  // Treat the staff as on shift-flow when EITHER the specific row was
+  // evaluated as a shift OR they are on the monthly shift roster (so
+  // shift workers feel acknowledged even on dates the manager hadn'''t
+  // explicitly assigned). Wording that describes what was actually
+  // measured (shift-IN vs punch-in, 8:00 AM bullet) stays gated on
+  // the narrower isCustomShift.
+  const isShiftFlow = !!(isCustomShift || staffHasShifts);
+  const subjectPrefix = isShiftFlow
     ? (isNightShiftStart ? 'Shift Late Arrival Notice (Night Shift)' : 'Shift Late Arrival Notice')
     : 'Late Arrival Notice';
   const subject = subjectPrefix + ' — ' + psn + ' ' + fullName + ' — ' + dateLong;
@@ -881,10 +933,22 @@ function lateEmailContentTemp({ employee, dateLong, punchInStr, minutesLate, sch
       + (assignedAt ? ' on ' + new Date(assignedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '')
       + ' through the ESAU HR Portal. Your acknowledgment of the shift is on file in the same system.\n\n'
     : '';
+
+  // No-assignment clarifier — only fires when the staff is on the
+  // monthly shift roster (staffHasShifts) but the SPECIFIC date in
+  // question had no shift on file (so isCustomShift came through
+  // false and the row fell back to office-hours evaluation). This
+  // explains to the staff why their email looks office-style even
+  // though they're a shift worker, and points them at the roster
+  // block to verify their schedule.
+  const noAssignmentNote = (staffHasShifts && !isCustomShift && Array.isArray(assignedShifts) && assignedShifts.length > 0)
+    ? 'Note: you are on the shift roster for this month (see the schedule below). However, no specific shift was assigned for ' + dateLong + ' in the ESAU HR Portal, so the punches for this date were evaluated against the standard office-hours window. If a shift should have been assigned for this date, please raise it with your line manager so the schedule can be corrected.\n\n'
+    : '';
   const body =
     'Dear ' + greetName + ',\n\n' +
     'HR\u2019s daily attendance review for ' + dateLong + ' shows your ' + punchPhrase + ' at ' + punchInStr + ', ' + minutesLate + ' minutes past the 15-minute grace period and with no approved permission on file. This is recorded as a late-arrival violation.' + shiftContext + '\n\n' +
     assignmentPara +
+    noAssignmentNote +
     buildAssignedShiftsBlock(assignedShifts, violationDate, divider) +
     'As a reminder, according to the ESAU attendance policy:\n\n' +
     divider + '\n' +
@@ -895,10 +959,11 @@ function lateEmailContentTemp({ employee, dateLong, punchInStr, minutesLate, sch
   return { subject, body };
 }
 
-function earlyLeaveEmailContentTemp({ employee, dateLong, punchOutStr, scheduledEnd, minutesEarly, isCustomShift, scheduleLabel, isNightShiftEnd, assignedBy, assignedAt, managerName, assignedShifts, violationDate }) {
+function earlyLeaveEmailContentTemp({ employee, dateLong, punchOutStr, scheduledEnd, minutesEarly, isCustomShift, scheduleLabel, isNightShiftEnd, assignedBy, assignedAt, managerName, assignedShifts, violationDate, staffHasShifts }) {
   const psn = String(employee.id || employee.psn || '').toUpperCase();
   const fullName = String(employee.name || '').toUpperCase();
-  const subjectPrefix = isCustomShift
+  const isShiftFlow = !!(isCustomShift || staffHasShifts);
+  const subjectPrefix = isShiftFlow
     ? (isNightShiftEnd ? 'Shift Early Departure Notice (Night Shift)' : 'Shift Early Departure Notice')
     : 'Early Departure Notice';
   const subject = subjectPrefix + ' — ' + psn + ' ' + fullName + ' — ' + dateLong;
@@ -935,10 +1000,22 @@ function earlyLeaveEmailContentTemp({ employee, dateLong, punchOutStr, scheduled
       + (assignedAt ? ' on ' + new Date(assignedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '')
       + ' through the ESAU HR Portal. Your acknowledgment of the shift is on file in the same system.\n\n'
     : '';
+
+  // No-assignment clarifier — only fires when the staff is on the
+  // monthly shift roster (staffHasShifts) but the SPECIFIC date in
+  // question had no shift on file (so isCustomShift came through
+  // false and the row fell back to office-hours evaluation). This
+  // explains to the staff why their email looks office-style even
+  // though they're a shift worker, and points them at the roster
+  // block to verify their schedule.
+  const noAssignmentNote = (staffHasShifts && !isCustomShift && Array.isArray(assignedShifts) && assignedShifts.length > 0)
+    ? 'Note: you are on the shift roster for this month (see the schedule below). However, no specific shift was assigned for ' + dateLong + ' in the ESAU HR Portal, so the punches for this date were evaluated against the standard office-hours window. If a shift should have been assigned for this date, please raise it with your line manager so the schedule can be corrected.\n\n'
+    : '';
   const body =
     'Dear ' + greetName + ',\n\n' +
     'HR\u2019s daily attendance review for ' + dateLong + ' shows your ' + punchPhrase + ' at ' + punchOutStr + ', ' + minutesEarly + ' minutes before your scheduled ' + endStr12h + (isCustomShift ? ' shift end' : ' clock-out time') + ' and with no approved permission on file. This is recorded as an early-departure violation.' + shiftContext + '\n\n' +
     assignmentPara +
+    noAssignmentNote +
     buildAssignedShiftsBlock(assignedShifts, violationDate, divider) +
     'As a reminder, according to the ESAU attendance policy:\n\n' +
     divider + '\n' +
@@ -1823,6 +1900,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             lateCutoff: addMinutesToTime(bridgeFromPrev.startStr, +15),
             scheduleLabel: 'Night shift (' + bridgeFromPrev.startStr + ' → ' + endStr + ' next day, completed today)',
             isCustomShift: true,
+            staffHasShifts: shiftStaffThisMonth.has(empKey),
             assignedBy: bridgeFromPrev.setBy || null,
             assignedAt: bridgeFromPrev.assignedAt || null,
             dateLabel: rowDate,
@@ -1855,6 +1933,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             earlyCutoff: endCutoffStr,
             scheduleLabel: 'Night shift (' + bridgeFromPrev.startStr + ' → ' + endStr + ' next day, completed today)',
             isCustomShift: true,
+            staffHasShifts: shiftStaffThisMonth.has(empKey),
             assignedBy: bridgeFromPrev.setBy || null,
             assignedAt: bridgeFromPrev.assignedAt || null,
             minutesEarly: endMin - outMin,
@@ -1891,6 +1970,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             lateCutoff: sched.lateCutoffStr,
             scheduleLabel: sched.label,
             isCustomShift: !!sched.isCustom,
+            staffHasShifts: shiftStaffThisMonth.has(empKey),
             assignedBy: sched.assignedBy || null,
             assignedAt: sched.assignedAt || null,
             dateLabel: rowDate,
@@ -1921,6 +2001,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             lateCutoff: sched.lateCutoffStr,
             scheduleLabel: sched.label,
             isCustomShift: !!sched.isCustom,
+            staffHasShifts: shiftStaffThisMonth.has(empKey),
             permission: perm, permStatus, minutesBeyond,
             dateLabel: rowDate,
           });
@@ -1970,6 +2051,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             lateCutoff: sched.lateCutoffStr,
             scheduleLabel: sched.label,
             isCustomShift: true,
+            staffHasShifts: shiftStaffThisMonth.has(empKey),
             assignedBy: sched.assignedBy || null,
             assignedAt: sched.assignedAt || null,
             dateLabel: rowDate,
@@ -2003,6 +2085,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             lateCutoff: sched.lateCutoffStr,
             scheduleLabel: sched.label,
             isCustomShift: true,
+            staffHasShifts: shiftStaffThisMonth.has(empKey),
             assignedBy: sched.assignedBy || null,
             assignedAt: sched.assignedAt || null,
             permission: perm, permStatus, minutesBeyond,
@@ -2031,6 +2114,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             lateCutoff: sched.lateCutoffStr,
             scheduleLabel: sched.label,
             isCustomShift: !!sched.isCustom,
+            staffHasShifts: shiftStaffThisMonth.has(empKey),
             assignedBy: sched.assignedBy || null,
             assignedAt: sched.assignedAt || null,
             dateLabel: rowDate,
@@ -2061,6 +2145,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             earlyCutoff: sched.earlyCutoffStr,
             scheduleLabel: sched.label,
             isCustomShift: !!sched.isCustom,
+            staffHasShifts: shiftStaffThisMonth.has(empKey),
             minutesEarly: scheduledEndMin - punchOutMin,
             isSup: isSupTeam(emp),
             permission: perm, permStatus, minutesBeyond,
@@ -2541,6 +2626,12 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
       managerName: entry.assignedBy ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
+      // staffHasShifts — true when the staff member is on the monthly
+      // shift roster, even if THIS specific date was not assigned a
+      // shift. Lets the email apply shift-aware wording, bullets, and
+      // attribution for shift workers caught on unassigned dates,
+      // instead of falling back to office-hours phrasing.
+      staffHasShifts: !!entry.staffHasShifts,
       // Always pass the staff's full month roster — buildAssignedShiftsBlock
       // returns '' when empty, so office staff get nothing extra. Per Nadeem
       // (2026-05-07): shift staff should see their assigned roster even if
@@ -2585,6 +2676,12 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
       managerName: entry.assignedBy ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
+      // staffHasShifts — true when the staff member is on the monthly
+      // shift roster, even if THIS specific date was not assigned a
+      // shift. Lets the email apply shift-aware wording, bullets, and
+      // attribution for shift workers caught on unassigned dates,
+      // instead of falling back to office-hours phrasing.
+      staffHasShifts: !!entry.staffHasShifts,
       // Always pass the staff's full month roster — buildAssignedShiftsBlock
       // returns '' when empty, so office staff get nothing extra. Per Nadeem
       // (2026-05-07): shift staff should see their assigned roster even if
@@ -2627,6 +2724,12 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
       managerName: entry.assignedBy ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
+      // staffHasShifts — true when the staff member is on the monthly
+      // shift roster, even if THIS specific date was not assigned a
+      // shift. Lets the email apply shift-aware wording, bullets, and
+      // attribution for shift workers caught on unassigned dates,
+      // instead of falling back to office-hours phrasing.
+      staffHasShifts: !!entry.staffHasShifts,
       // Always pass the staff's full month roster — buildAssignedShiftsBlock
       // returns '' when empty, so office staff get nothing extra. Per Nadeem
       // (2026-05-07): shift staff should see their assigned roster even if
@@ -5457,6 +5560,7 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, empById, monthly
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
       managerName: (entry.assignedBy && empById) ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
+      staffHasShifts: !!entry.staffHasShifts,
       assignedShifts: monthlyShiftsByEmp
         ? (monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [])
         : [],
@@ -5478,6 +5582,7 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, empById, monthly
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
       managerName: (entry.assignedBy && empById) ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
+      staffHasShifts: !!entry.staffHasShifts,
       assignedShifts: monthlyShiftsByEmp
         ? (monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [])
         : [],
@@ -5498,6 +5603,7 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, empById, monthly
       assignedBy: entry.assignedBy || null,
       assignedAt: entry.assignedAt || null,
       managerName: (entry.assignedBy && empById) ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
+      staffHasShifts: !!entry.staffHasShifts,
       assignedShifts: monthlyShiftsByEmp
         ? (monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [])
         : [],
