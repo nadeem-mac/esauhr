@@ -150,7 +150,7 @@ export default function SignatoriesCard() {
           <div className="text-[10px] tracking-[0.25em] mb-1" style={{ color: '#0A0A0A', fontWeight: 700 }}>
             OFFER LETTER SIGNATORIES
           </div>
-          <div style={{ fontFamily: 'Georgia, serif', fontSize: 20, color: '#0A0A0A' }}>
+          <div style={{ fontFamily: 'inherit', fontSize: 20, color: '#0A0A0A' }}>
             Signing authorities
           </div>
           <div className="text-xs mt-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>

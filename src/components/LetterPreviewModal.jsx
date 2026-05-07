@@ -318,7 +318,7 @@ export default function LetterPreviewModal({ offer, onClose, readOnly = false })
             textAlign: 'center',
             color: '#525252',
             fontSize: 13,
-            fontFamily: "'Helvetica Neue', Arial, sans-serif",
+            fontFamily: 'inherit',
           }}>
             <Loader2 style={{ width: 18, height: 18, display: 'inline-block', verticalAlign: 'middle', marginRight: 8 }} className="animate-spin" />
             Loading the contract…

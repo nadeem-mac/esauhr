@@ -428,7 +428,7 @@ function ColorTile({ accent = '#1F1B16', label, icon: Icon, stat, unit = '', des
       <div>
         <div
           style={{
-            fontFamily: "Georgia, 'Times New Roman', serif",
+            fontFamily: 'inherit',
             fontSize: smallStat ? '24px' : '38px',
             color: '#1F1B16',
             lineHeight: 1.05,
@@ -478,7 +478,7 @@ function FlagTile({ monthSummary }) {
       <div>
         <div
           style={{
-            fontFamily: "Georgia, 'Times New Roman', serif",
+            fontFamily: 'inherit',
             fontSize: '24px',
             color: '#1F1B16',
             lineHeight: 1.05,

@@ -51,7 +51,7 @@ export default function IssuePsnModal({ offer, onClose, onIssued, me }) {
             <div className="text-[10px] tracking-[0.25em] mb-1" style={{ color: '#0A0A0A', fontWeight: 700 }}>
               ISSUE PSN
             </div>
-            <div style={{ fontFamily: 'Georgia, serif', fontSize: 20, color: '#0A0A0A' }}>
+            <div style={{ fontFamily: 'inherit', fontSize: 20, color: '#0A0A0A' }}>
               {offer.candidate_name}
             </div>
           </div>

@@ -270,7 +270,7 @@ export default function ManagerDashboard({
         <div className="text-[10px] tracking-[0.25em] mb-1" style={{ color: '#1F1B16', fontWeight: 700 }}>
           — {todayLong.toUpperCase()}
         </div>
-        <h1 style={{ fontFamily: 'Georgia, serif', fontSize: '40px', color: '#1F1B16', lineHeight: 1.1 }}>
+        <h1 style={{ fontFamily: 'inherit', fontSize: '40px', color: '#1F1B16', lineHeight: 1.1 }}>
           {greeting}, {firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase()}.
         </h1>
         <div className="text-sm mt-2" style={{ color: '#1F1B16' }}>
@@ -490,7 +490,7 @@ function StatCard({ label, value, icon, accent, subtitle, actionLabel, onAction,
       <div className="min-w-0 flex-1">
         <div className="text-[10px] tracking-[0.25em]" style={{ color: '#1F1B16', fontWeight: 700 }}>{label}</div>
         <div className="flex items-baseline gap-2">
-          <div style={{ fontFamily: 'Georgia, serif', fontSize: '28px', color: '#1F1B16', fontWeight: 600 }}>{value}</div>
+          <div style={{ fontFamily: 'inherit', fontSize: '28px', color: '#1F1B16', fontWeight: 600 }}>{value}</div>
         </div>
         <div className="text-[11px]" style={{ color: '#1F1B16' }}>{subtitle}</div>
       </div>
@@ -515,7 +515,7 @@ function Card({ title, subtitle, empty, children }) {
     <div className="rounded-2xl border bg-white p-5"
          style={{ borderColor: 'var(--border-soft)', boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
       <div className="flex items-baseline justify-between mb-4">
-        <div style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#1F1B16' }}>{title}</div>
+        <div style={{ fontFamily: 'inherit', fontSize: '20px', color: '#1F1B16' }}>{title}</div>
         {subtitle && <div className="text-[11px]" style={{ color: '#1F1B16' }}>{subtitle}</div>}
       </div>
       {empty ? (

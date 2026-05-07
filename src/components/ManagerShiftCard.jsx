@@ -966,7 +966,7 @@ export default function ManagerShiftCard({ me, employees }) {
             <div className="text-[10px] tracking-[0.25em] mb-1.5" style={{ color: '#0A0A0A', fontWeight: 700 }}>
               CONFIRM SHIFT DISPATCH
             </div>
-            <div style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#0A0A0A', marginBottom: 6 }}>
+            <div style={{ fontFamily: 'inherit', fontSize: '20px', color: '#0A0A0A', marginBottom: 6 }}>
               Send shifts to {(directReports.find(e => e.id === staffId)?.name || '').split(' ')[0] || 'staff'}?
             </div>
             <div className="text-xs leading-relaxed mb-4" style={{ color: '#0A0A0A' }}>

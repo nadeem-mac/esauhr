@@ -675,7 +675,7 @@ export default function AttendanceBackfillPanel({ me, employees, embedded = fals
                   <span style={{ fontSize: 13, fontWeight: 700 }}>Writing rows…</span>
                 </div>
                 <div style={{ color: '#1F1B16' }}>
-                  <span style={{ fontFamily: 'Georgia, serif', fontSize: 22, fontWeight: 700 }}>{pct}</span>
+                  <span style={{ fontFamily: 'inherit', fontSize: 22, fontWeight: 700 }}>{pct}</span>
                   <span style={{ fontSize: 13, opacity: 0.55, marginLeft: 2 }}>%</span>
                 </div>
               </div>
@@ -730,7 +730,7 @@ export default function AttendanceBackfillPanel({ me, employees, embedded = fals
               <div className="flex-1 min-w-0">
                 <div
                   style={{
-                    fontFamily: 'Georgia, serif', fontSize: 20, color: '#065F46',
+                    fontFamily: 'inherit', fontSize: 20, color: '#065F46',
                     lineHeight: 1.15, fontWeight: 700,
                   }}
                 >
@@ -845,7 +845,7 @@ function FilePickerHero({ onFile }) {
       <div
         className="mt-3"
         style={{
-          fontFamily: 'Georgia, serif',
+          fontFamily: 'inherit',
           fontSize: 17,
           color: '#1F1B16',
           lineHeight: 1.2,
@@ -886,7 +886,7 @@ function StatTile({ icon, label, value, delay = 0 }) {
       </div>
       <div
         style={{
-          fontFamily: 'Georgia, serif',
+          fontFamily: 'inherit',
           fontSize: 28,
           color: '#1F1B16',
           marginTop: 4,

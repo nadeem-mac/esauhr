@@ -917,7 +917,7 @@ export default function HrApprovalModal({ request, employee, manager, substitute
               <div className="text-[10px] tracking-[0.25em] font-bold mb-1 pr-10" style={{ color: '#B45309' }}>
                 CROSS-CHECK · SEHHATY CERTIFICATE
               </div>
-              <h3 className="text-lg pr-10" style={{ fontFamily: 'Georgia, serif', color: '#0A0A0A', fontWeight: 500 }}>
+              <h3 className="text-lg pr-10" style={{ fontFamily: 'inherit', color: '#0A0A0A', fontWeight: 500 }}>
                 Cross-check the Sehhaty certificate
               </h3>
               <div className="text-[11px] mt-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>

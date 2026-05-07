@@ -687,7 +687,7 @@ function AddCertModal({ request, employee, me, onClose, onSaved }) {
           <div className="text-[10px] tracking-[0.25em] font-bold mb-1" style={{ color: '#0F4C2A' }}>
             ADD SEHHATY CERTIFICATE
           </div>
-          <h3 className="text-lg" style={{ fontFamily: 'Georgia, serif', color: '#0A0A0A', fontWeight: 500 }}>
+          <h3 className="text-lg" style={{ fontFamily: 'inherit', color: '#0A0A0A', fontWeight: 500 }}>
             Close the case
           </h3>
           <div className="text-[11px] mt-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>

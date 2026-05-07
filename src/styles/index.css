@@ -33,7 +33,12 @@ html, body, #root {
   min-height: 100%;
   background: var(--paper);
   color: var(--ink);
-  font-family: 'Carlito', 'Calibri', 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif;
+  /* Per Nadeem: Calibri across the project. Calibri is preferred when
+     installed (Microsoft Office machines, including Bashaier's work
+     laptop). Carlito is the metrically-compatible web fallback for
+     machines without Calibri. The further fallbacks (Trebuchet, Segoe
+     UI, system-ui) keep things readable on any platform. */
+  font-family: 'Calibri', 'Carlito', 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }

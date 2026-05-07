@@ -206,7 +206,7 @@ export default function AcceptOfferPage({ token }) {
 
   // ─── Render ────────────────────────────────────────────────────
   return (
-    <div style={{ minHeight: '100vh', background: '#F5F5F5', fontFamily: "'Helvetica Neue', Arial, sans-serif", padding: '24px 16px' }}>
+    <div style={{ minHeight: '100vh', background: '#F5F5F5', fontFamily: 'inherit', padding: '24px 16px' }}>
       <div style={{ maxWidth: 920, margin: '0 auto' }}>
         <PageHeader />
 

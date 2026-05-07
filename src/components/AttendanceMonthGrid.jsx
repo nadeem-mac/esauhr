@@ -271,7 +271,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
           <div className="text-[10px] mb-1" style={{ color: '#1F1B16', letterSpacing: '0.25em', fontWeight: 700 }}>
             MONTHLY ATTENDANCE
           </div>
-          <div style={{ fontFamily: 'Georgia, serif', fontSize: 20, color: '#1F1B16' }}>
+          <div style={{ fontFamily: 'inherit', fontSize: 20, color: '#1F1B16' }}>
             {monthLabel}
           </div>
           <div className="text-xs mt-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>

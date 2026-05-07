@@ -102,7 +102,7 @@ export default function StaffShiftStatusCard({ me }) {
           <div className="text-[10px] tracking-[0.25em] mb-1" style={{ color: '#1F1B16', fontWeight: 700 }}>
             SHIFT STATUS
           </div>
-          <div style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#1F1B16' }}>
+          <div style={{ fontFamily: 'inherit', fontSize: '20px', color: '#1F1B16' }}>
             Recent activity
           </div>
           <div className="text-xs mt-1" style={SMALL_TEXT}>

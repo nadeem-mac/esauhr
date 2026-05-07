@@ -238,7 +238,7 @@ function ZoneHeader({ number, kicker, title, body, accent = '#1F1B16' }) {
           background: '#FFFFFF',
           border: `1.5px solid ${accent}`,
           color: accent,
-          fontFamily: 'Georgia, serif',
+          fontFamily: 'inherit',
           fontSize: 16,
           fontWeight: 700,
           marginTop: 2,
@@ -256,7 +256,7 @@ function ZoneHeader({ number, kicker, title, body, accent = '#1F1B16' }) {
         </div>
         <div
           style={{
-            fontFamily: 'Georgia, serif',
+            fontFamily: 'inherit',
             fontSize: 22,
             color: '#1F1B16',
             lineHeight: 1.15,
@@ -4311,7 +4311,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             <div className="text-[10px] mb-1" style={{ color: '#0A0A0A', letterSpacing: '0.25em', fontWeight: 700 }}>
               WEEKEND ATTENDANCE
             </div>
-            <div style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#0A0A0A' }}>
+            <div style={{ fontFamily: 'inherit', fontSize: '20px', color: '#0A0A0A' }}>
               Weekend report for Mr John
             </div>
             <div className="text-xs mt-1" style={{ color: '#0A0A0A', opacity: 0.75 }}>
@@ -4933,7 +4933,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             background: isDragging ? '#ECFDF5' : '#F7F7F7',
           }}>
           <Upload className="w-10 h-10 mx-auto mb-4" style={{ color: '#1F1B16' }}/>
-          <div style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#1F1B16', marginBottom: '6px' }}>
+          <div style={{ fontFamily: 'inherit', fontSize: '20px', color: '#1F1B16', marginBottom: '6px' }}>
             Drop your Time Card .xlsx here
           </div>
           <div className="text-sm" style={{ color: '#1F1B16' }}>
@@ -5056,7 +5056,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       {hasFile && csvIsWeekend && (
         <div className="rounded-2xl border p-6 text-center" style={{ borderColor: '#D4D4D4', background: '#F7F7F7' }}>
           <Calendar className="w-8 h-8 mx-auto mb-3" style={{ color: '#1F1B16' }}/>
-          <div style={{ fontFamily: 'Georgia, serif', fontSize: '18px', color: '#1F1B16' }}>This was a weekend day.</div>
+          <div style={{ fontFamily: 'inherit', fontSize: '18px', color: '#1F1B16' }}>This was a weekend day.</div>
           <div className="text-sm mt-2" style={{ color: '#0A0A0A' }}>
             {formatDateLong(csvDate)} is a Friday or Saturday — no detection runs on KSA weekends.
           </div>
@@ -5352,7 +5352,7 @@ function WindowMismatchBanner({ mismatch, fileName, onReset }) {
           <div className="text-[10px] mb-1" style={{ color: '#0A0A0A', letterSpacing: '0.25em', fontWeight: 700 }}>
             FILE REJECTED &middot; DATE WINDOW MISMATCH
           </div>
-          <div style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#0A0A0A', lineHeight: 1.3 }}>
+          <div style={{ fontFamily: 'inherit', fontSize: '20px', color: '#0A0A0A', lineHeight: 1.3 }}>
             {headline}.
           </div>
           <div className="text-sm mt-1" style={{ color: '#0A0A0A' }}>
@@ -5814,7 +5814,7 @@ function FileSummary({
           <div className="text-[10px] mb-1" style={{ color: '#1F1B16', letterSpacing: '0.25em', fontWeight: 700 }}>
             UPLOADED FILE
           </div>
-          <div className="flex items-center gap-2" style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#1F1B16' }}>
+          <div className="flex items-center gap-2" style={{ fontFamily: 'inherit', fontSize: '20px', color: '#1F1B16' }}>
             <FileText className="w-5 h-5"/> {fileName}
           </div>
           <div className="text-sm mt-2" style={{ color: '#0A0A0A' }}>
@@ -6476,7 +6476,7 @@ function FlaggedSection({ title, kicker, iconColor, barFrom, barTo, entries, emp
     return (
       <div className="rounded-2xl border bg-white p-3 sm:p-5" style={{ borderColor: '#D4D4D4' }}>
         <div className="text-[10px] mb-1" style={{ color: '#1F1B16', letterSpacing: '0.25em', fontWeight: 700 }}>{kicker}</div>
-        <div style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#1F1B16' }}>{title}</div>
+        <div style={{ fontFamily: 'inherit', fontSize: '20px', color: '#1F1B16' }}>{title}</div>
         <div className="flex items-center gap-2 mt-3" style={{ color: '#047857' }}>
           <CheckCircle2 className="w-4 h-4"/>
           <span className="text-sm">{empty}</span>
@@ -6508,7 +6508,7 @@ function FlaggedSection({ title, kicker, iconColor, barFrom, barTo, entries, emp
           </button>
         )}
       </div>
-      <div className="mb-4" style={{ fontFamily: 'Georgia, serif', fontSize: '22px', color: '#1F1B16' }}>{title}</div>
+      <div className="mb-4" style={{ fontFamily: 'inherit', fontSize: '22px', color: '#1F1B16' }}>{title}</div>
       <div className="space-y-3">
         {entries.map(entry => (
           <div key={entry.id} className="rounded-xl border bg-white relative overflow-hidden esau-badge"
@@ -6829,7 +6829,7 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, empById, monthly
               <Mail className="w-5 h-5" style={{ color: mode === 'test' ? '#92400E' : '#A16207' }}/>
             </div>
             <div>
-              <h2 style={{ fontFamily: 'Georgia, serif', fontSize: '18px', color: '#0A0A0A', fontWeight: 500 }}>
+              <h2 style={{ fontFamily: 'inherit', fontSize: '18px', color: '#0A0A0A', fontWeight: 500 }}>
                 Confirm before sending
                 {mode === 'test' && (
                   <span className="ml-2 align-middle text-[10px] px-2 py-0.5 rounded-full"
@@ -6998,7 +6998,7 @@ function BulkActionModal({ session, csvDate, getManagerEmail, onClose, onOpenDra
                 BULK · {heading.toUpperCase()} · {isTest ? 'TEST' : 'LIVE'}
               </span>
             </div>
-            <h2 style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#0A0A0A', fontWeight: 500 }}>
+            <h2 style={{ fontFamily: 'inherit', fontSize: '20px', color: '#0A0A0A', fontWeight: 500 }}>
               {done} of {total} drafts opened
             </h2>
             <div className="text-xs mt-1" style={{ color: '#0A0A0A' }}>

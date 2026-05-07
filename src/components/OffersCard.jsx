@@ -296,7 +296,7 @@ export default function OffersCard({ me, employees, readOnly = false }) {
             <div className="text-[10px] tracking-[0.25em] mb-1" style={{ color: '#1F1B16', fontWeight: 700 }}>
               CANDIDATE OFFERS
             </div>
-            <div style={{ fontFamily: 'Georgia, serif', fontSize: 20, color: '#1F1B16' }}>
+            <div style={{ fontFamily: 'inherit', fontSize: 20, color: '#1F1B16' }}>
               Hiring pipeline
             </div>
             <div className="text-xs mt-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>
@@ -345,7 +345,7 @@ export default function OffersCard({ me, employees, readOnly = false }) {
           <div className="text-[10px] tracking-[0.25em] mb-1" style={{ color: '#1F1B16', fontWeight: 700 }}>
             CANDIDATE OFFERS
           </div>
-          <div style={{ fontFamily: 'Georgia, serif', fontSize: 20, color: '#1F1B16' }}>
+          <div style={{ fontFamily: 'inherit', fontSize: 20, color: '#1F1B16' }}>
             Hiring pipeline
           </div>
           <div className="text-xs mt-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>

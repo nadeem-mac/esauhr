@@ -753,7 +753,7 @@ function DayDetailModal({ iso, leaves, perms, shifts, holiday, empMap, typeMap, 
             <div className="text-[10px] tracking-[0.25em] mb-1" style={{ fontWeight: 700, color: '#0A0A0A' }}>
               CALENDAR · DAY DETAIL
             </div>
-            <h2 style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#0A0A0A', fontWeight: 500 }}>
+            <h2 style={{ fontFamily: 'inherit', fontSize: '20px', color: '#0A0A0A', fontWeight: 500 }}>
               {dateLabel}
             </h2>
             <div className="text-xs mt-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>

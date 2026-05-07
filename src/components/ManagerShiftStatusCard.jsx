@@ -120,7 +120,7 @@ export default function ManagerShiftStatusCard({ me, employees }) {
         <div className="text-[10px] tracking-[0.25em] mb-1" style={{ color: '#1F1B16', fontWeight: 700 }}>
           SHIFT STATUS
         </div>
-        <div style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#1F1B16' }}>
+        <div style={{ fontFamily: 'inherit', fontSize: '20px', color: '#1F1B16' }}>
           Acknowledgments
         </div>
         <div className="mt-3 text-sm" style={{ color: '#1F1B16' }}>
@@ -145,7 +145,7 @@ export default function ManagerShiftStatusCard({ me, employees }) {
           <div className="text-[10px] tracking-[0.25em]" style={{ color: '#1F1B16', fontWeight: 700 }}>
             SHIFT STATUS
           </div>
-          <div style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#1F1B16' }}>
+          <div style={{ fontFamily: 'inherit', fontSize: '20px', color: '#1F1B16' }}>
             Acknowledgments
           </div>
           <div className="text-xs mt-1" style={{ color: '#1F1B16' }}>
@@ -241,7 +241,7 @@ function RollupTile({ label, count, color, bg, icon }) {
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-1.5" style={{ color, fontWeight: 700 }}>
           {icon}
-          <span style={{ fontFamily: 'Georgia, serif', fontSize: '20px' }}>{count}</span>
+          <span style={{ fontFamily: 'inherit', fontSize: '20px' }}>{count}</span>
         </span>
       </div>
       <div className="text-[10px] tracking-[0.15em] mt-0.5" style={{ color: '#1F1B16', fontWeight: 700 }}>

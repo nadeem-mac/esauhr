@@ -436,7 +436,7 @@ export default function NewOfferModal({ open, onClose, onCreated, employees, me 
             <div className="text-[10px] tracking-[0.25em] mb-1" style={{ color: '#0A0A0A', fontWeight: 700 }}>
               NEW OFFER
             </div>
-            <div style={{ fontFamily: 'Georgia, serif', fontSize: 22, color: '#0A0A0A' }}>
+            <div style={{ fontFamily: 'inherit', fontSize: 22, color: '#0A0A0A' }}>
               Issue offer letter
             </div>
             <div className="text-xs mt-1" style={{ color: '#0A0A0A', opacity: 0.7 }}>

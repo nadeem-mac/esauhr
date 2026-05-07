@@ -318,7 +318,7 @@ export default function ShiftMonthGrid({
           <div className="text-[10px] mb-1" style={{ color: '#0A0A0A', letterSpacing: '0.25em', fontWeight: 700 }}>
             {kicker}
           </div>
-          <div style={{ fontFamily: 'Georgia, serif', fontSize: '20px', color: '#0A0A0A' }}>
+          <div style={{ fontFamily: 'inherit', fontSize: '20px', color: '#0A0A0A' }}>
             {title}
           </div>
           {subtitle && (

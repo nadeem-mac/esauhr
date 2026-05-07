@@ -346,11 +346,11 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           plain greeting. No tiles, no gradients. */}
       {bashaierMode ? (
         <div className="pb-8" style={{ borderBottom: '1px solid #E5E5E5' }}>
-          <h1 className="leading-[1] mb-4" style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 'clamp(2.2rem, 5vw, 3.5rem)', color: '#1F1B16', fontWeight: 400, letterSpacing: '-0.02em' }}>
+          <h1 className="leading-[1] mb-4" style={{ fontFamily: 'inherit', fontSize: 'clamp(2.2rem, 5vw, 3.5rem)', color: '#1F1B16', fontWeight: 400, letterSpacing: '-0.02em' }}>
             Good {_period}, Bashaier.
           </h1>
           <p className="mb-3" style={{
-              fontFamily: heroMessage.lang === 'ar' ? '"Segoe UI", "Tahoma", Georgia, serif' : 'Georgia, serif',
+              fontFamily: heroMessage.lang === 'ar' ? '"Segoe UI", "Tahoma", Georgia, serif' : 'inherit',
               fontStyle: 'italic',
               color: '#1F1B16',
               fontSize: '1.15rem',
@@ -370,7 +370,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
         </div>
       ) : (
       <div className="pb-8" style={{ borderBottom: '1px solid #E5E5E5' }}>
-        <h1 className="leading-[1]" style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontSize: 'clamp(2.5rem, 5vw, 3.8rem)', color: '#1F1B16', fontWeight: 400, letterSpacing: '-0.02em' }}>
+        <h1 className="leading-[1]" style={{ fontFamily: 'inherit', fontSize: 'clamp(2.5rem, 5vw, 3.8rem)', color: '#1F1B16', fontWeight: 400, letterSpacing: '-0.02em' }}>
           {greeting}
         </h1>
         <p className="text-base mt-4 max-w-xl" style={{ color: '#1F1B16' }}>
@@ -466,7 +466,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
         <div className="flex items-baseline justify-between flex-wrap gap-3 mb-5">
           <div>
             <div className="text-[10px]" style={{ color: '#9D6B53', letterSpacing: '0.3em' }}>PEOPLE AT ESAU</div>
-            <h2 style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontSize: '26px', color: '#1F1B16', marginTop: '4px', fontWeight: 400 }}>
+            <h2 style={{ fontFamily: 'inherit', fontSize: '26px', color: '#1F1B16', marginTop: '4px', fontWeight: 400 }}>
               Headcount by department
             </h2>
           </div>
@@ -787,7 +787,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
               — A GENTLE REMINDER
             </div>
             <h2 style={{
-              fontFamily: 'Georgia, "Times New Roman", serif',
+              fontFamily: 'inherit',
               fontSize: '24px', fontWeight: 500, color: '#1F1B16',
               textAlign: 'center', margin: '0 0 12px', letterSpacing: '-0.01em',
             }}>
@@ -927,7 +927,7 @@ export function StatCard({ label, value, sub, accent = 'var(--ink)', onClick }) 
       <div className="text-[10px]" style={{ color: labelColor, letterSpacing: '0.2em', fontWeight: 500 }}>
         {label.toUpperCase()}
       </div>
-      <div style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontSize: '42px', color: '#1F1B16', lineHeight: 1, margin: '8px 0 4px', fontWeight: 400 }}>
+      <div style={{ fontFamily: 'inherit', fontSize: '42px', color: '#1F1B16', lineHeight: 1, margin: '8px 0 4px', fontWeight: 400 }}>
         {value}
       </div>
       {sub && <div className="text-[11px]" style={{ color: '#1F1B16' }}>{sub}</div>}

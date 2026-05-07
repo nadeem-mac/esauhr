@@ -490,7 +490,7 @@ export default function RefreshOverlay({ open, message = 'Made by the HumbleGeni
                   color: '#0A0A0A',
                   fontWeight: 700,
                   letterSpacing: '-0.005em',
-                  fontFamily: 'Georgia, serif',
+                  fontFamily: 'inherit',
                   fontStyle: 'italic',
                   display: 'inline-flex',
                   flexWrap: 'wrap',
@@ -553,7 +553,7 @@ export default function RefreshOverlay({ open, message = 'Made by the HumbleGeni
               fontStyle: 'italic',
               fontFamily: quote.lang === 'ar'
                 ? '"Segoe UI", "Tahoma", Georgia, serif'
-                : 'Georgia, serif',
+                : 'inherit',
               direction: quote.lang === 'ar' ? 'rtl' : 'ltr',
               lineHeight: 1.45,
               padding: '0 16px',
