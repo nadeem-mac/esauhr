@@ -1619,11 +1619,11 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       absent:         { bg: '#FEE2E2', fg: '#991B1B', border: '#FCA5A5', label: 'AB' },
       annual_leave:   { bg: '#CCFBF1', fg: '#115E59', border: '#5EEAD4', label: 'AL' },
       sick_leave:     { bg: '#EDE9FE', fg: '#5B21B6', border: '#C4B5FD', label: 'SL' },
-      maternity_leave:{ bg: '#FCE7F3', fg: '#9D174D', border: '#F9A8D4', label: 'ML' },
-      paternity_leave:{ bg: '#E0F2FE', fg: '#075985', border: '#7DD3FC', label: 'PL' },
-      hajj_leave:     { bg: '#FEF3C7', fg: '#854F0B', border: '#FCD34D', label: 'HJ' },
-      emergency_leave:{ bg: '#FEE2E2', fg: '#7F1D1D', border: '#FCA5A5', label: 'EL' },
-      unpaid_leave:   { bg: '#F3F4F6', fg: '#374151', border: '#D1D5DB', label: 'UL' },
+      maternity_leave:{ bg: '#FCE7F3', fg: '#9D174D', border: '#F9A8D4', label: '\u2713ML' },
+      paternity_leave:{ bg: '#E0F2FE', fg: '#075985', border: '#7DD3FC', label: '\u2713PL' },
+      hajj_leave:     { bg: '#FEF3C7', fg: '#854F0B', border: '#FCD34D', label: '\u2713HJ' },
+      emergency_leave:{ bg: '#FEE2E2', fg: '#7F1D1D', border: '#FCA5A5', label: '\u2713EL' },
+      unpaid_leave:   { bg: '#F3F4F6', fg: '#374151', border: '#D1D5DB', label: '\u2713UL' },
       off_roster:     { bg: '#DBEAFE', fg: '#1E3A8A', border: '#93C5FD', label: 'OR' },
       off_day:        { bg: '#EEF0FA', fg: '#3B4279', border: '#C7CFE5', label: 'OF' },
     };
@@ -1873,11 +1873,11 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
 +   '<span class="ll" style="background:#FEE2E2;color:#991B1B">AB Absent</span>'
 +   '<span class="ll" style="background:#CCFBF1;color:#115E59">AL Annual</span>'
 +   '<span class="ll" style="background:#EDE9FE;color:#5B21B6">SL Sick</span>'
-+   '<span class="ll" style="background:#FCE7F3;color:#9D174D">ML Maternity</span>'
-+   '<span class="ll" style="background:#E0F2FE;color:#075985">PL Paternity</span>'
-+   '<span class="ll" style="background:#FEF3C7;color:#854F0B">HJ Hajj</span>'
-+   '<span class="ll" style="background:#FEE2E2;color:#7F1D1D">EL Emergency</span>'
-+   '<span class="ll" style="background:#F3F4F6;color:#374151">UL Unpaid</span>'
++   '<span class="ll" style="background:#FCE7F3;color:#9D174D">\u2713ML Maternity</span>'
++   '<span class="ll" style="background:#E0F2FE;color:#075985">\u2713PL Paternity</span>'
++   '<span class="ll" style="background:#FEF3C7;color:#854F0B">\u2713HJ Hajj</span>'
++   '<span class="ll" style="background:#FEE2E2;color:#7F1D1D">\u2713EL Emergency</span>'
++   '<span class="ll" style="background:#F3F4F6;color:#374151">\u2713UL Unpaid</span>'
 +   '<span class="ll" style="background:#DBEAFE;color:#1E3A8A">OR Off-roster</span>'
 +   '<span class="ll" style="background:#EEF0FA;color:#3B4279">OF Off-day</span>'
 + '</div>'

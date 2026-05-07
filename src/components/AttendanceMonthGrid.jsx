@@ -82,15 +82,15 @@ function styleForStatus(status, notes) {
     case 'sick_leave':
       return { bg: '#EDE9FE', fg: '#5B21B6', border: '#C4B5FD', label: 'SL' };
     case 'maternity_leave':
-      return { bg: '#FCE7F3', fg: '#9D174D', border: '#F9A8D4', label: 'ML' };
+      return { bg: '#FCE7F3', fg: '#9D174D', border: '#F9A8D4', label: '✓ML' };
     case 'paternity_leave':
-      return { bg: '#E0F2FE', fg: '#075985', border: '#7DD3FC', label: 'PL' };
+      return { bg: '#E0F2FE', fg: '#075985', border: '#7DD3FC', label: '✓PL' };
     case 'hajj_leave':
-      return { bg: '#FEF3C7', fg: '#854F0B', border: '#FCD34D', label: 'HJ' };
+      return { bg: '#FEF3C7', fg: '#854F0B', border: '#FCD34D', label: '✓HJ' };
     case 'emergency_leave':
-      return { bg: '#FEE2E2', fg: '#7F1D1D', border: '#FCA5A5', label: 'EL' };
+      return { bg: '#FEE2E2', fg: '#7F1D1D', border: '#FCA5A5', label: '✓EL' };
     case 'unpaid_leave':
-      return { bg: '#F3F4F6', fg: '#374151', border: '#D1D5DB', label: 'UL' };
+      return { bg: '#F3F4F6', fg: '#374151', border: '#D1D5DB', label: '✓UL' };
     case 'off_roster':
       return { bg: '#DBEAFE', fg: '#1E3A8A', border: '#93C5FD', label: 'OR' };
     case 'off_day':
