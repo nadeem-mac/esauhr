@@ -19,6 +19,7 @@ import AttendanceBackfillPanel from './AttendanceBackfillPanel.jsx';
 import WorkingHoursManager from './WorkingHoursManager.jsx';
 import EmployeeAttendanceDetailPanel from './EmployeeAttendanceDetailPanel.jsx';
 import RepeatOffendersCard from './RepeatOffendersCard.jsx';
+import ManagerRollupCard from './ManagerRollupCard.jsx';
 
 // ─── Error Boundary for AttendanceView sections ───────────────────────
 // Without this, a render-time exception anywhere in the tree under
@@ -5107,6 +5108,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             refreshTick={calendarRefreshTick}
             hrSignature={HR_SIGNATURE}
             fixedCc={FIXED_CC}
+          />
+          <ManagerRollupCard
+            detection={detection}
+            empById={empById}
           />
           <FileSummary
             fileName={xlsxFileName}
