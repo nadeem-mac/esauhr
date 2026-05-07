@@ -104,7 +104,7 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
         ? '&employee_id=eq.' + encodeURIComponent(scopeId)
         : '';
       const data = await directGet(
-        'employee_shifts?select=id,employee_id,shift_date,shift_start,shift_end,status'
+        'employee_shifts?select=id,employee_id,shift_date,start_time,end_time,status'
         + '&shift_date=gte.' + monthStart
         + '&shift_date=lte.' + monthEnd
         + scopeQs
@@ -669,8 +669,8 @@ function HoverTooltip({ iso, leaves, perms, shifts, holiday, empMap, typeMap, an
                     <Briefcase className="w-3 h-3 flex-shrink-0" style={{ color: '#7E22CE' }}/>
                     <span style={{ fontWeight: 600 }}>{emp?.name || s.employee_id}</span>
                     <span style={{ opacity: 0.7 }}>
-                      {s.shift_start && s.shift_end
-                        ? ` · ${String(s.shift_start).slice(0,5)}–${String(s.shift_end).slice(0,5)}`
+                      {s.start_time && s.end_time
+                        ? ` · ${String(s.start_time).slice(0,5)}–${String(s.end_time).slice(0,5)}`
                         : ''}
                     </span>
                   </li>
@@ -862,8 +862,8 @@ function DayDetailModal({ iso, leaves, perms, shifts, holiday, empMap, typeMap, 
                         <div>
                           <span style={{ fontWeight: 600 }}>Shift assignment</span>
                           <span style={{ opacity: 0.75 }}>
-                            {s.shift_start && s.shift_end
-                              ? ` · ${String(s.shift_start).slice(0,5)}–${String(s.shift_end).slice(0,5)}`
+                            {s.start_time && s.end_time
+                              ? ` · ${String(s.start_time).slice(0,5)}–${String(s.end_time).slice(0,5)}`
                               : ''}
                             {s.status ? ` · ${s.status}` : ''}
                           </span>

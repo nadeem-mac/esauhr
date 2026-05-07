@@ -443,7 +443,7 @@ export async function fetchShiftEmployeeIds() {
 export async function fetchShiftAssignmentDates(startDate, endDate) {
   try {
     const qs =
-      'select=employee_id,shift_date,shift_start,shift_end,status' +
+      'select=employee_id,shift_date,start_time,end_time,status' +
       `&shift_date=gte.${startDate}` +
       `&shift_date=lte.${endDate}` +
       '&status=neq.declined' +
@@ -453,8 +453,8 @@ export async function fetchShiftAssignmentDates(startDate, endDate) {
     (rows || []).forEach(r => {
       if (r?.employee_id && r?.shift_date) {
         out.set(`${r.employee_id}|${r.shift_date}`, {
-          start: r.shift_start,
-          end: r.shift_end,
+          start: r.start_time,
+          end: r.end_time,
           status: r.status,
         });
       }
