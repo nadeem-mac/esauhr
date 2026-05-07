@@ -1120,17 +1120,31 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
   // Now that we have the date range from existing rows, fetch the
   // date-keyed shift assignments. Tight scope — only the dates that
   // appear in attendance_daily rows we're re-evaluating.
+  //
+  // Approved leaves are fetched separately so we can ALSO seed rows
+  // for staff who have no existing attendance_daily entries — common
+  // case: someone on long-term leave (maternity, hajj) who hasn't
+  // appeared in any time-card upload. Without this, their calendar
+  // would show empty cells instead of the correct leave classification.
   if (existing.length > 0) {
     const minD = existing[0].attendance_date;
     const maxD = existing[existing.length - 1].attendance_date;
     shiftDateSet = await fetchShiftAssignmentDates(minD, maxD);
     permsMap = await fetchApprovedPermissions(minD, maxD);
-    // Tier 3 fix (#3 / item 2): also fetch approved leaves so we can
-    // promote `late`/`short`/`missed_*` rows to `annual_leave` /
-    // `sick_leave` when leave was approved retroactively. Without
-    // this, those rows stay flagged as violations forever even though
-    // HR has accepted the absence.
     leavesByEmp = await fetchApprovedLeaves(minD, maxD);
+  }
+
+  // Always pull leaves for the requested window, regardless of
+  // whether existing rows are present. Necessary for the leave-only
+  // seeding path below, which needs to know about leaves even when
+  // the affected staff have zero rows in attendance_daily yet.
+  if (options?.startDate && options?.endDate) {
+    const windowLeaves = await fetchApprovedLeaves(options.startDate, options.endDate);
+    // Merge — existing entries from the existing-rows path stay,
+    // any new ones from the wider window get added.
+    for (const [empId, leaves] of windowLeaves) {
+      if (!leavesByEmp.has(empId)) leavesByEmp.set(empId, leaves);
+    }
   }
 
   // Punch index for overnight-shift evaluation in the reeval path —
@@ -1463,6 +1477,94 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
       // 'attendance_upload', backfill rows stay as 'backfill'.
       source:             r.source || 'backfill',
     });
+  }
+
+  // ── Leave-coverage seed pass ──────────────────────────────────────
+  // For every approved leave that overlaps the re-eval window, ensure
+  // an attendance_daily row exists for each covered date. Without this,
+  // staff on long-term leave (maternity, hajj, extended sick) who
+  // never appeared in a time-card upload would show as empty cells in
+  // the calendar/export — invisible despite being on approved leave.
+  //
+  // We only insert NEW rows here (not overwrite existing ones — those
+  // were handled by the main loop above). Status is derived from the
+  // leave_type name, mirroring the classification logic in the main
+  // loop so the two paths stay consistent.
+  //
+  // Only runs when an explicit window was provided (startDate/endDate).
+  // Full-table re-evaluation has too broad a scope to seed safely.
+  if (options?.startDate && options?.endDate && leavesByEmp.size > 0) {
+    const processedKeys = new Set(
+      toUpsert.map(r => `${r.employee_id}|${r.attendance_date}`)
+    );
+    // Also include rows that didn't change but already exist — we
+    // mustn't seed over them either.
+    existing.forEach(r => {
+      processedKeys.add(`${r.employee_id}|${r.attendance_date}`);
+    });
+
+    const winStart = new Date(options.startDate + 'T00:00:00');
+    const winEnd   = new Date(options.endDate   + 'T00:00:00');
+
+    let seedCount = 0;
+    for (const [empId, leaves] of leavesByEmp) {
+      for (const leave of leaves) {
+        const lStart = new Date(leave.start_date + 'T00:00:00');
+        const lEnd   = new Date(leave.end_date   + 'T00:00:00');
+        // Effective range = intersection of leave with the window.
+        const effStart = lStart > winStart ? lStart : winStart;
+        const effEnd   = lEnd   < winEnd   ? lEnd   : winEnd;
+        if (effStart > effEnd) continue;
+
+        // Determine status from leave_type name. Mirror the same
+        // pattern used in the main classifier loop.
+        const ltype = String(leave.leave_type || '').toLowerCase();
+        let leaveStatus = 'annual_leave';
+        if (ltype.includes('sick'))           leaveStatus = 'sick_leave';
+        else if (ltype.includes('maternit'))  leaveStatus = 'maternity_leave';
+        else if (ltype.includes('paternit'))  leaveStatus = 'paternity_leave';
+        else if (ltype.includes('hajj'))      leaveStatus = 'hajj_leave';
+        else if (ltype.includes('emergency')) leaveStatus = 'emergency_leave';
+        else if (ltype.includes('unpaid'))    leaveStatus = 'unpaid_leave';
+
+        // Walk every date in the effective range. Cap at 90 days to
+        // defend against pathological data.
+        const cursor = new Date(effStart);
+        for (let i = 0; i < 90; i++) {
+          if (cursor > effEnd) break;
+          const y = cursor.getFullYear();
+          const mm = String(cursor.getMonth() + 1).padStart(2, '0');
+          const dd = String(cursor.getDate()).padStart(2, '0');
+          const dateStr = `${y}-${mm}-${dd}`;
+          const key = `${empId}|${dateStr}`;
+          if (!processedKeys.has(key)) {
+            toUpsert.push({
+              employee_id:         empId,
+              attendance_date:     dateStr,
+              status:              leaveStatus,
+              first_punch:         null,
+              last_punch:          null,
+              punch_count:         0,
+              expected_start:      null,
+              expected_end:        null,
+              late_minutes:        0,
+              early_leave_minutes: 0,
+              leave_request_id:    leave.id || null,
+              notes:               `Auto-seeded from approved ${leaveStatus.replace(/_/g, ' ')}`,
+              recorded_at:         new Date().toISOString(),
+              recorded_by:         null,
+              source:              'leave_seed',
+            });
+            processedKeys.add(key);
+            seedCount += 1;
+          }
+          cursor.setDate(cursor.getDate() + 1);
+        }
+      }
+    }
+    if (seedCount > 0 && onProgress) {
+      try { onProgress({ phase: 'seeding', processed: seedCount, total: seedCount }); } catch {}
+    }
   }
 
   // Phase 4 — upsert changed rows in batches
