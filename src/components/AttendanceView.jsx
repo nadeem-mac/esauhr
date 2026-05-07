@@ -1241,6 +1241,11 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // caused a TDZ error: "can't access lexical declaration 'g' before
   // initialization" (where 'g' was the minified calendarRefreshTick).
   const [lastUploadAt, setLastUploadAt] = useState(null);
+
+  // Which notification chip is currently expanded (string id or null).
+  // Used by the notifications row next to the system health pill —
+  // clicking a chip toggles its detail card. One open at a time.
+  const [openNotice, setOpenNotice] = useState(null);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -4512,15 +4517,13 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           The page is split into three zones below: <strong>see</strong> the month so far, <strong>upload</strong> today's file (your daily routine), and one section for <strong>one-time backfill</strong> if you need to import history.
         </p>
 
-        {/* Tier 2 fix (#7) — System health pill. Always visible at
-            the top of the Attendance page so Bashaier has a quick
-            read on whether the data she's viewing is current. Three
-            states based on the freshness of the most recent upload:
-              • Green  ✓ — uploaded within the last 24 hours
-              • Amber !  — uploaded 1-3 days ago
-              • Red    ! — uploaded more than 3 days ago, or never
-            Hovering shows the precise timestamps for last upload AND
-            last re-evaluation. Click expands a small breakdown. */}
+        {/* Tier 2 fix (#7) — System health pill + notifications row.
+            Health pill on the left (always present); notification
+            chips on the right when there are warnings. Replaces the
+            previous full-width banner cards (dateSanity, anomaly,
+            sheetSanity) — those messages are still surfaced, but as
+            click-to-expand chips. The detail card slides down below
+            this row when a chip is open. */}
         {(() => {
           const now = Date.now();
           const uploadMs = lastUploadAt ? (now - new Date(lastUploadAt).getTime()) : null;
@@ -4559,16 +4562,111 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             healthState === 'stale' ? 'Upload today\'s time card to refresh.' : null,
             healthState === 'aging' ? 'Consider uploading a fresh time card.' : null,
           ].filter(Boolean);
+
+          // Build the active notifications list. Each entry has:
+          //   id      — unique string for openNotice state
+          //   label   — 1-word chip text
+          //   tone    — 'amber' | 'red' (drives chip color)
+          //   title   — bold heading inside the expanded card
+          //   body    — paragraph text inside the expanded card
+          const notifications = [];
+          if (hasFile && dateSanity) {
+            notifications.push({
+              id: 'date',
+              label: dateSanity.kind === 'TODAY' ? 'Today' : dateSanity.kind === 'FUTURE' ? 'Future date' : 'Stale date',
+              tone: dateSanity.kind === 'FUTURE' ? 'red' : 'amber',
+              title: dateSanity.label + '.',
+              body: dateSanity.kind === 'TODAY'
+                ? "This file is for today — staff who haven't punched out yet will appear as Incomplete. Wait until end of day for a complete picture."
+                : dateSanity.kind === 'FUTURE'
+                  ? `The data date (${formatDateLong(csvDate)}) is in the future. Likely the wrong file — please verify before sending notices.`
+                  : `The data date (${formatDateLong(csvDate)}) is ${dateSanity.ageDays} days old. Make sure this is the file you intended to process.`,
+            });
+          }
+          if (hasFile && !csvIsWeekend && anomaly?.kind === 'MOSTLY_INCOMPLETE') {
+            notifications.push({
+              id: 'incomplete',
+              label: 'Incomplete',
+              tone: 'amber',
+              title: 'Most rows look incomplete.',
+              body: anomaly.message,
+            });
+          }
+          if (hasFile && sheetSanity) {
+            notifications.push({
+              id: 'sheet',
+              label: 'Sheet name',
+              tone: sheetSanity.kind === 'SHEET_BEFORE_DATA' ? 'red' : 'amber',
+              title: sheetSanity.kind === 'SHEET_BEFORE_DATA' ? 'Sheet name pre-dates the data.' : 'Sheet name far from data date.',
+              body: sheetSanity.message,
+            });
+          }
+
+          const toneStyles = {
+            amber: { chipBg: '#FFFBEB', chipBorder: '#FDE68A', chipFg: '#78350F', dot: '#F59E0B', cardBg: '#FFFBEB', cardBorder: '#F59E0B' },
+            red:   { chipBg: '#FEF2F2', chipBorder: '#FCA5A5', chipFg: '#7F1D1D', dot: '#DC2626', cardBg: '#FEF2F2', cardBorder: '#DC2626' },
+          };
+
+          const openNotif = notifications.find(n => n.id === openNotice);
+
           return (
-            <div className="mt-3 inline-flex items-center gap-2 text-[11px] px-3 py-1.5 rounded-full"
-                 style={{ background: bg, border: `1px solid ${border}`, color: fg, fontWeight: 600 }}
-                 title={tooltipParts.join('\n')}>
-              <span className="inline-block w-2 h-2 rounded-full" style={{ background: dotColor }} />
-              <span>{healthLabel}</span>
-              <span style={{ opacity: 0.7, fontWeight: 500 }}>
-                &middot; upload {fmtRel(uploadMs)}
-                {reevalState.lastRunAt && <> &middot; re-eval {fmtRel(reevalMs)}</>}
-              </span>
+            <div className="mt-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="inline-flex items-center gap-2 text-[11px] px-3 py-1.5 rounded-full"
+                     style={{ background: bg, border: `1px solid ${border}`, color: fg, fontWeight: 600 }}
+                     title={tooltipParts.join('\n')}>
+                  <span className="inline-block w-2 h-2 rounded-full" style={{ background: dotColor }} />
+                  <span>{healthLabel}</span>
+                  <span style={{ opacity: 0.7, fontWeight: 500 }}>
+                    &middot; upload {fmtRel(uploadMs)}
+                    {reevalState.lastRunAt && <> &middot; re-eval {fmtRel(reevalMs)}</>}
+                  </span>
+                </div>
+                {notifications.map(n => {
+                  const t = toneStyles[n.tone];
+                  const isOpen = openNotice === n.id;
+                  return (
+                    <button
+                      key={n.id}
+                      type="button"
+                      onClick={() => setOpenNotice(isOpen ? null : n.id)}
+                      className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-full transition-all hover:-translate-y-0.5"
+                      style={{
+                        background: t.chipBg,
+                        border: `1px solid ${t.chipBorder}`,
+                        color: t.chipFg,
+                        fontWeight: 600,
+                        boxShadow: isOpen ? `0 0 0 2px ${t.cardBorder}` : undefined,
+                        cursor: 'pointer',
+                      }}
+                      aria-expanded={isOpen}
+                      title={`${n.title} Click to ${isOpen ? 'hide' : 'see'} details.`}>
+                      <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: t.dot }} />
+                      <span>{n.label}</span>
+                      <span style={{ opacity: 0.6, fontSize: '10px', marginLeft: 1 }}>{isOpen ? '▾' : '▸'}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {openNotif && (() => {
+                const t = toneStyles[openNotif.tone];
+                return (
+                  <div className="mt-2 rounded-xl border p-3 sm:p-4 flex items-start gap-3"
+                       style={{ borderColor: t.cardBorder, background: t.cardBg }}>
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: t.cardBorder }} />
+                    <div className="text-sm flex-1" style={{ color: '#0A0A0A' }}>
+                      <div className="font-bold mb-1">{openNotif.title}</div>
+                      <div style={{ lineHeight: 1.5 }}>{openNotif.body}</div>
+                    </div>
+                    <button type="button" onClick={() => setOpenNotice(null)}
+                            className="text-[11px] px-2 py-0.5 rounded-full flex-shrink-0"
+                            style={{ color: t.chipFg, background: 'rgba(255,255,255,0.5)', border: `0.5px solid ${t.chipBorder}` }}
+                            title="Dismiss">
+                      Close
+                    </button>
+                  </div>
+                );
+              })()}
             </div>
           );
         })()}
@@ -4949,67 +5047,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         </div>
       )}
 
-      {/* Date sanity — today / future / very stale */}
-      {hasFile && dateSanity && (
-        <div className="rounded-2xl border p-4 flex items-start gap-3"
-             style={{
-               borderColor: dateSanity.kind === 'FUTURE' ? '#BE123C' : '#A16207',
-               background:  dateSanity.kind === 'FUTURE' ? '#FEF2F2' : '#FEFCE8',
-             }}>
-          <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5"
-            style={{ color: dateSanity.kind === 'FUTURE' ? '#BE123C' : '#A16207' }}/>
-          <div className="text-sm" style={{ color: '#0A0A0A' }}>
-            <div className="font-bold mb-1">{dateSanity.label}.</div>
-            <div>
-              {dateSanity.kind === 'TODAY' && (
-                <>This file is for today — staff who haven't punched out yet will appear as Incomplete.
-                Wait until end of day for a complete picture.</>
-              )}
-              {dateSanity.kind === 'FUTURE' && (
-                <>The data date ({formatDateLong(csvDate)}) is in the future. Likely the wrong file
-                — please verify before sending notices.</>
-              )}
-              {dateSanity.kind === 'STALE' && (
-                <>The data date ({formatDateLong(csvDate)}) is {dateSanity.ageDays} days old. Make sure
-                this is the file you intended to process.</>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* High-incompleteness anomaly — typically means file was
-          exported mid-day before staff punched out. */}
-      {hasFile && !csvIsWeekend && anomaly?.kind === 'MOSTLY_INCOMPLETE' && (
-        <div className="rounded-2xl border p-4 flex items-start gap-3"
-             style={{ borderColor: '#A16207', background: '#FEFCE8' }}>
-          <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: '#A16207' }}/>
-          <div className="text-sm" style={{ color: '#0A0A0A' }}>
-            <div className="font-bold mb-1">Most rows look incomplete.</div>
-            <div>{anomaly.message}</div>
-          </div>
-        </div>
-      )}
-
-      {/* Sheet-name vs data-date mismatch. Catches mislabeled exports
-          and device clock drift. Both kinds are mid-priority — yellow
-          for stale, red-tinted yellow for impossible. */}
-      {hasFile && sheetSanity && (
-        <div className="rounded-2xl border p-4 flex items-start gap-3"
-             style={{
-               borderColor: sheetSanity.kind === 'SHEET_BEFORE_DATA' ? '#BE123C' : '#A16207',
-               background:  sheetSanity.kind === 'SHEET_BEFORE_DATA' ? '#FEF2F2' : '#FEFCE8',
-             }}>
-          <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5"
-            style={{ color: sheetSanity.kind === 'SHEET_BEFORE_DATA' ? '#BE123C' : '#A16207' }}/>
-          <div className="text-sm" style={{ color: '#0A0A0A' }}>
-            <div className="font-bold mb-1">
-              {sheetSanity.kind === 'SHEET_BEFORE_DATA' ? 'Sheet name pre-dates the data.' : 'Sheet name far from data date.'}
-            </div>
-            <div>{sheetSanity.message}</div>
-          </div>
-        </div>
-      )}
+      {/* dateSanity / anomaly / sheetSanity banners moved into the
+          notification chips next to the system health pill at the top
+          of the page — see the IIFE above. The chips replace these
+          full-width cards; click a chip to expand the message. */}
 
       {/* Sections — only show if file uploaded and not weekend */}
       {hasFile && csvIsWeekend && (
