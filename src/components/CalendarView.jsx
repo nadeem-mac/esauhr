@@ -327,7 +327,11 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
             let bg = '#FFFFFF';
             let topAccent = null;
             if (!d) {
-              bg = '#F8F1DD'; // out-of-month filler — clearly muted
+              // Out-of-month placeholder — keep nearly invisible so
+              // attention stays on the actual month. Previously
+              // '#F8F1DD' read as a heavy cream block at the top of
+              // the grid; this softer shade fades into the chrome.
+              bg = '#FBF6E8';
             } else if (isToday) {
               bg = '#F0F9F4'; // soft brand-green tint — today pops
               topAccent = '#0F4C2A';
@@ -409,33 +413,38 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
                       )}
                     </div>
 
-                    {/* Colour-density dot row — one tiny dot per event,
-                        coloured by type. Gives the cell instant visual
-                        identity even when there's no room for full
-                        chips. Same colour palette as the filter chips
-                        so they cross-reference at a glance. */}
-                    {(leaves.length + perms.length + dayShifts.length) > 0 && (
-                      <div className="flex items-center gap-0.5 mt-1 flex-wrap">
-                        {leaves.slice(0, 6).map(r => {
-                          const tp = typeMap[r.leave_type_id];
-                          return (
-                            <span key={'l-' + r.id}
+                    {/* Colour-density dot strip — single row, capped
+                        at MAX_DOTS so the cell stays scannable even on
+                        busy days. Overflow collapses to "+N". Dots are
+                        ordered leaves → permissions → shifts so the
+                        colour grouping reads left-to-right. Same
+                        palette as the filter chips so they cross-
+                        reference at a glance. */}
+                    {(leaves.length + perms.length + dayShifts.length) > 0 && (() => {
+                      const MAX_DOTS = 5;
+                      const items = [
+                        ...leaves.map(r => ({ key: 'l-' + r.id, color: typeMap[r.leave_type_id]?.color || '#0F4C2A' })),
+                        ...perms.map(p => ({ key: 'p-' + p.id, color: p.type === 'late_arrival' ? '#1D4ED8' : '#D97706' })),
+                        ...dayShifts.map(s => ({ key: 's-' + s.id, color: '#9333EA' })),
+                      ];
+                      const visible = items.slice(0, MAX_DOTS);
+                      const overflow = items.length - visible.length;
+                      return (
+                        <div className="flex items-center gap-[3px] mt-1">
+                          {visible.map(it => (
+                            <span key={it.key}
                               className="inline-block w-1.5 h-1.5 rounded-full"
-                              style={{ background: tp?.color || '#0F4C2A' }}/>
-                          );
-                        })}
-                        {perms.slice(0, 6).map(p => (
-                          <span key={'p-' + p.id}
-                            className="inline-block w-1.5 h-1.5 rounded-full"
-                            style={{ background: p.type === 'late_arrival' ? '#1D4ED8' : '#D97706' }}/>
-                        ))}
-                        {dayShifts.slice(0, 6).map(s => (
-                          <span key={'s-' + s.id}
-                            className="inline-block w-1.5 h-1.5 rounded-full"
-                            style={{ background: '#9333EA' }}/>
-                        ))}
-                      </div>
-                    )}
+                              style={{ background: it.color }}/>
+                          ))}
+                          {overflow > 0 && (
+                            <span className="text-[8px] leading-none ml-0.5"
+                              style={{ color: '#0A0A0A', opacity: 0.55, fontWeight: 600 }}>
+                              +{overflow}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     {/* Holiday label — compact one-line copper text */}
                     {holiday && (
@@ -482,6 +491,8 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
                         empMap={empMap}
                         typeMap={typeMap}
                         anchorAbove={Math.floor(i / 7) >= Math.floor(cells.length / 7) - 2}
+                        anchorLeft={dow <= 1}
+                        anchorRight={dow >= 5}
                       />
                     )}
                   </>
@@ -570,11 +581,23 @@ function FilterChip({ active, onClick, label, dot }) {
 //
 // Pointer-events disabled so the tooltip never intercepts clicks
 // — the underlying cell stays clickable for the detail modal.
-function HoverTooltip({ iso, leaves, perms, shifts, holiday, empMap, typeMap, anchorAbove }) {
+function HoverTooltip({ iso, leaves, perms, shifts, holiday, empMap, typeMap, anchorAbove, anchorLeft, anchorRight }) {
   const dateLabel = new Date(iso).toLocaleDateString('en-GB', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   });
   const totalCount = leaves.length + perms.length + shifts.length;
+
+  // Horizontal anchoring — tooltip is up to 320px wide, so on the
+  // Sun/Mon columns it overflows the grid's left edge if centred,
+  // and on Fri/Sat it overflows the right edge. Detect via the
+  // dow-derived anchorLeft/anchorRight flags from the caller and
+  // pin to the cell edge instead. Centred anchoring stays as the
+  // default for middle columns where there's room to spread.
+  const hAnchor = anchorLeft
+    ? { left: 0 }
+    : anchorRight
+    ? { right: 0 }
+    : { left: '50%', transform: 'translateX(-50%)' };
 
   return (
     <div className="absolute z-50 pointer-events-none"
@@ -582,8 +605,7 @@ function HoverTooltip({ iso, leaves, perms, shifts, holiday, empMap, typeMap, an
         ...(anchorAbove
           ? { bottom: '100%', marginBottom: '6px' }
           : { top: '100%', marginTop: '6px' }),
-        left: '50%',
-        transform: 'translateX(-50%)',
+        ...hAnchor,
         minWidth: '240px',
         maxWidth: '320px',
       }}>
