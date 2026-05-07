@@ -4119,6 +4119,27 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     // dropped a read).
     ...(dailyPanelsOk && detection.shiftAbsent.length
       ? { shiftAbsent: buildShiftAbsentPanel() } : {}),
+    // UNIFIED SHIFT STAFF panel — single drilldown surfacing every
+    // shift-related signal (gaps, late, early, absences, off-roster)
+    // in one place. Per Nadeem (2026-05-07): "shift cases should have
+    // one tile as SHIFT STAFF and all activity for them appears when
+    // their card is clicked". Each sub-section is read-only here for
+    // visibility — emails for late/early/absent still fire from their
+    // own panels via the shiftLate/shiftEarly/shiftAbsent kinds, which
+    // the per-row buttons inside this unified view link to.
+    shiftStaff: (
+      <UnifiedShiftStaffPanel
+        rosterGaps={rosterGaps}
+        empById={empById}
+        detection={detection}
+        latePanel={dailyPanelsOk ? buildLatePanel({ shiftMode: true }) : null}
+        earlyPanel={dailyPanelsOk ? buildEarlyPanel({ shiftMode: true }) : null}
+        absentPanel={dailyPanelsOk && detection.shiftAbsent.length ? buildShiftAbsentPanel() : null}
+        offRosterCount={(detection.shiftOffDay || []).length}
+        offRosterEntries={detection.shiftOffDay || []}
+        monthlyShiftsByEmp={monthlyShiftsByEmp}
+      />
+    ),
     ...(detection.weekend.length ? { weekend: buildWeekendPanel() } : {}),
   };
 
@@ -4881,6 +4902,160 @@ function HelpTile({ id, label, sub, icon, accent, tint, isActive, onClick }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// UnifiedShiftStaffPanel
+// ─────────────────────────────────────────────────────────────────────
+// Single drilldown surface for all shift-related daily activity. Stacks
+// the roster gaps card + late + early + absence + off-roster sections
+// in priority order (most actionable first). Per Nadeem (2026-05-07):
+// "shift cases should have one tile as SHIFT STAFF and all activity
+// for them appears when their card is clicked".
+function UnifiedShiftStaffPanel({
+  rosterGaps, empById, detection,
+  latePanel, earlyPanel, absentPanel,
+  offRosterCount, offRosterEntries,
+  monthlyShiftsByEmp,
+}) {
+  const lateCount   = (detection.late  || []).filter(e => !!e.isCustomShift).length;
+  const earlyCount  = (detection.early || []).filter(e => !!e.isCustomShift).length;
+  const absentCount = (detection.shiftAbsent || []).length;
+  const hasGaps     = !!(rosterGaps && rosterGaps.totalGaps > 0);
+  const hasShiftStaff = !!(rosterGaps && rosterGaps.totalShiftStaff > 0);
+
+  // Helper: render a labelled section header with count chip.
+  const SectionHeader = ({ icon, label, count, tone }) => (
+    <div className="flex items-baseline gap-2 mb-2">
+      <span style={{ fontSize: 14 }} aria-hidden>{icon}</span>
+      <span className="text-[10px] tracking-[0.25em]" style={{ fontWeight: 700, color: '#0A0A0A' }}>
+        {label}
+      </span>
+      {count > 0 && (
+        <span style={{
+          background: tone?.bg || '#F4F4EE',
+          color: tone?.fg || '#0A0A0A',
+          padding: '1px 6px',
+          borderRadius: 999,
+          fontSize: 10,
+          fontWeight: 700,
+        }}>
+          {count}
+        </span>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="space-y-5">
+      {/* 1. Roster Gaps — manager-side completion check, top of stack
+          since fixing gaps prevents downstream violations. */}
+      {hasShiftStaff && (
+        <div>
+          <SectionHeader
+            icon="📋"
+            label="ROSTER COMPLETION"
+            count={hasGaps ? rosterGaps.totalGaps : 0}
+            tone={hasGaps ? { bg: '#FEF3C7', fg: '#78350F' } : { bg: '#DCFCE7', fg: '#14532D' }}
+          />
+          <RosterGapsCard
+            rosterGaps={rosterGaps}
+            empById={empById}
+            isOpen={true}
+            onToggle={() => {}}
+          />
+        </div>
+      )}
+
+      {/* 2. Shift absence — most serious; full-day no-show on an
+          assigned shift. */}
+      {absentCount > 0 && absentPanel && (
+        <div>
+          <SectionHeader
+            icon="🚨"
+            label="SHIFT ABSENCE"
+            count={absentCount}
+            tone={{ bg: '#FEE2E2', fg: '#7F1D1D' }}
+          />
+          {absentPanel}
+        </div>
+      )}
+
+      {/* 3. Late shift-IN. */}
+      {lateCount > 0 && latePanel && (
+        <div>
+          <SectionHeader
+            icon="🌙"
+            label="SHIFT LATE ARRIVAL"
+            count={lateCount}
+            tone={{ bg: '#EEF2FF', fg: '#3730A3' }}
+          />
+          {latePanel}
+        </div>
+      )}
+
+      {/* 4. Early shift-OUT. */}
+      {earlyCount > 0 && earlyPanel && (
+        <div>
+          <SectionHeader
+            icon="⏰"
+            label="SHIFT EARLY DEPARTURE"
+            count={earlyCount}
+            tone={{ bg: '#F5F3FF', fg: '#5B21B6' }}
+          />
+          {earlyPanel}
+        </div>
+      )}
+
+      {/* 5. Off-roster work — informational, not a violation. */}
+      {offRosterCount > 0 && (
+        <div>
+          <SectionHeader
+            icon="🗓️"
+            label="WORKED OFF-ROSTER"
+            count={offRosterCount}
+            tone={{ bg: '#EEF0FA', fg: '#3B4279' }}
+          />
+          <div style={{
+            background: '#F8FAFC',
+            border: '1px solid #E2E8F0',
+            borderRadius: 8,
+            padding: '10px 14px',
+          }}>
+            <div className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.7, marginBottom: 8 }}>
+              Punched in on a date with no shift planned. Informational only — not counted as a violation.
+            </div>
+            {offRosterEntries.map((e) => (
+              <div key={e.id} className="flex items-baseline gap-2" style={{ paddingTop: 4, paddingBottom: 4 }}>
+                <span className="text-[12px]" style={{ color: '#0A0A0A', fontWeight: 600 }}>
+                  {e.employee?.name || ''}
+                </span>
+                <span className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.6 }}>
+                  ({e.employee?.id || ''})
+                </span>
+                <span className="text-[11px]" style={{ color: '#1F1B16' }}>
+                  {e.dateLabel} &middot; {e.punchInStr || '—'} → {e.punchOutStr || '—'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Empty state — nothing to show but card was opened. */}
+      {!hasGaps && absentCount === 0 && lateCount === 0 && earlyCount === 0 && offRosterCount === 0 && (
+        <div style={{
+          padding: '24px 16px',
+          textAlign: 'center',
+          color: '#0A0A0A',
+          opacity: 0.7,
+          fontSize: 13,
+        }}>
+          ✓ No shift activity to flag for this period — roster complete and all assigned shifts attended on time.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // RosterGapsCard (#2 — Phase 1)
 // ─────────────────────────────────────────────────────────────────────
 // Surfaces working days for shift staff where the manager has not yet
@@ -5141,29 +5316,10 @@ function FileSummary({
             </div>
           )}
 
-          {/* ROSTER GAPS (#2 — Phase 1) — manager-side dashboard
-              showing working days where a shift staff member has no
-              shift assigned in employee_shifts for the current month.
-              The point: convert the silent fallback-to-office-hours
-              (which has been generating confusing emails like Jasim's)
-              into a visible roster-completion signal. Per Nadeem's
-              brief, this is grouped by manager so each line manager
-              sees their own gap count, click-through to the dates and
-              staff. The card surfaces whenever there's at least one
-              shift staff member on the monthly roster — when zero
-              gaps are found, it shows a confirming "all assigned"
-              state so HR has explicit evidence the system has run
-              and the roster is complete (silent absence of a card
-              would leave Bashaier unsure whether nothing was checked
-              or everything was fine). */}
-          {rosterGaps && rosterGaps.totalShiftStaff > 0 && (
-            <RosterGapsCard
-              rosterGaps={rosterGaps}
-              empById={empById}
-              isOpen={drillKind === 'rosterGaps'}
-              onToggle={() => setDrillKind(drillKind === 'rosterGaps' ? null : 'rosterGaps')}
-            />
-          )}
+          {/* (Roster gaps are now surfaced inside the SHIFT STAFF
+              drill panel below — the standalone amber card was
+              consolidated into the unified shift tile per Nadeem
+              2026-05-07.) */}
 
           {/* SHIFT STAFF — separate dashboard for shift-roster
               defaulters. Same email function as office staff,
@@ -5175,102 +5331,82 @@ function FileSummary({
               there's at least one shift defaulter to avoid
               taking up vertical space when there's nothing
               actionable. */}
-          {(counts.shiftLate > 0 || counts.shiftEarly > 0 || counts.shiftAbsent > 0) && (
-            <div>
-              <div className="flex items-baseline gap-2 mb-2">
-                <span className="text-[10px] tracking-[0.25em]" style={{ fontWeight: 700, color: '#0A0A0A' }}>
-                  SHIFT STAFF
-                </span>
-                <span className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
-                  Manager-assigned shift schedule &middot; click for details
-                </span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {counts.shiftLate > 0 && (
-                  <CountPill
-                    kind="shiftLate"
-                    icon="🌙"
-                    label="Shift late arrival"
-                    count={counts.shiftLate}
-                    color="#3730A3"
-                    tint="#EEF2FF"
-                    subtext="late shift-IN punch"
-                    isOpen={drillKind === 'shiftLate'}
-                    onClick={() => setDrillKind(drillKind === 'shiftLate' ? null : 'shiftLate')}
-                    progress={progressByKind?.shiftLate}
-                  />
-                )}
-                {counts.shiftEarly > 0 && (
-                  <CountPill
-                    kind="shiftEarly"
-                    icon="⏰"
-                    label="Shift early departure"
-                    count={counts.shiftEarly}
-                    color="#5B21B6"
-                    tint="#F5F3FF"
-                    subtext="early shift-OUT punch"
-                    isOpen={drillKind === 'shiftEarly'}
-                    onClick={() => setDrillKind(drillKind === 'shiftEarly' ? null : 'shiftEarly')}
-                    progress={progressByKind?.shiftEarly}
-                  />
-                )}
-                {/* SHIFT-ABSENT (#4 — Phase 1) — sterner classification
-                    when a manager-assigned shift had zero punches and
-                    no leave on file. Distinct from missed-punch (where
-                    one punch hit but the other didn't): this is the
-                    "didn't show up at all" case. Red colourway flags
-                    it as the most serious shift outcome on the page. */}
-                {counts.shiftAbsent > 0 && (
-                  <CountPill
-                    kind="shiftAbsent"
-                    icon="🚨"
-                    label="Shift absence"
-                    count={counts.shiftAbsent}
-                    color="#991B1B"
-                    tint="#FEF2F2"
-                    subtext="assigned shift, no punches"
-                    isOpen={drillKind === 'shiftAbsent'}
-                    onClick={() => setDrillKind(drillKind === 'shiftAbsent' ? null : 'shiftAbsent')}
-                    progress={progressByKind?.shiftAbsent}
-                  />
-                )}
-              </div>
-            </div>
-          )}
+          {/* SHIFT STAFF — single tile entry point. All shift-related
+              activity (roster gaps, late, early, absences, off-roster
+              work) lives behind this one tile. Clicking expands into
+              a stacked panel showing each sub-category — Bashaier
+              gets the full shift picture in one place rather than
+              having to scan multiple separate tiles. Per Nadeem
+              (2026-05-07): "shift cases should have one tile as
+              SHIFT STAFF and all activity for them appears when
+              their card is clicked". */}
+          {(() => {
+            const shiftTotal =
+              (counts.shiftLate || 0) +
+              (counts.shiftEarly || 0) +
+              (counts.shiftAbsent || 0) +
+              (counts.shiftOffDay || 0);
+            const hasGaps = !!(rosterGaps && rosterGaps.totalGaps > 0);
+            const hasShiftActivity = shiftTotal > 0 || hasGaps || (rosterGaps && rosterGaps.totalShiftStaff > 0);
+            if (!hasShiftActivity) return null;
 
-          {/* SHIFT roster — surfaces only when there are shift staff
-              who showed up on a planned off-day (the manager's plan
-              has them off, but they punched in anyway). Useful for
-              Bashaier to see at a glance — could be voluntary cover,
-              an error, or a misalignment with the roster. The row
-              is informational only — does NOT count as late or
-              absent because the staff isn't expected today per
-              their shift plan. */}
-          {counts.shiftOffDay > 0 && (
-            <div>
-              <div className="flex items-baseline gap-2 mb-2">
-                <span className="text-[10px] tracking-[0.25em]" style={{ fontWeight: 700, color: '#0A0A0A' }}>
-                  SHIFT ROSTER
-                </span>
-                <span className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
-                  Worked off-roster &middot; click for details
-                </span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            // Subtext mirrors the most prominent finding so the tile
+            // tells the story at a glance even before being opened.
+            // Priority: absences > gaps > late/early > off-roster.
+            let subtext;
+            if (counts.shiftAbsent > 0) {
+              subtext = `${counts.shiftAbsent} ${counts.shiftAbsent === 1 ? 'absence' : 'absences'} flagged`;
+            } else if (hasGaps) {
+              subtext = `${rosterGaps.totalGaps} roster ${rosterGaps.totalGaps === 1 ? 'gap' : 'gaps'} this month`;
+            } else if (counts.shiftLate > 0 || counts.shiftEarly > 0) {
+              const parts = [];
+              if (counts.shiftLate > 0)  parts.push(`${counts.shiftLate} late`);
+              if (counts.shiftEarly > 0) parts.push(`${counts.shiftEarly} early`);
+              subtext = parts.join(' · ');
+            } else if (counts.shiftOffDay > 0) {
+              subtext = `${counts.shiftOffDay} worked off-roster`;
+            } else {
+              subtext = 'roster complete · no defaulters';
+            }
+
+            // Tile colour shifts based on severity:
+            //   - red when there are actual absences (most serious)
+            //   - amber when there are late/early/off-roster issues
+            //   - green when nothing actionable
+            const palette = (counts.shiftAbsent > 0)
+              ? { color: '#991B1B', tint: '#FEF2F2' }
+              : (shiftTotal > 0 || hasGaps)
+                ? { color: '#3730A3', tint: '#EEF2FF' }
+                : { color: '#15803D', tint: '#F0FDF4' };
+
+            return (
+              <div>
+                <div className="flex items-baseline gap-2 mb-2">
+                  <span className="text-[10px] tracking-[0.25em]" style={{ fontWeight: 700, color: '#0A0A0A' }}>
+                    SHIFT STAFF
+                  </span>
+                  <span className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+                    Manager-assigned shift schedule &middot; click for details
+                  </span>
+                </div>
                 <CountPill
-                  kind="shiftOffDay"
-                  icon="🗓️"
-                  label="Worked off-roster"
-                  count={counts.shiftOffDay}
-                  color="#3B4279"
-                  tint="#EEF0FA"
-                  subtext="no shift planned for the date"
-                  isOpen={drillKind === 'shiftOffDay'}
-                  onClick={() => setDrillKind(drillKind === 'shiftOffDay' ? null : 'shiftOffDay')}
+                  kind="shiftStaff"
+                  icon="🌙"
+                  label="Shift staff activity"
+                  count={shiftTotal || (hasGaps ? rosterGaps.totalGaps : 0)}
+                  color={palette.color}
+                  tint={palette.tint}
+                  subtext={subtext}
+                  isOpen={drillKind === 'shiftStaff'}
+                  onClick={() => setDrillKind(drillKind === 'shiftStaff' ? null : 'shiftStaff')}
                 />
               </div>
-            </div>
-          )}
+            );
+          })()}
+
+          {/* (Worked off-roster — now consolidated into the SHIFT
+              STAFF drill panel above. Counts still tracked, panel
+              still renders inside the unified shift drill.) */}
 
           {/* WEEKEND attendance — Mr John's report. Surfaces only
               when the file's window includes a weekend day with
