@@ -30,17 +30,28 @@ import EmployeeAttendanceDetailPanel from './EmployeeAttendanceDetailPanel.jsx';
 // keeps the rest of the page (upload area, processed report,
 // weekend section) usable. Console gets the full stack trace for
 // debugging.
+import { reportClientError } from '../lib/clientErrors.js';
+
 class AttendanceErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { error: null };
+    this.state = { error: null, sessionId: null };
   }
   static getDerivedStateFromError(error) {
     return { error };
   }
   componentDidCatch(error, info) {
-    // eslint-disable-next-line no-console
-    console.error('[AttendanceView ErrorBoundary]', this.props.label || '', error, info);
+    // Tier 2 fix (#5 / item 1) — pipe the boundary catch through the
+    // central reporter so we get a session-tagged paper trail in
+    // console + localStorage. Capture the returned sessionId so the
+    // user-visible message can quote it for support.
+    const sessionId = reportClientError({
+      kind: 'boundary',
+      label: this.props.label || 'AttendanceView',
+      error,
+      info,
+    });
+    this.setState({ sessionId });
   }
   render() {
     if (this.state.error) {
@@ -55,9 +66,12 @@ class AttendanceErrorBoundary extends React.Component {
           </div>
           <div className="text-[10px] mt-2 opacity-70">
             Open the browser DevTools console for the full stack trace. The rest of the page remains usable.
+            {this.state.sessionId && (
+              <> &middot; Session id: <code style={{ background: '#FFF', padding: '0 4px', borderRadius: 3 }}>{this.state.sessionId}</code></>
+            )}
           </div>
           <button
-            onClick={() => this.setState({ error: null })}
+            onClick={() => this.setState({ error: null, sessionId: null })}
             className="text-[11px] mt-2 px-3 py-1 rounded-full"
             style={{ background: '#991B1B', color: '#FFFFFF', fontWeight: 600 }}
           >
@@ -1183,6 +1197,31 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     })();
     return () => { cancelled = true; };
   }, []);
+
+  // Tier 2 fix (#7) — System health: track when the most recent
+  // attendance upload landed, so the health pill can tell Bashaier at
+  // a glance whether the system is "fresh" (uploaded today) or stale
+  // (no upload in days). Combined with reevalState.lastRunAt, gives
+  // her a quick read on whether the data she's looking at is current.
+  // Refreshes whenever the calendar refresh tick bumps so it stays
+  // current after Save & Close.
+  const [lastUploadAt, setLastUploadAt] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await directGet(
+          'attendance_uploads',
+          'select=uploaded_at&order=uploaded_at.desc&limit=1',
+          { timeoutMs: 6000 }
+        );
+        if (!cancelled && Array.isArray(rows) && rows[0]?.uploaded_at) {
+          setLastUploadAt(rows[0].uploaded_at);
+        }
+      } catch { /* non-fatal */ }
+    })();
+    return () => { cancelled = true; };
+  }, [calendarRefreshTick]);
 
   // Escape-hatch detection — on mount, parse the URL for
   // `?admin=backfill` and flip the flag. Not persisted; a fresh tab
@@ -4435,6 +4474,67 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         <p className="text-sm mt-1.5 max-w-3xl" style={{ color: '#0A0A0A', opacity: 0.8 }}>
           The page is split into three zones below: <strong>see</strong> the month so far, <strong>upload</strong> today's file (your daily routine), and one section for <strong>one-time backfill</strong> if you need to import history.
         </p>
+
+        {/* Tier 2 fix (#7) — System health pill. Always visible at
+            the top of the Attendance page so Bashaier has a quick
+            read on whether the data she's viewing is current. Three
+            states based on the freshness of the most recent upload:
+              • Green  ✓ — uploaded within the last 24 hours
+              • Amber !  — uploaded 1-3 days ago
+              • Red    ! — uploaded more than 3 days ago, or never
+            Hovering shows the precise timestamps for last upload AND
+            last re-evaluation. Click expands a small breakdown. */}
+        {(() => {
+          const now = Date.now();
+          const uploadMs = lastUploadAt ? (now - new Date(lastUploadAt).getTime()) : null;
+          const reevalMs = reevalState.lastRunAt ? (now - new Date(reevalState.lastRunAt).getTime()) : null;
+          const dayMs = 24 * 60 * 60 * 1000;
+          let healthState, healthLabel, dotColor, bg, border, fg;
+          if (uploadMs == null) {
+            healthState = 'unknown';
+            healthLabel = 'No uploads yet';
+            dotColor = '#9CA3AF'; bg = '#F4F4EE'; border = '#D4D4D4'; fg = '#1F1B16';
+          } else if (uploadMs <= dayMs) {
+            healthState = 'fresh';
+            healthLabel = 'System current';
+            dotColor = '#10B981'; bg = '#F0FDF4'; border = '#BBF7D0'; fg = '#064E3B';
+          } else if (uploadMs <= 3 * dayMs) {
+            healthState = 'aging';
+            healthLabel = 'Last upload aging';
+            dotColor = '#F59E0B'; bg = '#FFFBEB'; border = '#FDE68A'; fg = '#78350F';
+          } else {
+            healthState = 'stale';
+            healthLabel = 'System stale';
+            dotColor = '#DC2626'; bg = '#FEF2F2'; border = '#FCA5A5'; fg = '#7F1D1D';
+          }
+          const fmtRel = (ms) => {
+            if (ms == null) return '—';
+            const mins = Math.floor(ms / 60000);
+            if (mins < 1) return 'just now';
+            if (mins < 60) return `${mins} min ago`;
+            const hrs = Math.floor(mins / 60);
+            if (hrs < 24) return `${hrs} h ago`;
+            return `${Math.floor(hrs / 24)} d ago`;
+          };
+          const tooltipParts = [
+            `Last upload: ${fmtRel(uploadMs)}`,
+            `Last re-evaluation: ${fmtRel(reevalMs)}`,
+            healthState === 'stale' ? 'Upload today\'s time card to refresh.' : null,
+            healthState === 'aging' ? 'Consider uploading a fresh time card.' : null,
+          ].filter(Boolean);
+          return (
+            <div className="mt-3 inline-flex items-center gap-2 text-[11px] px-3 py-1.5 rounded-full"
+                 style={{ background: bg, border: `1px solid ${border}`, color: fg, fontWeight: 600 }}
+                 title={tooltipParts.join('\n')}>
+              <span className="inline-block w-2 h-2 rounded-full" style={{ background: dotColor }} />
+              <span>{healthLabel}</span>
+              <span style={{ opacity: 0.7, fontWeight: 500 }}>
+                &middot; upload {fmtRel(uploadMs)}
+                {reevalState.lastRunAt && <> &middot; re-eval {fmtRel(reevalMs)}</>}
+              </span>
+            </div>
+          );
+        })()}
 
         {/* Inline keyframes for the tile + panel animations.
             • help-tile-pop fires on the active tile button each
