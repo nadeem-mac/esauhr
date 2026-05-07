@@ -1281,6 +1281,25 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   const triggerReevaluation = useCallback(async (opts = {}) => {
     const { silent = false, days = 7 } = opts;
     if (reevalState.running) return null; // already running — bail
+    // Tier 3 fix (#3 / item 3) — race guard: don't re-evaluate while
+    // a bulk-send session is open. Bulk-send walks the queue using
+    // entry rows captured at session start; if re-eval reclassifies
+    // them mid-walk, the email body data and the audit row data
+    // diverge. The re-eval will fire after the bulk session closes
+    // (via the next Save & Close, or the 24h stale-check on next
+    // load), so nothing is lost — just deferred.
+    if (bulkSessionRef.current) {
+      if (!silent) {
+        try {
+          window.dispatchEvent(new CustomEvent('esauhr_toast', { detail: {
+            kind: 'warning',
+            title: 'Re-evaluation deferred',
+            body: 'Bulk send is active. Re-evaluation will run automatically after the bulk session closes.',
+          }}));
+        } catch {}
+      }
+      return null;
+    }
     setReevalState(s => ({ ...s, running: true, error: null }));
     try {
       const summary = await reevaluateLastNDays(days);
@@ -1387,6 +1406,14 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // whole queue. Mirrors the per-row mode toggle so a bulk session and
   // a per-row click never produce divergent wording for the same kind.
   const [bulkSession, setBulkSession] = useState(null);
+  // Tier 3 fix (#3 / item 3) — race guard: triggerReevaluation
+  // (declared earlier) needs to read the current bulkSession without
+  // re-creating its callback on every change. A ref kept in sync
+  // gives the callback live access without dependency churn. The
+  // re-eval bails when a bulk-send is mid-flight to avoid clobbering
+  // the rows being emailed against.
+  const bulkSessionRef = useRef(null);
+  useEffect(() => { bulkSessionRef.current = bulkSession; }, [bulkSession]);
 
   // Tile drill-down state — which kind's panel is currently expanded
   // inside the FileSummary card. Lifted from FileSummary so the

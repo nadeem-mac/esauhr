@@ -29,7 +29,7 @@
 // =============================================================================
 
 import { parseTimeCardXlsx } from './timeCard.js';
-import { directPost, directGet } from '../supabaseClient.js';
+import { directPost, directGet, directPatchQuery } from '../supabaseClient.js';
 import { addDaysIso as addDaysIsoCentral } from './dateUtils.js';
 
 // Local YYYY-MM-DD without timezone surprises.
@@ -230,6 +230,68 @@ function widthMins(p) {
   const b = timeToMinutes(p?.time_to);
   if (a == null || b == null) return 0;
   return Math.max(0, b - a);
+}
+
+/**
+ * Tier 3 fix (#3 / item 2) — re-eval clears stale violations.
+ *
+ * Fetch approved leave_requests overlapping a date window. Returns a
+ * Map keyed by employee_id, with values being arrays of leave ranges:
+ * `{ start_date, end_date, leave_type, leave_request_id }`.
+ *
+ * Used by reevaluateBackfillRows to reclassify rows when leave was
+ * approved retroactively. Without this, a `late` row stays `late`
+ * forever even if HR approved annual leave covering that day after
+ * the fact.
+ *
+ * Includes both annual and sick leave. Status filter requires the
+ * leave to be in `approved` state — pending or rejected don't count.
+ *
+ * @param {string} startDate YYYY-MM-DD inclusive
+ * @param {string} endDate   YYYY-MM-DD inclusive
+ */
+export async function fetchApprovedLeaves(startDate, endDate) {
+  try {
+    // Fetch any leave whose [start_date, end_date] window overlaps
+    // [startDate, endDate]. PostgREST doesn't have a native overlap
+    // operator that's cheap, so we use the standard interval-overlap
+    // formula: leave.end_date >= window.start AND leave.start_date <= window.end
+    const qs =
+      'select=id,employee_id,leave_type,start_date,end_date,status' +
+      `&end_date=gte.${startDate}` +
+      `&start_date=lte.${endDate}` +
+      '&status=eq.approved';
+    const rows = await directGet('leave_requests', qs, { timeoutMs: 9000 });
+    const out = new Map();
+    (rows || []).forEach(l => {
+      if (!l?.employee_id || !l?.start_date || !l?.end_date) return;
+      const arr = out.get(l.employee_id) || [];
+      arr.push({
+        start_date: l.start_date,
+        end_date:   l.end_date,
+        leave_type: l.leave_type || 'annual',
+        leave_request_id: l.id,
+      });
+      out.set(l.employee_id, arr);
+    });
+    return out;
+  } catch {
+    return new Map();
+  }
+}
+
+/**
+ * findLeaveCoverage — helper that returns the leave (if any) that
+ * covers a given (employee, date). Returns null when no approved
+ * leave straddles the date.
+ */
+export function findLeaveCoverage(empId, dateIso, leavesByEmp) {
+  const arr = leavesByEmp?.get?.(empId);
+  if (!Array.isArray(arr) || arr.length === 0) return null;
+  for (const l of arr) {
+    if (l.start_date <= dateIso && l.end_date >= dateIso) return l;
+  }
+  return null;
 }
 
 // Apply an approved permission to a (status, lateMin, earlyMin)
@@ -1054,6 +1116,7 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
     { timeoutMs: 45000 }
   ) || [];
 
+  let leavesByEmp = new Map();
   // Now that we have the date range from existing rows, fetch the
   // date-keyed shift assignments. Tight scope — only the dates that
   // appear in attendance_daily rows we're re-evaluating.
@@ -1062,6 +1125,12 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
     const maxD = existing[existing.length - 1].attendance_date;
     shiftDateSet = await fetchShiftAssignmentDates(minD, maxD);
     permsMap = await fetchApprovedPermissions(minD, maxD);
+    // Tier 3 fix (#3 / item 2): also fetch approved leaves so we can
+    // promote `late`/`short`/`missed_*` rows to `annual_leave` /
+    // `sick_leave` when leave was approved retroactively. Without
+    // this, those rows stay flagged as violations forever even though
+    // HR has accepted the absence.
+    leavesByEmp = await fetchApprovedLeaves(minD, maxD);
   }
 
   // Punch index for overnight-shift evaluation in the reeval path —
@@ -1140,9 +1209,88 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
 
     // Same guard for daily-flow rows on existing 'off_roster' or
     // 'on_leave' status — those classifications carry information
-    // we shouldn't blindly overwrite.
-    if (isDailyRow && (r.status === 'off_roster' || r.status === 'on_leave' ||
-                       r.status === 'annual_leave' || r.status === 'sick_leave')) continue;
+    // we shouldn't blindly overwrite. Tier 3 refinement (2026-05-07):
+    // still skip these UNLESS leave coverage has changed (e.g. the
+    // leave was rescinded). The leave-coverage check below handles
+    // both the promote and demote paths cleanly: if the row is on
+    // leave AND the leave is still approved, the new classification
+    // matches the old and the row is left alone in the "no change"
+    // upsert filter at the end of the loop.
+    if (isDailyRow && (r.status === 'off_roster')) continue;
+
+    // Tier 3 fix (#3 / item 2): leave coverage check.
+    //
+    // If approved leave straddles this date, the row should be
+    // classified as annual_leave or sick_leave — even if it was
+    // previously `late` / `short` / `missed_*` (because HR approved
+    // the leave retroactively). Conversely, if a row is currently
+    // `annual_leave`/`sick_leave` but no approved leave covers the
+    // date anymore (leave was rescinded), we fall through to the
+    // normal classification path so the row gets re-evaluated
+    // against punches.
+    const leaveCoverage = findLeaveCoverage(empId, r.attendance_date, leavesByEmp);
+    if (leaveCoverage) {
+      const leaveStatus = (String(leaveCoverage.leave_type || '').toLowerCase().includes('sick'))
+        ? 'sick_leave'
+        : 'annual_leave';
+      newStatus    = leaveStatus;
+      newLate      = 0;
+      newEarly     = 0;
+      newExpStart  = null;
+      newExpEnd    = null;
+      newNote      = `Covered by approved ${leaveStatus.replace('_', ' ')} (re-evaluated)`;
+      // Skip the rest of the classification — leave wins.
+      const oldStatus = r.status;
+      const oldLate   = Number(r.late_minutes || 0);
+      const oldEarly  = Number(r.early_leave_minutes || 0);
+      const oldLeaveId = r.leave_request_id || null;
+      const changed = (
+        oldStatus !== newStatus ||
+        oldLate   !== newLate   ||
+        oldEarly  !== newEarly  ||
+        oldLeaveId !== leaveCoverage.leave_request_id
+      );
+      if (changed) {
+        if (newStatus === 'late')         lateCount++;
+        else if (newStatus === 'short')   shortCount++;
+        else if (newStatus === 'present') presentCount++;
+        toUpsert.push({
+          employee_id:        r.employee_id,
+          attendance_date:    r.attendance_date,
+          status:             newStatus,
+          first_punch:        r.first_punch,
+          last_punch:         r.last_punch,
+          punch_count:        r.punch_count,
+          expected_start:     newExpStart,
+          expected_end:       newExpEnd,
+          late_minutes:       newLate,
+          early_leave_minutes: newEarly,
+          leave_request_id:   leaveCoverage.leave_request_id,
+          notes:              newNote,
+          recorded_by:        r.recorded_by || 'reeval',
+          source:             r.source || 'backfill',
+        });
+      }
+      continue;
+    }
+
+    // If we reach here, no leave covers this date. If the existing
+    // row was on leave but the leave is gone, FALL THROUGH to normal
+    // classification (don't preserve a stale leave classification).
+    if (isDailyRow && (r.status === 'on_leave' ||
+                       r.status === 'annual_leave' ||
+                       r.status === 'sick_leave') &&
+        r.leave_request_id) {
+      // Leave was rescinded — let the normal path re-evaluate this row.
+      // We still skip when leave_request_id is null AND the row is
+      // hand-tagged as leave (manual flag), to avoid clobbering
+      // operator intent.
+    } else if (isDailyRow && (r.status === 'on_leave' ||
+                              r.status === 'annual_leave' ||
+                              r.status === 'sick_leave')) {
+      // Hand-tagged leave with no leave_request_id — preserve.
+      continue;
+    }
 
     // Detect missing punches — preserves the same semantics as
     // buildBackfillRows so a row imported via backfill keeps its
@@ -1312,6 +1460,71 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
     }
   }
 
+  // Phase 5 — Tier 3 fix (#7) auto-supersede stale violation emails.
+  //
+  // For each row that just changed AWAY from a violation status into
+  // a non-violation status (present / annual_leave / sick_leave),
+  // mark any matching attendance_violations rows with
+  // email_outcome='superseded'. This gives Bashaier visibility into
+  // the system's own correction rate over time:
+  //
+  //   "Of the 47 late-arrival emails sent in May, 8 were superseded
+  //    by retroactive permission/leave approvals."
+  //
+  // Only auto-marks rows that don't already have an outcome set
+  // (so a manual "correct" tag from Bashaier wins). Failure to
+  // update is non-fatal — the supersede metric is informational,
+  // not load-bearing.
+  let supersededCount = 0;
+  try {
+    const violationStatuses = new Set(['late', 'short', 'absent', 'missed_in', 'missed_out', 'shift_absent']);
+    const nowSupersedes = (oldStatus, newStatus) => {
+      // We only auto-supersede when the OLD row was a violation
+      // and the NEW classification is no longer one.
+      return violationStatuses.has(oldStatus) && !violationStatuses.has(newStatus);
+    };
+
+    // Index existing rows by (empId, date) so we can look up the
+    // pre-update status for each upsert row.
+    const oldByKey = new Map();
+    for (const r of existing) {
+      oldByKey.set(`${r.employee_id}|${r.attendance_date}`, r.status);
+    }
+
+    const supersedeKeys = []; // list of (empId, date) pairs to mark
+    for (const u of toUpsert) {
+      const oldStatus = oldByKey.get(`${u.employee_id}|${u.attendance_date}`);
+      if (oldStatus && nowSupersedes(oldStatus, u.status)) {
+        supersedeKeys.push({ empId: u.employee_id, date: u.attendance_date });
+      }
+    }
+
+    // Batch-update violations. PostgREST doesn't support multi-row
+    // updates with disjoint WHERE clauses cheaply, so we issue one
+    // PATCH per (empId, date) pair. Bounded by supersedeKeys length;
+    // typically small (a handful per re-eval at most).
+    if (supersedeKeys.length > 0) {
+      const nowIso = new Date().toISOString();
+      // Use Promise.allSettled so a single failed update doesn't
+      // abort the rest. Failed updates are silently logged and
+      // counted as not-superseded.
+      const results = await Promise.allSettled(supersedeKeys.map(k => {
+        const qs = `employee_id=eq.${encodeURIComponent(k.empId)}` +
+                   `&violation_date=eq.${encodeURIComponent(k.date)}` +
+                   `&email_outcome=is.null`;
+        return directPatchQuery(
+          'attendance_violations',
+          qs,
+          { email_outcome: 'superseded', email_outcome_at: nowIso, email_outcome_by: 'reeval' },
+          { timeoutMs: 8000 }
+        );
+      }));
+      supersededCount = results.filter(r => r.status === 'fulfilled').length;
+    }
+  } catch {
+    // Non-fatal — supersede tracking is observability, not correctness.
+  }
+
   return {
     scanned: existing.length,
     changed: toUpsert.length,
@@ -1319,6 +1532,7 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
     shortCount,
     presentCount,
     mawaniDayCount,
+    supersededCount,
   };
 }
 
