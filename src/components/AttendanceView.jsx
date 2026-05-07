@@ -1463,6 +1463,149 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     // first paint, even when no re-eval was triggered this session.
     setReevalState(s => ({ ...s, lastRunAt: lastIso }));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ─── Export monthly report ─────────────────────────────────────────
+  // Generates a printable A4 HTML report of the on-screen month grid.
+  // Clones the calendar's rendered DOM (so the report mirrors exactly
+  // what Bashaier sees), inlines all current document stylesheets so
+  // the new window doesn't depend on Vite's CSS bundle, and adds @page
+  // A4 + print-orientation rules. The new window auto-prompts the
+  // print dialog so it's one click from button to PDF/paper.
+  //
+  // Cross-origin protected stylesheets are skipped silently — if the
+  // report ends up missing a font or color, that's why. The portal's
+  // CSS is same-origin so this is fine in practice.
+  const exportMonthReport = useCallback(() => {
+    const target = document.querySelector('[data-month-export-target]');
+    if (!target) {
+      alert('Calendar not loaded yet — give it a moment and try again.');
+      return;
+    }
+
+    // Pull every CSS rule reachable from this document. CORS-blocked
+    // sheets (Google Fonts, etc.) throw on cssRules access — skip
+    // silently so a single bad sheet doesn't block the whole export.
+    let css = '';
+    try {
+      for (const sheet of document.styleSheets) {
+        try {
+          const rules = Array.from(sheet.cssRules || []);
+          css += rules.map(r => r.cssText).join('\n') + '\n';
+        } catch { /* CORS — skip */ }
+      }
+    } catch { /* defensive */ }
+
+    const monthLabel = (csvDate ? new Date(csvDate + 'T00:00:00') : new Date())
+      .toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+    const generatedAt = new Date().toLocaleString('en-GB', {
+      day: '2-digit', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    });
+
+    const win = window.open('', '_blank', 'width=1200,height=900');
+    if (!win) {
+      alert('Pop-up blocked — allow pop-ups for this site to use the export feature.');
+      return;
+    }
+
+    win.document.open();
+    win.document.write(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Monthly Attendance — ${monthLabel}</title>
+  <style>${css}</style>
+  <style>
+    /* Print-specific overrides. A4 landscape gives the best fit for
+       the wide month grid; portrait would force horizontal scroll and
+       compress unreadably. */
+    @page { size: A4 landscape; margin: 1cm; }
+    html, body {
+      background: #FFFFFF !important;
+      margin: 0;
+      padding: 0;
+      font-family: Calibri, 'Segoe UI', Arial, sans-serif;
+    }
+    body { padding: 16px 20px; }
+    .esau-export-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #0F4C2A;
+    }
+    .esau-export-title {
+      font-size: 22px;
+      font-weight: 700;
+      color: #0F4C2A;
+      margin: 0;
+    }
+    .esau-export-subtitle {
+      font-size: 12px;
+      color: #5F5E5A;
+      margin: 4px 0 0;
+    }
+    .esau-export-meta {
+      font-size: 10px;
+      color: #5F5E5A;
+      text-align: right;
+    }
+    .esau-export-print-btn {
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      padding: 10px 20px;
+      background: #0F4C2A;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    @media print {
+      .esau-export-print-btn { display: none !important; }
+      .esau-export-header { page-break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="esau-export-header">
+    <div>
+      <h1 class="esau-export-title">Monthly Attendance — ${monthLabel}</h1>
+      <p class="esau-export-subtitle">Evergreen Shipping Agency Saudi Co. (L.L.C) · ESAU HR Portal</p>
+    </div>
+    <div class="esau-export-meta">
+      Generated ${generatedAt}<br/>
+      ESAU HR Department
+    </div>
+  </div>
+  <div id="esau-report-body"></div>
+  <button class="esau-export-print-btn" onclick="window.print()">🖨 Print / Save as PDF</button>
+  <script>
+    // Auto-trigger the print dialog once the page is settled. The
+    // user can cancel and still see the on-screen preview.
+    window.addEventListener('load', () => {
+      setTimeout(() => { try { window.print(); } catch (e) {} }, 600);
+    });
+  </script>
+</body>
+</html>`);
+    win.document.close();
+    // Insert the calendar clone after the document is ready. Doing
+    // this via DOM (not innerHTML in document.write) avoids React
+    // event-listener issues and preserves any inline canvas state.
+    const cloned = target.cloneNode(true);
+    // Strip interactive controls — buttons inside the calendar are
+    // useless on paper and add visual noise.
+    cloned.querySelectorAll('button').forEach(b => b.remove());
+    setTimeout(() => {
+      const body = win.document.getElementById('esau-report-body');
+      if (body) body.appendChild(cloned);
+    }, 50);
+  }, [csvDate]);
   const [parsedData, setParsedData]     = useState({ rows: [], dataDate: null, sheetName: null });
   const [parseError, setParseError]     = useState(null);
 
@@ -5288,23 +5431,19 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           onDragLeave={() => setIsDragging(false)}
           onDrop={onDrop}
           onClick={() => fileInputRef.current?.click()}
-          className="rounded-2xl border-2 border-dashed p-10 text-center cursor-pointer transition-colors"
+          className="rounded-xl border-2 border-dashed px-4 py-3 cursor-pointer transition-colors flex items-center gap-3"
           style={{
             borderColor: isDragging ? '#10B981' : '#D4D4D4',
             background: isDragging ? '#ECFDF5' : '#F7F7F7',
           }}>
-          <Upload className="w-10 h-10 mx-auto mb-4" style={{ color: '#1F1B16' }}/>
-          <div style={{ fontFamily: 'inherit', fontSize: '20px', color: '#1F1B16', marginBottom: '6px' }}>
-            Drop your Time Card .xlsx here
-          </div>
-          <div className="text-sm" style={{ color: '#1F1B16' }}>
-            or <span style={{ color: '#047857', textDecoration: 'underline', fontWeight: 600 }}>click to browse</span>
-          </div>
-          <div className="text-xs mt-4" style={{ color: '#0A0A0A' }}>
-            Expected columns: Employee ID · First Name · Date · Times · Time
-          </div>
-          <div className="text-[11px] mt-1" style={{ color: '#1F1B16', opacity: 0.7 }}>
-            Only the .xlsx export from the fingerprint device is accepted.
+          <Upload className="w-5 h-5 flex-shrink-0" style={{ color: '#1F1B16' }}/>
+          <div className="flex-1 min-w-0">
+            <div style={{ fontFamily: 'inherit', fontSize: '13px', color: '#1F1B16', fontWeight: 600 }}>
+              Drop your Time Card .xlsx here, or <span style={{ color: '#047857', textDecoration: 'underline' }}>click to browse</span>
+            </div>
+            <div className="text-[10px] mt-0.5" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+              Expected columns: Employee ID · First Name · Date · Times · Time. Only the .xlsx export from the fingerprint device is accepted.
+            </div>
           </div>
           <input
             ref={fileInputRef}
@@ -5314,7 +5453,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             onChange={onPick}
           />
           {parseError && (
-            <div className="mt-4 text-sm px-3 py-2 rounded-md inline-block text-left" style={{ color: '#BE123C', background: '#FEF2F2', maxWidth: '480px' }}>{parseError}</div>
+            <div className="text-sm px-3 py-2 rounded-md text-left" style={{ color: '#BE123C', background: '#FEF2F2', maxWidth: '320px' }}>{parseError}</div>
           )}
         </div>
       ) : windowMismatch ? (
@@ -5612,14 +5751,36 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             >
               {reevalState.running ? '…' : '↻ Re-evaluate this month'}
             </button>
+            {/* Export to HTML — print-friendly report of the on-screen
+                month grid. Clones the calendar's DOM, inlines all
+                stylesheets, and opens in a new window with @page A4
+                print rules. The new window auto-triggers print so the
+                user can save as PDF or send to printer in one click.
+                Bashaier can also print directly to physical paper. */}
+            <button
+              type="button"
+              onClick={exportMonthReport}
+              className="text-[11px] px-3 py-1.5 rounded-full border flex items-center gap-1.5"
+              style={{
+                borderColor: '#D4D4D4',
+                color: '#1F1B16',
+                background: '#FFFFFF',
+                fontWeight: 600,
+              }}
+              title="Generate a printable A4 report of the monthly attendance grid as it appears on screen."
+            >
+              📄 Export report
+            </button>
           </div>
         </div>
         <AttendanceErrorBoundary label="Monthly attendance calendar">
+          <div data-month-export-target>
           <AttendanceMonthGrid
             employees={employees}
             onEmployeeClick={setDetailEmployee}
             refreshTick={calendarRefreshTick}
           />
+          </div>
         </AttendanceErrorBoundary>
       </div>
 
