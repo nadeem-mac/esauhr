@@ -704,25 +704,35 @@ function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd,
   return { subject, body };
 }
 
-function missedPunchEmailContent({ employee, dateLong, missingType }) {
+function missedPunchEmailContent({ employee, dateLong, missingType, isCustomShift, scheduleLabel, scheduledStart, scheduledEnd, isNightShiftStart, isNightShiftEnd, assignedBy, assignedAt, managerName, assignedShifts, violationDate }) {
   // missingType: 'in' | 'out' | 'both'
   // Wording variants for the violation summary line and the action
   // paragraph. Both have to agree on which punch(es) are missing —
   // kept as a single switch so future edits don't drift.
+  // For shift staff the noun "punch" is replaced with "shift-IN
+  // punch" / "shift-OUT punch" so the email matches how their
+  // manager-assigned schedule is described elsewhere in the portal.
+  const inLabel  = isCustomShift ? 'shift-IN punch'  : 'punch-in';
+  const outLabel = isCustomShift ? 'shift-OUT punch' : 'punch-out';
   const missingPhrase = missingType === 'in'
-    ? 'your punch-in'
+    ? 'your ' + inLabel
     : missingType === 'out'
-    ? 'your punch-out'
-    : 'both your punch-in and punch-out';
+    ? 'your ' + outLabel
+    : 'both your ' + inLabel + ' and ' + outLabel;
   const actualTimesPhrase = missingType === 'in'
-    ? 'your actual arrival time'
+    ? (isCustomShift ? 'your actual shift-IN time' : 'your actual arrival time')
     : missingType === 'out'
-    ? 'your actual departure time'
-    : 'your actual arrival and departure times';
+    ? (isCustomShift ? 'your actual shift-OUT time' : 'your actual departure time')
+    : (isCustomShift ? 'your actual shift-IN and shift-OUT times' : 'your actual arrival and departure times');
 
   const psn = String(employee.id || employee.psn || '').toUpperCase();
   const fullName = String(employee.name || '').toUpperCase();
-  const subject = 'Missing Punch Notice — ' + psn + ' ' + fullName + ' — ' + dateLong;
+  // Shift staff get a distinct subject prefix so the inbox makes
+  // it obvious this is a shift-attendance issue.
+  const subjectPrefix = isCustomShift
+    ? ((isNightShiftStart || isNightShiftEnd) ? 'Shift Missing Punch Notice (Night Shift)' : 'Shift Missing Punch Notice')
+    : 'Missing Punch Notice';
+  const subject = subjectPrefix + ' — ' + psn + ' ' + fullName + ' — ' + dateLong;
   const firstName = (employee.first_name || (employee.name || '').split(' ')[0] || '').trim();
   const greetName = firstName
     ? firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase()
@@ -733,16 +743,49 @@ function missedPunchEmailContent({ employee, dateLong, missingType }) {
   // situation. The framing is: a complete record is required, the
   // gap has real downstream consequences (payroll, overtime,
   // Saudi labor compliance), and the correction must come through
-  // the line manager within a 2-day window.
-  const policyBullets = [
-    '\u2022 A complete punch-in and punch-out is required on every working day.',
-    '\u2022 Missing punches affect payroll, overtime, and Saudi labor law compliance.',
-    '\u2022 Missed punches must be reported and confirmed by your manager within two working days.',
-  ];
+  // the line manager within a 2-day window. For shift staff, the
+  // first bullet is rewritten to reference the assigned shift
+  // window instead of "every working day".
+  const startStr12h = scheduledStart ? fmtTime12h(scheduledStart) : null;
+  const endStr12h   = scheduledEnd   ? fmtTime12h(scheduledEnd)   : null;
+  const policyBullets = isCustomShift
+    ? [
+        '\u2022 A complete shift-IN and shift-OUT punch is required on every assigned shift'
+          + (startStr12h && endStr12h ? ' (' + startStr12h + ' \u2192 ' + endStr12h + ((isNightShiftStart || isNightShiftEnd) ? ', overnight' : '') + ').' : '.'),
+        '\u2022 Missing punches affect payroll, overtime, and Saudi labor law compliance.',
+        '\u2022 Missed shift punches must be reported and confirmed by your line manager within two working days.',
+      ]
+    : [
+        '\u2022 A complete punch-in and punch-out is required on every working day.',
+        '\u2022 Missing punches affect payroll, overtime, and Saudi labor law compliance.',
+        '\u2022 Missed punches must be reported and confirmed by your manager within two working days.',
+      ];
 
   // Same 71-char "=" divider as the late/early emails (visual fit
   // confirmed in production mail-client rendering by Nadeem).
   const divider = '='.repeat(71);
+
+  // Manager attribution — same wording shape as the late/early
+  // shift emails so the staff sees who set their schedule and when.
+  const assignmentPara = (isCustomShift && (managerName || assignedBy))
+    ? 'This shift schedule'
+      + (startStr12h && endStr12h
+          ? ' (' + startStr12h + ' \u2192 ' + endStr12h + ((isNightShiftStart || isNightShiftEnd) ? ', overnight' : '') + ')'
+          : '')
+      + ' was set by your line manager'
+      + (managerName ? ' (' + managerName + ')' : '')
+      + (assignedAt ? ' on ' + new Date(assignedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '')
+      + ' through the ESAU HR Portal. Your acknowledgment of the shift is on file in the same system.\n\n'
+    : '';
+
+  // Shift context line — reinforces in the opening paragraph that
+  // the missed punches relate to a specific assigned shift, not a
+  // generic working day.
+  const shiftContext = isCustomShift && scheduleLabel
+    ? ' Your assigned ' + scheduleLabel.toLowerCase() + ' covers '
+      + (startStr12h || '?') + ' \u2192 ' + (endStr12h || '?')
+      + ((isNightShiftStart || isNightShiftEnd) ? ' (overnight)' : '') + '.'
+    : '';
 
   // Body — HR-Department voice. Action paragraph routes the
   // correction through the line manager (who is already CC'd on
@@ -751,10 +794,15 @@ function missedPunchEmailContent({ employee, dateLong, missingType }) {
   // HR updates the log. Removed the previous "device fault /
   // operations team" exception paragraph per Nadeem's instruction
   // — manager-confirmation now covers all legitimate correction
-  // cases including faulty terminal readings.
+  // cases including faulty terminal readings. For shift staff the
+  // full month roster + attribution paragraph are inserted between
+  // the violation summary and the policy bullets so they see the
+  // schedule context for the missing day.
   const body =
     'Dear ' + greetName + ',\n\n' +
-    'HR\u2019s daily attendance review for ' + dateLong + ' shows ' + missingPhrase + ' missing from the time card. This leaves the day\u2019s record incomplete and cannot be processed for payroll until corrected.\n\n' +
+    'HR\u2019s daily attendance review for ' + dateLong + ' shows ' + missingPhrase + ' missing from the time card. This leaves the day\u2019s record incomplete and cannot be processed for payroll until corrected.' + shiftContext + '\n\n' +
+    assignmentPara +
+    (isCustomShift ? buildAssignedShiftsBlock(assignedShifts, violationDate, divider) : '') +
     'As a reminder, according to the ESAU attendance policy:\n\n' +
     divider + '\n' +
     policyBullets.join('\n') + '\n' +
@@ -2562,6 +2610,19 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       employee: entry.employee,
       dateLong,
       missingType: entry.missingType,
+      isCustomShift: !!entry.isCustomShift,
+      scheduleLabel: entry.scheduleLabel || null,
+      scheduledStart: entry.scheduledStart || null,
+      scheduledEnd: entry.scheduledEnd || null,
+      isNightShiftStart: !!entry.isNightShiftStart,
+      isNightShiftEnd:   !!entry.isNightShiftEnd,
+      assignedBy: entry.assignedBy || null,
+      assignedAt: entry.assignedAt || null,
+      managerName: entry.assignedBy ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
+      assignedShifts: entry.isCustomShift
+        ? (monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [])
+        : [],
+      violationDate: entry.dateLabel || csvDate,
     });
     const cc = [getManagerEmail(entry.employee), ...FIXED_CC].filter(Boolean);
     const url = buildMailto({ to: entry.employee.email, cc, subject, body });
@@ -5416,6 +5477,19 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, empById, monthly
     const fn = mode === 'test' ? missedPunchEmailContentTemp : missedPunchEmailContent;
     const c = fn({
       employee: entry.employee, dateLong, missingType: entry.missingType,
+      isCustomShift: !!entry.isCustomShift,
+      scheduleLabel: entry.scheduleLabel || null,
+      scheduledStart: entry.scheduledStart || null,
+      scheduledEnd: entry.scheduledEnd || null,
+      isNightShiftStart: !!entry.isNightShiftStart,
+      isNightShiftEnd:   !!entry.isNightShiftEnd,
+      assignedBy: entry.assignedBy || null,
+      assignedAt: entry.assignedAt || null,
+      managerName: (entry.assignedBy && empById) ? (empById[String(entry.assignedBy).toUpperCase()]?.name || null) : null,
+      assignedShifts: (entry.isCustomShift && monthlyShiftsByEmp)
+        ? (monthlyShiftsByEmp[String(entry.employee.id).toUpperCase()] || [])
+        : [],
+      violationDate: entry.dateLabel || csvDate,
     });
     subject = c.subject;
     summary = `Missing punch on ${dateLong} — ${entry.missingType === 'both' ? 'both in and out' : entry.missingType === 'in' ? 'punch-in' : 'punch-out'} not recorded.`;
