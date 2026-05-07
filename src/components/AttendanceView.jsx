@@ -736,7 +736,7 @@ function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd,
   return { subject, body };
 }
 
-function missedPunchEmailContent({ employee, dateLong, missingType, isCustomShift, scheduleLabel, scheduledStart, scheduledEnd, isNightShiftStart, isNightShiftEnd, assignedBy, assignedAt, managerName, assignedShifts, violationDate, staffHasShifts }) {
+function missedPunchEmailContent({ employee, dateLong, missingType, isCustomShift, scheduleLabel, scheduledStart, scheduledEnd, isNightShiftStart, isNightShiftEnd, assignedBy, assignedAt, managerName, assignedShifts, violationDate, staffHasShifts, isShiftAbsence }) {
   // missingType: 'in' | 'out' | 'both'
   // Wording variants for the violation summary line and the action
   // paragraph. Both have to agree on which punch(es) are missing —
@@ -762,9 +762,15 @@ function missedPunchEmailContent({ employee, dateLong, missingType, isCustomShif
   // Shift staff get a distinct subject prefix so the inbox makes
   // it obvious this is a shift-attendance issue.
   const isShiftFlow = !!(isCustomShift || staffHasShifts);
-  const subjectPrefix = isShiftFlow
-    ? ((isNightShiftStart || isNightShiftEnd) ? 'Shift Missing Punch Notice (Night Shift)' : 'Shift Missing Punch Notice')
-    : 'Missing Punch Notice';
+  // Subject prefix — shift absence (#4) gets the strongest framing
+  // since it represents an unexcused no-show on a manager-assigned
+  // shift, distinct from a missed-punch correction. Falls through to
+  // standard shift / office wording for everything else.
+  const subjectPrefix = isShiftAbsence
+    ? ((isNightShiftStart || isNightShiftEnd) ? 'Shift Absence Notice (Night Shift)' : 'Shift Absence Notice')
+    : (isShiftFlow
+        ? ((isNightShiftStart || isNightShiftEnd) ? 'Shift Missing Punch Notice (Night Shift)' : 'Shift Missing Punch Notice')
+        : 'Missing Punch Notice');
   const subject = subjectPrefix + ' — ' + psn + ' ' + fullName + ' — ' + dateLong;
   const firstName = (employee.first_name || (employee.name || '').split(' ')[0] || '').trim();
   const greetName = firstName
@@ -842,9 +848,21 @@ function missedPunchEmailContent({ employee, dateLong, missingType, isCustomShif
   // full month roster + attribution paragraph are inserted between
   // the violation summary and the policy bullets so they see the
   // schedule context for the missing day.
+  // Opener and closer adapt for shift absence (#4 — Phase 1) — the
+  // wording shifts from "this is incomplete, please correct" to "this
+  // is logged as an unexcused absence on a manager-assigned shift".
+  // Manager-confirmation route is still offered as the resolution
+  // path, but the framing makes clear this is a more serious flag
+  // than a routine missed-punch correction.
+  const opener = isShiftAbsence
+    ? 'HR\u2019s daily attendance review for ' + dateLong + ' shows neither a shift-IN nor a shift-OUT punch on record for your manager-assigned ' + (scheduleLabel || 'shift') + '. As no leave or permission is on file for this date, this is logged as an unexcused absence on an assigned shift.'
+    : 'HR\u2019s daily attendance review for ' + dateLong + ' shows ' + missingPhrase + ' missing from the time card. This leaves the day\u2019s record incomplete and cannot be processed for payroll until corrected.';
+  const closer = isShiftAbsence
+    ? 'If you were present for this shift but the terminal failed to register your punches, please coordinate with your direct manager (copied on this email) within two working days so the absence can be reclassified. Without timely manager confirmation, this stands on your record as an unexcused shift absence and may carry implications for your evaluation and payroll.'
+    : 'Please discuss ' + actualTimesPhrase + ' for ' + dateLong + ' with your direct manager (copied on this email). Your manager must then reply confirming the times within two working days, after which the attendance log will be updated. Without manager confirmation, the day stands as incomplete on your record.';
   const body =
     'Dear ' + greetName + ',\n\n' +
-    'HR\u2019s daily attendance review for ' + dateLong + ' shows ' + missingPhrase + ' missing from the time card. This leaves the day\u2019s record incomplete and cannot be processed for payroll until corrected.' + shiftContext + '\n\n' +
+    opener + shiftContext + '\n\n' +
     assignmentPara +
     noAssignmentNote +
     buildAssignedShiftsBlock(assignedShifts, violationDate, divider) +
@@ -852,7 +870,7 @@ function missedPunchEmailContent({ employee, dateLong, missingType, isCustomShif
     divider + '\n' +
     policyBullets.join('\n') + '\n' +
     divider + '\n\n' +
-    'Please discuss ' + actualTimesPhrase + ' for ' + dateLong + ' with your direct manager (copied on this email). Your manager must then reply confirming the times within two working days, after which the attendance log will be updated. Without manager confirmation, the day stands as incomplete on your record.\n\n' +
+    closer + '\n\n' +
     HR_SIGNATURE;
   return { subject, body };
 }
@@ -1604,6 +1622,107 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     return m;
   }, [acceptedShifts]);
 
+  // ── Roster gap detection (#2 — Phase 1) ──────────────────────────
+  // Surfaces working days for shift staff where the manager has not
+  // assigned a shift in employee_shifts. The point: convert silent
+  // fallback-to-office-hours into a visible roster-completion signal
+  // so managers can fill gaps before HR violation emails go out
+  // against staff for dates that should have been shift days.
+  //
+  // What counts as a gap, for each employee in shiftStaffThisMonth:
+  //   - Date is within the current month (1st through today)
+  //   - No employee_shifts row for {empId, date} (status pending OR
+  //     accepted both count as "assigned"; only the absence is a gap)
+  //   - Not a Saudi weekend (Fri = 5, Sat = 6) — we don't expect
+  //     managers to assign weekends by default; weekend shifts are
+  //     opt-in and surface separately via the weekend bucket
+  //   - Employee is not on approved leave that day
+  //   - Date is not a designated Mawani-visit day (BIZ-team trips
+  //     scheduled portal-side)
+  //
+  // Output: array of manager groups, each carrying their direct
+  // reports' gap dates. Sorted by gap count descending so the worst
+  // offenders surface first.
+  const rosterGaps = useMemo(() => {
+    if (!csvDate) return { totalGaps: 0, totalStaff: 0, byManager: [] };
+    // The month under review = the month of the file's csvDate. This
+    // matches the rest of the page's monthly framing (acceptedShifts,
+    // monthlyShiftsByEmp, etc.) — single source of truth.
+    const [yStr, mStr] = csvDate.split('-');
+    const year  = Number(yStr);
+    const month = Number(mStr); // 1–12
+    const today = new Date();
+    const isSameMonth = (today.getFullYear() === year && today.getMonth() + 1 === month);
+    // For the current month, only check up to today. For a past
+    // month being reviewed, check the entire month.
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const lastDay = isSameMonth ? today.getDate() : daysInMonth;
+
+    // Per-staff gap counts — only employees who are on the monthly
+    // shift roster (i.e. have at least one shift assignment this
+    // month) are evaluated. Office-only staff are out of scope.
+    const staffGaps = {}; // empKey → { empId, name, managerId, gapDates: [] }
+
+    shiftStaffThisMonth.forEach(empKey => {
+      const emp = empById[empKey];
+      if (!emp) return;
+      // SUP-team staff (Bashaier marked them as office hours) are
+      // skipped — Bashaier's marker overrides any shift assignment,
+      // so a shift gap is meaningless for them.
+      const isSup = String(emp.department || '').toUpperCase() === 'SUP';
+      if (isSup) return;
+
+      const gapDates = [];
+      for (let d = 1; d <= lastDay; d++) {
+        const dt = new Date(year, month - 1, d);
+        const dow = dt.getDay(); // 0=Sun ... 5=Fri, 6=Sat
+        if (dow === 5 || dow === 6) continue; // Saudi weekend
+
+        const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+        // Gap conditions
+        if (shiftOverrideById[`${empKey}|${dateStr}`]) continue; // shift assigned (pending or accepted)
+        if (mawaniDays.has(dateStr)) continue;                   // Mawani-visit day (no shift expected)
+        if (onLeaveOnDate(emp.id, dateStr)) continue;            // approved leave covers this day
+
+        gapDates.push(dateStr);
+      }
+      if (gapDates.length > 0) {
+        staffGaps[empKey] = {
+          empId: emp.id,
+          name: emp.name || '',
+          managerId: emp.manager_id || null,
+          gapDates,
+        };
+      }
+    });
+
+    // Group by managerId
+    const byManagerMap = {};
+    Object.values(staffGaps).forEach(s => {
+      const mid = String(s.managerId || '').toUpperCase() || '__UNASSIGNED__';
+      if (!byManagerMap[mid]) {
+        const mgr = empById[mid];
+        byManagerMap[mid] = {
+          managerId: mid === '__UNASSIGNED__' ? null : mid,
+          managerName: mgr?.name || (mid === '__UNASSIGNED__' ? '— No manager on file —' : mid),
+          staff: [],
+          totalGaps: 0,
+        };
+      }
+      byManagerMap[mid].staff.push(s);
+      byManagerMap[mid].totalGaps += s.gapDates.length;
+    });
+
+    const byManager = Object.values(byManagerMap)
+      .map(g => ({ ...g, staff: g.staff.sort((a, b) => b.gapDates.length - a.gapDates.length) }))
+      .sort((a, b) => b.totalGaps - a.totalGaps);
+
+    const totalGaps  = byManager.reduce((sum, g) => sum + g.totalGaps, 0);
+    const totalStaff = Object.keys(staffGaps).length;
+    return { totalGaps, totalStaff, byManager };
+  }, [csvDate, shiftStaffThisMonth, shiftOverrideById, empById, mawaniDays, onLeaveOnDate]);
+
   // ── Night-shift bridge ────────────────────────────────────────────
   // Maps the END day of a night shift back to its START day. Keyed
   // by `${employee}|${endDate}` where endDate = startDate + 1 day,
@@ -1738,7 +1857,8 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       early: [], missedOut: [],
       onTime: [], onLeave: [], unknownEmp: [],
       weekend: [],
-      shiftOffDay: [], // shift staff who showed up on their planned off-day
+      shiftOffDay: [],   // shift staff who showed up on their planned off-day
+      shiftAbsent: [],   // shift staff with assigned shift, zero punches, no leave (#4)
     };
     if (!parsed.rows.length && !(parsed.weekendRows || []).length) return out;
 
@@ -1959,6 +2079,32 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         // Exception: night-shift START — we still check late arrival
         // below, and don't expect a punch-out (it'll be tomorrow).
         if (!punchInMin) {
+          // SHIFT-DAY ABSENT (#4 — Phase 1): when a shift was
+          // explicitly assigned for this date AND zero punches landed
+          // AND no leave covers the day, this is no longer a "missed
+          // punch" (which suggests staff was at work but the terminal
+          // missed it) — it's an unexcused absence on a manager-set
+          // shift. Routes to a separate bucket so HR can apply the
+          // sterner email tone and so the dashboard counts this
+          // distinctly from genuine missed-punch corrections.
+          if (sched.isCustom && !punchInMin && !punchOutMin) {
+            out.shiftAbsent.push({
+              id: 'row-' + idx, employee: emp, row,
+              punchInStr, punchOutStr,
+              scheduledStart: sched.startStr,
+              scheduledEnd: sched.endStr,
+              scheduleLabel: sched.label,
+              isCustomShift: true,
+              isNightShiftStart: !!isNightShiftStart,
+              staffHasShifts: shiftStaffThisMonth.has(empKey),
+              missingType: 'both',
+              isShiftAbsence: true,
+              assignedBy: sched.assignedBy || null,
+              assignedAt: sched.assignedAt || null,
+              dateLabel: rowDate,
+            });
+            return;
+          }
           out.missedIn.push({
             id: 'row-' + idx, employee: emp, row,
             // For night shifts, "missing both" still means absent —
@@ -2038,24 +2184,23 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         const shiftInStr = punchOutStr || punchInStr;
         const shiftInMin = timeToMinutes(shiftInStr);
         if (!shiftInMin) {
-          // No clock-in for the night shift — missed-punch on the
-          // START side. Surface as missedIn (not missedOut) since
-          // conceptually they failed to arrive, even though it's
-          // yesterday's row.
-          out.missedIn.push({
+          // SHIFT-ABSENT on night-shift START: yesterday's row has
+          // zero punches, so the staff didn't even start the assigned
+          // overnight shift. Sterner classification than missed-punch.
+          out.shiftAbsent.push({
             id: 'row-' + idx, employee: emp, row,
-            missingType: 'in',
             punchInStr, punchOutStr,
             scheduledStart: sched.startStr,
             scheduledEnd:   sched.endStr,
-            lateCutoff: sched.lateCutoffStr,
             scheduleLabel: sched.label,
             isCustomShift: true,
+            isNightShiftStart: true,
             staffHasShifts: shiftStaffThisMonth.has(empKey),
+            missingType: 'both',
+            isShiftAbsence: true,
             assignedBy: sched.assignedBy || null,
             assignedAt: sched.assignedAt || null,
             dateLabel: rowDate,
-            isNightShiftStart: true,
           });
           return;
         }
@@ -2105,6 +2250,26 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         // Could be a real missed punch (forgot to clock out) or rare
         // device sync issue. Either way, actionable.
         if (!punchOutMin) {
+          // SHIFT-ABSENT (#4): same logic as the today block above —
+          // a shift assigned for yesterday with zero punches is an
+          // unexcused shift absence, not a missed punch.
+          if (sched.isCustom && !punchInMin && !punchOutMin) {
+            out.shiftAbsent.push({
+              id: 'row-' + idx, employee: emp, row,
+              punchInStr, punchOutStr,
+              scheduledStart: sched.startStr,
+              scheduledEnd: sched.endStr,
+              scheduleLabel: sched.label,
+              isCustomShift: true,
+              staffHasShifts: shiftStaffThisMonth.has(empKey),
+              missingType: 'both',
+              isShiftAbsence: true,
+              assignedBy: sched.assignedBy || null,
+              assignedAt: sched.assignedAt || null,
+              dateLabel: rowDate,
+            });
+            return;
+          }
           out.missedOut.push({
             id: 'row-' + idx, employee: emp, row,
             missingType: !punchInMin ? 'both' : 'out',
@@ -2240,6 +2405,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     out.onLeave.sort(byName);
     out.unknownEmp.sort(byPsn);
     out.shiftOffDay.sort(byName);
+    out.shiftAbsent.sort(byName);
     // weekend already sorted (location → dept → check-in) by the
     // weekendSorted memo downstream — leave the raw out.weekend in
     // file order so the memo's sort owns the canonical order.
@@ -2715,6 +2881,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       employee: entry.employee,
       dateLong,
       missingType: entry.missingType,
+      isShiftAbsence: !!entry.isShiftAbsence,
       isCustomShift: !!entry.isCustomShift,
       scheduleLabel: entry.scheduleLabel || null,
       scheduledStart: entry.scheduledStart || null,
@@ -3090,6 +3257,57 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       )}
     />
   );
+
+  // ── SHIFT ABSENCE panel (#4 — Phase 1) ─────────────────────────────
+  // Distinct from missed-punch: shift was assigned, no punches landed,
+  // no leave on file. The most serious daily-attendance flag we
+  // surface. Reuses handleEmailMissed under the hood (same plumbing,
+  // sentMarkers, logged state) but renders with a stern subject and
+  // tone via the isShiftAbsence flag we set on each entry.
+  const buildShiftAbsentPanel = () => (
+    <FlaggedSection
+      title="Shift absences"
+      kicker="ASSIGNED SHIFT · NO PUNCHES · NO LEAVE"
+      iconColor="#991B1B"
+      barFrom="#F87171" barTo="#991B1B"
+      empty="No shift absences flagged."
+      onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'shiftAbsent', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
+      entries={detection.shiftAbsent.map(e => {
+        const types = ['missed_in', 'missed_out'];
+        const allLogged = types.every(t => loggedMarkers[e.employee.id + ':' + t]);
+        const sentTimestamp = types
+          .map(t => loggedMarkers[e.employee.id + ':' + t])
+          .find(v => typeof v === 'string') || null;
+        return ({
+          ...e,
+          detail: 'Did not punch in or out on assigned ' + (e.scheduleLabel || 'shift')
+            + (e.isNightShiftStart ? ' (overnight start)' : ''),
+          metaIcon: <AlertTriangle className="w-4 h-4"/>,
+          logged: allLogged,
+          actionable: true,
+          emailSentAt: sentTimestamp,
+          monthlyCount: monthlyCounts[e.employee.id] || 0,
+        });
+      })}
+      renderButton={(entry) => !actionsEnabled ? (
+        <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
+          style={{ background: '#F4F4EE', color: '#0A0A0A', border: '1px solid #E5E5E5' }}>
+          READ-ONLY
+        </span>
+      ) : (
+        <RowButton
+          onClick={() => setConfirmEntry({ entry, kind: 'shiftAbsent', mode: 'live' })}
+          onClickTest={() => setConfirmEntry({ entry, kind: 'shiftAbsent', mode: 'test' })}
+          onMarkSent={() => markSent(entry.id)}
+          sent={!!sentMarkers[entry.id]}
+          logged={entry.logged}
+          emailSentAt={entry.emailSentAt}
+          label="Email shift absence notice"
+        />
+      )}
+    />
+  );
+
   const buildEarlyPanel = (opts = {}) => {
     const { shiftMode = false } = opts;
     const filteredEntries = (detection.early || []).filter(e =>
@@ -3883,6 +4101,12 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       ? { shiftLate:  buildLatePanel({ shiftMode: true }) }  : {}),
     ...(dailyPanelsOk && (detection.early || []).some(e => e.isCustomShift)
       ? { shiftEarly: buildEarlyPanel({ shiftMode: true }) } : {}),
+    // Shift absence panel (#4 — Phase 1) — fires whenever there's a
+    // manager-assigned shift with zero punches. Distinct from missed
+    // punch (which assumes the staff was at work but the terminal
+    // dropped a read).
+    ...(dailyPanelsOk && detection.shiftAbsent.length
+      ? { shiftAbsent: buildShiftAbsentPanel() } : {}),
     ...(detection.weekend.length ? { weekend: buildWeekendPanel() } : {}),
   };
 
@@ -4229,6 +4453,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             shiftEarly:     detection.early.filter(e => !!e.isCustomShift).length,
             shiftMissedIn:  detection.missedIn.filter(e => !!e.isCustomShift).length,
             shiftMissedOut: detection.missedOut.filter(e => !!e.isCustomShift).length,
+            shiftAbsent:    detection.shiftAbsent.length,
             onTime:      detection.onTime.length,
             onLeave:     detection.onLeave.length,
             unknown:     detection.unknownEmp.length,
@@ -4247,6 +4472,8 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           isDuplicate={!!existingUpload}
           onReset={reset}
           monthlyShiftsByEmp={monthlyShiftsByEmp}
+          rosterGaps={rosterGaps}
+          empById={empById}
         />
       )}
 
@@ -4364,7 +4591,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             setConfirmEntry(null);
             if (kind === 'late')   handleEmailLate(entry, mode);
             else if (kind === 'early')  handleEmailEarly(entry, mode);
-            else if (kind === 'missed' || kind === 'missedIn' || kind === 'missedOut') handleEmailMissed(entry, mode);
+            else if (kind === 'missed' || kind === 'missedIn' || kind === 'missedOut' || kind === 'shiftAbsent') handleEmailMissed(entry, mode);
           }}
         />
       )}
@@ -4388,7 +4615,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             const m = bulkSession.mode || 'live';
             if (k === 'late')   handleEmailLate(entry, m);
             else if (k === 'early')  handleEmailEarly(entry, m);
-            else if (k === 'missed' || k === 'missedIn' || k === 'missedOut') handleEmailMissed(entry, m);
+            else if (k === 'missed' || k === 'missedIn' || k === 'missedOut' || k === 'shiftAbsent') handleEmailMissed(entry, m);
             // Mark this one in the queue's sent set so the modal can
             // strike it through. Also flips the row's UI state below.
             setBulkSession(prev => prev ? {
@@ -4641,12 +4868,121 @@ function HelpTile({ id, label, sub, icon, accent, tint, isActive, onClick }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// RosterGapsCard (#2 — Phase 1)
+// ─────────────────────────────────────────────────────────────────────
+// Surfaces working days for shift staff where the manager has not yet
+// assigned a shift in employee_shifts. Grouped by line manager so each
+// supervisor can see their own outstanding work. Designed to nudge
+// managers to complete their roster BEFORE HR violation emails fire on
+// dates that should have been shifts.
+//
+// Click the card header to expand. Each manager group then shows the
+// staff under them with the specific gap dates listed compactly.
+function RosterGapsCard({ rosterGaps, empById, isOpen, onToggle }) {
+  if (!rosterGaps || !rosterGaps.totalGaps) return null;
+  const { totalGaps, totalStaff, byManager } = rosterGaps;
+
+  const fmtDate = (iso) => {
+    if (!iso) return '';
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  };
+
+  return (
+    <div
+      style={{
+        background: '#FFFBEB',
+        border: '1px solid #FDE68A',
+        borderRadius: 10,
+        padding: 0,
+        overflow: 'hidden',
+      }}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        style={{
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '12px 16px',
+          background: 'transparent',
+          border: 'none',
+          textAlign: 'left',
+          cursor: 'pointer',
+        }}
+      >
+        <div className="flex items-center gap-3" style={{ minWidth: 0 }}>
+          <span style={{ fontSize: 18 }} aria-hidden>📋</span>
+          <div style={{ minWidth: 0 }}>
+            <div className="text-[10px] tracking-[0.25em]" style={{ fontWeight: 700, color: '#0A0A0A' }}>
+              ROSTER GAPS
+            </div>
+            <div className="text-[12px] mt-0.5" style={{ color: '#0A0A0A' }}>
+              <strong>{totalGaps}</strong> unassigned working {totalGaps === 1 ? 'day' : 'days'} across <strong>{totalStaff}</strong> shift {totalStaff === 1 ? 'staff' : 'staff'} this month
+            </div>
+          </div>
+        </div>
+        <span style={{ fontSize: 18, color: '#0A0A0A', opacity: 0.5 }}>{isOpen ? '−' : '+'}</span>
+      </button>
+
+      {isOpen && (
+        <div style={{ borderTop: '1px solid #FDE68A', padding: '8px 16px 14px' }}>
+          {byManager.map((g) => {
+            const mgrInitial = (g.managerName || '?').charAt(0).toUpperCase();
+            return (
+              <div key={g.managerId || '__unassigned__'} style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed #FDE68A' }}>
+                <div className="flex items-baseline gap-2 mb-2">
+                  <div style={{
+                    width: 22, height: 22, borderRadius: '50%',
+                    background: '#FCD34D', color: '#78350F',
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 11, fontWeight: 700,
+                  }}>
+                    {mgrInitial}
+                  </div>
+                  <div className="text-[12px]" style={{ color: '#0A0A0A', fontWeight: 700 }}>
+                    {g.managerName}
+                  </div>
+                  <div className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+                    {g.totalGaps} {g.totalGaps === 1 ? 'gap' : 'gaps'} &middot; {g.staff.length} {g.staff.length === 1 ? 'staff' : 'staff'}
+                  </div>
+                </div>
+                <div style={{ paddingLeft: 30 }}>
+                  {g.staff.map((s) => (
+                    <div key={s.empId} style={{ marginBottom: 6 }}>
+                      <div className="text-[11px]" style={{ color: '#0A0A0A', fontWeight: 600 }}>
+                        {s.name}
+                        <span style={{ marginLeft: 6, opacity: 0.6, fontWeight: 500 }}>
+                          ({s.empId}) &middot; {s.gapDates.length} unassigned
+                        </span>
+                      </div>
+                      <div className="text-[11px] mt-0.5" style={{ color: '#1F1B16', lineHeight: 1.5 }}>
+                        {s.gapDates.map(d => fmtDate(d)).join('  ·  ')}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          <div className="text-[11px] mt-3" style={{ color: '#0A0A0A', opacity: 0.65, fontStyle: 'italic' }}>
+            Managers can fill these in via the Shifts tab on the ESAU HR Portal. Gaps clear automatically once a shift is assigned for the date.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FileSummary({
   fileName, csvDate, isWeekend, totalRows, offDateCount = 0,
   counts, dates, windowAvail, detection, progressByKind,
   drillKind, setDrillKind, actionPanels,
   actionsEnabled, onToggleActions, isDuplicate, onReset,
-  monthlyShiftsByEmp,
+  monthlyShiftsByEmp, rosterGaps, empById,
 }) {
   // drillKind is now controlled by the parent (AttendanceView) so the
   // action UI for each kind can be constructed alongside the email
@@ -4779,6 +5115,25 @@ function FileSummary({
             </div>
           )}
 
+          {/* ROSTER GAPS (#2 — Phase 1) — manager-side dashboard
+              showing working days where a shift staff member has no
+              shift assigned in employee_shifts for the current month.
+              The point: convert the silent fallback-to-office-hours
+              (which has been generating confusing emails like Jasim's)
+              into a visible roster-completion signal. Per Nadeem's
+              brief, this is grouped by manager so each line manager
+              sees their own gap count, click-through to the dates and
+              staff. Hidden when there are no gaps to keep the
+              dashboard clean. */}
+          {rosterGaps && rosterGaps.totalGaps > 0 && (
+            <RosterGapsCard
+              rosterGaps={rosterGaps}
+              empById={empById}
+              isOpen={drillKind === 'rosterGaps'}
+              onToggle={() => setDrillKind(drillKind === 'rosterGaps' ? null : 'rosterGaps')}
+            />
+          )}
+
           {/* SHIFT STAFF — separate dashboard for shift-roster
               defaulters. Same email function as office staff,
               but the tiles surface independently so Bashaier
@@ -4789,7 +5144,7 @@ function FileSummary({
               there's at least one shift defaulter to avoid
               taking up vertical space when there's nothing
               actionable. */}
-          {(counts.shiftLate > 0 || counts.shiftEarly > 0) && (
+          {(counts.shiftLate > 0 || counts.shiftEarly > 0 || counts.shiftAbsent > 0) && (
             <div>
               <div className="flex items-baseline gap-2 mb-2">
                 <span className="text-[10px] tracking-[0.25em]" style={{ fontWeight: 700, color: '#0A0A0A' }}>
@@ -4826,6 +5181,26 @@ function FileSummary({
                     isOpen={drillKind === 'shiftEarly'}
                     onClick={() => setDrillKind(drillKind === 'shiftEarly' ? null : 'shiftEarly')}
                     progress={progressByKind?.shiftEarly}
+                  />
+                )}
+                {/* SHIFT-ABSENT (#4 — Phase 1) — sterner classification
+                    when a manager-assigned shift had zero punches and
+                    no leave on file. Distinct from missed-punch (where
+                    one punch hit but the other didn't): this is the
+                    "didn't show up at all" case. Red colourway flags
+                    it as the most serious shift outcome on the page. */}
+                {counts.shiftAbsent > 0 && (
+                  <CountPill
+                    kind="shiftAbsent"
+                    icon="🚨"
+                    label="Shift absence"
+                    count={counts.shiftAbsent}
+                    color="#991B1B"
+                    tint="#FEF2F2"
+                    subtext="assigned shift, no punches"
+                    isOpen={drillKind === 'shiftAbsent'}
+                    onClick={() => setDrillKind(drillKind === 'shiftAbsent' ? null : 'shiftAbsent')}
+                    progress={progressByKind?.shiftAbsent}
                   />
                 )}
               </div>
@@ -5590,10 +5965,11 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, empById, monthly
     });
     subject = c.subject;
     summary = `Early departure on ${dateLong} — punched out ${entry.punchOutStr}, ${entry.minutesEarly} min before scheduled ${entry.scheduledEnd}.`;
-  } else if (kind === 'missed' || kind === 'missedIn' || kind === 'missedOut') {
+  } else if (kind === 'missed' || kind === 'missedIn' || kind === 'missedOut' || kind === 'shiftAbsent') {
     const fn = mode === 'test' ? missedPunchEmailContentTemp : missedPunchEmailContent;
     const c = fn({
       employee: entry.employee, dateLong, missingType: entry.missingType,
+      isShiftAbsence: !!entry.isShiftAbsence,
       isCustomShift: !!entry.isCustomShift,
       scheduleLabel: entry.scheduleLabel || null,
       scheduledStart: entry.scheduledStart || null,
@@ -5617,7 +5993,7 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, empById, monthly
   // wording is identical to live (the live version doesn't reference
   // the portal anyway), so we surface that fact rather than implying
   // a difference that isn't there.
-  const testBannerCopy = (kind === 'missed' || kind === 'missedIn' || kind === 'missedOut')
+  const testBannerCopy = (kind === 'missed' || kind === 'missedIn' || kind === 'missedOut' || kind === 'shiftAbsent')
     ? 'TEST DRAFT — the missed-punch email has no portal references in either Live or Test wording, so this is identical to the Live version. The button is shown for UI consistency.'
     : 'TEST DRAFT — pre-launch wording with no references to esauhr.netlify.app or the HR Portal. The recipient is asked to reply with their explanation rather than submit a portal request.';
 
@@ -5763,7 +6139,7 @@ function BulkActionModal({ session, csvDate, getManagerEmail, onClose, onOpenDra
       return `Left ${entry.punchOutStr} · ${entry.minutesEarly} min before ${entry.scheduledEnd}`
         + (entry.permission ? ` · permitted from ${String(entry.permission.time_from || '').slice(0,5)}` : ' · no permission');
     }
-    if (kind === 'missed' || kind === 'missedIn' || kind === 'missedOut') {
+    if (kind === 'missed' || kind === 'missedIn' || kind === 'missedOut' || kind === 'shiftAbsent') {
       return entry.missingType === 'both' ? 'Both punch-in and punch-out missing'
            : entry.missingType === 'in'   ? 'No punch-in on record'
                                           : 'No punch-out on record';
