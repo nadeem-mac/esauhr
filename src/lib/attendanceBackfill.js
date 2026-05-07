@@ -1230,15 +1230,31 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
     // against punches.
     const leaveCoverage = findLeaveCoverage(empId, r.attendance_date, leavesByEmp);
     if (leaveCoverage) {
-      const leaveStatus = (String(leaveCoverage.leave_type || '').toLowerCase().includes('sick'))
-        ? 'sick_leave'
-        : 'annual_leave';
+      // Special leave types get their own attendance status so the
+      // calendar / report can show them with distinct chips. Maternity,
+      // paternity, hajj, emergency, and unpaid leaves are all visually
+      // separate from general "annual leave" — important because these
+      // are statutorily distinct categories that managers and HR need
+      // to spot at a glance (e.g., maternity covers months not days,
+      // hajj is once-in-a-lifetime, unpaid affects payroll).
+      //
+      // Pattern match is case-insensitive substring on leave_type name.
+      // Falls through to annual_leave as the default for any other
+      // type (annual, casual, etc.).
+      const ltype = String(leaveCoverage.leave_type || '').toLowerCase();
+      let leaveStatus = 'annual_leave';
+      if (ltype.includes('sick'))           leaveStatus = 'sick_leave';
+      else if (ltype.includes('maternit'))  leaveStatus = 'maternity_leave';
+      else if (ltype.includes('paternit'))  leaveStatus = 'paternity_leave';
+      else if (ltype.includes('hajj'))      leaveStatus = 'hajj_leave';
+      else if (ltype.includes('emergency')) leaveStatus = 'emergency_leave';
+      else if (ltype.includes('unpaid'))    leaveStatus = 'unpaid_leave';
       newStatus    = leaveStatus;
       newLate      = 0;
       newEarly     = 0;
       newExpStart  = null;
       newExpEnd    = null;
-      newNote      = `Covered by approved ${leaveStatus.replace('_', ' ')} (re-evaluated)`;
+      newNote      = `Covered by approved ${leaveStatus.replace(/_/g, ' ')} (re-evaluated)`;
       // Skip the rest of the classification — leave wins.
       const oldStatus = r.status;
       const oldLate   = Number(r.late_minutes || 0);
@@ -1277,17 +1293,20 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
     // If we reach here, no leave covers this date. If the existing
     // row was on leave but the leave is gone, FALL THROUGH to normal
     // classification (don't preserve a stale leave classification).
-    if (isDailyRow && (r.status === 'on_leave' ||
-                       r.status === 'annual_leave' ||
-                       r.status === 'sick_leave') &&
-        r.leave_request_id) {
+    // The set covers every leave-bucket status the classifier may
+    // emit — extending this list is mandatory whenever a new leave
+    // type is added so re-evaluation behaves correctly.
+    const LEAVE_STATUSES = new Set([
+      'on_leave', 'annual_leave', 'sick_leave',
+      'maternity_leave', 'paternity_leave',
+      'hajj_leave', 'emergency_leave', 'unpaid_leave',
+    ]);
+    if (isDailyRow && LEAVE_STATUSES.has(r.status) && r.leave_request_id) {
       // Leave was rescinded — let the normal path re-evaluate this row.
       // We still skip when leave_request_id is null AND the row is
       // hand-tagged as leave (manual flag), to avoid clobbering
       // operator intent.
-    } else if (isDailyRow && (r.status === 'on_leave' ||
-                              r.status === 'annual_leave' ||
-                              r.status === 'sick_leave')) {
+    } else if (isDailyRow && LEAVE_STATUSES.has(r.status)) {
       // Hand-tagged leave with no leave_request_id — preserve.
       continue;
     }

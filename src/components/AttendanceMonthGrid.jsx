@@ -81,6 +81,16 @@ function styleForStatus(status, notes) {
       return { bg: '#CCFBF1', fg: '#115E59', border: '#5EEAD4', label: 'AL' };
     case 'sick_leave':
       return { bg: '#EDE9FE', fg: '#5B21B6', border: '#C4B5FD', label: 'SL' };
+    case 'maternity_leave':
+      return { bg: '#FCE7F3', fg: '#9D174D', border: '#F9A8D4', label: 'ML' };
+    case 'paternity_leave':
+      return { bg: '#E0F2FE', fg: '#075985', border: '#7DD3FC', label: 'PL' };
+    case 'hajj_leave':
+      return { bg: '#FEF3C7', fg: '#854F0B', border: '#FCD34D', label: 'HJ' };
+    case 'emergency_leave':
+      return { bg: '#FEE2E2', fg: '#7F1D1D', border: '#FCA5A5', label: 'EL' };
+    case 'unpaid_leave':
+      return { bg: '#F3F4F6', fg: '#374151', border: '#D1D5DB', label: 'UL' };
     case 'off_roster':
       return { bg: '#DBEAFE', fg: '#1E3A8A', border: '#93C5FD', label: 'OR' };
     case 'off_day':
@@ -98,6 +108,11 @@ function readableStatus(status) {
     absent: 'Absent',
     annual_leave: 'Annual leave',
     sick_leave: 'Sick leave',
+    maternity_leave: 'Maternity leave',
+    paternity_leave: 'Paternity leave',
+    hajj_leave: 'Hajj leave',
+    emergency_leave: 'Emergency leave',
+    unpaid_leave: 'Unpaid leave',
     off_roster: 'Worked off-roster',
     off_day: 'Off-day',
   })[status] || status;
@@ -246,7 +261,10 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
       else if (r.status === 'late') cur.late++;
       else if (r.status === 'short') cur.short++;
       else if (r.status === 'absent') cur.absent++;
-      else if (r.status === 'annual_leave' || r.status === 'sick_leave') cur.leave++;
+      else if (r.status === 'annual_leave' || r.status === 'sick_leave'
+            || r.status === 'maternity_leave' || r.status === 'paternity_leave'
+            || r.status === 'hajj_leave' || r.status === 'emergency_leave'
+            || r.status === 'unpaid_leave') cur.leave++;
       else if (r.status === 'off_day' || r.status === 'off_roster') cur.off++;
       m.set(r.employee_id, cur);
     });
@@ -620,6 +638,11 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
           { st: 'absent',       lbl: 'Absent' },
           { st: 'annual_leave', lbl: 'Annual leave' },
           { st: 'sick_leave',   lbl: 'Sick leave' },
+          { st: 'maternity_leave', lbl: 'Maternity' },
+          { st: 'paternity_leave', lbl: 'Paternity' },
+          { st: 'hajj_leave',      lbl: 'Hajj' },
+          { st: 'emergency_leave', lbl: 'Emergency' },
+          { st: 'unpaid_leave',    lbl: 'Unpaid' },
           { st: 'off_roster',   lbl: 'Off-roster work' },
           { st: 'off_day',      lbl: 'Off-day' },
           { st: 'present',      lbl: 'Shift day', overrideStyle: { bg: '#F8FAFC', fg: '#1F2937', border: '#CBD5E1', label: '🌙' } },
