@@ -317,8 +317,8 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
   const handleLeave = useCallback(() => setHoverTip(null), []);
 
   return (
-    <div className="rounded-2xl border bg-white p-3 sm:p-5" style={{ borderColor: '#D4D4D4' }}>
-      <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+    <div className="rounded-2xl border bg-white p-3 sm:px-4 sm:py-3" style={{ borderColor: '#D4D4D4' }}>
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
         <div>
           <div className="flex items-baseline gap-3">
             <span style={{
@@ -335,7 +335,80 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2 flex-wrap" style={{ flex: '1 1 auto', justifyContent: 'flex-end' }}>
+          {/* Search box — inline with title bar nav. Has clear border
+              so it visually reads as a search input. */}
+          {trackedTotalCount > 0 && (
+            <div
+              style={{
+                position: 'relative',
+                flex: '0 1 280px',
+                minWidth: 200,
+              }}
+            >
+              <Search
+                className="w-3.5 h-3.5"
+                style={{
+                  position: 'absolute',
+                  left: 10, top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: '#0A0A0A',
+                  opacity: 0.5,
+                  pointerEvents: 'none',
+                }}
+              />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search by name, PSN, department…"
+                aria-label="Search staff in monthly attendance"
+                style={{
+                  width: '100%',
+                  padding: '6px 30px 6px 30px',
+                  border: '1.5px solid #C7C2B6',
+                  borderRadius: 8,
+                  fontSize: 12,
+                  fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
+                  background: '#FFFFFF',
+                  color: '#1F1B16',
+                  outline: 'none',
+                }}
+                onFocus={(e) => { e.target.style.borderColor = '#0F4C2A'; }}
+                onBlur={(e) => { e.target.style.borderColor = '#C7C2B6'; }}
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch('')}
+                  aria-label="Clear search"
+                  style={{
+                    position: 'absolute',
+                    right: 4, top: '50%',
+                    transform: 'translateY(-50%)',
+                    width: 22, height: 22,
+                    borderRadius: 999,
+                    border: 'none',
+                    background: '#F5F5F5',
+                    color: '#0A0A0A',
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          )}
+          {/* Staff count — inline with search/nav. */}
+          {trackedTotalCount > 0 && (
+            <div className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.7, fontWeight: 500, whiteSpace: 'nowrap' }}>
+              {search
+                ? `${tracked.length} / ${trackedTotalCount}`
+                : `${trackedTotalCount} staff`}
+            </div>
+          )}
           <button
             onClick={() => nav(-1)}
             className="w-8 h-8 rounded-full inline-flex items-center justify-center"
@@ -371,83 +444,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
         </div>
       </div>
 
-      {/* Search row — lets Bashaier narrow the grid to a specific
-          staffer or department. Sits below the title bar and above
-          the calendar grid so it's visible whether or not the grid
-          is scrolled horizontally. The result counter on the right
-          adapts to whether a search is active:
-            • No search   → "64 staff"
-            • With search → "12 of 64 staff"
-          Empty result is handled in the grid below — same empty
-          state markup, different copy. */}
-      {trackedTotalCount > 0 && (
-        <div className="flex items-center gap-2 mb-3 flex-wrap">
-          <div
-            style={{
-              position: 'relative',
-              flex: '1 1 240px',
-              maxWidth: 360,
-            }}
-          >
-            <Search
-              className="w-3.5 h-3.5"
-              style={{
-                position: 'absolute',
-                left: 10, top: '50%',
-                transform: 'translateY(-50%)',
-                color: '#0A0A0A',
-                opacity: 0.5,
-                pointerEvents: 'none',
-              }}
-            />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by name, PSN, department…"
-              aria-label="Search staff in monthly attendance"
-              style={{
-                width: '100%',
-                padding: '7px 32px 7px 32px',
-                border: '1px solid #D4D4D4',
-                borderRadius: 999,
-                fontSize: 12,
-                fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
-                background: '#FFFFFF',
-                color: '#1F1B16',
-                outline: 'none',
-              }}
-            />
-            {search && (
-              <button
-                onClick={() => setSearch('')}
-                aria-label="Clear search"
-                style={{
-                  position: 'absolute',
-                  right: 6, top: '50%',
-                  transform: 'translateY(-50%)',
-                  width: 22, height: 22,
-                  borderRadius: 999,
-                  border: 'none',
-                  background: '#F5F5F5',
-                  color: '#0A0A0A',
-                  cursor: 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <X className="w-3 h-3" />
-              </button>
-            )}
-          </div>
-          <div className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.65 }}>
-            {search
-              ? `${tracked.length} of ${trackedTotalCount} staff`
-              : `${trackedTotalCount} staff`}
-          </div>
-        </div>
-      )}
+      {/* Old standalone search row removed — now lives in the title bar above. */}
 
       {/* When search filters out everything, show a dedicated empty
           state so Bashaier doesn't see a blank canvas. The "no records
@@ -483,7 +480,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
             Set to nowrap so all items stay on one row; if the viewport
             is too narrow, horizontal scroll appears (cleaner than
             wrapping into multiple rows). */}
-        <div className="text-[11px] mb-3 flex gap-2 items-center"
+        <div className="text-[11px] mb-2 flex gap-2 items-center"
           style={{
             color: '#0A0A0A',
             padding: '8px 12px',

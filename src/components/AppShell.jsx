@@ -910,7 +910,10 @@ export default function AppShell({ session, me, onRefreshMe }) {
         </div>
       )}
 
-      <main className="max-w-7xl mx-auto px-3 sm:px-6 py-6 sm:py-8 fade-in" key={tab}>
+      <main
+        className={`max-w-7xl mx-auto px-3 sm:px-6 fade-in ${tab === 'attendance' ? 'py-2 sm:py-3' : 'py-6 sm:py-8'}`}
+        key={tab}
+      >
         {tab === 'dashboard' && (
           (isAdmin || isHrReviewer) ? (
             // Admin Dashboard: Nadeem (admin) and Bashaier (HR reviewer) only.

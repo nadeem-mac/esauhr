@@ -5147,7 +5147,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   };
 
   return (
-    <div className="space-y-6" style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
+    <div className="space-y-2" style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
       {/* Removed: large "Attendance." heading + intro paragraph + four
           help tiles. The page is now task-focused — system health pill
           + notifications, then straight to the workspace. */}
@@ -5700,7 +5700,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           work. The 24-line spacer keeps the visual handoff clear
           between "action" (above) and "memory" (below). */}
       <div style={{
-        marginTop: 12,
+        marginTop: 0,
         // Use full viewport width — break out of the parent's max-w-7xl
         // so all 31 day columns fit. Increased side padding so the rightmost
         // column doesn't graze the page edge.
@@ -5709,10 +5709,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         paddingLeft: 24,
         paddingRight: 24,
       }}>
-        {/* Status (small, centered) + action buttons (centered row).
-            Status sits above the buttons in a tight stack — both
-            horizontally centered. */}
-        <div className="flex flex-col items-center mb-3" style={{ gap: 6 }}>
+        {/* Single-row layout: action buttons (centered) with the
+            compact status pill as the leading item. Everything sits
+            on one line. */}
+        <div className="flex items-center justify-center mb-2" style={{ flexWrap: 'wrap', gap: 10 }}>
           {/* Compact status — small dot + brief text. */}
           {(() => {
             const now = Date.now();
@@ -5741,20 +5741,15 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
                 ].filter(Boolean).join('\n')}>
                 <span className="inline-block w-2 h-2 rounded-full" style={{ background: dot }} />
                 <span style={{ opacity: 0.85 }}>
-                  {uploadMs == null ? 'No uploads yet' : `Uploaded ${fmt(uploadMs)} ago`}
+                  {uploadMs == null ? 'No uploads' : `Uploaded ${fmt(uploadMs)} ago`}
                   {reevalMs != null && <span style={{ opacity: 0.6 }}> · re-eval {fmt(reevalMs)}</span>}
-                  {reevalState.summary && reevalState.summary.changed > 0 && (
-                    <span style={{ opacity: 0.6 }}> · {reevalState.summary.changed} updated</span>
-                  )}
                 </span>
                 {reevalState.error && (
-                  <span style={{ color: '#991B1B', marginLeft: 6 }}>· failed</span>
+                  <span style={{ color: '#991B1B', marginLeft: 4 }}>· failed</span>
                 )}
               </div>
             );
           })()}
-          {/* Action buttons — centered horizontal row. */}
-          <div className="flex items-center justify-center gap-3" style={{ flexWrap: 'wrap' }}>
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
@@ -5868,7 +5863,6 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             >
               📄 Export report
             </button>
-          </div>
         </div>
         <AttendanceErrorBoundary label="Monthly attendance calendar">
           <div data-month-export-target>
