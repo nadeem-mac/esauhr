@@ -5699,16 +5699,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           scrolls down to confirm the calendar reflects the day's
           work. The 24-line spacer keeps the visual handoff clear
           between "action" (above) and "memory" (below). */}
-      <div style={{
-        marginTop: 0,
-        // Use full viewport width — break out of the parent's max-w-7xl
-        // so all 31 day columns fit. Increased side padding so the rightmost
-        // column doesn't graze the page edge.
-        marginLeft:  'calc(50% - 50vw + 16px)',
-        marginRight: 'calc(50% - 50vw + 16px)',
-        paddingLeft: 24,
-        paddingRight: 24,
-      }}>
+      <div style={{ marginTop: 0 }}>
         {/* Single-row layout: action buttons (centered) with the
             compact status pill as the leading item. Everything sits
             on one line. */}

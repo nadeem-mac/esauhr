@@ -527,12 +527,13 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
             );
           })}
         </div>
-        <div style={{ overflowX: 'hidden', maxWidth: '100%' }}>
+        <div style={{ overflowX: 'visible', maxWidth: '100%', boxSizing: 'border-box' }}>
           <div style={{
             display: 'grid',
-            gridTemplateColumns: `200px repeat(${days.length}, 1fr)`,
+            gridTemplateColumns: `190px repeat(${days.length}, minmax(0, 1fr))`,
             gap: 3,
             width: '100%',
+            boxSizing: 'border-box',
           }}>
             {/* Header */}
             <div style={{ background: '#FAFAFA', padding: '6px 8px', fontSize: 10, fontWeight: 700, color: '#0A0A0A', letterSpacing: '0.05em' }}>
