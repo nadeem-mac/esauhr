@@ -5347,8 +5347,17 @@ function FileSummary({
               (counts.shiftAbsent || 0) +
               (counts.shiftOffDay || 0);
             const hasGaps = !!(rosterGaps && rosterGaps.totalGaps > 0);
-            const hasShiftActivity = shiftTotal > 0 || hasGaps || (rosterGaps && rosterGaps.totalShiftStaff > 0);
-            if (!hasShiftActivity) return null;
+
+            // Tile renders ALWAYS once a file is uploaded — even when
+            // there's nothing to flag. Per Nadeem (2026-05-07): the
+            // SHIFT STAFF tile is the single entry point for all
+            // shift-related activity, so it needs to be visible on
+            // every uploaded-file view so Bashaier can confirm the
+            // system has checked. The colour and subtext shift to
+            // tell the story:
+            //   - red    → absences flagged
+            //   - indigo → late/early/gaps to action
+            //   - green  → roster complete, no defaulters
 
             // Subtext mirrors the most prominent finding so the tile
             // tells the story at a glance even before being opened.
@@ -5365,14 +5374,12 @@ function FileSummary({
               subtext = parts.join(' · ');
             } else if (counts.shiftOffDay > 0) {
               subtext = `${counts.shiftOffDay} worked off-roster`;
+            } else if (rosterGaps && rosterGaps.totalShiftStaff > 0) {
+              subtext = `roster complete · ${rosterGaps.totalShiftStaff} shift ${rosterGaps.totalShiftStaff === 1 ? 'staff' : 'staff'} on schedule`;
             } else {
-              subtext = 'roster complete · no defaulters';
+              subtext = 'no shift staff on the monthly roster';
             }
 
-            // Tile colour shifts based on severity:
-            //   - red when there are actual absences (most serious)
-            //   - amber when there are late/early/off-roster issues
-            //   - green when nothing actionable
             const palette = (counts.shiftAbsent > 0)
               ? { color: '#991B1B', tint: '#FEF2F2' }
               : (shiftTotal > 0 || hasGaps)
