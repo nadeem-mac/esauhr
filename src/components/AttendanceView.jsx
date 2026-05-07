@@ -1676,21 +1676,25 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       return;
     }
 
-    // Filter the directory to staff who appear in the month's
-    // records, then sort by location → name. Empty location strings
-    // sort to the end (so "Unknown" shows up after named offices).
-    const have = new Set((records || []).map(r => r.employee_id));
+    // Filter the directory — by default include ALL staff (so absent
+    // staff appear too, with empty cells indicating no records). Sort
+    // by location → department → name so the printed report groups
+    // first by office, then by team within an office. Empty locations
+    // and departments sort to the end.
     const sortedEmps = (employees || [])
-      .filter(e => have.has(e.id))
+      .filter(e => e?.id && !e.terminated && e.is_active !== false && e.status !== 'inactive')
       .sort((a, b) => {
-        const locA = String(a.location || '\uFFFF').toLowerCase();
-        const locB = String(b.location || '\uFFFF').toLowerCase();
+        const locA = String(a.location   || '\uFFFF').toLowerCase();
+        const locB = String(b.location   || '\uFFFF').toLowerCase();
         if (locA !== locB) return locA.localeCompare(locB);
+        const depA = String(a.department || '\uFFFF').toLowerCase();
+        const depB = String(b.department || '\uFFFF').toLowerCase();
+        if (depA !== depB) return depA.localeCompare(depB);
         return String(a.name || '').localeCompare(String(b.name || ''));
       });
 
     if (sortedEmps.length === 0) {
-      alert('No attendance data on file for ' + monthLabel + ' yet.');
+      alert('No active staff in the directory yet.');
       return;
     }
 
@@ -1716,9 +1720,11 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     }
 
     // Build rows. Each cell is a small chip showing the status label
-    // plus first/last punch. Empty cells stay blank (no record).
+    // plus first/last punch. Empty cells stay blank (no record) — for
+    // absent-all-month staff this means a row of empty cells, which
+    // is itself useful information at a glance.
     // Weekends are tinted so the visual rhythm matches on-screen.
-    const tbody = sortedEmps.map(emp => {
+    const tbody = sortedEmps.map((emp, idx) => {
       const cells = days.map(day => {
         const rec = byEmp[emp.id]?.[day.dateStr];
         const weekendStyle = day.isWeekend
@@ -1748,6 +1754,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       }).join('');
 
       return '<tr>'
+        + '<td class="sn-cell">' + (idx + 1) + '</td>'
         + '<th class="emp-cell">'
         +   '<div class="emp-name">' + escapeHtml(emp.name || '') + '</div>'
         +   '<div class="emp-meta">' + escapeHtml(emp.id || '')
@@ -1794,13 +1801,24 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
 + '.export-title { font-size: 20px; font-weight: 700; color: #0F4C2A; margin: 0; }'
 + '.export-subtitle { font-size: 10px; color: #5F5E5A; margin: 3px 0 0; }'
 + '.export-meta { font-size: 9px; color: #5F5E5A; text-align: right; line-height: 1.4; }'
-+ '.loc-bar { margin: 6px 0 10px; font-size: 9px; color: #5F5E5A; }'
-+ '.loc-pill { display: inline-block; padding: 2px 8px; margin: 0 4px 3px 0; '
++ '.info-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; '
++ '  margin: 6px 0 10px; font-size: 9px; color: #5F5E5A; }'
++ '.info-bar .group-label { font-size: 8px; font-weight: 700; '
++ '  color: #5F5E5A; letter-spacing: 0.05em; text-transform: uppercase; '
++ '  margin-right: 2px; }'
++ '.loc-pill { display: inline-block; padding: 2px 8px; '
 + '  border: 1px solid #E5E5E5; border-radius: 999px; background: #FAFAF9; }'
++ '.ll { display: inline-block; padding: 1px 6px; border-radius: 3px; '
++ '  font-weight: 700; font-size: 8px; }'
++ '.info-divider { width: 1px; height: 14px; background: #D4D4D4; margin: 0 4px; }'
 + 'table.grid { border-collapse: collapse; width: 100%; table-layout: fixed; '
 + '  font-size: 8px; }'
 + 'table.grid th, table.grid td { border: 1px solid #EEEAE0; padding: 0; '
 + '  vertical-align: middle; }'
++ '.sn-head, .sn-cell { width: 24px; text-align: center; '
++ '  background: #FAFAF9; font-size: 8px; font-weight: 600; color: #6B6B6B; '
++ '  padding: 2px 0 !important; }'
++ '.sn-cell { color: #0A0A0A; font-weight: 700; }'
 + '.emp-cell { width: 130px; padding: 4px 6px !important; text-align: left; '
 + '  background: #FAFAF9; vertical-align: middle; }'
 + '.emp-name { font-size: 9px; font-weight: 600; color: #0A0A0A; line-height: 1.2; }'
@@ -1819,9 +1837,6 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
 + '.chip-label { font-size: 8px; font-weight: 700; }'
 + '.chip-time  { font-size: 6.5px; opacity: 0.85; '
 + '  font-family: "SFMono-Regular", monospace; }'
-+ '.legend { margin-top: 12px; font-size: 8px; color: #6B6B6B; line-height: 1.6; }'
-+ '.legend .ll { display: inline-block; padding: 1px 6px; margin: 0 6px 4px 0; '
-+ '  border-radius: 3px; font-weight: 700; }'
 + '.print-btn { position: fixed; bottom: 12px; right: 12px; padding: 8px 16px; '
 + '  background: #0F4C2A; color: white; border: none; border-radius: 6px; '
 + '  font-size: 12px; font-weight: 600; cursor: pointer; '
@@ -1838,15 +1853,14 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
 +   '<div class="export-meta">'
 +     'Generated ' + escapeHtml(generatedAt) + '<br>'
 +     'ESAU HR Department<br>'
-+     sortedEmps.length + ' staff \u00b7 sorted by location \u2192 name'
++     sortedEmps.length + ' staff \u00b7 sorted by location \u2192 department \u2192 name'
 +   '</div>'
 + '</div>'
-+ '<div class="loc-bar">' + locSummary + '</div>'
-+ '<table class="grid">'
-+   '<thead><tr><th class="emp-cell">Employee</th>' + dayHeader + '</tr></thead>'
-+   '<tbody>' + tbody + '</tbody>'
-+ '</table>'
-+ '<div class="legend">'
++ '<div class="info-bar">'
++   '<span class="group-label">Locations:</span>'
++   locSummary
++   '<span class="info-divider"></span>'
++   '<span class="group-label">Legend:</span>'
 +   '<span class="ll" style="background:#ECFDF5;color:#0F4C2A">\u2713 Present</span>'
 +   '<span class="ll" style="background:#EFF6FF;color:#1E40AF">\u2713LP / \u2713EP Permission-covered</span>'
 +   '<span class="ll" style="background:#FEF3C7;color:#854F0B">LT Late</span>'
@@ -1857,6 +1871,14 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
 +   '<span class="ll" style="background:#DBEAFE;color:#1E3A8A">OR Off-roster</span>'
 +   '<span class="ll" style="background:#EEF0FA;color:#3B4279">OF Off-day</span>'
 + '</div>'
++ '<table class="grid">'
++   '<thead><tr>'
++     '<th class="sn-head">#</th>'
++     '<th class="emp-cell">Employee</th>'
++     dayHeader
++   '</tr></thead>'
++   '<tbody>' + tbody + '</tbody>'
++ '</table>'
 + '<button class="print-btn" onclick="window.print()">\ud83d\udda8 Print / Save as PDF</button>'
 + '<script>window.addEventListener("load", () => setTimeout(() => { try { window.print(); } catch (e) {} }, 600));</script>'
 + '</body></html>';
