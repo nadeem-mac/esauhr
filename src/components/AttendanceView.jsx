@@ -5544,21 +5544,12 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         </>
       ) : (
         <>
-          <RepeatOffendersCard
-            empById={empById}
-            refreshTick={calendarRefreshTick}
-            hrSignature={HR_SIGNATURE}
-            fixedCc={FIXED_CC}
-          />
-          <ManagerRollupCard
-            detection={detection}
-            empById={empById}
-            loggedMarkers={loggedMarkers}
-          />
-          <SilentAbsencesCard
-            silentAbsences={silentAbsences}
-            empById={empById}
-          />
+          {/* RepeatOffendersCard, ManagerRollupCard, SilentAbsencesCard
+              removed at user request — the daily review modal is now
+              just FileSummary + the original tile system (Late, Early,
+              Missed in, Missed out, Shift staff) with email buttons
+              per row when a tile is expanded. Cleaner, faster, matches
+              what was working well before. */}
           <FileSummary
             fileName={xlsxFileName}
             csvDate={csvDate}
