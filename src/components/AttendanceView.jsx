@@ -1189,6 +1189,27 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     }
   }, [reevalState.running]);
 
+  // Save & Close — explicit handoff that finalises the upload session
+  // and triggers the 7-day re-evaluation pass. Distinct from reset:
+  // does NOT clear the form, so Bashaier can still review what she
+  // sent. The success path emits a transient toast and bumps the
+  // calendar refresh tick. Called from the FileSummary header button.
+  // Phase B+C / Decision #4 option C.
+  const handleSaveAndClose = useCallback(async () => {
+    if (reevalState.running) return;
+    const summary = await triggerReevaluation({ silent: false });
+    if (summary) {
+      try {
+        const evt = new CustomEvent('esauhr_toast', { detail: {
+          kind: 'success',
+          title: 'Upload session closed',
+          body: `Re-evaluated ${summary.scanned || 0} ${summary.scanned === 1 ? 'row' : 'rows'} · ${summary.changed || 0} updated. Calendar refreshed.`,
+        }});
+        window.dispatchEvent(evt);
+      } catch {}
+    }
+  }, [reevalState.running, triggerReevaluation]);
+
   // Stale-check on mount (Decision #5 / option C — the "B" leg).
   // If the last successful re-eval was more than 24h ago (or never),
   // fire a silent re-eval so the calendar reflects late-arriving
@@ -4631,6 +4652,8 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           monthlyShiftsByEmp={monthlyShiftsByEmp}
           rosterGaps={rosterGaps}
           empById={empById}
+          onSaveAndClose={handleSaveAndClose}
+          savingClose={reevalState.running}
         />
       )}
 
@@ -4841,6 +4864,55 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
               title="Re-scan the last 7 days against current permissions, leaves, and shift assignments. Catches retroactive corrections."
             >
               {reevalState.running ? 'Re-evaluating…' : '↻ Re-evaluate last 7 days'}
+            </button>
+            {/* Full-month re-eval — Phase C / Decision #5 manual leg.
+                Uses the month boundaries of csvDate (or today, if no
+                file is uploaded) and runs the same pipeline against
+                a wider window. Slower than the 7-day scan but the
+                right tool when corrections may have landed earlier
+                in the month — e.g., a leave approved retroactively
+                for a date 20 days back. */}
+            <button
+              type="button"
+              onClick={() => {
+                const ref = csvDate ? new Date(csvDate) : new Date();
+                const yy = ref.getFullYear();
+                const mm = String(ref.getMonth() + 1).padStart(2, '0');
+                const lastDay = new Date(yy, ref.getMonth() + 1, 0).getDate();
+                const startDate = `${yy}-${mm}-01`;
+                const endDate   = `${yy}-${mm}-${String(lastDay).padStart(2, '0')}`;
+                // Reuse the same plumbing as the 7-day button but with
+                // a wider window. The pipeline accepts arbitrary date
+                // ranges via reevaluateDateRange — we route through the
+                // existing triggerReevaluation by temporarily swapping
+                // its days param into a date-range call.
+                (async () => {
+                  if (reevalState.running) return;
+                  setReevalState(s => ({ ...s, running: true, error: null }));
+                  try {
+                    const { reevaluateDateRange } = await import('../lib/attendanceBackfill.js');
+                    const summary = await reevaluateDateRange(startDate, endDate);
+                    const nowIso = new Date().toISOString();
+                    try { localStorage.setItem('esauhr_last_reeval_at', nowIso); } catch {}
+                    setReevalState({ running: false, lastRunAt: nowIso, summary, error: null });
+                    setCalendarRefreshTick(t => t + 1);
+                  } catch (err) {
+                    setReevalState(s => ({ ...s, running: false, error: err?.message || 'Re-eval failed' }));
+                  }
+                })();
+              }}
+              disabled={reevalState.running}
+              className="text-[11px] px-3 py-1.5 rounded-full border flex items-center gap-1.5"
+              style={{
+                borderColor: '#D4D4D4',
+                color: reevalState.running ? '#A1A1AA' : '#1F1B16',
+                background: reevalState.running ? '#F4F4EE' : '#FFFFFF',
+                cursor: reevalState.running ? 'wait' : 'pointer',
+                fontWeight: 600,
+              }}
+              title="Re-scan the entire month against current permissions, leaves, and shift assignments. Use after retroactive corrections that landed earlier in the month."
+            >
+              {reevalState.running ? '…' : '↻ Re-evaluate this month'}
             </button>
           </div>
         </div>
@@ -5377,6 +5449,7 @@ function FileSummary({
   drillKind, setDrillKind, actionPanels,
   actionsEnabled, onToggleActions, isDuplicate, onReset,
   monthlyShiftsByEmp, rosterGaps, empById,
+  onSaveAndClose, savingClose,
 }) {
   // drillKind is now controlled by the parent (AttendanceView) so the
   // action UI for each kind can be constructed alongside the email
@@ -5458,6 +5531,28 @@ function FileSummary({
                   DUPLICATE
                 </span>
               )}
+            </button>
+          )}
+          {/* Save & Close (Phase B+C / Decision #4 option C) — explicit
+              handoff button. Persists the upload session as "done" and
+              triggers a 7-day re-evaluation pass that refreshes the
+              calendar below. Distinct from "Upload different file"
+              which resets the form to start over. Only renders when
+              there's an active uploaded file with actions enabled. */}
+          {onSaveAndClose && actionsEnabled && (
+            <button
+              onClick={onSaveAndClose}
+              disabled={savingClose}
+              className="text-xs px-3 py-1.5 rounded-full border flex items-center gap-1.5"
+              style={{
+                borderColor: savingClose ? '#A7F3D0' : '#10B981',
+                color: savingClose ? '#047857' : '#FFFFFF',
+                background: savingClose ? '#ECFDF5' : '#10B981',
+                fontWeight: 600,
+                cursor: savingClose ? 'wait' : 'pointer',
+              }}
+              title="Mark this upload's review as complete. Triggers a re-evaluation against current permissions, leaves, and shift assignments — calendar will refresh below.">
+              {savingClose ? '… Saving' : '✓ Save & Close'}
             </button>
           )}
           <button
