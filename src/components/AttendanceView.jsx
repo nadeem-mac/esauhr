@@ -1278,6 +1278,17 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // option A). The reevaluateLastNDays helper handles the date math
   // in local time so the window matches Bashaier's perception of
   // "this week" rather than UTC days.
+  // Tier 3 fix (#3 / item 3) — race guard: triggerReevaluation (below)
+  // needs to read the current bulkSession without re-creating its
+  // callback on every change. A ref kept in sync gives the callback
+  // live access without dependency churn. The re-eval bails when a
+  // bulk-send is mid-flight to avoid clobbering the rows being
+  // emailed against. Must be declared BEFORE triggerReevaluation
+  // (the callback's closure references it lexically — declaring it
+  // after caused a TDZ minification error: "can't access lexical
+  // declaration 'g' before initialization").
+  const bulkSessionRef = useRef(null);
+
   const triggerReevaluation = useCallback(async (opts = {}) => {
     const { silent = false, days = 7 } = opts;
     if (reevalState.running) return null; // already running — bail
@@ -1406,13 +1417,9 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // whole queue. Mirrors the per-row mode toggle so a bulk session and
   // a per-row click never produce divergent wording for the same kind.
   const [bulkSession, setBulkSession] = useState(null);
-  // Tier 3 fix (#3 / item 3) — race guard: triggerReevaluation
-  // (declared earlier) needs to read the current bulkSession without
-  // re-creating its callback on every change. A ref kept in sync
-  // gives the callback live access without dependency churn. The
-  // re-eval bails when a bulk-send is mid-flight to avoid clobbering
-  // the rows being emailed against.
-  const bulkSessionRef = useRef(null);
+  // Sync the bulkSession state into bulkSessionRef (declared earlier).
+  // The ref is what triggerReevaluation reads to detect "is a bulk
+  // send active right now?" without taking a dependency on the state.
   useEffect(() => { bulkSessionRef.current = bulkSession; }, [bulkSession]);
 
   // Tile drill-down state — which kind's panel is currently expanded
