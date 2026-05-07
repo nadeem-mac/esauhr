@@ -22,7 +22,6 @@ import RepeatOffendersCard from './RepeatOffendersCard.jsx';
 import ManagerRollupCard from './ManagerRollupCard.jsx';
 import EvaluationExplainModal from './EvaluationExplainModal.jsx';
 import SilentAbsencesCard from './SilentAbsencesCard.jsx';
-import LogLeaveModal from './LogLeaveModal.jsx';
 
 // ─── Error Boundary for AttendanceView sections ───────────────────────
 // Without this, a render-time exception anywhere in the tree under
@@ -1542,13 +1541,6 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // row, we stash { entry, kind } here and render the modal.
   // Single-instance — only one explain open at a time.
   const [explainPayload, setExplainPayload] = useState(null);
-
-  // HR direct-entry leave modal — visible to admin and HR reviewer.
-  // When closed, no extra cleanup needed; on success, the modal's
-  // onSuccess callback triggers a re-eval covering the leave's date
-  // range so attendance_daily reclassifies immediately.
-  const [logLeaveOpen, setLogLeaveOpen] = useState(false);
-  const canLogLeave = !!(me?.is_admin || me?.is_hr_reviewer);
   // Pending-EOD-review tracker. Populated from attendance_review_log on
   // mount and after each file-load mode-log. Each entry: { review_date,
   // morning_at, eod_at }. eod_at is null by definition for everything
@@ -5781,32 +5773,6 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         />
       )}
 
-      {/* HR direct-entry leave modal — opened by the "+ Log leave"
-          button in the Monthly Overview header. On submit, fires
-          onSuccess which triggers re-evaluation for the date range
-          so attendance_daily rows are seeded/reclassified to the
-          right leave status without manual intervention. */}
-      {logLeaveOpen && (
-        <LogLeaveModal
-          me={me}
-          employees={employees}
-          leaveTypes={leaveTypes}
-          onClose={() => setLogLeaveOpen(false)}
-          onSuccess={async ({ startDate, endDate }) => {
-            // Fire-and-forget reeval covering the leave's date range.
-            // Catches the seed pass that creates missing
-            // attendance_daily rows for the affected staff.
-            try {
-              const { reevaluateDateRange } = await import('../lib/attendanceBackfill.js');
-              await reevaluateDateRange(startDate, endDate);
-              setCalendarRefreshTick(t => t + 1);
-            } catch (err) {
-              console.warn('Auto-reeval after leave entry failed:', err?.message || err);
-            }
-          }}
-        />
-      )}
-
       {bulkSession && (
         <BulkActionModal
           session={bulkSession}
@@ -5886,22 +5852,6 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             >
               ⬆ Upload Time Card
             </button>
-            {canLogLeave && (
-              <button
-                type="button"
-                onClick={() => setLogLeaveOpen(true)}
-                className="text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1.5"
-                style={{
-                  background: '#9D174D',
-                  color: '#FFFFFF',
-                  border: '1px solid #9D174D',
-                  fontWeight: 600,
-                }}
-                title="Log a long-term or special leave directly (maternity, hajj, retroactive sick, etc.) without going through the request workflow."
-              >
-                + Log leave
-              </button>
-            )}
             <button
               type="button"
               onClick={() => triggerReevaluation({ silent: false })}

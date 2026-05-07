@@ -438,8 +438,8 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
         <div style={{ overflowX: 'auto', maxWidth: '100%' }}>
           <div style={{
             display: 'grid',
-            gridTemplateColumns: `200px repeat(${days.length}, minmax(22px, 1fr))`,
-            gap: 1,
+            gridTemplateColumns: `200px repeat(${days.length}, minmax(34px, 1fr))`,
+            gap: 2,
             width: '100%',
             minWidth: 'fit-content',
           }}>
@@ -576,7 +576,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
                           background: cellBg,
                           borderTop: '1px solid var(--border-soft, #EFEFEF)',
                           borderLeft: '1px solid var(--border-soft, #EFEFEF)',
-                          padding: '3px 2px',
+                          padding: '5px 4px',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
@@ -590,15 +590,17 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
                             background: sty.bg,
                             color: sty.fg,
                             border: `1px solid ${sty.border}`,
-                            borderRadius: 4,
+                            borderRadius: 5,
                             width: '100%',
-                            minHeight: 22,
-                            fontSize: 9,
+                            minHeight: 30,
+                            padding: '4px 5px',
+                            fontSize: 11,
                             fontWeight: 700,
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            letterSpacing: '0.04em',
+                            gap: 3,
+                            letterSpacing: '0.03em',
                             cursor: 'default',
                           }}
                         >
@@ -608,8 +610,8 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
                               aria-hidden
                               title="Shift day"
                               style={{
-                                marginLeft: 2,
-                                fontSize: 8,
+                                marginLeft: 1,
+                                fontSize: 10,
                                 lineHeight: 1,
                               }}
                             >🌙</span>
