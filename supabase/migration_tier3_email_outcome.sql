@@ -9,7 +9,7 @@
 -- After a few months of data, queries like
 --
 --   SELECT email_outcome, COUNT(*) FROM attendance_violations
---    WHERE created_at >= '2026-05-01' GROUP BY 1;
+--    WHERE recorded_at >= '2026-05-01' GROUP BY 1;
 --
 -- tell us how often violation emails turned out to be wrong, so we
 -- can target detection improvements where it matters.
@@ -66,6 +66,10 @@ end $$;
 -- Index for the future analytics view — scoped by outcome state +
 -- date, since most queries will be "how many retracted in last
 -- month?" or "how many superseded this quarter?".
-create index if not exists attendance_violations_outcome_created_idx
-  on public.attendance_violations(email_outcome, created_at)
+-- Note: `attendance_violations` uses `recorded_at` (not created_at)
+-- as the row timestamp — confirmed against the live schema and
+-- mirrored elsewhere in the codebase (MyAttendanceCard.jsx,
+-- monthlyAttendanceReport.js).
+create index if not exists attendance_violations_outcome_recorded_idx
+  on public.attendance_violations(email_outcome, recorded_at)
  where email_outcome is not null;
