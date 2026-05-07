@@ -1464,6 +1464,134 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     setReevalState(s => ({ ...s, lastRunAt: lastIso }));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const [parsedData, setParsedData]     = useState({ rows: [], dataDate: null, sheetName: null });
+  const [parseError, setParseError]     = useState(null);
+
+  // File-integrity state. fileSha256 is the SHA-256 of the raw bytes;
+  // we use it to dedupe accidental re-uploads of the same file (and
+  // to record an audit row in attendance_uploads). fileSize is shown
+  // in the summary so Bashaier can sanity-check before processing.
+  // existingUpload is the row from attendance_uploads that already
+  // exists for this (data_date, file_sha256) pair — when present it
+  // means the file was processed before.
+  const [fileSha256,     setFileSha256]     = useState('');
+  const [fileSize,       setFileSize]       = useState(0);
+  const [existingUpload, setExistingUpload] = useState(null);
+  const [uploadId,       setUploadId]       = useState(null); // current upload row pk
+
+  // Per-row email confirm modal state. Holds the entry being
+  // emailed so the modal can show a TO/CC/SUBJECT preview before
+  // the mailto fires.
+  // Shape: { entry, kind: 'late'|'early'|'missed', mode: 'live'|'test' }
+  // Default mode is 'live'. The Test buttons set mode='test' which
+  // routes to the temp email content functions (no portal references).
+  const [confirmEntry, setConfirmEntry] = useState(null);
+
+  // Bulk-action session. When Bashaier clicks 'Email all N actionable'
+  // on a section header, we stage a queue of entries to email and
+  // open a modal that lets her step through them one by one. Mailto:
+  // can only fire one email at a time (browser limitation), so the
+  // UX is sequential — but the modal stays open and tracks progress.
+  // bulkSession shape: { kind: 'late'|'early'|'missed', queue: entry[],
+  //                      sentIds: Set<string>, mode: 'live'|'test' }
+  // The mode field defaults to 'live' (production wording) but Bashaier
+  // can flip to 'test' inside the bulk modal during the pre-launch
+  // period — same as the per-row Test button, but applied across the
+  // whole queue. Mirrors the per-row mode toggle so a bulk session and
+  // a per-row click never produce divergent wording for the same kind.
+  const [bulkSession, setBulkSession] = useState(null);
+  // Sync the bulkSession state into bulkSessionRef (declared earlier).
+  // The ref is what triggerReevaluation reads to detect "is a bulk
+  // send active right now?" without taking a dependency on the state.
+  useEffect(() => { bulkSessionRef.current = bulkSession; }, [bulkSession]);
+
+  // Tile drill-down state — which kind's panel is currently expanded
+  // inside the FileSummary card. Lifted from FileSummary so the
+  // action panels (built below) can be constructed alongside the
+  // email handlers and shared state, then passed down. Resets to
+  // null whenever a new file is loaded so the next session starts
+  // clean.
+  const [drillKind, setDrillKind] = useState(null);
+
+  // Which help tile is currently expanded. null = nothing open
+  // (the default — most days Bashaier knows the workflow and the
+  // upload box should be the first thing she sees). Setting this
+  // to one of 'workflow' | 'shift' | 'leave' | 'mail' opens that
+  // tile's content panel below the grid with a bounce animation.
+  // Clicking the active tile a second time closes it.
+  const [activeHelpTile, setActiveHelpTile] = useState(null);
+
+  // View mode is no longer needed — the 2-day workflow runs both
+  // morning (today's late + missed-in) and end-of-day (yesterday's
+  // early + missed-out) checks simultaneously off a single upload.
+  // The previous viewMode + viewModeOverride state was retired when
+  // the workflow shifted; one upload now covers both passes.
+
+  const [approvedLeaves, setApprovedLeaves]       = useState([]);
+  const [approvedPermissions, setApprovedPerms]   = useState([]); // for the data date
+  const [acceptedShifts, setAcceptedShifts]       = useState([]);
+  // Mawani visits indexed as `${empId}|${YYYY-MM-DD}` for O(1) lookup
+  // during row classification. Fetched for the CSV's month so partial-
+  // year files don't pull more than needed.
+  const [mawaniDays, setMawaniDays]               = useState(() => new Set());
+  const [sentMarkers, setSentMarkers]             = useState({}); // key: row.id → true
+  const [loggedMarkers, setLoggedMarkers]         = useState({}); // key: 'empId:type' → true
+
+  // Explain-modal state — when a user clicks "Why?" on any violation
+  // row, we stash { entry, kind } here and render the modal.
+  // Single-instance — only one explain open at a time.
+  const [explainPayload, setExplainPayload] = useState(null);
+  // Pending-EOD-review tracker. Populated from attendance_review_log on
+  // mount and after each file-load mode-log. Each entry: { review_date,
+  // morning_at, eod_at }. eod_at is null by definition for everything
+  // surfaced here (it's the "you started but didn't finish" list).
+  const [pendingEodDates, setPendingEodDates] = useState([]);
+  // Bumps after every successful review-log upsert so the pending-fetch
+  // effect re-runs and clears any date Bashaier just completed.
+  const [reviewLogTick, setReviewLogTick]     = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef(null);
+
+  // The xlsx parser yields rows with { psn, name, date, firstPunch,
+  // lastPunch, uniquePunches, midDayPunches, ... }. The downstream
+  // detection logic in this file (carried over from the CSV era)
+  // expects rows keyed by the spreadsheet header names: 'Employee ID',
+  // 'First Name', 'Date', 'First Punch', 'Last Punch'. We adapt the
+  // shape here once at ingestion time so detection stays untouched —
+  // less risk of regressing the shift-override and weekend handling
+  // that already work.
+  // ── Two-day data window ──────────────────────────────────────────────
+  // The new daily workflow asks Bashaier to download a TWO-DAY export
+  // (yesterday + today) so a single upload covers both passes:
+  //
+  //   Today's data      → late arrivals + missed punch-in
+  //   Yesterday's data  → early departures + missed punch-out
+  //
+  // ENFORCEMENT (per Nadeem): the file MUST contain rows for BOTH
+  // today and yesterday's working day. A file with only today, only
+  // yesterday, or with the wrong dates entirely is rejected with a
+  // clear blocking banner. The expected dates come from the real-
+  // world clock (todayInLocal) — NOT from the file — so a file
+  // dated last week can't sneak through by claiming to be today.
+  //
+  // Weekend exception: when today is a KSA weekend (Fri/Sat), no
+  // review is expected at all. The first working day after a weekend
+  // (Sunday) computes yesterday=Thursday automatically via
+  // previousWorkingDay, so Sunday's standard import naturally spans
+  // Thu→Sun.
+  const expectedToday = useMemo(() => todayInLocal(), []);
+  const expectedYesterday = useMemo(() => previousWorkingDay(expectedToday), [expectedToday]);
+  const todayIsWeekend = useMemo(() => isKsaWeekend(expectedToday), [expectedToday]);
+
+  // csvDate / yesterdayDate are driven by the real clock so the
+  // detection runs against the correct dates regardless of how the
+  // file's rows are ordered. (The xlsx parser previously took the
+  // first row's date as `dataDate`; that's brittle when the export
+  // happens to put yesterday's rows before today's.)
+  const csvDate       = expectedToday;
+  const yesterdayDate = expectedYesterday;
+  const csvIsWeekend  = todayIsWeekend;
+
   // ─── Export monthly report ─────────────────────────────────────────
   // Generates a printable A4 HTML report of the on-screen month grid.
   // Clones the calendar's rendered DOM (so the report mirrors exactly
@@ -1606,133 +1734,6 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       if (body) body.appendChild(cloned);
     }, 50);
   }, [csvDate]);
-  const [parsedData, setParsedData]     = useState({ rows: [], dataDate: null, sheetName: null });
-  const [parseError, setParseError]     = useState(null);
-
-  // File-integrity state. fileSha256 is the SHA-256 of the raw bytes;
-  // we use it to dedupe accidental re-uploads of the same file (and
-  // to record an audit row in attendance_uploads). fileSize is shown
-  // in the summary so Bashaier can sanity-check before processing.
-  // existingUpload is the row from attendance_uploads that already
-  // exists for this (data_date, file_sha256) pair — when present it
-  // means the file was processed before.
-  const [fileSha256,     setFileSha256]     = useState('');
-  const [fileSize,       setFileSize]       = useState(0);
-  const [existingUpload, setExistingUpload] = useState(null);
-  const [uploadId,       setUploadId]       = useState(null); // current upload row pk
-
-  // Per-row email confirm modal state. Holds the entry being
-  // emailed so the modal can show a TO/CC/SUBJECT preview before
-  // the mailto fires.
-  // Shape: { entry, kind: 'late'|'early'|'missed', mode: 'live'|'test' }
-  // Default mode is 'live'. The Test buttons set mode='test' which
-  // routes to the temp email content functions (no portal references).
-  const [confirmEntry, setConfirmEntry] = useState(null);
-
-  // Bulk-action session. When Bashaier clicks 'Email all N actionable'
-  // on a section header, we stage a queue of entries to email and
-  // open a modal that lets her step through them one by one. Mailto:
-  // can only fire one email at a time (browser limitation), so the
-  // UX is sequential — but the modal stays open and tracks progress.
-  // bulkSession shape: { kind: 'late'|'early'|'missed', queue: entry[],
-  //                      sentIds: Set<string>, mode: 'live'|'test' }
-  // The mode field defaults to 'live' (production wording) but Bashaier
-  // can flip to 'test' inside the bulk modal during the pre-launch
-  // period — same as the per-row Test button, but applied across the
-  // whole queue. Mirrors the per-row mode toggle so a bulk session and
-  // a per-row click never produce divergent wording for the same kind.
-  const [bulkSession, setBulkSession] = useState(null);
-  // Sync the bulkSession state into bulkSessionRef (declared earlier).
-  // The ref is what triggerReevaluation reads to detect "is a bulk
-  // send active right now?" without taking a dependency on the state.
-  useEffect(() => { bulkSessionRef.current = bulkSession; }, [bulkSession]);
-
-  // Tile drill-down state — which kind's panel is currently expanded
-  // inside the FileSummary card. Lifted from FileSummary so the
-  // action panels (built below) can be constructed alongside the
-  // email handlers and shared state, then passed down. Resets to
-  // null whenever a new file is loaded so the next session starts
-  // clean.
-  const [drillKind, setDrillKind] = useState(null);
-
-  // Which help tile is currently expanded. null = nothing open
-  // (the default — most days Bashaier knows the workflow and the
-  // upload box should be the first thing she sees). Setting this
-  // to one of 'workflow' | 'shift' | 'leave' | 'mail' opens that
-  // tile's content panel below the grid with a bounce animation.
-  // Clicking the active tile a second time closes it.
-  const [activeHelpTile, setActiveHelpTile] = useState(null);
-
-  // View mode is no longer needed — the 2-day workflow runs both
-  // morning (today's late + missed-in) and end-of-day (yesterday's
-  // early + missed-out) checks simultaneously off a single upload.
-  // The previous viewMode + viewModeOverride state was retired when
-  // the workflow shifted; one upload now covers both passes.
-
-  const [approvedLeaves, setApprovedLeaves]       = useState([]);
-  const [approvedPermissions, setApprovedPerms]   = useState([]); // for the data date
-  const [acceptedShifts, setAcceptedShifts]       = useState([]);
-  // Mawani visits indexed as `${empId}|${YYYY-MM-DD}` for O(1) lookup
-  // during row classification. Fetched for the CSV's month so partial-
-  // year files don't pull more than needed.
-  const [mawaniDays, setMawaniDays]               = useState(() => new Set());
-  const [sentMarkers, setSentMarkers]             = useState({}); // key: row.id → true
-  const [loggedMarkers, setLoggedMarkers]         = useState({}); // key: 'empId:type' → true
-
-  // Explain-modal state — when a user clicks "Why?" on any violation
-  // row, we stash { entry, kind } here and render the modal.
-  // Single-instance — only one explain open at a time.
-  const [explainPayload, setExplainPayload] = useState(null);
-  // Pending-EOD-review tracker. Populated from attendance_review_log on
-  // mount and after each file-load mode-log. Each entry: { review_date,
-  // morning_at, eod_at }. eod_at is null by definition for everything
-  // surfaced here (it's the "you started but didn't finish" list).
-  const [pendingEodDates, setPendingEodDates] = useState([]);
-  // Bumps after every successful review-log upsert so the pending-fetch
-  // effect re-runs and clears any date Bashaier just completed.
-  const [reviewLogTick, setReviewLogTick]     = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
-  const fileInputRef = useRef(null);
-
-  // The xlsx parser yields rows with { psn, name, date, firstPunch,
-  // lastPunch, uniquePunches, midDayPunches, ... }. The downstream
-  // detection logic in this file (carried over from the CSV era)
-  // expects rows keyed by the spreadsheet header names: 'Employee ID',
-  // 'First Name', 'Date', 'First Punch', 'Last Punch'. We adapt the
-  // shape here once at ingestion time so detection stays untouched —
-  // less risk of regressing the shift-override and weekend handling
-  // that already work.
-  // ── Two-day data window ──────────────────────────────────────────────
-  // The new daily workflow asks Bashaier to download a TWO-DAY export
-  // (yesterday + today) so a single upload covers both passes:
-  //
-  //   Today's data      → late arrivals + missed punch-in
-  //   Yesterday's data  → early departures + missed punch-out
-  //
-  // ENFORCEMENT (per Nadeem): the file MUST contain rows for BOTH
-  // today and yesterday's working day. A file with only today, only
-  // yesterday, or with the wrong dates entirely is rejected with a
-  // clear blocking banner. The expected dates come from the real-
-  // world clock (todayInLocal) — NOT from the file — so a file
-  // dated last week can't sneak through by claiming to be today.
-  //
-  // Weekend exception: when today is a KSA weekend (Fri/Sat), no
-  // review is expected at all. The first working day after a weekend
-  // (Sunday) computes yesterday=Thursday automatically via
-  // previousWorkingDay, so Sunday's standard import naturally spans
-  // Thu→Sun.
-  const expectedToday = useMemo(() => todayInLocal(), []);
-  const expectedYesterday = useMemo(() => previousWorkingDay(expectedToday), [expectedToday]);
-  const todayIsWeekend = useMemo(() => isKsaWeekend(expectedToday), [expectedToday]);
-
-  // csvDate / yesterdayDate are driven by the real clock so the
-  // detection runs against the correct dates regardless of how the
-  // file's rows are ordered. (The xlsx parser previously took the
-  // first row's date as `dataDate`; that's brittle when the export
-  // happens to put yesterday's rows before today's.)
-  const csvDate       = expectedToday;
-  const yesterdayDate = expectedYesterday;
-  const csvIsWeekend  = todayIsWeekend;
 
   // Window-mismatch validation. Returns null when the file matches
   // the strict today+yesterday requirement; otherwise returns an
