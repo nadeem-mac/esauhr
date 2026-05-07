@@ -5866,10 +5866,10 @@ function FileSummary({
           {hasToday && (
             <div>
               <div className="flex items-baseline gap-2 mb-2">
-                <span className="text-[10px] tracking-[0.25em]" style={{ fontWeight: 700, color: '#0A0A0A' }}>
-                  TODAY
+                <span className="text-[11px]" style={{ fontWeight: 600, color: '#1F1B16' }}>
+                  Today
                 </span>
-                <span className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+                <span className="text-[10px]" style={{ color: '#1F1B16', opacity: 0.6 }}>
                   {shortDate(today)} · arrival checks
                 </span>
               </div>
@@ -5885,10 +5885,10 @@ function FileSummary({
           {hasYesterday && (
             <div>
               <div className="flex items-baseline gap-2 mb-2">
-                <span className="text-[10px] tracking-[0.25em]" style={{ fontWeight: 700, color: '#0A0A0A' }}>
-                  YESTERDAY
+                <span className="text-[11px]" style={{ fontWeight: 600, color: '#1F1B16' }}>
+                  Yesterday
                 </span>
-                <span className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+                <span className="text-[10px]" style={{ color: '#1F1B16', opacity: 0.6 }}>
                   {shortDate(yesterday)} · departure checks
                 </span>
               </div>
@@ -5973,11 +5973,11 @@ function FileSummary({
             return (
               <div>
                 <div className="flex items-baseline gap-2 mb-2">
-                  <span className="text-[10px] tracking-[0.25em]" style={{ fontWeight: 700, color: '#0A0A0A' }}>
-                    SHIFT STAFF
+                  <span className="text-[11px]" style={{ fontWeight: 600, color: '#1F1B16' }}>
+                    Shift staff
                   </span>
-                  <span className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
-                    Manager-assigned shift schedule &middot; click for details
+                  <span className="text-[10px]" style={{ color: '#1F1B16', opacity: 0.6 }}>
+                    Manager-assigned schedule &middot; click for details
                   </span>
                 </div>
                 <CountPill
@@ -6063,68 +6063,63 @@ function CountPill({ icon, label, count, color, tint, subtext, isOpen, onClick, 
   const isInteractive = typeof onClick === 'function' && count > 0;
   const Tag = isInteractive ? 'button' : 'div';
   // Progress: { sent: number, total: number } when this kind is
-  // actionable and at least one email has been sent today. Surfaced
-  // on the collapsed tile so Bashaier can see the day's progress at
-  // a glance without expanding. e.g. "3 / 6 emailed". The whole
-  // progress UI hides for non-actionable tiles or when nothing's
-  // sent yet — keeps the tile clean until there's signal to show.
+  // actionable and at least one email has been sent today. In the B3
+  // single-line layout we surface progress as a tiny status string
+  // on the right rather than the previous progress-bar block — keeps
+  // the tile to one row while still telling Bashaier where she is.
   const showProgress = !!progress && progress.total > 0;
   const allDone = showProgress && progress.sent >= progress.total;
-  const progressPct = showProgress ? Math.round((progress.sent / progress.total) * 100) : 0;
+  const progressText = showProgress
+    ? (allDone ? `✓ all ${progress.total} sent` : `${progress.sent}/${progress.total} sent`)
+    : null;
+  // Right-side status text — progress wins when present, otherwise
+  // fall back to the static subtext (e.g. "by 8:15", "approved leave
+  // on file"). This collapses two separate UI rows into one.
+  const statusText = progressText || subtext;
   return (
     <Tag
       type={isInteractive ? 'button' : undefined}
       onClick={isInteractive ? onClick : undefined}
       className={
-        'rounded-xl p-3 text-left transition-all w-full '
+        'rounded-lg text-left transition-all w-full flex items-center gap-2 '
         + (isInteractive
-            ? 'cursor-pointer hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 focus:outline-none focus:ring-2 focus:ring-offset-1'
+            ? 'cursor-pointer hover:-translate-y-0.5 active:translate-y-0 focus:outline-none focus:ring-2 focus:ring-offset-1'
             : 'cursor-default')
       }
       style={{
         background: tint,
+        padding: '7px 11px',
         outlineColor: color,
-        boxShadow: isOpen ? `0 0 0 2px ${color}, 0 4px 12px rgba(31,27,22,0.08)` : undefined,
+        boxShadow: isOpen ? `0 0 0 2px ${color}, 0 2px 8px rgba(31,27,22,0.06)` : undefined,
       }}
       title={isInteractive ? `Click to ${isOpen ? 'collapse' : 'expand'} the list of ${count} ${label.toLowerCase()} below` : undefined}>
-      <div className="flex items-center gap-2" style={{ color }}>
-        <span style={{ fontSize: '16px' }}>{icon}</span>
-        <span className="text-[10px]" style={{ letterSpacing: '0.18em', fontWeight: 700, color: '#1F1B16' }}>{label.toUpperCase()}</span>
-      </div>
-      <div className="mt-1 flex items-baseline gap-2 flex-wrap">
-        <span style={{ fontSize: '24px', fontWeight: 700, color, lineHeight: 1 }}>{count}</span>
-        {isInteractive && (
-          <span className="text-[10px]" style={{ color, opacity: 0.7, fontWeight: 600 }}>
-            {isOpen ? '▾ open' : 'view ▸'}
-          </span>
-        )}
-      </div>
-      {subtext && (
-        <div className="text-[10px] mt-0.5" style={{ color: '#0A0A0A', opacity: 0.7 }}>
-          {subtext}
-        </div>
+      {/* Count — leftmost, prominent */}
+      <span style={{ fontSize: '18px', fontWeight: 700, color, lineHeight: 1.1, minWidth: '22px' }}>{count}</span>
+      {/* Label — sentence-case, mid-weight, takes available space */}
+      <span style={{ fontSize: '12px', fontWeight: 600, color, whiteSpace: 'nowrap' }}>{label}</span>
+      {/* Status text — right-aligned, smaller, lighter */}
+      {statusText && (
+        <span style={{
+          fontSize: '10px',
+          color: allDone ? '#047857' : color,
+          opacity: 0.75,
+          fontWeight: allDone ? 600 : 500,
+          marginLeft: 'auto',
+          textAlign: 'right',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        }}>
+          {statusText}
+        </span>
       )}
-      {showProgress && (
-        <div className="mt-2">
-          <div className="flex items-center justify-between text-[10px] mb-1" style={{ color: '#0A0A0A' }}>
-            <span style={{ fontWeight: 700 }}>
-              {allDone
-                ? <><span style={{ color: '#047857' }}>✓</span> All {progress.total} emailed</>
-                : <><strong>{progress.sent}</strong> of <strong>{progress.total}</strong> emailed</>}
-            </span>
-            {!allDone && (
-              <span style={{ opacity: 0.7 }}>
-                {progress.total - progress.sent} left
-              </span>
-            )}
-          </div>
-          <div className="h-1.5 rounded-full overflow-hidden" style={{ background: '#E5E5E5' }}>
-            <div
-              className="h-full transition-all"
-              style={{ width: progressPct + '%', background: allDone ? '#047857' : color }}
-            />
-          </div>
-        </div>
+      {/* Open-state chevron — only shows when clickable + has count.
+          ▾ when expanded, ▸ when collapsed. Tiny so it doesn't
+          dominate the right side. */}
+      {isInteractive && (
+        <span style={{ fontSize: '10px', color, opacity: 0.55, fontWeight: 600, marginLeft: statusText ? '6px' : 'auto' }}>
+          {isOpen ? '▾' : '▸'}
+        </span>
       )}
     </Tag>
   );
