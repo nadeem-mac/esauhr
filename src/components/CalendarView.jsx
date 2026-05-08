@@ -645,16 +645,18 @@ function HoverTooltip({ iso, leaves, perms, shifts, holiday, empMap, typeMap, an
                 const Icon = p.type === 'late_arrival' ? Sunrise : Sunset;
                 const color = p.type === 'late_arrival' ? '#1D4ED8' : '#A16207';
                 const label = p.type === 'late_arrival' ? 'Late arrival' : 'Early leave';
-                const timeStr = `${label} · ${String(p.time_from || '').slice(0,5)} – ${String(p.time_to || '').slice(0,5)}`;
+                const timeStr = `${String(p.time_from || '').slice(0,5)} – ${String(p.time_to || '').slice(0,5)}`;
                 return (
-                  // Two-line row, same fix as shifts above. Without the
-                  // split, the secondary line wraps as
-                  // 'Late arrival · 08:00-' / '08:30' — ugly.
+                  // Inline row, same shape as shifts. Wrapping happens
+                  // at the gap between name and detail when narrow;
+                  // the 'Late arrival 08:00 – 08:30' detail itself is
+                  // a single nowrap span so it never breaks mid-string.
                   <li key={p.id} className="flex items-start gap-1.5 text-[11px]" style={{ color: '#0A0A0A' }}>
                     <Icon className="w-3 h-3 flex-shrink-0" style={{ color, marginTop: 2 }}/>
-                    <div className="flex-1 min-w-0">
-                      <div style={{ fontWeight: 600 }}>{emp?.name || p.employee_id}</div>
-                      <div style={{ opacity: 0.7, whiteSpace: 'nowrap' }}>{timeStr}</div>
+                    <div className="flex-1 min-w-0" style={{ lineHeight: 1.5 }}>
+                      <span style={{ fontWeight: 600 }}>{emp?.name || p.employee_id}</span>
+                      <span style={{ opacity: 0.7 }}> → </span>
+                      <span style={{ opacity: 0.7, whiteSpace: 'nowrap' }}>{label} {timeStr}</span>
                     </div>
                   </li>
                 );
@@ -676,20 +678,19 @@ function HoverTooltip({ iso, leaves, perms, shifts, holiday, empMap, typeMap, an
                   ? `${String(s.start_time).slice(0,5)} – ${String(s.end_time).slice(0,5)}`
                   : '';
                 return (
-                  // Two-line row: name on line 1, time on line 2 below
-                  // the name (small + muted). Previously the row was a
-                  // single flex line with name + ' · ' + time, which
-                  // word-wrapped mid time-string ('11:00-' on one
-                  // line, '20:00' on the next) when the name was
-                  // long. Splitting into rows lets the name wrap
-                  // freely while the time stays on its own atomic
-                  // line with whiteSpace: nowrap.
+                  // Single inline row: name → time. Wraps at word
+                  // boundaries when narrow but the time itself is
+                  // wrapped in a nowrap span so it never breaks
+                  // mid-string (was '11:00-' / '20:00' before).
                   <li key={s.id} className="flex items-start gap-1.5 text-[11px]" style={{ color: '#0A0A0A' }}>
                     <Briefcase className="w-3 h-3 flex-shrink-0" style={{ color: '#7E22CE', marginTop: 2 }}/>
-                    <div className="flex-1 min-w-0">
-                      <div style={{ fontWeight: 600 }}>{emp?.name || s.employee_id}</div>
+                    <div className="flex-1 min-w-0" style={{ lineHeight: 1.5 }}>
+                      <span style={{ fontWeight: 600 }}>{emp?.name || s.employee_id}</span>
                       {timeStr && (
-                        <div style={{ opacity: 0.7, whiteSpace: 'nowrap' }}>{timeStr}</div>
+                        <>
+                          <span style={{ opacity: 0.7 }}> → </span>
+                          <span style={{ opacity: 0.7, whiteSpace: 'nowrap' }}>{timeStr}</span>
+                        </>
                       )}
                     </div>
                   </li>
