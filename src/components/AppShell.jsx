@@ -1115,18 +1115,24 @@ export default function AppShell({ session, me, onRefreshMe }) {
               <RequestTypePicker
                 onClose={() => setRequestFlow(null)}
                 onPick={(type) => setRequestFlow(type)}
+                leaveTypes={leaveTypes}
+                me={me}
                 blockingDeclaration={blockingDecl}
               />
             )}
           </>
         );
       })()}
-      {requestFlow === 'leave' && (
+      {(requestFlow === 'leave' || (typeof requestFlow === 'string' && requestFlow.startsWith('leave:'))) && (
         <NewRequestModal
           me={me}
           employees={employees} leaveTypes={leaveTypes}
           requests={requests} balances={balances} holidays={holidays}
-          lockedLeaveType={null}
+          lockedLeaveType={
+            typeof requestFlow === 'string' && requestFlow.startsWith('leave:')
+              ? requestFlow.slice('leave:'.length)
+              : null
+          }
           onClose={() => setRequestFlow(null)}
           onSubmit={async (payload) => {
             await createRequest(payload);

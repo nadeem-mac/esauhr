@@ -1,77 +1,74 @@
 import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Plane, Sunrise, Sunset, ChevronRight, HeartPulse, AlertTriangle, Upload } from 'lucide-react';
+import { X, Plane, Sunrise, Sunset, ChevronRight, HeartPulse, AlertTriangle, Upload, Baby, Heart, Star, Briefcase, Pause, MoreHorizontal } from 'lucide-react';
 
 // =============================================================================
 // RequestTypePicker
 //
-// One-stop entry for staff submitting any new request. The "+ New request"
-// button used to open NewRequestModal directly, which only handles
-// vacation-style leave (annual / emergency / sick / etc.). Staff who wanted
-// a permission (late arrival or early leave) had to know to click one of
-// the colored tiles on the dashboard — discoverable for power users, but
-// confusing for everyone else and easy to miss.
+// One-stop entry for staff submitting any new request. Surfaces every
+// leave category as a dedicated tile so staff can pick exactly what
+// they need in one tap. Layout (top-to-bottom):
 //
-// Now the same "+ New request" entry opens this picker first, and the
-// staff member explicitly chooses the kind of request they're making. Each
-// option carries a one-liner so there's no ambiguity about which form
-// applies to their situation.
+//   1. URGENT      → Sick leave
+//   2. LEAVE       → Annual, Maternity (female only), Paternity (male only),
+//                    Hajj, Marriage, Bereavement, Emergency, Unpaid, Other
+//   3. PERMISSIONS → Late arrival, Early leave
 //
-// Choice routes:
-//   'leave'        → NewRequestModal (vacation/emergency/hajj/etc.)
-//   'sick'         → NewRequestModal pre-locked to 'sick' (Sehhaty flow,
-//                    no substitute step)
-//   'late_arrival' → PermissionRequestModal with type='late_arrival'
-//   'early_leave'  → PermissionRequestModal with type='early_leave'
-//
-// Sick leave gets its own top-level slot because the workflow is
-// fundamentally different — Sehhaty service code is mandatory,
-// substitutes are skipped entirely, and the request goes straight to
-// the manager. Hiding it inside 'Vacation or leave' made it hard to
-// discover and didn't reflect how distinct the flow is.
-//
-// The picker itself is intentionally small and visual — large option
-// cards in a single column so it works well on phones, where the
-// staff are most likely to be submitting requests in the moment.
+// Leave-type tiles are rendered from the `leaveTypes` prop (Supabase),
+// so any new types added to the DB appear here automatically without a
+// code change. Gender-restricted types are filtered to the staff's
+// gender as a UX nicety; server-side validation enforces the rule.
 // =============================================================================
 
-export default function RequestTypePicker({ onPick, onClose, blockingDeclaration = null }) {
-  const options = [
-    {
-      // Sick leave — promoted to the top of the picker. Sick days
-      // are time-sensitive (staff often submit while still feeling
-      // unwell, want the fewest taps to complete) and they're the
-      // most frequent leave type by submission volume. Putting them
-      // first reduces friction for the most common urgent case.
-      //
-      // Single unified entry for ALL sick-leave scenarios. Internal
-      // toggle (inside SickLeaveModal) decides whether the staff is
-      // declaring without a certificate yet ("Not yet") or submitting
-      // a Sehhaty certificate they already have ("Yes, I have it").
-      //
-      // Two paths, one tile — the previous design had a "Submit sick
-      // leave" tile sitting next to "I'm sick today" and the difference
-      // was easy to miss. Folding both into a single entry, with the
-      // path selection happening as the FIRST question in the modal,
-      // makes the consequence of each choice impossible to overlook.
-      id: 'sick_unified',
-      icon: HeartPulse,
-      title: 'Sick leave — I am sick today or I have a Sehhaty Certificate',
-      titleArabic: 'إجازة مرضية — أنا مريض اليوم أو لدي شهادة صحتي',
-      description: 'Declare a sick day with or without a Sehhaty certificate. The form will guide you.',
-      iconBg: '#FEE2E2',
-      iconColor: '#B91C1C',
-      borderColor: '#FCA5A5',
-    },
-    {
-      id: 'leave',
-      icon: Plane,
-      title: 'Vacation or leave',
-      description: 'Full or half-day requests — annual, emergency, hajj, maternity, etc.',
-      iconBg: 'var(--evergreen-100)',
-      iconColor: 'var(--evergreen-600)',
-      borderColor: 'var(--evergreen-200)',
-    },
+const LEAVE_TYPE_VISUAL = {
+  annual:      { icon: Plane,           iconBg: '#ECFDF5', iconColor: '#0F4C2A', borderColor: '#86EFAC' },
+  maternity:   { icon: Baby,            iconBg: '#FCE7F3', iconColor: '#9D174D', borderColor: '#F9A8D4' },
+  paternity:   { icon: Baby,            iconBg: '#E0F2FE', iconColor: '#075985', borderColor: '#7DD3FC' },
+  hajj:        { icon: Star,            iconBg: '#FEF3C7', iconColor: '#854F0B', borderColor: '#FCD34D' },
+  marriage:    { icon: Heart,           iconBg: '#FAF5FF', iconColor: '#7E22CE', borderColor: '#D8B4FE' },
+  bereavement: { icon: Heart,           iconBg: '#F3F4F6', iconColor: '#374151', borderColor: '#9CA3AF' },
+  emergency:   { icon: AlertTriangle,   iconBg: '#FEE2E2', iconColor: '#7F1D1D', borderColor: '#FCA5A5' },
+  unpaid:      { icon: Pause,           iconBg: '#F5F5F4', iconColor: '#525252', borderColor: '#A8A29E' },
+  other:       { icon: MoreHorizontal,  iconBg: '#F1F5F9', iconColor: '#475569', borderColor: '#94A3B8' },
+};
+
+const FALLBACK_VISUAL = { icon: Briefcase, iconBg: '#F1F5F9', iconColor: '#475569', borderColor: '#94A3B8' };
+
+export default function RequestTypePicker({ onPick, onClose, leaveTypes = [], me = null, blockingDeclaration = null }) {
+  const meGender = (me?.gender || '').toLowerCase();
+  const leaveTypeTiles = (leaveTypes || [])
+    .filter(t => t.active !== false && t.id !== 'sick')
+    .filter(t => {
+      if (!t.applies_to_gender) return true;
+      if (!meGender) return true;
+      return t.applies_to_gender === meGender;
+    })
+    .sort((a, b) => (a.sort_order || 100) - (b.sort_order || 100))
+    .map(t => {
+      const v = LEAVE_TYPE_VISUAL[t.id] || FALLBACK_VISUAL;
+      return {
+        id: `leave:${t.id}`,
+        icon: v.icon,
+        title: t.name || t.id,
+        description: t.description || '',
+        iconBg: v.iconBg,
+        iconColor: v.iconColor,
+        borderColor: v.borderColor,
+      };
+    });
+
+  const sickTile = {
+    id: 'sick_unified',
+    icon: HeartPulse,
+    title: 'Sick leave — I am sick today or I have a Sehhaty Certificate',
+    titleArabic: 'إجازة مرضية — أنا مريض اليوم أو لدي شهادة صحتي',
+    description: 'Declare a sick day with or without a Sehhaty certificate. The form will guide you.',
+    iconBg: '#FEE2E2',
+    iconColor: '#B91C1C',
+    borderColor: '#FCA5A5',
+  };
+
+  const permissionTiles = [
     {
       id: 'late_arrival',
       icon: Sunrise,
@@ -92,13 +89,57 @@ export default function RequestTypePicker({ onPick, onClose, blockingDeclaration
     },
   ];
 
-  // Lock body scroll while open + portal-mount on document.body so the
-  // picker is fully isolated from any parent's render cycle.
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = prev; };
   }, []);
+
+  const renderTile = (opt) => {
+    const Icon = opt.icon;
+    return (
+      <button
+        key={opt.id}
+        type="button"
+        onClick={() => onPick(opt.id)}
+        className="w-full text-left flex items-center gap-3 p-3.5 rounded-xl border transition-colors hover:bg-white/60 group"
+        style={{ borderColor: opt.borderColor, background: '#FFFFFF' }}
+      >
+        <div
+          className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+          style={{ background: opt.iconBg, color: opt.iconColor, border: `1px solid ${opt.borderColor}` }}
+        >
+          <Icon className="w-5 h-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold" style={{ color: '#1F1B16' }}>
+            {opt.title}
+          </div>
+          {opt.titleArabic && (
+            <div className="text-[12px] mt-0.5" dir="rtl"
+              style={{ color: '#1F1B16', fontWeight: 500 }}>
+              {opt.titleArabic}
+            </div>
+          )}
+          {opt.description && (
+            <div className="text-[11px] mt-0.5" style={{ color: '#1F1B16' }}>
+              {opt.description}
+            </div>
+          )}
+        </div>
+        <ChevronRight
+          className="w-4 h-4 flex-shrink-0 opacity-30 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all"
+          style={{ color: '#1F1B16' }}
+        />
+      </button>
+    );
+  };
+
+  const SectionLabel = ({ children }) => (
+    <div className="text-[10px] tracking-[0.18em] mt-3 mb-1.5 px-1" style={{ color: '#1F1B16', fontWeight: 700 }}>
+      {children}
+    </div>
+  );
 
   return createPortal(
     <div
@@ -118,7 +159,6 @@ export default function RequestTypePicker({ onPick, onClose, blockingDeclaration
           boxShadow: '0 12px 40px rgba(31,27,22,0.18)',
         }}
       >
-        {/* Header */}
         <div className="flex items-baseline justify-between px-6 py-5 border-b" style={{ borderColor: 'var(--border-soft)' }}>
           <div>
             <h2 className="serif text-lg" style={{ fontWeight: 500, color: '#1F1B16' }}>
@@ -138,13 +178,6 @@ export default function RequestTypePicker({ onPick, onClose, blockingDeclaration
           </button>
         </div>
 
-        {/* Soft pressure block — visible only when the staff has at
-            least one pending_certificate row that's overdue. The banner
-            disables every option except the cert-upload escape hatch
-            (which routes to SickLeaveModal Path B with the Path picker
-            skipped). Mirrors the DB trigger's logic so the messaging
-            matches what would be enforced server-side.
-            See getBlockingDeclarations in lib/sickDeclaration.js. */}
         {blockingDeclaration && (
           <div className="mx-4 mt-4 mb-2 rounded-xl px-4 py-3 border flex items-start gap-3"
                style={{ background: '#FEE2E2', borderColor: '#FCA5A5' }}>
@@ -164,13 +197,7 @@ export default function RequestTypePicker({ onPick, onClose, blockingDeclaration
           </div>
         )}
 
-        {/* Options */}
-        <div className="p-4 space-y-2.5">
-          {/* When blocked: show ONE prominent action — Submit certificate
-              — instead of the full option list. Tapping it opens the
-              SickLeaveModal directly to Path B (cert upload), skipping
-              the path picker. The escape hatch keeps the staff from
-              being stuck with a useless picker. */}
+        <div className="p-4 pt-2">
           {blockingDeclaration ? (
             <button
               type="button"
@@ -198,43 +225,26 @@ export default function RequestTypePicker({ onPick, onClose, blockingDeclaration
               />
             </button>
           ) : (
-            options.map(opt => {
-              const Icon = opt.icon;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => onPick(opt.id)}
-                  className="w-full text-left flex items-center gap-3 p-3.5 rounded-xl border transition-colors hover:bg-white/60 group"
-                  style={{ borderColor: opt.borderColor, background: '#FFFFFF' }}
-                >
-                  <div
-                    className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
-                    style={{ background: opt.iconBg, color: opt.iconColor, border: `1px solid ${opt.borderColor}` }}
-                  >
-                    <Icon className="w-5 h-5" />
+            <>
+              <SectionLabel>URGENT</SectionLabel>
+              <div className="space-y-2">
+                {renderTile(sickTile)}
+              </div>
+
+              {leaveTypeTiles.length > 0 && (
+                <>
+                  <SectionLabel>LEAVE</SectionLabel>
+                  <div className="space-y-2">
+                    {leaveTypeTiles.map(renderTile)}
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-semibold" style={{ color: '#1F1B16' }}>
-                      {opt.title}
-                    </div>
-                    {opt.titleArabic && (
-                      <div className="text-[12px] mt-0.5" dir="rtl"
-                        style={{ color: '#1F1B16', fontWeight: 500 }}>
-                        {opt.titleArabic}
-                      </div>
-                    )}
-                    <div className="text-[11px] mt-0.5" style={{ color: '#1F1B16' }}>
-                      {opt.description}
-                    </div>
-                  </div>
-                  <ChevronRight
-                    className="w-4 h-4 flex-shrink-0 opacity-30 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all"
-                    style={{ color: '#1F1B16' }}
-                />
-              </button>
-            );
-          })
+                </>
+              )}
+
+              <SectionLabel>PERMISSIONS</SectionLabel>
+              <div className="space-y-2">
+                {permissionTiles.map(renderTile)}
+              </div>
+            </>
           )}
         </div>
       </div>
