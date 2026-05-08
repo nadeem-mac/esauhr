@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { HeartPulse, X, Loader2, FileWarning } from 'lucide-react';
+import { HeartPulse, X, Loader2 } from 'lucide-react';
 import { initialApprovalStage } from '../lib/leaveLogic.js';
 
 // =============================================================================
@@ -28,7 +28,7 @@ import { initialApprovalStage } from '../lib/leaveLogic.js';
 //   • Cert upload — handled by the full form / magic-link page later
 // =============================================================================
 
-export default function QuickSickConfirm({ me, employees = [], onSubmit, onClose, onEscalateToFullForm }) {
+export default function QuickSickConfirm({ me, employees = [], onSubmit, onClose }) {
   // 1 / 2 / 3 — number of consecutive sick days starting today.
   // Anything > 3 has to go through the full form (cert mandatory).
   const [days, setDays]     = useState(1);
@@ -168,9 +168,9 @@ export default function QuickSickConfirm({ me, employees = [], onSubmit, onClose
             <DurationBtn active={days === 1} onClick={() => setDays(1)} disabled={busy}
               label="Today only" sub="1 day" />
             <DurationBtn active={days === 2} onClick={() => setDays(2)} disabled={busy}
-              label="2 days"     sub="incl. tomorrow" />
+              label="2 days"     sub="+1 day" />
             <DurationBtn active={days === 3} onClick={() => setDays(3)} disabled={busy}
-              label="3 days"     sub="max without cert" />
+              label="3 days"     sub="+2 days" />
           </div>
         </div>
 
@@ -212,29 +212,14 @@ export default function QuickSickConfirm({ me, employees = [], onSubmit, onClose
             : (days === 1 ? "Yes, I'm sick today" : `Yes, declare ${days} sick days`)}
         </button>
 
-        {/* >3 day escalation. The full SickLeaveModal handles cert
-            upload + multi-day range. We don't bake that into the
-            quick sheet because it would balloon the simple flow. */}
-        {onEscalateToFullForm && (
-          <button
-            type="button"
-            onClick={() => { onClose && onClose(); onEscalateToFullForm(); }}
-            disabled={busy}
-            className="w-full mt-2 inline-flex items-center justify-center gap-1.5 disabled:opacity-50"
-            style={{
-              padding: 8,
-              background: 'transparent',
-              color: '#1F1B16',
-              border: 'none',
-              fontSize: 11,
-              cursor: 'pointer',
-              opacity: 0.65,
-            }}
-          >
-            <FileWarning className="w-3 h-3" />
-            More than 3 days? Use full form (cert required)
-          </button>
-        )}
+        {/* Note: there used to be a "More than 3 days? Use full form
+            (cert required)" link here, based on a misreading of Saudi
+            labour law. Article 117 doesn't set a 3-day cert threshold —
+            cert compliance is enforced by the existing grace flow
+            (24h/48h/72h reminders → 5-day auto-mark) regardless of
+            duration. 4+ day cases are an edge case handled elsewhere
+            (HR-initiated, or a future entry point), not via this
+            bottom sheet. */}
 
         <button
           type="button"

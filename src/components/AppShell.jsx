@@ -1140,12 +1140,6 @@ export default function AppShell({ session, me, onRefreshMe }) {
           me={me}
           employees={employees}
           onClose={() => setRequestFlow(null)}
-          onEscalateToFullForm={() => {
-            // Staff picked "more than 3 days" — close the bottom sheet
-            // and open the full SickLeaveModal which handles the
-            // cert-mandatory case for >3 day Saudi labor law rule.
-            setRequestFlow('sick_unified');
-          }}
           onSubmit={async (payload) => {
             // Insert IS the source of truth for success/failure. If the
             // post-insert loadAll() inside createRequest fails, that's a
