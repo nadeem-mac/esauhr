@@ -74,14 +74,25 @@ function trimTime(t) {
 }
 
 const STATUS_META = {
-  present:      { bg: '#ECFDF5', fg: '#0F4C2A', border: '#A7F3D0', label: 'Present',      icon: '✓'  },
-  late:         { bg: '#FEF3C7', fg: '#854F0B', border: '#FCD34D', label: 'Late',         icon: 'LT' },
-  short:        { bg: '#FED7AA', fg: '#7C2D12', border: '#FB923C', label: 'Left early',   icon: 'SH' },
-  absent:       { bg: '#FEE2E2', fg: '#991B1B', border: '#FCA5A5', label: 'Absent',       icon: 'AB' },
-  annual_leave: { bg: '#CCFBF1', fg: '#115E59', border: '#5EEAD4', label: 'Annual leave', icon: 'AL' },
-  sick_leave:   { bg: '#EDE9FE', fg: '#5B21B6', border: '#C4B5FD', label: 'Sick leave',   icon: 'SL' },
-  off_roster:   { bg: '#DBEAFE', fg: '#1E3A8A', border: '#93C5FD', label: 'Off-roster',   icon: 'OR' },
-  off_day:      { bg: '#EEF0FA', fg: '#3B4279', border: '#C7CFE5', label: 'Off-day',      icon: 'OF' },
+  present:          { bg: '#ECFDF5', fg: '#0F4C2A', border: '#A7F3D0', label: 'Present',          icon: '✓'  },
+  late:             { bg: '#FEF3C7', fg: '#854F0B', border: '#FCD34D', label: 'Late',             icon: 'LT' },
+  short:            { bg: '#FED7AA', fg: '#7C2D12', border: '#FB923C', label: 'Left early',       icon: 'SH' },
+  absent:           { bg: '#FEE2E2', fg: '#991B1B', border: '#FCA5A5', label: 'Absent',           icon: 'AB' },
+  annual_leave:     { bg: '#CCFBF1', fg: '#115E59', border: '#5EEAD4', label: 'Annual leave',     icon: 'AL' },
+  sick_leave:       { bg: '#EDE9FE', fg: '#5B21B6', border: '#C4B5FD', label: 'Sick leave',       icon: 'SL' },
+  // Statutory long-form leaves — colour-coded per the existing portal
+  // conventions used in the main attendance grid. Keeping them
+  // distinct from generic annual_leave because Article 117 / labour
+  // law treats them as separate categories with different entitlement
+  // rules, and HR needs to spot them at a glance in the detail panel
+  // exactly as on the grid.
+  maternity_leave:  { bg: '#FCE7F3', fg: '#9D174D', border: '#F9A8D4', label: 'Maternity leave',  icon: 'ML' },
+  paternity_leave:  { bg: '#DBEAFE', fg: '#1E3A8A', border: '#93C5FD', label: 'Paternity leave',  icon: 'PL' },
+  hajj_leave:       { bg: '#FEF3C7', fg: '#92400E', border: '#FCD34D', label: 'Hajj leave',       icon: 'HJ' },
+  emergency_leave:  { bg: '#FEE2E2', fg: '#991B1B', border: '#FCA5A5', label: 'Emergency leave',  icon: 'EL' },
+  unpaid_leave:     { bg: '#F3F4F6', fg: '#374151', border: '#D1D5DB', label: 'Unpaid leave',     icon: 'UL' },
+  off_roster:       { bg: '#DBEAFE', fg: '#1E3A8A', border: '#93C5FD', label: 'Off-roster',       icon: 'OR' },
+  off_day:          { bg: '#EEF0FA', fg: '#3B4279', border: '#C7CFE5', label: 'Off-day',          icon: 'OF' },
 };
 
 function statusMeta(s, notes) {
@@ -1539,10 +1550,15 @@ tbody tr:first-child td { border-top: none; }
 .chip.late         { background: #FEF3C7; color: #854F0B; border: 1px solid #FCD34D; }
 .chip.short        { background: #FED7AA; color: #7C2D12; border: 1px solid #FB923C; }
 .chip.absent       { background: #FEE2E2; color: #991B1B; border: 1px solid #FCA5A5; }
-.chip.annual_leave { background: #CCFBF1; color: #115E59; border: 1px solid #5EEAD4; }
-.chip.sick_leave   { background: #EDE9FE; color: #5B21B6; border: 1px solid #C4B5FD; }
-.chip.off_roster   { background: #DBEAFE; color: #1E3A8A; border: 1px solid #93C5FD; }
-.chip.off_day      { background: #EEF0FA; color: #3B4279; border: 1px solid #C7CFE5; }
+.chip.annual_leave    { background: #CCFBF1; color: #115E59; border: 1px solid #5EEAD4; }
+.chip.sick_leave      { background: #EDE9FE; color: #5B21B6; border: 1px solid #C4B5FD; }
+.chip.maternity_leave { background: #FCE7F3; color: #9D174D; border: 1px solid #F9A8D4; }
+.chip.paternity_leave { background: #DBEAFE; color: #1E3A8A; border: 1px solid #93C5FD; }
+.chip.hajj_leave      { background: #FEF3C7; color: #92400E; border: 1px solid #FCD34D; }
+.chip.emergency_leave { background: #FEE2E2; color: #991B1B; border: 1px solid #FCA5A5; }
+.chip.unpaid_leave    { background: #F3F4F6; color: #374151; border: 1px solid #D1D5DB; }
+.chip.off_roster      { background: #DBEAFE; color: #1E3A8A; border: 1px solid #93C5FD; }
+.chip.off_day         { background: #EEF0FA; color: #3B4279; border: 1px solid #C7CFE5; }
 .chip.approved     { background: #ECFDF5; color: #0F4C2A; border: 1px solid #A7F3D0; }
 .chip.pending      { background: #FEF3C7; color: #854F0B; border: 1px solid #FCD34D; }
 .chip.rejected,
