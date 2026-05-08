@@ -589,8 +589,13 @@ function HoverTooltip({ iso, leaves, perms, shifts, holiday, empMap, typeMap, an
       <div className="rounded-xl shadow-lg p-3"
         style={{
           background: '#FFFFFF',
-          border: '1px solid var(--border-soft)',
-          boxShadow: '0 8px 24px rgba(31, 27, 22, 0.12)',
+          // Stronger, brand-warm border so the tooltip reads as a
+          // distinct floating surface against the calendar grid
+          // (previously the soft grey border vanished against the
+          // shadow). 1.5px in the dark warm-grey used for primary
+          // text — visible without being heavy.
+          border: '1.5px solid #1F1B16',
+          boxShadow: '0 10px 28px rgba(31, 27, 22, 0.18)',
         }}>
         <div className="text-[10px] tracking-widest mb-2"
           style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.7 }}>
@@ -640,13 +645,17 @@ function HoverTooltip({ iso, leaves, perms, shifts, holiday, empMap, typeMap, an
                 const Icon = p.type === 'late_arrival' ? Sunrise : Sunset;
                 const color = p.type === 'late_arrival' ? '#1D4ED8' : '#A16207';
                 const label = p.type === 'late_arrival' ? 'Late arrival' : 'Early leave';
+                const timeStr = `${label} · ${String(p.time_from || '').slice(0,5)} – ${String(p.time_to || '').slice(0,5)}`;
                 return (
-                  <li key={p.id} className="flex items-center gap-1.5 text-[11px]" style={{ color: '#0A0A0A' }}>
-                    <Icon className="w-3 h-3 flex-shrink-0" style={{ color }}/>
-                    <span style={{ fontWeight: 600 }}>{emp?.name || p.employee_id}</span>
-                    <span style={{ opacity: 0.7 }}>
-                      · {label} · {String(p.time_from || '').slice(0,5)}–{String(p.time_to || '').slice(0,5)}
-                    </span>
+                  // Two-line row, same fix as shifts above. Without the
+                  // split, the secondary line wraps as
+                  // 'Late arrival · 08:00-' / '08:30' — ugly.
+                  <li key={p.id} className="flex items-start gap-1.5 text-[11px]" style={{ color: '#0A0A0A' }}>
+                    <Icon className="w-3 h-3 flex-shrink-0" style={{ color, marginTop: 2 }}/>
+                    <div className="flex-1 min-w-0">
+                      <div style={{ fontWeight: 600 }}>{emp?.name || p.employee_id}</div>
+                      <div style={{ opacity: 0.7, whiteSpace: 'nowrap' }}>{timeStr}</div>
+                    </div>
                   </li>
                 );
               })}
@@ -663,15 +672,26 @@ function HoverTooltip({ iso, leaves, perms, shifts, holiday, empMap, typeMap, an
             <ul className="space-y-1">
               {shifts.map(s => {
                 const emp = empMap[s.employee_id];
+                const timeStr = (s.start_time && s.end_time)
+                  ? `${String(s.start_time).slice(0,5)} – ${String(s.end_time).slice(0,5)}`
+                  : '';
                 return (
-                  <li key={s.id} className="flex items-center gap-1.5 text-[11px]" style={{ color: '#0A0A0A' }}>
-                    <Briefcase className="w-3 h-3 flex-shrink-0" style={{ color: '#7E22CE' }}/>
-                    <span style={{ fontWeight: 600 }}>{emp?.name || s.employee_id}</span>
-                    <span style={{ opacity: 0.7 }}>
-                      {s.start_time && s.end_time
-                        ? ` · ${String(s.start_time).slice(0,5)}–${String(s.end_time).slice(0,5)}`
-                        : ''}
-                    </span>
+                  // Two-line row: name on line 1, time on line 2 below
+                  // the name (small + muted). Previously the row was a
+                  // single flex line with name + ' · ' + time, which
+                  // word-wrapped mid time-string ('11:00-' on one
+                  // line, '20:00' on the next) when the name was
+                  // long. Splitting into rows lets the name wrap
+                  // freely while the time stays on its own atomic
+                  // line with whiteSpace: nowrap.
+                  <li key={s.id} className="flex items-start gap-1.5 text-[11px]" style={{ color: '#0A0A0A' }}>
+                    <Briefcase className="w-3 h-3 flex-shrink-0" style={{ color: '#7E22CE', marginTop: 2 }}/>
+                    <div className="flex-1 min-w-0">
+                      <div style={{ fontWeight: 600 }}>{emp?.name || s.employee_id}</div>
+                      {timeStr && (
+                        <div style={{ opacity: 0.7, whiteSpace: 'nowrap' }}>{timeStr}</div>
+                      )}
+                    </div>
                   </li>
                 );
               })}
