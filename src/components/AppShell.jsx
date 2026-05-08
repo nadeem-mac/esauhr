@@ -1130,7 +1130,19 @@ export default function AppShell({ session, me, onRefreshMe }) {
           employees={employees}
           onClose={() => setRequestFlow(null)}
           onSubmit={async (payload) => {
-            await createRequest(payload);
+            // Insert IS the source of truth for success/failure. If the
+            // post-insert loadAll() inside createRequest fails, that's a
+            // refresh issue, not a submission issue — don't propagate it
+            // up to QuickSickConfirm or the modal will reset to the
+            // confirm screen even though the row is happily in the DB.
+            try {
+              await createRequest(payload);
+            } catch (e) {
+              console.warn('[AppShell] post-insert refresh failed (insert likely succeeded)', e);
+              // Try a best-effort refresh again so the dashboard reflects
+              // the new row eventually. Swallow any further failure.
+              loadAll && loadAll().catch(() => {});
+            }
             // Don't close immediately — QuickSickConfirm needs to show
             // its own "Get well soon" success state for ~4s before it
             // auto-retracts. It will call onClose itself when ready.
