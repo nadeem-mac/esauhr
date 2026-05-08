@@ -95,19 +95,17 @@ export default function QuickSickConfirm({ me, employees = [], onSubmit, onClose
         reason:             'Sick leave declared via dashboard quick-sick (same-day).',
       };
       console.log('[QuickSick] submitting', payload);
-      // Only send the essential columns. cert_received and declared_via
-      // have DB defaults from migration_sick_cert_tracking.sql
-      // ('false' and 'staff' respectively); cert_deadline_at is filled
-      // in by a backfill on the HR queue side (or a follow-up trigger).
-      // Sending unknown column names causes PostgREST to wedge silently
-      // when the schema cache hasn't refreshed yet.
       await onSubmit(payload);
-      console.log('[QuickSick] success');
-      setPhase('done');
+      console.log('[QuickSick] success — closing immediately');
+      // Close the modal right away. The global submission toast in
+      // AppShell will give the user a "Request submitted" confirmation.
+      // We previously tried showing a 'done' phase inline, but a parent
+      // re-render after the insert was remounting the modal back to the
+      // confirm screen. Closing immediately bypasses that entirely.
+      onClose && onClose();
     } catch (e) {
       console.error('[QuickSick] submission failed', e);
       setError((e && (e.message || e.toString())) || 'Could not submit. Please try again.');
-    } finally {
       setBusy(false);
     }
   }
