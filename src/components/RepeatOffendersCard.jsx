@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { AlertTriangle, ChevronDown, ChevronRight, Mail, RefreshCw } from 'lucide-react';
 import { loadRepeatOffenders } from '../lib/repeatOffenderDetector.js';
+import { parseEmailAddress } from '../lib/emailTemplates.js';
 
 // =============================================================================
 // RepeatOffendersCard.jsx
@@ -263,7 +264,7 @@ export default function RepeatOffendersCard({
             const employee = empById[o.employeeId] || { id: o.employeeId, name: o.employeeId };
             const sev = SEVERITY_STYLE[o.severity] || SEVERITY_STYLE.pattern;
             const isExpanded = !!expanded[o.employeeId];
-            const managerEmail = empById[String(employee.manager_id || '').toUpperCase()]?.email || null;
+            const managerEmail = parseEmailAddress(empById[String(employee.manager_id || '').toUpperCase()]?.email || '') || null;
             const managerName  = empById[String(employee.manager_id || '').toUpperCase()]?.name  || null;
 
             return (

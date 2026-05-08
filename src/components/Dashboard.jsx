@@ -3,6 +3,7 @@ import { Check, ArrowRight, Palmtree, Calendar, KeyRound, Mail, AlertCircle, Ale
 import { supabase } from '../supabaseClient.js';
 import { todayISO, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 import { summariseMonth } from '../lib/permissionLogic.js';
+import { parseEmailAddress } from '../lib/emailTemplates.js';
 import BashaierTasksCard from './BashaierTasksCard.jsx';
 import PendingShiftApprovalsCard from './PendingShiftApprovalsCard.jsx';
 import HrShiftMonthCard from './HrShiftMonthCard.jsx';
@@ -1066,7 +1067,10 @@ function PinRequestsCard({ me, employees, onCountChange }) {
         `Best regards,\n${me?.name?.split(' ').slice(0, 2).join(' ') || 'HR'}\n` +
         `Evergreen Shipping Agency Saudi Co. (LLC)`
       );
-      const to = emp.email || '';
+      // Strip any 'NAME <addr>' wrapping from a messy spreadsheet
+      // import. Without this the mailto: encodes the whole string
+      // and mail clients render the recipient mangled.
+      const to = parseEmailAddress(emp.email || '');
       window.location.href = `mailto:${encodeURIComponent(to)}?subject=${subject}&body=${body}`;
 
       setInfo(`PIN ${pin} issued to ${emp.name}. Mail draft opened.`);

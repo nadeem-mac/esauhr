@@ -64,6 +64,7 @@ import { reminderStatus, reminderKindLabel } from '../lib/sickReminderEmail.js';
 import { groupViolationsBySource, findStaffNeedingDigest, AUTO_UNMARK_WINDOW_DAYS } from '../lib/sickHardPressure.js';
 import { directPatch } from '../supabaseClient.js';
 import { logAction } from '../lib/audit.js';
+import { parseEmailAddress } from '../lib/emailTemplates.js';
 import CertExemptModal from './CertExemptModal.jsx';
 import SendReminderModal from './SendReminderModal.jsx';
 import UnauthorizedDigestModal from './UnauthorizedDigestModal.jsx';
@@ -93,7 +94,12 @@ If a Sehhaty certificate was not issued for this absence, please reply confirmin
 
 Thank you,
 HR — Evergreen Shipping Agency Saudi Co.`;
-  const to = encodeURIComponent(employee?.email || '');
+  // Sanitize the address — strips any 'NAME <addr>' wrapping that
+  // might have come from a messy spreadsheet import. Without this,
+  // the mailto: link encodes the full string and mail clients render
+  // the recipient mangled.
+  const cleanAddr = parseEmailAddress(employee?.email || '');
+  const to = encodeURIComponent(cleanAddr);
   const subj = encodeURIComponent(subject);
   const bod  = encodeURIComponent(body);
   return `mailto:${to}?subject=${subj}&body=${bod}`;

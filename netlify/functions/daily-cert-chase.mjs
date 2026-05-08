@@ -58,6 +58,25 @@ const SUPABASE_HEADERS = SUPABASE_KEY ? {
   'Prefer':         'return=representation',
 } : null;
 
+// ── Email address sanitisation ──────────────────────────────────────
+// Mirror of parseEmailAddress() from src/lib/emailTemplates.js. Inlined
+// here because Netlify Functions can't import from the React bundle at
+// runtime. Strips 'NAME <addr>' display-name wrapping that some rows
+// in employees.email accidentally hold from the 2026 spreadsheet
+// import. Without this, Resend rejects the message (invalid To: header)
+// or the recipient address gets mangled at the mail-client end.
+
+function parseEmailAddress(raw) {
+  if (!raw || typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  const angleMatch = trimmed.match(/<\s*([^<>\s]+@[^<>\s]+)\s*>/);
+  if (angleMatch && angleMatch[1]) return angleMatch[1].trim().toLowerCase();
+  const tokenMatch = trimmed.match(/[^\s<>,;]+@[^\s<>,;]+/);
+  if (tokenMatch && tokenMatch[0]) return tokenMatch[0].trim().toLowerCase();
+  return '';
+}
+
 // ── Audit table helpers (mirrors daily-reeval) ──────────────────────
 
 async function logRunStart() {
@@ -294,8 +313,11 @@ export default async (req, context) => {
     for (const decl of eligible) {
       summary.evaluated++;
       const emp = empById.get(decl.employee_id);
-      if (!emp || !emp.email) {
-        console.warn('[cert-chase] no email for', decl.employee_id);
+      // Clean both the staff and manager emails before any send /
+      // CC computation — see parseEmailAddress comment above.
+      const cleanEmpEmail = parseEmailAddress(emp?.email || '');
+      if (!emp || !cleanEmpEmail) {
+        console.warn('[cert-chase] no usable email for', decl.employee_id, '(raw:', emp?.email, ')');
         continue;
       }
       const wdLate = workingDaysSince(decl.end_date);
@@ -304,12 +326,13 @@ export default async (req, context) => {
       if (!kind) continue;
 
       const mgr = emp.manager_id ? mgrById.get(emp.manager_id) : null;
+      const cleanMgrEmail = parseEmailAddress(mgr?.email || '');
       const cc = [];
-      if ((kind === 'firmer_72h' || kind === 'final_5d') && mgr?.email) cc.push(mgr.email);
-      if (kind === 'final_5d' && HR_EMAIL && HR_EMAIL !== emp.email) cc.push(HR_EMAIL);
+      if ((kind === 'firmer_72h' || kind === 'final_5d') && cleanMgrEmail) cc.push(cleanMgrEmail);
+      if (kind === 'final_5d' && HR_EMAIL && HR_EMAIL !== cleanEmpEmail) cc.push(HR_EMAIL);
 
       const { subject, html } = renderEmail(kind, { declaration: decl, employee: emp });
-      const result = await sendViaResend({ to: emp.email, cc, subject, html });
+      const result = await sendViaResend({ to: cleanEmpEmail, cc, subject, html });
 
       if (result.ok) {
         summary.sent++;

@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { X, Mail, AlertTriangle, Check, Loader2, Calendar, ExternalLink } from 'lucide-react';
 import { directPost } from '../supabaseClient.js';
+import { parseEmailAddress } from '../lib/emailTemplates.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EvaluationReviewModal
@@ -169,7 +170,7 @@ export default function EvaluationReviewModal({ row, employee, manager, onClose,
     const [yStr, mStr] = (row.monthStart || '').split('-');
     const periodYear  = parseInt(yStr, 10);
     const periodMonth = parseInt(mStr, 10);
-    const managerEmail = (employee?.manager_id && manager?.email) ? manager.email : null;
+    const managerEmail = (employee?.manager_id && manager?.email) ? parseEmailAddress(manager.email) : null;
 
     try {
       // Direct insert — let the unique constraint enforce idempotency.

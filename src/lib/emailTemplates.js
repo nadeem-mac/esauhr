@@ -180,3 +180,42 @@ export function renderHrSignature(sig) {
     `Email:${s.email}`,
   ].join('\n');
 }
+
+// =============================================================================
+// parseEmailAddress
+//
+// Defensive helper that extracts the bare email address from values that
+// might be stored as 'NAME <address@domain>' or '"NAME" <address@domain>'
+// instead of just 'address@domain'. Returns the canonical lowercase
+// address, or empty string when nothing usable is found.
+//
+// Why this exists:
+//   The 2026 employee spreadsheet import stored some emails in the
+//   'NAME <addr>' display format. Building a mailto: link with that
+//   whole string as the recipient produces malformed URLs that some
+//   mail clients (notably Apple Mail on iOS) render as
+//   'Name. Surname @domain' with weird spacing and dots. Always pipe
+//   employee.email values through this helper before constructing a
+//   mailto: link, building a Resend `to:` array, or otherwise relying
+//   on the string being a clean RFC 5322 addr-spec.
+//
+// The fix at the data layer is to clean the rows in employees.email
+// (e.g. UPDATE employees SET email = lower(...) WHERE email LIKE '%<%').
+// This helper is belt-and-suspenders so future bad imports don't
+// resurface the bug.
+// =============================================================================
+export function parseEmailAddress(raw) {
+  if (!raw || typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  // Format: 'NAME <addr@domain>' or '"NAME" <addr@domain>'.
+  // Capture whatever sits inside the angle brackets.
+  const angleMatch = trimmed.match(/<\s*([^<>\s]+@[^<>\s]+)\s*>/);
+  if (angleMatch && angleMatch[1]) return angleMatch[1].trim().toLowerCase();
+  // Format: bare email — could still have stray spaces or tabs.
+  // Pull the first whitespace-separated token that looks like an
+  // address. Catches 'addr@domain extra junk' edge cases.
+  const tokenMatch = trimmed.match(/[^\s<>,;]+@[^\s<>,;]+/);
+  if (tokenMatch && tokenMatch[0]) return tokenMatch[0].trim().toLowerCase();
+  return '';
+}

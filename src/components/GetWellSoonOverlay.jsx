@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckCircle2, Bell, Mail, X } from 'lucide-react';
+import { parseEmailAddress } from '../lib/emailTemplates.js';
 
 // =============================================================================
 // GetWellSoonOverlay
@@ -84,7 +85,11 @@ export default function GetWellSoonOverlay({ open, me, employees = [], payload, 
   const mailtoHref = useMemo(() => {
     if (!me) return null;
     const manager = (employees || []).find(e => e.id === me.manager_id);
-    const managerEmail = manager?.email || '';
+    // Strip any 'NAME <addr>' display-name wrapping that might have
+    // come from the 2026 spreadsheet import. Without this, the mailto:
+    // link encodes the whole string and mail clients render it
+    // mangled (e.g. 'Name. Surname @domain' with stray spaces).
+    const managerEmail = parseEmailAddress(manager?.email || '');
     // Subject reflects the actual range — for 2-3 day cases, this
     // tells Bashaier at-a-glance whether it's a single day or a span
     // without opening the email.
