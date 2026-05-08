@@ -978,7 +978,6 @@ export default function AppShell({ session, me, onRefreshMe }) {
               pendingShifts={pendingShifts}
               onOpenShiftAck={() => setShiftAckOpen(true)}
               onOpenNewRequest={() => setShowNewRequest(true)}
-              onQuickSickToday={() => setRequestFlow('quick_sick')}
             />
           )
         )}

@@ -187,7 +187,7 @@ export default function RequestTypePicker({ onPick, onClose, leaveTypes = [], me
               <SectionLabel top>URGENT</SectionLabel>
               <button
                 type="button"
-                onClick={() => onPick('sick_unified')}
+                onClick={() => onPick('quick_sick')}
                 className="w-full text-left flex items-center gap-3 p-3 rounded-xl border transition-all hover:scale-[1.01] active:scale-[0.99]"
                 style={{ borderColor: '#FCA5A5', background: '#FEE2E2' }}
               >

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { supabase, directGet } from '../supabaseClient.js';
 import {
   Calendar, Clock, Plus, AlertTriangle, Sun, Sunrise, Sunset,
-  CheckCircle2, XCircle, Loader2, Users, Plane, Mail, HeartPulse, ChevronRight
+  CheckCircle2, XCircle, Loader2, Users, Plane, Mail
 } from 'lucide-react';
 import { fmtDate, calculateBalance, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 import { summariseMonth, PERMISSION_QUOTA } from '../lib/permissionLogic.js';
@@ -29,7 +29,6 @@ export default function PersonalDashboard({
   pendingShifts,        // employee_shifts rows with status='pending' for me
   onOpenShiftAck,       // callback that opens the ShiftAcknowledgmentModal
   onOpenNewRequest,
-  onQuickSickToday,     // callback that opens the QuickSickConfirm bottom sheet
 }) {
   const [adjustments, setAdjustments] = useState({});
   // Local fetch state used only when the parent didn't pass the data in.
@@ -162,113 +161,6 @@ export default function PersonalDashboard({
             : 'No upcoming approved leave on the books.'}
         </p>
       </section>
-
-      {/* I'M SICK TODAY — hero card. Largest, reddest element on the
-          dashboard so a sick staff member taps it without thinking.
-          Single-day same-day declaration. Multi-day sick leaves still
-          go through the full SickLeaveModal via the normal picker. The
-          card flips to a calmer "recorded today" state if the staff
-          already declared sick for today, so they don't double-submit
-          and so the dashboard shows the right thing on a re-open. */}
-      {onQuickSickToday && (() => {
-        const today = new Date().toISOString().slice(0, 10);
-        const declaredToday = (requests || []).find(r =>
-          r.employee_id === me?.id &&
-          r.leave_type_id === 'sick' &&
-          r.start_date === today &&
-          r.status !== 'rejected' && r.status !== 'cancelled'
-        );
-        if (declaredToday) {
-          return (
-            <section
-              className="rounded-2xl px-4 py-3 flex items-center gap-3"
-              style={{
-                background: 'linear-gradient(135deg, #F0FDF4, #DCFCE7)',
-                border: '1px solid #BBF7D0',
-              }}
-            >
-              <div
-                className="flex items-center justify-center flex-shrink-0"
-                style={{ width: 44, height: 44, background: '#FFFFFF', borderRadius: 12 }}
-              >
-                <HeartPulse className="w-6 h-6" style={{ color: '#0F4C2A' }} />
-              </div>
-              <div className="flex-1">
-                <div className="text-[13px] font-semibold" style={{ color: '#0F4C2A' }}>
-                  Sick leave recorded for today
-                </div>
-                <div className="text-[11px]" style={{ color: '#0A0A0A', opacity: 0.7 }}>
-                  Get well soon. Manager &amp; HR notified.
-                </div>
-              </div>
-              {!declaredToday.cert_received && (
-                <span
-                  className="text-[10px] px-2 py-1 rounded-full"
-                  style={{ background: '#FEF3C7', color: '#854F0B', fontWeight: 600 }}
-                >
-                  Cert pending
-                </span>
-              )}
-            </section>
-          );
-        }
-        return (
-          <section>
-            <button
-              type="button"
-              onClick={onQuickSickToday}
-              className="w-full text-left flex items-center gap-3.5 transition-all hover:scale-[1.005] active:scale-[0.995]"
-              style={{
-                background: 'linear-gradient(135deg, #FEE2E2 0%, #FECACA 100%)',
-                border: '1.5px solid #FCA5A5',
-                borderRadius: 18,
-                padding: '16px 18px',
-                boxShadow: '0 4px 18px rgba(220,38,38,0.10)',
-                position: 'relative',
-                overflow: 'hidden',
-              }}
-            >
-              {/* Soft radial highlight in the corner — gives the
-                  card depth without a hard gradient. */}
-              <span
-                aria-hidden="true"
-                style={{
-                  position: 'absolute', top: -40, right: -40, width: 160, height: 160,
-                  background: 'radial-gradient(circle, rgba(220,38,38,0.18), transparent 70%)',
-                  borderRadius: '50%', pointerEvents: 'none',
-                }}
-              />
-              <div
-                className="flex items-center justify-center flex-shrink-0"
-                style={{
-                  width: 54, height: 54, background: '#FFFFFF', borderRadius: 14,
-                  boxShadow: '0 3px 10px rgba(185,28,28,0.18)', position: 'relative', zIndex: 1,
-                }}
-              >
-                <HeartPulse className="w-7 h-7" style={{ color: '#B91C1C' }} />
-              </div>
-              <div className="flex-1 min-w-0" style={{ position: 'relative', zIndex: 1 }}>
-                <div style={{ fontSize: 16, fontWeight: 700, color: '#7F1D1D', letterSpacing: '-0.005em' }}>
-                  I'm sick today
-                </div>
-                <div
-                  dir="rtl"
-                  style={{ fontSize: 11, fontWeight: 500, color: '#7F1D1D', opacity: 0.85, marginTop: 1 }}
-                >
-                  أنا مريض اليوم
-                </div>
-                <div style={{ fontSize: 11, color: '#7F1D1D', opacity: 0.78, marginTop: 3 }}>
-                  Tap to declare · 8 seconds · manager + HR auto-notified
-                </div>
-              </div>
-              <ChevronRight
-                className="w-5 h-5 flex-shrink-0"
-                style={{ color: '#B91C1C', opacity: 0.65, position: 'relative', zIndex: 1 }}
-              />
-            </button>
-          </section>
-        );
-      })()}
 
       {/* TILE GRID — 3 cols. Row 1: leave-context tiles (annual / next /
           pending). Row 2: permission tiles (late / early adjacent) +

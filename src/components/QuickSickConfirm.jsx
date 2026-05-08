@@ -82,9 +82,9 @@ export default function QuickSickConfirm({ me, employees = [], onSubmit, onClose
         cert_received:      false,
         cert_deadline_at:   certDeadlineAt,
         declared_via:       'staff',
-        // Notes field captures the declaration channel for the audit
-        // trail — useful for HR when reconciling against punch records.
-        notes:              'Declared via dashboard quick-sick tile (same-day).',
+        // Reason captures the declaration channel for the audit trail —
+        // useful for HR when reconciling against punch records.
+        reason:             'Sick leave declared via dashboard quick-sick (same-day).',
       });
       setPhase('done');
     } catch (e) {
