@@ -583,8 +583,14 @@ function HoverTooltip({ iso, leaves, perms, shifts, holiday, empMap, typeMap, an
           ? { bottom: '100%', marginBottom: '6px' }
           : { top: '100%', marginTop: '6px' }),
         ...hAnchor,
-        minWidth: '240px',
-        maxWidth: '320px',
+        // Width sized to fit the longest realistic 'NAME → 11:00 – 20:00'
+        // single-line case (e.g. ABDULRAHMAN NASSER AHMED ALGHAMDI →
+        // 11:00 – 20:00, ~50 chars at 11px). Old cap of 320px forced
+        // wraps. Also clamps to viewport on narrow screens so it
+        // never overflows the grid edge.
+        minWidth: '260px',
+        maxWidth: 'min(480px, calc(100vw - 24px))',
+        width: 'max-content',
       }}>
       <div className="rounded-xl shadow-lg p-3"
         style={{
@@ -655,8 +661,7 @@ function HoverTooltip({ iso, leaves, perms, shifts, holiday, empMap, typeMap, an
                     <Icon className="w-3 h-3 flex-shrink-0" style={{ color, marginTop: 2 }}/>
                     <div className="flex-1 min-w-0" style={{ lineHeight: 1.5 }}>
                       <span style={{ fontWeight: 600 }}>{emp?.name || p.employee_id}</span>
-                      <span style={{ opacity: 0.7 }}> → </span>
-                      <span style={{ opacity: 0.7, whiteSpace: 'nowrap' }}>{label} {timeStr}</span>
+                      <span style={{ opacity: 0.7, whiteSpace: 'nowrap' }}>{' → '}{label} {timeStr}</span>
                     </div>
                   </li>
                 );
@@ -687,10 +692,7 @@ function HoverTooltip({ iso, leaves, perms, shifts, holiday, empMap, typeMap, an
                     <div className="flex-1 min-w-0" style={{ lineHeight: 1.5 }}>
                       <span style={{ fontWeight: 600 }}>{emp?.name || s.employee_id}</span>
                       {timeStr && (
-                        <>
-                          <span style={{ opacity: 0.7 }}> → </span>
-                          <span style={{ opacity: 0.7, whiteSpace: 'nowrap' }}>{timeStr}</span>
-                        </>
+                        <span style={{ opacity: 0.7, whiteSpace: 'nowrap' }}>{' → '}{timeStr}</span>
                       )}
                     </div>
                   </li>
