@@ -745,10 +745,10 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
       expectedStart = policy.startTime;
       expectedEnd   = policy.endTime;
       noteText      = isMissedIn
-        ? `Backfill — Mawani duty visit (${policy.label}) (no punch-in)`
+        ? `Mawani duty visit (${policy.label}) (no punch-in)`
         : isMissedOut
-          ? `Backfill — Mawani duty visit (${policy.label}) (no punch-out)`
-          : `Backfill — Mawani duty visit (${policy.label})`;
+          ? `Mawani duty visit (${policy.label}) (no punch-out)`
+          : `Mawani duty visit (${policy.label})`;
       mawaniDayCount++;
     } else if (hasDateSpecificShift) {
       // Shift day with a known manager-assigned schedule.
@@ -762,7 +762,7 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
         earlyMin      = 0;
         expectedStart = null;
         expectedEnd   = null;
-        noteText      = `Backfill — shift assigned but times unparseable`;
+        noteText      = `Shift assigned but times unparseable`;
         shiftWorkerSkipped++;
       } else if (isOvernightShift(shiftPolicy)) {
         // ─── OVERNIGHT SHIFT (crosses midnight) ─────────────────
@@ -786,26 +786,26 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
           status   = 'late';
           lateMin  = 0;
           earlyMin = 0;
-          noteText = `Backfill — overnight ${shiftPolicy.label}: no shift-IN or shift-OUT punches recorded`;
+          noteText = `Overnight ${shiftPolicy.label}: no shift-IN or shift-OUT punches recorded`;
           missedInCount = 1;
         } else if (!shiftInPunch) {
           status   = 'late';
           lateMin  = 0;
           earlyMin = 0;
-          noteText = `Backfill — overnight ${shiftPolicy.label}: no shift-IN punch (expected ~${shiftPolicy.startTime.slice(0,5)}); shift-OUT ${shiftOutPunch?.slice(0,5)}`;
+          noteText = `Overnight ${shiftPolicy.label}: no shift-IN punch (expected ~${shiftPolicy.startTime.slice(0,5)}); shift-OUT ${shiftOutPunch?.slice(0,5)}`;
           missedInCount = 1;
         } else if (!shiftOutPunch) {
           status   = 'short';
           lateMin  = 0;
           earlyMin = 0;
-          noteText = `Backfill — overnight ${shiftPolicy.label}: shift-IN ${shiftInPunch?.slice(0,5)}; no shift-OUT punch (expected ~${shiftPolicy.endTime.slice(0,5)})`;
+          noteText = `Overnight ${shiftPolicy.label}: shift-IN ${shiftInPunch?.slice(0,5)}; no shift-OUT punch (expected ~${shiftPolicy.endTime.slice(0,5)})`;
           missedOutCount = 1;
         } else {
           const evalRes = evaluateOvernightShift(shiftInPunch, shiftOutPunch, shiftPolicy);
           status   = evalRes.status;
           lateMin  = evalRes.lateMin;
           earlyMin = evalRes.earlyMin;
-          noteText = `Backfill — overnight ${shiftPolicy.label}: shift-IN ${shiftInPunch.slice(0,5)} (today) → shift-OUT ${shiftOutPunch.slice(0,5)} (next day) with 15-min grace`;
+          noteText = `Overnight ${shiftPolicy.label}: shift-IN ${shiftInPunch.slice(0,5)} (today) → shift-OUT ${shiftOutPunch.slice(0,5)} (next day)`;
         }
       } else if (isMissedIn) {
         status        = 'late';
@@ -813,7 +813,7 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
         earlyMin      = 0;
         expectedStart = shiftPolicy.startTime;
         expectedEnd   = shiftPolicy.endTime;
-        noteText      = `Backfill — no punch-in recorded (${shiftPolicy.label})`;
+        noteText      = `No punch-in recorded (${shiftPolicy.label})`;
         missedInCount = 1;
       } else if (isMissedOut) {
         status        = 'short';
@@ -821,7 +821,7 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
         earlyMin      = 0;
         expectedStart = shiftPolicy.startTime;
         expectedEnd   = shiftPolicy.endTime;
-        noteText      = `Backfill — no punch-out recorded (${shiftPolicy.label})`;
+        noteText      = `No punch-out recorded (${shiftPolicy.label})`;
         missedOutCount = 1;
       } else {
         const evalRes = evaluateOffice(firstPunchRaw, lastPunchRaw, shiftPolicy);
@@ -830,7 +830,7 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
         earlyMin      = evalRes.earlyMin;
         expectedStart = shiftPolicy.startTime;
         expectedEnd   = shiftPolicy.endTime;
-        noteText      = `Backfill — evaluated against ${shiftPolicy.label} with 15-min grace`;
+        noteText      = `Evaluated against ${shiftPolicy.label} with 15-min grace`;
       }
     } else if (isShiftWorker || isWeekend) {
       // Legacy / fallback path — employee-level shift fallback or
@@ -843,13 +843,13 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
       expectedEnd   = null;
       if (isShiftWorker) shiftWorkerSkipped++;
       const baseLabel = isShiftWorker
-        ? 'shift worker, schedule unknown'
+        ? 'Shift worker, schedule unknown'
         : 'KSA weekend punch';
       noteText = isMissedIn
-        ? `Backfill — ${baseLabel} (no punch-in)`
+        ? `${baseLabel} (no punch-in)`
         : isMissedOut
-          ? `Backfill — ${baseLabel} (no punch-out)`
-          : `Backfill — ${baseLabel}`;
+          ? `${baseLabel} (no punch-out)`
+          : `${baseLabel}`;
     } else if (isMissedIn) {
       // Missed clock-in for office staff — mirrors daily-flow
       // convention (status='late' so the violation surfaces, with
@@ -860,7 +860,7 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
       earlyMin      = 0;
       expectedStart = policy.startTime;
       expectedEnd   = policy.endTime;
-      noteText      = `Backfill — no punch-in recorded (${policy.label})`;
+      noteText      = `No punch-in recorded (${policy.label})`;
       missedInCount = 1;
     } else if (isMissedOut) {
       // Missed clock-out — same rationale, classified as 'short'
@@ -870,7 +870,7 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
       earlyMin      = 0;
       expectedStart = policy.startTime;
       expectedEnd   = policy.endTime;
-      noteText      = `Backfill — no punch-out recorded (${policy.label})`;
+      noteText      = `No punch-out recorded (${policy.label})`;
       missedOutCount = 1;
     } else {
       // Normal case: both punches present. Run the policy-based
@@ -881,7 +881,7 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
       earlyMin      = evalRes.earlyMin;
       expectedStart = policy.startTime;
       expectedEnd   = policy.endTime;
-      noteText      = `Backfill — evaluated against ${policy.label} with 15-min grace`;
+      noteText      = `Evaluated against ${policy.label} with 15-min grace`;
     }
 
     // Apply approved permission coverage — late_arrival or
