@@ -137,6 +137,17 @@ export default function PendingSickCertsCard({
   // Modal targets — at most one modal open at a time.
   const [exemptingReq,  setExemptingReq]  = useState(null);
   const [remindingReq,  setRemindingReq]  = useState(null);
+  // Filter pill state. Lets Bashaier quickly cut the list by pressure
+  // tier so she can focus on the urgent items without scrolling.
+  // 'all' is the default; the other tiers map directly to the
+  // pressure values produced by classifyPressure().
+  //   in_grace      → returned within 48h grace window
+  //   soft_overdue  → 2-5 working days late
+  //   hard_overdue  → 5+ working days late
+  // 'still_out' (staff hasn't returned yet) is included in 'all'
+  // and handled implicitly — there's nothing to filter on yet, so
+  // a dedicated pill would just duplicate the All view.
+  const [filter, setFilter] = useState('all');
   // Add-cert form — opens when Bashaier clicks ADD CERT on a
   // post-approval row (stage='approved' && sick_cert_exempt=true).
   // She types the service code from the email reply / cert PDF and
@@ -201,13 +212,25 @@ export default function PendingSickCertsCard({
   // Counts shown in the section header so Bashaier can see at-a-glance
   // how many overdue items there are without scrolling.
   const counts = useMemo(() => {
-    const c = { total: decorated.length, hard: 0, soft: 0 };
+    const c = { total: decorated.length, hard: 0, soft: 0, grace: 0, stillOut: 0 };
     for (const d of decorated) {
       if (d.pressure === 'hard_overdue') c.hard++;
       else if (d.pressure === 'soft_overdue') c.soft++;
+      else if (d.pressure === 'in_grace') c.grace++;
+      else if (d.pressure === 'still_out') c.stillOut++;
     }
     return c;
   }, [decorated]);
+
+  // Apply the filter pill selection to produce the visible rows.
+  // 'all' (default) keeps everything, the others narrow to a single
+  // pressure tier. Auto-falls-through to the empty-state if the
+  // filter excludes everything (e.g. Bashaier picked Hard-overdue
+  // and there are none — she sees the empty state, not a stale list).
+  const displayedRows = useMemo(() => {
+    if (filter === 'all') return decorated;
+    return decorated.filter(d => d.pressure === filter);
+  }, [decorated, filter]);
 
   // Hide the card entirely when there are no pending certs AND no
   // unsent digest targets. The latter matters because a staff who
@@ -307,27 +330,77 @@ export default function PendingSickCertsCard({
         </div>
       )}
 
+      {/* Filter pills — Bashaier can narrow the visible rows to a
+          single pressure tier (e.g. only Hard-overdue) when she's
+          working through the queue. Counts on each pill let her see
+          at a glance how many items each tier has without scrolling.
+          Hidden during loading and when the list is empty (no point
+          showing pills for an empty list). */}
+      {!loading && counts.total > 0 && (
+        <div
+          className="px-4 py-2.5 border-b flex items-center gap-1.5 flex-wrap"
+          style={{ borderColor: 'var(--border-soft)' }}
+        >
+          <FilterPill active={filter === 'all'}              onClick={() => setFilter('all')}>
+            All · {counts.total}
+          </FilterPill>
+          {counts.stillOut > 0 && (
+            <FilterPill active={filter === 'still_out'}     onClick={() => setFilter('still_out')} dotColor="#9CA3AF">
+              Still out · {counts.stillOut}
+            </FilterPill>
+          )}
+          {counts.grace > 0 && (
+            <FilterPill active={filter === 'in_grace'}      onClick={() => setFilter('in_grace')} dotColor="#10B981">
+              In grace · {counts.grace}
+            </FilterPill>
+          )}
+          {counts.soft > 0 && (
+            <FilterPill active={filter === 'soft_overdue'}  onClick={() => setFilter('soft_overdue')} dotColor="#F59E0B">
+              Overdue · {counts.soft}
+            </FilterPill>
+          )}
+          {counts.hard > 0 && (
+            <FilterPill active={filter === 'hard_overdue'}  onClick={() => setFilter('hard_overdue')} dotColor="#DC2626">
+              Hard-overdue · {counts.hard}
+            </FilterPill>
+          )}
+        </div>
+      )}
+
       {/* Body — list of declaration rows or a loading/empty state. */}
       {loading ? (
         <div className="px-4 py-6 flex items-center gap-2 text-sm" style={{ color: '#0A0A0A', opacity: 0.7 }}>
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
           Loading pending certificates…
         </div>
-      ) : decorated.length === 0 ? (
-        // No active pending_certificate rows. If there are digest
-        // targets, the banner above is doing the work and we can
-        // keep the body empty without an extra "nothing pending"
-        // line that visually competes. Otherwise show the original
-        // empty state.
-        digestTargets.length > 0 ? null : (
+      ) : displayedRows.length === 0 ? (
+        // No rows match the current filter. If the underlying data is
+        // empty AND there are digest targets, defer to the banner above
+        // (no extra "nothing pending" message). Otherwise show a
+        // contextual empty state — different copy when filtering vs
+        // when truly empty so Bashaier knows whether to clear the
+        // filter or whether the queue is genuinely clean.
+        decorated.length === 0 && digestTargets.length > 0 ? null : (
           <div className="px-4 py-6 flex items-center gap-2 text-sm" style={{ color: '#0A0A0A', opacity: 0.7 }}>
             <Inbox className="w-4 h-4" />
-            Nothing pending — all certificates received.
+            {decorated.length === 0
+              ? 'Nothing pending — all certificates received.'
+              : 'No items match this filter.'}
+            {decorated.length > 0 && filter !== 'all' && (
+              <button
+                type="button"
+                onClick={() => setFilter('all')}
+                className="ml-2 underline"
+                style={{ background: 'none', border: 'none', color: '#0A0A0A', opacity: 0.7, cursor: 'pointer' }}
+              >
+                Show all
+              </button>
+            )}
           </div>
         )
       ) : (
         <ul className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
-          {decorated.map(({ req, emp, pressure, reminder, markedDays }) => {
+          {displayedRows.map(({ req, emp, pressure, reminder, markedDays }) => {
             const tint = rowTint(pressure);
             const pressureMeta = PRESSURE_LABELS[pressure] || PRESSURE_LABELS.still_out;
             const empName = emp?.name || req.employee_id;
@@ -757,5 +830,37 @@ function AddCertModal({ request, employee, me, onClose, onSaved }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// Compact filter pill used at the top of the card body. Colored dot
+// indicator + label + optional count, matching the existing pill
+// aesthetic used elsewhere in the portal (review filters, queue
+// filters in HrApprovalModal).
+function FilterPill({ active, onClick, children, dotColor }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] transition-colors"
+      style={{
+        background:    active ? '#1F1B16' : '#FFFFFF',
+        color:         active ? '#FFFFFF' : '#1F1B16',
+        border:        `1px solid ${active ? '#1F1B16' : 'var(--border-soft)'}`,
+        fontWeight:    active ? 600 : 500,
+        cursor:        'pointer',
+      }}
+    >
+      {dotColor && (
+        <span
+          aria-hidden="true"
+          style={{
+            width: 6, height: 6, borderRadius: '50%',
+            background: dotColor, display: 'inline-block',
+          }}
+        />
+      )}
+      {children}
+    </button>
   );
 }
