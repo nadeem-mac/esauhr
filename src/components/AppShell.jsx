@@ -1331,9 +1331,12 @@ export default function AppShell({ session, me, onRefreshMe }) {
 
       {/* Get-well-soon overlay — fires after a successful quick-sick
           declaration. Rendered at AppShell level so the modal lifecycle
-          can't reset its state. Auto-dismisses after 4s. */}
+          can't reset its state. Stays open until the user dismisses or
+          taps the email button. */}
       <GetWellSoonOverlay
         open={getWellOpen}
+        me={me}
+        employees={employees}
         onClose={() => setGetWellOpen(false)}
       />
     </div>
