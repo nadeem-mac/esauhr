@@ -1,38 +1,33 @@
 import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Plane, Sunrise, Sunset, ChevronRight, HeartPulse, AlertTriangle, Upload, Baby, Heart, Star, Briefcase, Pause, MoreHorizontal } from 'lucide-react';
+import { X, Plane, Sunrise, Sunset, HeartPulse, AlertTriangle, Upload, Baby, Heart, Star, Briefcase, Pause, MoreHorizontal, HeartCrack, Flame } from 'lucide-react';
 
 // =============================================================================
-// RequestTypePicker
+// RequestTypePicker — Option B (compact grid layout)
 //
-// One-stop entry for staff submitting any new request. Surfaces every
-// leave category as a dedicated tile so staff can pick exactly what
-// they need in one tap. Layout (top-to-bottom):
+// Three sections, each rendered as a compact 2-column tile grid:
+//   1. URGENT       → Sick leave (full-width, prominent)
+//   2. LEAVE        → Annual, Maternity (female-only), Paternity (male-only),
+//                     Hajj, Marriage, Bereavement, Emergency, Unpaid, Other
+//   3. PERMISSIONS  → Late arrival, Early leave
 //
-//   1. URGENT      → Sick leave
-//   2. LEAVE       → Annual, Maternity (female only), Paternity (male only),
-//                    Hajj, Marriage, Bereavement, Emergency, Unpaid, Other
-//   3. PERMISSIONS → Late arrival, Early leave
-//
-// Leave-type tiles are rendered from the `leaveTypes` prop (Supabase),
-// so any new types added to the DB appear here automatically without a
-// code change. Gender-restricted types are filtered to the staff's
-// gender as a UX nicety; server-side validation enforces the rule.
+// Each leave-type tile clicks through to NewRequestModal with that type
+// pre-selected (lockedLeaveType). Sick stays urgent at the top with its
+// own dedicated full-width tile + bilingual sub-text.
 // =============================================================================
 
 const LEAVE_TYPE_VISUAL = {
-  annual:      { icon: Plane,           iconBg: '#ECFDF5', iconColor: '#0F4C2A', borderColor: '#86EFAC' },
-  maternity:   { icon: Baby,            iconBg: '#FCE7F3', iconColor: '#9D174D', borderColor: '#F9A8D4' },
-  paternity:   { icon: Baby,            iconBg: '#E0F2FE', iconColor: '#075985', borderColor: '#7DD3FC' },
-  hajj:        { icon: Star,            iconBg: '#FEF3C7', iconColor: '#854F0B', borderColor: '#FCD34D' },
-  marriage:    { icon: Heart,           iconBg: '#FAF5FF', iconColor: '#7E22CE', borderColor: '#D8B4FE' },
-  bereavement: { icon: Heart,           iconBg: '#F3F4F6', iconColor: '#374151', borderColor: '#9CA3AF' },
-  emergency:   { icon: AlertTriangle,   iconBg: '#FEE2E2', iconColor: '#7F1D1D', borderColor: '#FCA5A5' },
-  unpaid:      { icon: Pause,           iconBg: '#F5F5F4', iconColor: '#525252', borderColor: '#A8A29E' },
-  other:       { icon: MoreHorizontal,  iconBg: '#F1F5F9', iconColor: '#475569', borderColor: '#94A3B8' },
+  annual:      { Icon: Plane,        bg: '#ECFDF5', fg: '#0F4C2A', border: '#86EFAC' },
+  maternity:   { Icon: Baby,         bg: '#FCE7F3', fg: '#9D174D', border: '#F9A8D4' },
+  paternity:   { Icon: Baby,         bg: '#E0F2FE', fg: '#075985', border: '#7DD3FC' },
+  hajj:        { Icon: Star,         bg: '#FEF3C7', fg: '#854F0B', border: '#FCD34D' },
+  marriage:    { Icon: Heart,        bg: '#FAF5FF', fg: '#7E22CE', border: '#D8B4FE' },
+  bereavement: { Icon: HeartCrack,   bg: '#F3F4F6', fg: '#374151', border: '#9CA3AF' },
+  emergency:   { Icon: Flame,        bg: '#FEE2E2', fg: '#7F1D1D', border: '#FCA5A5' },
+  unpaid:      { Icon: Pause,        bg: '#F5F5F4', fg: '#525252', border: '#A8A29E' },
+  other:       { Icon: MoreHorizontal, bg: '#F1F5F9', fg: '#475569', border: '#94A3B8' },
 };
-
-const FALLBACK_VISUAL = { icon: Briefcase, iconBg: '#F1F5F9', iconColor: '#475569', borderColor: '#94A3B8' };
+const FALLBACK_VISUAL = { Icon: Briefcase, bg: '#F1F5F9', fg: '#475569', border: '#94A3B8' };
 
 export default function RequestTypePicker({ onPick, onClose, leaveTypes = [], me = null, blockingDeclaration = null }) {
   const meGender = (me?.gender || '').toLowerCase();
@@ -48,95 +43,56 @@ export default function RequestTypePicker({ onPick, onClose, leaveTypes = [], me
       const v = LEAVE_TYPE_VISUAL[t.id] || FALLBACK_VISUAL;
       return {
         id: `leave:${t.id}`,
-        icon: v.icon,
+        Icon: v.Icon,
         title: t.name || t.id,
-        description: t.description || '',
-        iconBg: v.iconBg,
-        iconColor: v.iconColor,
-        borderColor: v.borderColor,
+        bg: v.bg,
+        fg: v.fg,
+        border: v.border,
       };
     });
 
-  const sickTile = {
-    id: 'sick_unified',
-    icon: HeartPulse,
-    title: 'Sick leave — I am sick today or I have a Sehhaty Certificate',
-    titleArabic: 'إجازة مرضية — أنا مريض اليوم أو لدي شهادة صحتي',
-    description: 'Declare a sick day with or without a Sehhaty certificate. The form will guide you.',
-    iconBg: '#FEE2E2',
-    iconColor: '#B91C1C',
-    borderColor: '#FCA5A5',
-  };
-
   const permissionTiles = [
-    {
-      id: 'late_arrival',
-      icon: Sunrise,
-      title: 'Late arrival permission',
-      description: 'You expect to arrive after 08:00 on a specific day. 1–3 hours.',
-      iconBg: '#FEF3C7',
-      iconColor: '#A16207',
-      borderColor: '#FDE68A',
-    },
-    {
-      id: 'early_leave',
-      icon: Sunset,
-      title: 'Early leave permission',
-      description: 'You need to leave before your normal end time. 1–3 hours.',
-      iconBg: '#FCE7F3',
-      iconColor: '#BE185D',
-      borderColor: '#FBCFE8',
-    },
+    { id: 'late_arrival', Icon: Sunrise, title: 'Late arrival', sub: 'After 08:00', bg: '#FEF3C7', fg: '#A16207', border: '#FDE68A' },
+    { id: 'early_leave',  Icon: Sunset,  title: 'Early leave',  sub: 'Before end',  bg: '#FCE7F3', fg: '#BE185D', border: '#FBCFE8' },
   ];
 
+  // Lock body scroll while open + portal-mount on document.body so the
+  // picker is fully isolated from any parent's render cycle.
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = prev; };
   }, []);
 
-  const renderTile = (opt) => {
-    const Icon = opt.icon;
+  // Compact grid tile — icon + name (and optional 1-word subtext).
+  const renderCompactTile = (opt) => {
+    const Icon = opt.Icon;
     return (
       <button
         key={opt.id}
         type="button"
         onClick={() => onPick(opt.id)}
-        className="w-full text-left flex items-center gap-3 p-3.5 rounded-xl border transition-colors hover:bg-white/60 group"
-        style={{ borderColor: opt.borderColor, background: '#FFFFFF' }}
+        className="text-left flex items-center gap-2 px-3 py-2.5 rounded-lg border transition-all hover:scale-[1.02] active:scale-[0.98]"
+        style={{ borderColor: opt.border, background: opt.bg }}
       >
-        <div
-          className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
-          style={{ background: opt.iconBg, color: opt.iconColor, border: `1px solid ${opt.borderColor}` }}
-        >
-          <Icon className="w-5 h-5" />
-        </div>
+        <Icon className="w-4 h-4 flex-shrink-0" style={{ color: opt.fg }} />
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold" style={{ color: '#1F1B16' }}>
+          <div className="text-[12px] font-semibold leading-tight" style={{ color: opt.fg }}>
             {opt.title}
           </div>
-          {opt.titleArabic && (
-            <div className="text-[12px] mt-0.5" dir="rtl"
-              style={{ color: '#1F1B16', fontWeight: 500 }}>
-              {opt.titleArabic}
-            </div>
-          )}
-          {opt.description && (
-            <div className="text-[11px] mt-0.5" style={{ color: '#1F1B16' }}>
-              {opt.description}
+          {opt.sub && (
+            <div className="text-[10px] leading-tight" style={{ color: opt.fg, opacity: 0.7 }}>
+              {opt.sub}
             </div>
           )}
         </div>
-        <ChevronRight
-          className="w-4 h-4 flex-shrink-0 opacity-30 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all"
-          style={{ color: '#1F1B16' }}
-        />
       </button>
     );
   };
 
-  const SectionLabel = ({ children }) => (
-    <div className="text-[10px] tracking-[0.18em] mt-3 mb-1.5 px-1" style={{ color: '#1F1B16', fontWeight: 700 }}>
+  const SectionLabel = ({ children, top = false }) => (
+    <div className="text-[10px] tracking-[0.18em] mb-2 px-1"
+      style={{ color: '#1F1B16', fontWeight: 700, marginTop: top ? 0 : 14 }}>
       {children}
     </div>
   );
@@ -159,12 +115,14 @@ export default function RequestTypePicker({ onPick, onClose, leaveTypes = [], me
           boxShadow: '0 12px 40px rgba(31,27,22,0.18)',
         }}
       >
-        <div className="flex items-baseline justify-between px-6 py-5 border-b" style={{ borderColor: 'var(--border-soft)' }}>
+        {/* Header */}
+        <div className="flex items-baseline justify-between px-5 py-4 border-b"
+          style={{ borderColor: 'var(--border-soft)' }}>
           <div>
             <h2 className="serif text-lg" style={{ fontWeight: 500, color: '#1F1B16' }}>
               New request
             </h2>
-            <div className="text-xs mt-1" style={{ color: '#1F1B16' }}>
+            <div className="text-xs mt-0.5" style={{ color: '#1F1B16' }}>
               Pick the kind of request you'd like to submit.
             </div>
           </div>
@@ -178,6 +136,8 @@ export default function RequestTypePicker({ onPick, onClose, leaveTypes = [], me
           </button>
         </div>
 
+        {/* Blocking-state escape hatch — shown when a prior sick declaration
+            has an overdue Sehhaty cert. Replaces all other options. */}
         {blockingDeclaration && (
           <div className="mx-4 mt-4 mb-2 rounded-xl px-4 py-3 border flex items-start gap-3"
                style={{ background: '#FEE2E2', borderColor: '#FCA5A5' }}>
@@ -197,7 +157,8 @@ export default function RequestTypePicker({ onPick, onClose, leaveTypes = [], me
           </div>
         )}
 
-        <div className="p-4 pt-2">
+        {/* Body */}
+        <div className="p-4">
           {blockingDeclaration ? (
             <button
               type="button"
@@ -219,30 +180,50 @@ export default function RequestTypePicker({ onPick, onClose, leaveTypes = [], me
                   Upload the cert PDF and the system will attach it to your declaration.
                 </div>
               </div>
-              <ChevronRight
-                className="w-4 h-4 flex-shrink-0 opacity-50 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all"
-                style={{ color: '#0F4C2A' }}
-              />
             </button>
           ) : (
             <>
-              <SectionLabel>URGENT</SectionLabel>
-              <div className="space-y-2">
-                {renderTile(sickTile)}
-              </div>
+              {/* URGENT — Sick leave (full-width, prominent) */}
+              <SectionLabel top>URGENT</SectionLabel>
+              <button
+                type="button"
+                onClick={() => onPick('sick_unified')}
+                className="w-full text-left flex items-center gap-3 p-3 rounded-xl border transition-all hover:scale-[1.01] active:scale-[0.99]"
+                style={{ borderColor: '#FCA5A5', background: '#FEE2E2' }}
+              >
+                <div
+                  className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+                  style={{ background: '#FFFFFF', color: '#B91C1C', border: '1px solid #FCA5A5' }}
+                >
+                  <HeartPulse className="w-4 h-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13px] font-semibold leading-tight" style={{ color: '#7F1D1D' }}>
+                    Sick leave
+                  </div>
+                  <div className="text-[11px] leading-tight mt-0.5" style={{ color: '#7F1D1D', opacity: 0.85 }} dir="rtl">
+                    إجازة مرضية
+                  </div>
+                  <div className="text-[10px] mt-1" style={{ color: '#7F1D1D', opacity: 0.75 }}>
+                    Sick today or have a Sehhaty certificate
+                  </div>
+                </div>
+              </button>
 
+              {/* LEAVE — 2-col grid of compact tiles */}
               {leaveTypeTiles.length > 0 && (
                 <>
                   <SectionLabel>LEAVE</SectionLabel>
-                  <div className="space-y-2">
-                    {leaveTypeTiles.map(renderTile)}
+                  <div className="grid grid-cols-2 gap-2">
+                    {leaveTypeTiles.map(renderCompactTile)}
                   </div>
                 </>
               )}
 
+              {/* PERMISSIONS — 2-col grid of compact tiles */}
               <SectionLabel>PERMISSIONS</SectionLabel>
-              <div className="space-y-2">
-                {permissionTiles.map(renderTile)}
+              <div className="grid grid-cols-2 gap-2">
+                {permissionTiles.map(renderCompactTile)}
               </div>
             </>
           )}
