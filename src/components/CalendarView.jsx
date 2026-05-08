@@ -22,25 +22,76 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
   const month = viewDate.getMonth();
   const monthName = viewDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
 
-  // Access scope. Bashaier (HR reviewer) and Nadeem (admin) see every
-  // staff member's events — that's the workforce-wide visibility the
-  // calendar was built for. Regular staff see only their own events
-  // (their own leaves, their own permissions, their own shifts) so
-  // colleague absences and time-off remain private.
-  // Defense in depth: enforced here AND inside the self-fetch queries
-  // below, so even if a future change passes unfiltered props the
-  // CalendarView never renders other people's data to a regular user.
+  // Access scope. Three tiers:
+  //
+  //   • admin / HR reviewer (Nadeem, Bashaier, Badria when added)
+  //     → see every staff member's events. Workforce-wide visibility.
+  //
+  //   • manager (anyone with at least one direct report in empMap)
+  //     → see their direct reports' events PLUS their own. Mirrors
+  //       the ManagerDashboard's data scope. They need to plan around
+  //       team absences and review shifts/permissions for their
+  //       reports, while still seeing what THEY personally have on.
+  //
+  //   • regular staff
+  //     → see only their own events. Colleague absences stay private.
+  //
+  // Defense in depth: the scope is enforced both in the self-fetch
+  // queries below (server-side filter) AND in the client-side
+  // filters, so even a future change to upstream props can't leak
+  // unscoped data to a regular user.
   const canSeeAll = Boolean(me?.is_admin || me?.is_hr_reviewer);
-  const scopeId   = me?.id || null;
+
+  // Direct reports — derived from empMap. Anyone whose manager_id
+  // points to me is on my team. Memoised so the dep-array stays
+  // stable across renders that don't change the employee list.
+  const directReportIds = useMemo(() => {
+    if (!me?.id) return [];
+    const ids = [];
+    Object.values(empMap || {}).forEach(emp => {
+      if (emp?.manager_id === me.id && emp?.id && emp.id !== me.id) {
+        ids.push(emp.id);
+      }
+    });
+    return ids;
+  }, [empMap, me?.id]);
+
+  // Final scope set: null means "see all", a Set means "filter to
+  // these ids only". Admin/HR get null. Managers get a Set
+  // containing themselves plus their reports. Regular staff get a
+  // singleton Set with just themselves.
+  const scopeSet = useMemo(() => {
+    if (canSeeAll) return null;
+    if (!me?.id) return null;
+    const s = new Set([me.id]);
+    directReportIds.forEach(id => s.add(id));
+    return s;
+  }, [canSeeAll, me?.id, directReportIds]);
+
+  // Querystring fragment for server-side scoping. Empty string when
+  // the user can see everything; otherwise an in.(...) filter
+  // listing every id in the scope set. Encoded so PSNs with weird
+  // characters don't break the URL.
+  const scopeQs = useMemo(() => {
+    if (!scopeSet) return '';
+    const ids = Array.from(scopeSet);
+    if (ids.length === 0) return '';
+    return '&employee_id=in.(' + ids.map(encodeURIComponent).join(',') + ')';
+  }, [scopeSet]);
 
   const firstDay = new Date(year, month, 1);
   const lastDay = new Date(year, month + 1, 0);
   const daysInMonth = lastDay.getDate();
   const startDow = firstDay.getDay();
 
+  // Default chip state: all four categories ON. Per Nadeem
+  // (2026-05-09) the calendar is most useful when it shows the
+  // full picture by default — toggling things off is the user's
+  // call. Previously Shifts started off, which hid the most
+  // operationally relevant category for managers.
   const [showLeaves, setShowLeaves]           = useState(true);
   const [showPermissions, setShowPermissions] = useState(true);
-  const [showShifts, setShowShifts]           = useState(false);
+  const [showShifts, setShowShifts]           = useState(true);
   const [showHolidays, setShowHolidays]       = useState(true);
   const [personFilter, setPersonFilter]       = useState('all');
   // Hovered cell — used for the rich preview tooltip that appears
@@ -63,12 +114,10 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
     try {
       const monthStart = toISO(firstDay);
       const monthEnd   = toISO(lastDay);
-      // For regular staff, scope the query to their own PSN so
-      // we never even pull other people's permissions over the
-      // wire — defense in depth on top of the client-side filter.
-      const scopeQs = (!canSeeAll && scopeId)
-        ? '&employee_id=eq.' + encodeURIComponent(scopeId)
-        : '';
+      // Server-side scoping via the precomputed scopeQs (empty for
+      // admin/HR, in.(self+reports) for managers, in.(self) for
+      // regular staff). Defense in depth on top of the client-side
+      // filter below.
       const data = await directGet(
         'permission_requests?select=id,employee_id,type,permission_date,time_from,time_to,hours,stage'
         + '&stage=eq.approved'
@@ -81,17 +130,17 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
     } catch (e) {
       setPermsLocal([]);
     }
-  }, [permsProp, year, month, canSeeAll, scopeId]);
+  }, [permsProp, year, month, scopeQs]);
   useEffect(() => { refetchPermsLocal(); }, [refetchPermsLocal]);
 
   // When the parent passes permissions and the user can't see all,
-  // clip the prop to the user's own rows so we don't leak even via
+  // clip the prop to the user's scope so we don't leak even via
   // accidentally-broad parent fetches.
   const permissions = useMemo(() => {
     const source = Array.isArray(permsProp) ? permsProp : permsLocal;
-    if (canSeeAll || !scopeId) return source;
-    return source.filter(p => p.employee_id === scopeId);
-  }, [permsProp, permsLocal, canSeeAll, scopeId]);
+    if (!scopeSet) return source;
+    return source.filter(p => scopeSet.has(p.employee_id));
+  }, [permsProp, permsLocal, scopeSet]);
 
   // Shifts: self-fetch the visible month, scoped to the user when
   // they're not allowed to see everyone's.
@@ -100,9 +149,6 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
     try {
       const monthStart = toISO(firstDay);
       const monthEnd   = toISO(lastDay);
-      const scopeQs = (!canSeeAll && scopeId)
-        ? '&employee_id=eq.' + encodeURIComponent(scopeId)
-        : '';
       const data = await directGet(
         'employee_shifts?select=id,employee_id,shift_date,start_time,end_time,status'
         + '&shift_date=gte.' + monthStart
@@ -114,7 +160,7 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
     } catch (e) {
       setShifts([]);
     }
-  }, [year, month, canSeeAll, scopeId]);
+  }, [year, month, scopeQs]);
   useEffect(() => { refetchShifts(); }, [refetchShifts]);
 
   // Realtime updates. Subscribes to the three tables that drive the
@@ -157,12 +203,12 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
   }, [refetchPermsLocal, refetchShifts, permsProp]);
 
   // Leaves come in as a pre-loaded prop — filter them client-side
-  // for non-admin/HR users. Memoised so the lookup helpers below
-  // stay stable.
+  // through the scopeSet for non-admin/HR users. Memoised so the
+  // lookup helpers below stay stable.
   const scopedRequests = useMemo(() => {
-    if (canSeeAll || !scopeId) return requests;
-    return (requests || []).filter(r => r.employee_id === scopeId);
-  }, [requests, canSeeAll, scopeId]);
+    if (!scopeSet) return requests;
+    return (requests || []).filter(r => scopeSet.has(r.employee_id));
+  }, [requests, scopeSet]);
 
   const holidayMap = useMemo(() => {
     const m = {};
@@ -268,7 +314,7 @@ export default function CalendarView({ me, requests, permissions: permsProp, emp
           <FilterChip active={showShifts}      onClick={() => setShowShifts(v => !v)}      label="Shifts"      dot="#9333EA" />
           <FilterChip active={showHolidays}    onClick={() => setShowHolidays(v => !v)}    label="Holidays"    dot="#B45309" />
         </div>
-        {canSeeAll && peopleInMonth.length > 1 && (
+        {peopleInMonth.length > 1 && (
           <select value={personFilter} onChange={e => setPersonFilter(e.target.value)}
             className="text-xs px-3 py-1.5 rounded-full border ml-auto"
             style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', color: '#0A0A0A' }}>
