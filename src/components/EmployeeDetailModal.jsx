@@ -7,6 +7,21 @@ import {
 } from '../lib/leaveLogic.js';
 import { downloadMonthlyAttendanceReport } from '../lib/monthlyAttendanceReport.js';
 
+// Full English display names for ESAU department codes. Used everywhere the
+// department is rendered to staff/HR — the codes themselves are kept
+// short for filtering, sorting, and DB consistency.
+const DEPT_FULL_NAMES = {
+  'SUP':       'Human Resources & Supervisory Department',
+  'HR':        'Human Resources & Supervisory Department', // legacy fallback
+  'BIZ':       'Business',
+  'LOG':       'Logistics',
+  'OPS':       'Operations Department',
+  'FIN':       'Finance',
+  'CSD':       'Customer Service Department',
+  'MGT':       'Management',
+  'SUP / CSD': 'Human Resources & Supervisory / Customer Service Department',
+};
+
 export default function EmployeeDetailModal({ employee, leaveTypes, requests, balances, typeMap, me, employees = [], empMap = {}, onSaved, onDeleted, onClose }) {
   const year = new Date().getFullYear();
 
@@ -979,23 +994,33 @@ function EditProfilePanel({ employee, employees, onSaved }) {
   const [error, setError]     = useState('');
   const [done, setDone]       = useState(false);
   const [form, setForm] = useState({
-    name:          employee.name        || '',
-    email:         employee.email       || '',
-    department:    employee.department  || '',
-    location:      employee.location    || '',
-    manager_id:    employee.manager_id  || '',
-    phone:         employee.phone       || '',
+    name:             employee.name              || '',
+    email:            employee.email             || '',
+    personal_email:   employee.personal_email    || '',
+    department:       employee.department        || '',
+    location:         employee.location          || '',
+    manager_id:       employee.manager_id        || '',
+    phone:            employee.phone             || '',
+    iqama_id:         employee.iqama_id          || '',
+    nationality_full: employee.nationality_full  || '',
+    gender:           employee.gender            || '',
+    join_date:        employee.join_date         || '',
   });
 
   // Reset form when modal swaps to a different employee
   React.useEffect(() => {
     setForm({
-      name:       employee.name       || '',
-      email:      employee.email      || '',
-      department: employee.department || '',
-      location:   employee.location   || '',
-      manager_id: employee.manager_id || '',
-      phone:      employee.phone      || '',
+      name:             employee.name              || '',
+      email:            employee.email             || '',
+      personal_email:   employee.personal_email    || '',
+      department:       employee.department        || '',
+      location:         employee.location          || '',
+      manager_id:       employee.manager_id        || '',
+      phone:            employee.phone             || '',
+      iqama_id:         employee.iqama_id          || '',
+      nationality_full: employee.nationality_full  || '',
+      gender:           employee.gender            || '',
+      join_date:        employee.join_date         || '',
     });
     setEditing(false);
     setError('');
@@ -1024,12 +1049,22 @@ function EditProfilePanel({ employee, employees, onSaved }) {
       // values get translated to null so the column is properly cleared
       // rather than being stored as '' (which fails some FK checks).
       const patch = {};
-      const keys = ['name', 'email', 'department', 'location', 'manager_id', 'phone'];
+      const keys = [
+        'name', 'email', 'personal_email', 'department', 'location',
+        'manager_id', 'phone',
+        'iqama_id', 'nationality_full', 'gender', 'join_date',
+      ];
       keys.forEach(k => {
         const cur = String(employee[k] ?? '');
         const nxt = String(form[k] ?? '');
         if (cur !== nxt) patch[k] = nxt === '' ? null : nxt;
       });
+      // Derive the legacy short nationality ('saudi' | 'expat') from
+      // the full name so existing code keeps working.
+      if ('nationality_full' in patch) {
+        patch.nationality =
+          (patch.nationality_full || '').toLowerCase() === 'saudi' ? 'saudi' : 'expat';
+      }
       if (Object.keys(patch).length === 0) {
         setEditing(false);
         setBusy(false);
@@ -1072,11 +1107,18 @@ function EditProfilePanel({ employee, employees, onSaved }) {
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-1.5 text-[11px]" style={{ color: '#0A0A0A' }}>
           <ProfileLine label="Name"        value={employee.name} />
-          <ProfileLine label="Email"       value={employee.email} missing="No email" />
-          <ProfileLine label="Phone"       value={employee.phone} missing="—" />
-          <ProfileLine label="Department"  value={employee.department} />
+          <ProfileLine
+            label={(employee.nationality_full || employee.nationality || '').toLowerCase() === 'saudi' ? 'National ID' : 'Iqama ID'}
+            value={employee.iqama_id} missing="—" />
+          <ProfileLine label="Nationality" value={employee.nationality_full || (employee.nationality === 'saudi' ? 'Saudi' : '—')} missing="—" />
+          <ProfileLine label="Gender"      value={employee.gender ? (employee.gender[0].toUpperCase() + employee.gender.slice(1)) : '—'} missing="—" />
+          <ProfileLine label="Joining date" value={employee.join_date} missing="—" />
+          <ProfileLine label="Department"  value={DEPT_FULL_NAMES[employee.department] || employee.department} />
           <ProfileLine label="Location"    value={LOCATION_LABELS[employee.location] || employee.location} />
           <ProfileLine label="Manager"     value={(employees || []).find(e => e.id === employee.manager_id)?.name || employee.manager_id} missing="—" />
+          <ProfileLine label="Phone"       value={employee.phone} missing="—" />
+          <ProfileLine label="Company email"  value={employee.email} missing="No email" />
+          <ProfileLine label="Personal email" value={employee.personal_email} missing="—" />
         </div>
         {done && (
           <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px]"
@@ -1106,10 +1148,51 @@ function EditProfilePanel({ employee, employees, onSaved }) {
             className="w-full px-3 py-2 rounded-md text-sm"
             style={{ border: '1px solid #86EFAC', background: '#FFFFFF', color: '#0A0A0A' }}/>
         </Field>
-        <Field label="Email">
+        <Field label={(form.nationality_full || '').toLowerCase() === 'saudi' ? 'National ID' : 'Iqama / National ID'}>
+          <input type="text" value={form.iqama_id} inputMode="numeric"
+            onChange={e => setForm(f => ({ ...f, iqama_id: e.target.value.replace(/\D/g, '').slice(0, 10) }))}
+            placeholder="10-digit ID"
+            className="w-full px-3 py-2 rounded-md text-sm font-mono"
+            style={{ border: '1px solid #86EFAC', background: '#FFFFFF', color: '#0A0A0A' }}/>
+        </Field>
+        <Field label="Nationality">
+          <select value={form.nationality_full}
+            onChange={e => setForm(f => ({ ...f, nationality_full: e.target.value }))}
+            className="w-full px-3 py-2 rounded-md text-sm"
+            style={{ border: '1px solid #86EFAC', background: '#FFFFFF', color: '#0A0A0A' }}>
+            <option value="">—</option>
+            {['Saudi','Indian','Pakistani','Philippine','Sudanese','Egyptian','Palestine','Taiwanese','Bangladeshi','Yemeni','Jordanian','Syrian','Lebanese','Other'].map(n => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Gender">
+          <select value={form.gender}
+            onChange={e => setForm(f => ({ ...f, gender: e.target.value }))}
+            className="w-full px-3 py-2 rounded-md text-sm"
+            style={{ border: '1px solid #86EFAC', background: '#FFFFFF', color: '#0A0A0A' }}>
+            <option value="">—</option>
+            <option value="male">Male</option>
+            <option value="female">Female</option>
+          </select>
+        </Field>
+        <Field label="Joining date">
+          <input type="date" value={form.join_date || ''}
+            onChange={e => setForm(f => ({ ...f, join_date: e.target.value }))}
+            className="w-full px-3 py-2 rounded-md text-sm"
+            style={{ border: '1px solid #86EFAC', background: '#FFFFFF', color: '#0A0A0A' }}/>
+        </Field>
+        <Field label="Company email">
           <input type="email" value={form.email}
             onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
             placeholder="firstname.lastname@evergreen-shipping.com.sa"
+            className="w-full px-3 py-2 rounded-md text-sm"
+            style={{ border: '1px solid #86EFAC', background: '#FFFFFF', color: '#0A0A0A' }}/>
+        </Field>
+        <Field label="Personal email">
+          <input type="email" value={form.personal_email}
+            onChange={e => setForm(f => ({ ...f, personal_email: e.target.value }))}
+            placeholder="personal@gmail.com"
             className="w-full px-3 py-2 rounded-md text-sm"
             style={{ border: '1px solid #86EFAC', background: '#FFFFFF', color: '#0A0A0A' }}/>
         </Field>
@@ -1119,7 +1202,7 @@ function EditProfilePanel({ employee, employees, onSaved }) {
             className="w-full px-3 py-2 rounded-md text-sm"
             style={{ border: '1px solid #86EFAC', background: '#FFFFFF', color: '#0A0A0A' }}>
             <option value="">—</option>
-            {departments.map(d => <option key={d} value={d}>{d}</option>)}
+            {departments.map(d => <option key={d} value={d}>{DEPT_FULL_NAMES[d] || d}</option>)}
           </select>
         </Field>
         <Field label="Location">
