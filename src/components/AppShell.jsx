@@ -579,6 +579,55 @@ export default function AppShell({ session, me, onRefreshMe }) {
     };
     const created = await directPost('leave_requests', row, { timeoutMs: 12000 });
     const data = Array.isArray(created) ? created[0] : created;
+
+    // ── Same-day sick declaration → write the attendance row right away
+    //
+    // For sick leaves declared TODAY (start_date = today), upsert an
+    // attendance_daily row so the grid reflects the absence immediately
+    // — without waiting for manager+HR approval. Without this, today's
+    // grid cell would show as 'absent' (no punch) until approval lands,
+    // which can be hours or days later. That's a record-keeping gap.
+    //
+    // Future days of a multi-day quick-sick declaration are NOT written
+    // here — they get picked up by the existing reevaluateBackfillRows
+    // flow once the row hits `status='approved'`. Writing them now would
+    // pre-mark days that haven't happened yet, and rejection rollback
+    // would be more complex. Today is the only urgent case.
+    //
+    // If the row is later REJECTED, today's attendance entry still
+    // points to the (rejected) leave_request_id. A follow-up cleanup
+    // step at reject time can flip the status back to 'absent'. That
+    // edge case is not handled yet — flagged for the cert chase /
+    // rejection-handling work.
+    try {
+      const todayIso = new Date().toISOString().slice(0, 10);
+      if (
+        payload.leave_type_id === 'sick'
+        && payload.start_date === todayIso
+        && data?.id
+      ) {
+        const attendanceRow = {
+          employee_id:      payload.employee_id,
+          attendance_date:  todayIso,
+          status:           'sick_leave',
+          leave_request_id: data.id,
+          source:           'self_declared',
+          recorded_by:      session.user.email,
+          recorded_at:      new Date().toISOString(),
+          notes:            'Same-day sick declaration via quick-sick flow.',
+        };
+        await directPost('attendance_daily', attendanceRow, {
+          upsert:     true,
+          onConflict: 'employee_id,attendance_date',
+          timeoutMs:  9000,
+        });
+      }
+    } catch (e) {
+      // Non-blocking — the leave_request itself is already saved.
+      // Worst case the attendance row gets backfilled later by re-eval.
+      console.warn('[createRequest] attendance same-day write failed (non-blocking)', e);
+    }
+
     const empName = empMap[payload.employee_id]?.name || payload.employee_id;
     const typeName = typeMap[payload.leave_type_id]?.name || payload.leave_type_id;
     logAction(me, 'leave_request_create', {

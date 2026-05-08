@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { supabase, directGet } from '../supabaseClient.js';
+import { supabase, directGet, directPost, directPatch } from '../supabaseClient.js';
 import {
   Calendar, Clock, Plus, AlertTriangle, Sun, Sunrise, Sunset,
-  CheckCircle2, XCircle, Loader2, Users, Plane, Mail
+  CheckCircle2, XCircle, Loader2, Users, Plane, Mail, HeartPulse
 } from 'lucide-react';
 import { fmtDate, calculateBalance, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 import { summariseMonth, PERMISSION_QUOTA } from '../lib/permissionLogic.js';
@@ -145,6 +145,123 @@ export default function PersonalDashboard({
   const remaining = bal.available != null ? Math.max(0, bal.available) : Math.max(0, totalEntitlement - used);
   const usedPct = Math.min(100, (used / Math.max(1,totalEntitlement)) * 100);
 
+  // ── Saudi sick-leave entitlement tracker (Article 117) ────────────
+  // YTD sick days used, plus the entitlement tier the staff is in.
+  // Tiers (Article 117):
+  //   Days 1-30   →  100% pay (full)
+  //   Days 31-90  →  75% pay  (partial)
+  //   Days 91-120 →  unpaid
+  //   Days 121+   →  grounds for medical termination
+  // We count days from approved + pending sick leaves whose start_date
+  // falls in the current calendar year. Pending counts because the
+  // staff has effectively committed to the absence; the tier they're
+  // approaching matters now, not just at approval time.
+  const sickYtd = useMemo(() => {
+    const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10);
+    const today     = new Date().toISOString().slice(0, 10);
+    let total = 0;
+    (requests || []).forEach(r => {
+      if (r.leave_type_id !== 'sick') return;
+      if (r.status === 'rejected' || r.status === 'cancelled') return;
+      if (!r.start_date || r.start_date < yearStart) return;
+      if (r.start_date > today) return;
+      // Only count days that have already happened (start_date through
+      // min(end_date, today)). Future days don't yet count toward
+      // the entitlement tier — they're a forecast, not a fact.
+      const startD = r.start_date;
+      const endD   = r.end_date && r.end_date < today ? r.end_date : today;
+      if (endD < startD) return;
+      const a = new Date(startD + 'T00:00:00');
+      const b = new Date(endD   + 'T00:00:00');
+      const diff = Math.floor((b - a) / 86_400_000) + 1;
+      total += Math.max(0, diff);
+    });
+    return total;
+  }, [requests]);
+  const sickTier = useMemo(() => {
+    // Returns { label, paidPct, daysLeft, color, bg } describing the
+    // staff's current position on the entitlement timeline.
+    if (sickYtd <= 30)  return { label: 'Full pay tier',    paidPct: 100, daysLeft: 30 - sickYtd,        color: '#0F4C2A', bg: '#ECFDF5' };
+    if (sickYtd <= 90)  return { label: 'Partial pay tier', paidPct: 75,  daysLeft: 90 - sickYtd,        color: '#A16207', bg: '#FEF3C7' };
+    if (sickYtd <= 120) return { label: 'Unpaid tier',      paidPct: 0,   daysLeft: 120 - sickYtd,       color: '#B91C1C', bg: '#FEE2E2' };
+    return                       { label: 'Beyond entitlement', paidPct: 0, daysLeft: 0,                 color: '#7F1D1D', bg: '#FEE2E2' };
+  }, [sickYtd]);
+
+  // ── Active sick leave detection ────────────────────────────────────
+  // Finds the most recent sick leave whose end_date is today or
+  // yesterday and whose status isn't terminal (rejected / cancelled).
+  // The card surfaces only for these — leaves that ended 2+ days ago
+  // are presumed resolved (staff is back at work). Yesterday is
+  // included so a staff member who didn't tap "extend" before going
+  // to sleep can still extend the next morning.
+  const activeSick = useMemo(() => {
+    const today = new Date();
+    const todayIso = today.toISOString().slice(0, 10);
+    const yIso     = new Date(today.getTime() - 86_400_000).toISOString().slice(0, 10);
+    return (requests || [])
+      .filter(r =>
+        r.leave_type_id === 'sick'
+        && r.status !== 'rejected'
+        && r.status !== 'cancelled'
+        && (r.end_date === todayIso || r.end_date === yIso))
+      .sort((a, b) => (b.requested_at || '').localeCompare(a.requested_at || ''))[0]
+      || null;
+  }, [requests]);
+
+  const [extendBusy, setExtendBusy] = useState(false);
+  const [extendErr,  setExtendErr]  = useState('');
+  const handleExtend = useCallback(async () => {
+    if (!activeSick || extendBusy) return;
+    setExtendBusy(true);
+    setExtendErr('');
+    try {
+      // Move the end_date forward by exactly one calendar day. We
+      // don't add weekend / holiday awareness here — the source row
+      // is just calendar days, and the attendance grid handles the
+      // semantic interpretation when it renders. Bump days by 1 too
+      // so the leave_requests row stays internally consistent.
+      const cur     = new Date(activeSick.end_date + 'T00:00:00');
+      const next    = new Date(cur.getTime() + 86_400_000);
+      const newEnd  = next.toISOString().slice(0, 10);
+      const newDays = (Number(activeSick.days) || 1) + 1;
+      await directPatch(
+        'leave_requests', 'id', activeSick.id,
+        { end_date: newEnd, days: newDays },
+        { timeoutMs: 9000 },
+      );
+      // Mirror the attendance_daily row for the new day so the grid
+      // reflects the absence immediately. Same upsert pattern as
+      // same-day declarations in createRequest. Today's row already
+      // exists from the initial declaration; this writes tomorrow's
+      // (or today's, depending on the original end_date).
+      try {
+        await directPost('attendance_daily', {
+          employee_id:      activeSick.employee_id,
+          attendance_date:  newEnd,
+          status:           'sick_leave',
+          leave_request_id: activeSick.id,
+          source:           'self_declared',
+          recorded_at:      new Date().toISOString(),
+          notes:            'Sick leave extended via dashboard.',
+        }, {
+          upsert:     true,
+          onConflict: 'employee_id,attendance_date',
+          timeoutMs:  9000,
+        });
+      } catch (e) {
+        console.warn('[handleExtend] attendance write failed (non-blocking)', e);
+      }
+      // Force a parent refresh so the active-sick window re-evaluates
+      // against the updated end_date. Without this, tapping Extend
+      // again would still show yesterday's end_date.
+      window.location.reload();
+    } catch (e) {
+      console.error('[handleExtend] failed', e);
+      setExtendErr((e && (e.message || e.toString())) || 'Could not extend. Try again.');
+      setExtendBusy(false);
+    }
+  }, [activeSick, extendBusy]);
+
   return (
     <div className="space-y-6">
       {/* HERO */}
@@ -162,6 +279,107 @@ export default function PersonalDashboard({
         </p>
       </section>
 
+      {/* ACTIVE SICK LEAVE — Extend flow.
+          Surfaces ONLY when the staff member has a sick leave whose
+          end_date is today or yesterday. Lets them roll the leave
+          forward by one calendar day without re-running the full
+          declare flow (which would create a second row and a second
+          cert obligation). The same DB row gets its end_date pushed
+          forward; today's attendance is already covered, the new
+          day gets its attendance_daily row written by handleExtend. */}
+      {activeSick && (() => {
+        const todayIso = new Date().toISOString().slice(0, 10);
+        const endingToday   = activeSick.end_date === todayIso;
+        const endedYesterday = !endingToday;
+        return (
+          <section
+            className="rounded-2xl border p-4 sm:p-5"
+            style={{ background: '#FEF2F2', borderColor: '#FCA5A5' }}
+          >
+            <div className="flex items-start gap-3">
+              <div
+                className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{ background: '#FFFFFF', color: '#B91C1C', border: '1px solid #FCA5A5' }}
+              >
+                <HeartPulse className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold" style={{ color: '#7F1D1D' }}>
+                  {endingToday ? 'You\'re on sick leave today' : 'Your sick leave ended yesterday'}
+                </div>
+                <div className="text-[12px] mt-0.5" style={{ color: '#7F1D1D', opacity: 0.85 }}>
+                  Declared {fmtDate(new Date(activeSick.start_date))} &mdash; {fmtDate(new Date(activeSick.end_date))} ({activeSick.days} {activeSick.days === 1 ? 'day' : 'days'}).
+                  {' '}Tap below if you're still sick.
+                </div>
+                {extendErr && (
+                  <div className="mt-2 px-2.5 py-1.5 rounded-md text-[11px]"
+                       style={{ background: '#FEE2E2', color: '#0A0A0A', border: '1px solid #FECACA' }}>
+                    {extendErr}
+                  </div>
+                )}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleExtend}
+                    disabled={extendBusy}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold transition-opacity disabled:opacity-50"
+                    style={{ background: '#B91C1C', color: '#FFFFFF', border: 'none' }}
+                  >
+                    {extendBusy
+                      ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Extending…</>
+                      : <>Still sick &mdash; extend by 1 day</>}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+        );
+      })()}
+
+      {/* SICK LEAVE BALANCE — Article 117 entitlement ribbon.
+          Surfaces only when the staff has used at least one sick day
+          this year. Showing it for staff with zero sick days would be
+          noise. Three-segment progress bar reflects the 30/60/30
+          structure of the law: full pay → partial → unpaid. */}
+      {sickYtd > 0 && (
+        <section
+          className="rounded-2xl border p-4 sm:p-5"
+          style={{ background: sickTier.bg, borderColor: sickTier.color, borderWidth: '1px' }}
+        >
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="min-w-0">
+              <div className="text-[10px] tracking-[0.25em] font-bold" style={{ color: sickTier.color }}>
+                SICK LEAVE BALANCE · {new Date().getFullYear()}
+              </div>
+              <div className="mt-1 text-sm" style={{ color: sickTier.color, fontWeight: 600 }}>
+                {sickYtd} {sickYtd === 1 ? 'day' : 'days'} used
+                <span style={{ opacity: 0.65, fontWeight: 500 }}> · {sickTier.label}</span>
+              </div>
+              <div className="text-[11px] mt-0.5" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+                {sickTier.paidPct === 100 && sickTier.daysLeft > 0 &&
+                  `${sickTier.daysLeft} days remain at full pay (Article 117).`}
+                {sickTier.paidPct === 75 && sickTier.daysLeft > 0 &&
+                  `${sickTier.daysLeft} days remain at 75% pay before the unpaid tier.`}
+                {sickTier.paidPct === 0 && sickTier.daysLeft > 0 &&
+                  `${sickTier.daysLeft} days of unpaid sick entitlement remain.`}
+                {sickTier.daysLeft === 0 &&
+                  'You\'ve used your full annual sick entitlement under Article 117.'}
+              </div>
+            </div>
+          </div>
+          {/* Three-segment progress bar — visually maps the 30/60/30
+              structure. Each segment fills to show consumption within
+              its tier; saturated bars indicate tier exhaustion. */}
+          <div className="mt-3 flex gap-1.5" style={{ height: 8 }}>
+            <Segment used={Math.min(sickYtd, 30)}        cap={30} color="#0F4C2A" />
+            <Segment used={Math.max(0, Math.min(sickYtd - 30, 60))} cap={60} color="#A16207" />
+            <Segment used={Math.max(0, Math.min(sickYtd - 90, 30))} cap={30} color="#B91C1C" />
+          </div>
+          <div className="mt-1.5 flex justify-between text-[9px] tracking-wider" style={{ color: '#0A0A0A', opacity: 0.55 }}>
+            <span>0</span><span>30 (full)</span><span>90 (partial)</span><span>120</span>
+          </div>
+        </section>
+      )}
       {/* TILE GRID — 3 cols. Row 1: leave-context tiles (annual / next /
           pending). Row 2: permission tiles (late / early adjacent) +
           evaluation flag. Late + Early sit beside each other so the
@@ -544,6 +762,34 @@ function DigestStat({ label, primary, secondary, color }) {
       <div className="text-[10px] tracking-[0.2em] opacity-60 mb-1">{label.toUpperCase()}</div>
       <div className="text-sm font-semibold" style={{ color }}>{primary}</div>
       <div className="text-[10px] opacity-60 mt-0.5">{secondary}</div>
+    </div>
+  );
+}
+
+// Single segment of the sick-balance progress bar. Each segment maps
+// to one Article 117 tier (full pay / partial pay / unpaid). The
+// fill width reflects how much of that tier the staff has consumed.
+function Segment({ used, cap, color }) {
+  const pct = cap > 0 ? Math.min(100, (used / cap) * 100) : 0;
+  return (
+    <div
+      style={{
+        flex: cap, // tier widths reflect their day count proportionally
+        background: '#FFFFFF',
+        border: '1px solid rgba(10,10,10,0.08)',
+        borderRadius: 4,
+        overflow: 'hidden',
+        position: 'relative',
+      }}
+    >
+      <div
+        style={{
+          width: `${pct}%`,
+          height: '100%',
+          background: color,
+          transition: 'width 0.3s ease',
+        }}
+      />
     </div>
   );
 }

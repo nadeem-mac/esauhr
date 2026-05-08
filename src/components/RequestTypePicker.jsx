@@ -209,6 +209,23 @@ export default function RequestTypePicker({ onPick, onClose, leaveTypes = [], me
                   </div>
                 </div>
               </button>
+              {/* Long-sick escape hatch. The URGENT tile above goes to
+                  the quick same-day flow (1-3 days). For genuinely
+                  longer sick leaves (post-surgery recovery, extended
+                  hospitalisation, etc.) staff need the multi-day form
+                  with an explicit start/end picker. The link is honest
+                  about its purpose — no false legal claim about cert
+                  requirements (Saudi Article 117 doesn't set a 3-day
+                  threshold; cert compliance is enforced by the cert
+                  chase flow regardless of duration). */}
+              <button
+                type="button"
+                onClick={() => onPick('sick_unified')}
+                className="w-full text-left text-[11px] mt-1 px-3 py-1.5 rounded-md hover:bg-[#FEF2F2]"
+                style={{ color: '#7F1D1D', opacity: 0.7, background: 'transparent', border: 'none' }}
+              >
+                Sick for 4+ days? Submit a multi-day request →
+              </button>
 
               {/* LEAVE — 2-col grid of compact tiles */}
               {leaveTypeTiles.length > 0 && (
