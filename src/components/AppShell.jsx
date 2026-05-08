@@ -17,6 +17,7 @@ import ConnectivityTest from './ConnectivityTest.jsx';
 import NewRequestModal from './NewRequestModal.jsx';
 import RequestTypePicker from './RequestTypePicker.jsx';
 import QuickSickConfirm from './QuickSickConfirm.jsx';
+import GetWellSoonOverlay from './GetWellSoonOverlay.jsx';
 import SickLeaveModal from './SickLeaveModal.jsx';
 import PermissionRequestModal from './PermissionRequestModal.jsx';
 import SuccessToast, { bodyForStage } from './SuccessToast.jsx';
@@ -181,6 +182,12 @@ export default function AppShell({ session, me, onRefreshMe }) {
   // Shape: { title, body, actionLabel, onAction } | null
   // Auto-dismisses after 6s; SuccessToast handles the timer.
   const [submissionToast, setSubmissionToast] = useState(null);
+  // Sick-leave success overlay: shows the "Get well soon" full-screen
+  // message for ~4s after a successful sick declaration via the
+  // QuickSickConfirm bottom sheet. Lives at the AppShell level (not
+  // inside the modal) so it survives the modal's remount cycle that
+  // happens when the post-insert data refresh fires.
+  const [getWellOpen, setGetWellOpen] = useState(false);
   // Backwards-compatible alias so existing call sites (`onNewRequest`,
   // `onOpenNewRequest`) still open the picker. Internal callers can call
   // setRequestFlow(...) directly to skip the picker (e.g. dashboard
@@ -1133,19 +1140,18 @@ export default function AppShell({ session, me, onRefreshMe }) {
             // Insert IS the source of truth for success/failure. If the
             // post-insert loadAll() inside createRequest fails, that's a
             // refresh issue, not a submission issue — don't propagate it
-            // up to QuickSickConfirm or the modal will reset to the
-            // confirm screen even though the row is happily in the DB.
+            // up to QuickSickConfirm.
             try {
               await createRequest(payload);
             } catch (e) {
               console.warn('[AppShell] post-insert refresh failed (insert likely succeeded)', e);
-              // Try a best-effort refresh again so the dashboard reflects
-              // the new row eventually. Swallow any further failure.
               loadAll && loadAll().catch(() => {});
             }
-            // Don't close immediately — QuickSickConfirm needs to show
-            // its own "Get well soon" success state for ~4s before it
-            // auto-retracts. It will call onClose itself when ready.
+            // Replace the generic submission toast with a dedicated
+            // sick-leave overlay. createRequest already set a toast —
+            // suppress it now that we're showing the bigger overlay.
+            setSubmissionToast(null);
+            setGetWellOpen(true);
           }}
         />
       )}
@@ -1322,6 +1328,14 @@ export default function AppShell({ session, me, onRefreshMe }) {
           onDismiss={() => setSubmissionToast(null)}
         />
       )}
+
+      {/* Get-well-soon overlay — fires after a successful quick-sick
+          declaration. Rendered at AppShell level so the modal lifecycle
+          can't reset its state. Auto-dismisses after 4s. */}
+      <GetWellSoonOverlay
+        open={getWellOpen}
+        onClose={() => setGetWellOpen(false)}
+      />
     </div>
   );
 }
