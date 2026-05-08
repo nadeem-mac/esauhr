@@ -695,7 +695,7 @@ export default function ManagerShiftCard({ me, employees }) {
                 if (kind === 'past') {
                   bg = 'transparent'; fg = '#0A0A0A'; br = '0.5px solid var(--border)'; label = 'Past';
                 } else if (kind === 'accepted') {
-                  bg = 'var(--evergreen-600)'; fg = '#FFFFFF'; br = '2px solid var(--evergreen-600)'; label = 'Accepted';
+                  bg = 'var(--evergreen-600)'; fg = '#FFFFFF'; br = '2px solid var(--evergreen-600)'; label = 'ACCEPTED';
                 } else if (kind === 'pending') {
                   // Saved & dispatched, awaiting staff acknowledgment.
                   // Light amber background to visually echo the pending

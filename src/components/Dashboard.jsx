@@ -137,7 +137,15 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
     return m;
   }, [employees]);
 
-  const bashaierMode = !!(me?.is_hr_reviewer && !me?.is_admin);
+  // bashaierMode is the toggle for personal touches (warm hero
+  // greeting + monthly task reminder modal with the 🧚 fairy emoji).
+  // These are scoped to Bashaier (H94830) specifically, NOT all HR
+  // reviewers. Other HR reviewers (Badria once she has access) see
+  // the neutral generic hero — they don't get the personalised
+  // affirmation messages or the fairy task nudges.
+  // For the broader "HR reviewer privileges" behaviours (e.g. seeing
+  // your own applications card), use me?.is_hr_reviewer directly.
+  const bashaierMode = me?.id === 'H94830';
 
   // PIN requests modal — badge in the stat row opens this; always-mounted
   // card fetches its own data so the count stays live.
@@ -707,7 +715,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           not appearing in my dashboard." MyApplicationsCard auto-
           hides itself when the viewer has no applications, so it
           doesn't clutter Nadeem's screen when he's empty-handed. */}
-      {(bashaierMode || me?.is_admin) && (
+      {(me?.is_hr_reviewer || me?.is_admin) && (
         <MyApplicationsCard
           me={me}
           requests={requests}

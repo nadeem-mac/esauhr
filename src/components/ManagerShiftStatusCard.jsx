@@ -167,11 +167,13 @@ export default function ManagerShiftStatusCard({ me, employees }) {
         </div>
       </div>
 
-      {/* Roll-up tiles — four columns. Reading left to right traces the
-          happy path of the shift workflow: Waiting (sent, awaiting staff)
-          → Accepted (staff acknowledged) → Approved by SUP (Bashaier/HR
-          signed off) → Declined sits last as the negative-outcome bucket. */}
-      <div className="grid grid-cols-4 gap-2 mt-4">
+      {/* Roll-up tiles — three columns. Reading left to right traces the
+          shift workflow: Waiting (sent, awaiting staff) → Accepted (staff
+          acknowledged) → Declined sits last as the negative-outcome
+          bucket. The previous "Approved by SUP" tile was retired per
+          Nadeem — shift acknowledgment is now manager↔staff direct,
+          no HR sign-off step, so the column count is 3 not 4. */}
+      <div className="grid grid-cols-3 gap-2 mt-4">
         <RollupTile
           label="Waiting for staff"
           count={total.pending}
