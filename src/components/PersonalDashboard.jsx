@@ -116,6 +116,112 @@ export default function PersonalDashboard({
     };
   }, [me?.id, load]);
 
+  // ── Sick-leave hooks ─────────────────────────────────────────────
+  // These useMemo / useState / useCallback hooks MUST live above the
+  // `if (loading) return <Loader />` early return below. React hooks
+  // must be called in the same order on every render; if we put any
+  // hook after a conditional return, the render that takes the early
+  // path skips them and the render that doesn't take the early path
+  // suddenly creates them. React detects the mismatch and crashes the
+  // component to a blank screen — which is exactly what happened in
+  // the 2026-05-09 multi-staff blank-screen incident.
+  //
+  // Don't move these below `if (loading)`. Don't add new hooks below
+  // it either. All hooks at the top, conditional render afterwards.
+
+  // Saudi sick-leave entitlement tracker (Article 117) — YTD sick days
+  // used + the entitlement tier the staff is in.
+  // Tiers (Article 117):
+  //   Days 1-30   →  100% pay (full)
+  //   Days 31-90  →  75% pay  (partial)
+  //   Days 91-120 →  unpaid
+  //   Days 121+   →  grounds for medical termination
+  // We count days from approved + pending sick leaves whose start_date
+  // falls in the current calendar year.
+  const sickYtd = useMemo(() => {
+    const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10);
+    const today     = new Date().toISOString().slice(0, 10);
+    let total = 0;
+    (requests || []).forEach(r => {
+      if (r.leave_type_id !== 'sick') return;
+      if (r.status === 'rejected' || r.status === 'cancelled') return;
+      if (!r.start_date || r.start_date < yearStart) return;
+      if (r.start_date > today) return;
+      const startD = r.start_date;
+      const endD   = r.end_date && r.end_date < today ? r.end_date : today;
+      if (endD < startD) return;
+      const a = new Date(startD + 'T00:00:00');
+      const b = new Date(endD   + 'T00:00:00');
+      const diff = Math.floor((b - a) / 86_400_000) + 1;
+      total += Math.max(0, diff);
+    });
+    return total;
+  }, [requests]);
+  const sickTier = useMemo(() => {
+    if (sickYtd <= 30)  return { label: 'Full pay tier',    paidPct: 100, daysLeft: 30 - sickYtd,  color: '#0F4C2A', bg: '#ECFDF5' };
+    if (sickYtd <= 90)  return { label: 'Partial pay tier', paidPct: 75,  daysLeft: 90 - sickYtd,  color: '#A16207', bg: '#FEF3C7' };
+    if (sickYtd <= 120) return { label: 'Unpaid tier',      paidPct: 0,   daysLeft: 120 - sickYtd, color: '#B91C1C', bg: '#FEE2E2' };
+    return                       { label: 'Beyond entitlement', paidPct: 0, daysLeft: 0,           color: '#7F1D1D', bg: '#FEE2E2' };
+  }, [sickYtd]);
+
+  // Active sick leave detection — fuels the "Still sick? Extend" card.
+  // Surfaces only when there's a sick leave whose end_date is today
+  // or yesterday and whose status isn't terminal.
+  const activeSick = useMemo(() => {
+    const today = new Date();
+    const todayIso = today.toISOString().slice(0, 10);
+    const yIso     = new Date(today.getTime() - 86_400_000).toISOString().slice(0, 10);
+    return (requests || [])
+      .filter(r =>
+        r.leave_type_id === 'sick'
+        && r.status !== 'rejected'
+        && r.status !== 'cancelled'
+        && (r.end_date === todayIso || r.end_date === yIso))
+      .sort((a, b) => (b.requested_at || '').localeCompare(a.requested_at || ''))[0]
+      || null;
+  }, [requests]);
+
+  const [extendBusy, setExtendBusy] = useState(false);
+  const [extendErr,  setExtendErr]  = useState('');
+  const handleExtend = useCallback(async () => {
+    if (!activeSick || extendBusy) return;
+    setExtendBusy(true);
+    setExtendErr('');
+    try {
+      const cur     = new Date(activeSick.end_date + 'T00:00:00');
+      const next    = new Date(cur.getTime() + 86_400_000);
+      const newEnd  = next.toISOString().slice(0, 10);
+      const newDays = (Number(activeSick.days) || 1) + 1;
+      await directPatch(
+        'leave_requests', 'id', activeSick.id,
+        { end_date: newEnd, days: newDays },
+        { timeoutMs: 9000 },
+      );
+      try {
+        await directPost('attendance_daily', {
+          employee_id:      activeSick.employee_id,
+          attendance_date:  newEnd,
+          status:           'sick_leave',
+          leave_request_id: activeSick.id,
+          source:           'self_declared',
+          recorded_at:      new Date().toISOString(),
+          notes:            'Sick leave extended via dashboard.',
+        }, {
+          upsert:     true,
+          onConflict: 'employee_id,attendance_date',
+          timeoutMs:  9000,
+        });
+      } catch (e) {
+        console.warn('[handleExtend] attendance write failed (non-blocking)', e);
+      }
+      window.location.reload();
+    } catch (e) {
+      console.error('[handleExtend] failed', e);
+      setExtendErr((e && (e.message || e.toString())) || 'Could not extend. Try again.');
+      setExtendBusy(false);
+    }
+  }, [activeSick, extendBusy]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-32">
@@ -144,123 +250,6 @@ export default function PersonalDashboard({
   const used = bal.used || 0;
   const remaining = bal.available != null ? Math.max(0, bal.available) : Math.max(0, totalEntitlement - used);
   const usedPct = Math.min(100, (used / Math.max(1,totalEntitlement)) * 100);
-
-  // ── Saudi sick-leave entitlement tracker (Article 117) ────────────
-  // YTD sick days used, plus the entitlement tier the staff is in.
-  // Tiers (Article 117):
-  //   Days 1-30   →  100% pay (full)
-  //   Days 31-90  →  75% pay  (partial)
-  //   Days 91-120 →  unpaid
-  //   Days 121+   →  grounds for medical termination
-  // We count days from approved + pending sick leaves whose start_date
-  // falls in the current calendar year. Pending counts because the
-  // staff has effectively committed to the absence; the tier they're
-  // approaching matters now, not just at approval time.
-  const sickYtd = useMemo(() => {
-    const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10);
-    const today     = new Date().toISOString().slice(0, 10);
-    let total = 0;
-    (requests || []).forEach(r => {
-      if (r.leave_type_id !== 'sick') return;
-      if (r.status === 'rejected' || r.status === 'cancelled') return;
-      if (!r.start_date || r.start_date < yearStart) return;
-      if (r.start_date > today) return;
-      // Only count days that have already happened (start_date through
-      // min(end_date, today)). Future days don't yet count toward
-      // the entitlement tier — they're a forecast, not a fact.
-      const startD = r.start_date;
-      const endD   = r.end_date && r.end_date < today ? r.end_date : today;
-      if (endD < startD) return;
-      const a = new Date(startD + 'T00:00:00');
-      const b = new Date(endD   + 'T00:00:00');
-      const diff = Math.floor((b - a) / 86_400_000) + 1;
-      total += Math.max(0, diff);
-    });
-    return total;
-  }, [requests]);
-  const sickTier = useMemo(() => {
-    // Returns { label, paidPct, daysLeft, color, bg } describing the
-    // staff's current position on the entitlement timeline.
-    if (sickYtd <= 30)  return { label: 'Full pay tier',    paidPct: 100, daysLeft: 30 - sickYtd,        color: '#0F4C2A', bg: '#ECFDF5' };
-    if (sickYtd <= 90)  return { label: 'Partial pay tier', paidPct: 75,  daysLeft: 90 - sickYtd,        color: '#A16207', bg: '#FEF3C7' };
-    if (sickYtd <= 120) return { label: 'Unpaid tier',      paidPct: 0,   daysLeft: 120 - sickYtd,       color: '#B91C1C', bg: '#FEE2E2' };
-    return                       { label: 'Beyond entitlement', paidPct: 0, daysLeft: 0,                 color: '#7F1D1D', bg: '#FEE2E2' };
-  }, [sickYtd]);
-
-  // ── Active sick leave detection ────────────────────────────────────
-  // Finds the most recent sick leave whose end_date is today or
-  // yesterday and whose status isn't terminal (rejected / cancelled).
-  // The card surfaces only for these — leaves that ended 2+ days ago
-  // are presumed resolved (staff is back at work). Yesterday is
-  // included so a staff member who didn't tap "extend" before going
-  // to sleep can still extend the next morning.
-  const activeSick = useMemo(() => {
-    const today = new Date();
-    const todayIso = today.toISOString().slice(0, 10);
-    const yIso     = new Date(today.getTime() - 86_400_000).toISOString().slice(0, 10);
-    return (requests || [])
-      .filter(r =>
-        r.leave_type_id === 'sick'
-        && r.status !== 'rejected'
-        && r.status !== 'cancelled'
-        && (r.end_date === todayIso || r.end_date === yIso))
-      .sort((a, b) => (b.requested_at || '').localeCompare(a.requested_at || ''))[0]
-      || null;
-  }, [requests]);
-
-  const [extendBusy, setExtendBusy] = useState(false);
-  const [extendErr,  setExtendErr]  = useState('');
-  const handleExtend = useCallback(async () => {
-    if (!activeSick || extendBusy) return;
-    setExtendBusy(true);
-    setExtendErr('');
-    try {
-      // Move the end_date forward by exactly one calendar day. We
-      // don't add weekend / holiday awareness here — the source row
-      // is just calendar days, and the attendance grid handles the
-      // semantic interpretation when it renders. Bump days by 1 too
-      // so the leave_requests row stays internally consistent.
-      const cur     = new Date(activeSick.end_date + 'T00:00:00');
-      const next    = new Date(cur.getTime() + 86_400_000);
-      const newEnd  = next.toISOString().slice(0, 10);
-      const newDays = (Number(activeSick.days) || 1) + 1;
-      await directPatch(
-        'leave_requests', 'id', activeSick.id,
-        { end_date: newEnd, days: newDays },
-        { timeoutMs: 9000 },
-      );
-      // Mirror the attendance_daily row for the new day so the grid
-      // reflects the absence immediately. Same upsert pattern as
-      // same-day declarations in createRequest. Today's row already
-      // exists from the initial declaration; this writes tomorrow's
-      // (or today's, depending on the original end_date).
-      try {
-        await directPost('attendance_daily', {
-          employee_id:      activeSick.employee_id,
-          attendance_date:  newEnd,
-          status:           'sick_leave',
-          leave_request_id: activeSick.id,
-          source:           'self_declared',
-          recorded_at:      new Date().toISOString(),
-          notes:            'Sick leave extended via dashboard.',
-        }, {
-          upsert:     true,
-          onConflict: 'employee_id,attendance_date',
-          timeoutMs:  9000,
-        });
-      } catch (e) {
-        console.warn('[handleExtend] attendance write failed (non-blocking)', e);
-      }
-      // Force a parent refresh so the active-sick window re-evaluates
-      // against the updated end_date. Without this, tapping Extend
-      // again would still show yesterday's end_date.
-      window.location.reload();
-    } catch (e) {
-      console.error('[handleExtend] failed', e);
-      setExtendErr((e && (e.message || e.toString())) || 'Could not extend. Try again.');
-      setExtendBusy(false);
-    }
-  }, [activeSick, extendBusy]);
 
   return (
     <div className="space-y-6">
