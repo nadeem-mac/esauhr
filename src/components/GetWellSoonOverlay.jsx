@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckCircle2, Bell, Link as LinkIcon, Mail, X } from 'lucide-react';
+import { CheckCircle2, Bell, Mail, X } from 'lucide-react';
 
 // =============================================================================
 // GetWellSoonOverlay
@@ -39,6 +39,11 @@ export default function GetWellSoonOverlay({ open, me, employees = [], onClose }
   // Build the prefilled mailto URL once we have a context. The user
   // taps the action button → their default mail app opens with TO,
   // CC, subject and body already filled in. They just hit Send.
+  //
+  // NOTE on encoding: mailto: URLs need %20 for spaces, not '+'.
+  // URLSearchParams encodes spaces as '+' which Apple Mail / Outlook
+  // sometimes render literally. We build the query string by hand
+  // with encodeURIComponent which gives %20.
   const mailtoHref = useMemo(() => {
     if (!me) return null;
     const today = new Date().toLocaleDateString('en-GB', {
@@ -46,8 +51,7 @@ export default function GetWellSoonOverlay({ open, me, employees = [], onClose }
     });
     const manager = (employees || []).find(e => e.id === me.manager_id);
     const managerEmail = manager?.email || '';
-    const ccList = managerEmail ? [managerEmail] : [];
-    const subject = `Sick Leave — ${today}`;
+    const subject = `Sick Leave — ${today} — ${me.name || ''} — ${me.id || ''}`;
     const body = [
       'Dear HR,',
       '',
@@ -56,14 +60,13 @@ export default function GetWellSoonOverlay({ open, me, employees = [], onClose }
       'I have already recorded my sick leave in the Evergreen HR portal. I will submit my Sehhaty certificate within 24 hours.',
       '',
       'Best regards,',
-      me.name || '',
-      me.id || '',
+      `${me.name || ''} - ${me.id || ''}`,
     ].join('\n');
-    const params = new URLSearchParams();
-    if (ccList.length) params.set('cc', ccList.join(','));
-    params.set('subject', subject);
-    params.set('body', body);
-    return `mailto:${HR_EMAIL}?${params.toString()}`;
+    const parts = [];
+    if (managerEmail) parts.push(`cc=${encodeURIComponent(managerEmail)}`);
+    parts.push(`subject=${encodeURIComponent(subject)}`);
+    parts.push(`body=${encodeURIComponent(body)}`);
+    return `mailto:${HR_EMAIL}?${parts.join('&')}`;
   }, [me, employees]);
 
   if (!open) return null;
@@ -170,13 +173,15 @@ export default function GetWellSoonOverlay({ open, me, employees = [], onClose }
           Open email to HR/SUP
         </a>
 
-        {/* Reminders block — what happens next */}
+        {/* Reminders block — what happens next.
+            Note: a second hint about a magic-link in the cert reminder
+            email used to live here. Removed because the magic-link
+            upload page hasn't been built yet — promising it would
+            mislead the staff. The cert-reminder cron itself is still
+            on the roadmap; once shipped, we can bring this back. */}
         <div className="mt-4 flex flex-col gap-2">
           <Hint icon={Bell}>
             Reminder tomorrow at 9:24 AM to upload your Sehhaty cert
-          </Hint>
-          <Hint icon={LinkIcon}>
-            One-tap link in the email — no need to log in again
           </Hint>
         </div>
 
