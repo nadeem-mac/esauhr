@@ -27,7 +27,7 @@ import { CheckCircle2, Bell, Mail, X } from 'lucide-react';
 // but for now Bashaier alone is the right destination.
 const HR_EMAIL = 'bashaier.alsubaie@evergreen-shipping.com.sa';
 
-export default function GetWellSoonOverlay({ open, me, employees = [], onClose }) {
+export default function GetWellSoonOverlay({ open, me, employees = [], payload, onClose }) {
   // Lock body scroll while open so background content doesn't shift.
   useEffect(() => {
     if (!open) return undefined;
@@ -35,6 +35,43 @@ export default function GetWellSoonOverlay({ open, me, employees = [], onClose }
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = prev; };
   }, [open]);
+
+  // Compute date strings from the actual submitted payload. For 1-day
+  // sick leaves this is just "today"; for 2-3 day cases we render the
+  // full range so the email accurately describes the absence.
+  // Fallback to today if no payload passed (shouldn't happen in
+  // practice but defends against state-clearing race conditions).
+  const { dateRangeLabel, durationPhrase, headerLabel, days } = useMemo(() => {
+    const fmt = (iso) => {
+      if (!iso) return '';
+      // YYYY-MM-DD → Friday, 8 May 2026
+      const [y, m, d] = iso.split('-').map(Number);
+      const dt = new Date(y, m - 1, d);
+      return dt.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    };
+    const startIso = payload?.start_date;
+    const endIso   = payload?.end_date;
+    const n        = payload?.days || 1;
+    if (!startIso || n === 1 || startIso === endIso) {
+      const label = fmt(startIso) || new Date().toLocaleDateString('en-GB', {
+        weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+      });
+      return {
+        dateRangeLabel:   label,
+        durationPhrase:   `today, ${label}`,
+        headerLabel:      'today',
+        days:             1,
+      };
+    }
+    const startLabel = fmt(startIso);
+    const endLabel   = fmt(endIso);
+    return {
+      dateRangeLabel:   `${startLabel} → ${endLabel}`,
+      durationPhrase:   `from ${startLabel} to ${endLabel} (${n} days)`,
+      headerLabel:      `for ${n} days`,
+      days:             n,
+    };
+  }, [payload]);
 
   // Build the prefilled mailto URL once we have a context. The user
   // taps the action button → their default mail app opens with TO,
@@ -46,16 +83,19 @@ export default function GetWellSoonOverlay({ open, me, employees = [], onClose }
   // with encodeURIComponent which gives %20.
   const mailtoHref = useMemo(() => {
     if (!me) return null;
-    const today = new Date().toLocaleDateString('en-GB', {
-      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-    });
     const manager = (employees || []).find(e => e.id === me.manager_id);
     const managerEmail = manager?.email || '';
-    const subject = `Sick Leave — ${today} — ${me.name || ''} — ${me.id || ''}`;
+    // Subject reflects the actual range — for 2-3 day cases, this
+    // tells Bashaier at-a-glance whether it's a single day or a span
+    // without opening the email.
+    const subject = `Sick Leave — ${dateRangeLabel} — ${me.name || ''} — ${me.id || ''}`;
+    const opener  = days === 1
+      ? `This is to inform you that I will be on sick leave ${durationPhrase}.`
+      : `This is to inform you that I will be on sick leave ${durationPhrase}.`;
     const body = [
       'Dear HR,',
       '',
-      `This is to inform you that I will be on sick leave today, ${today}.`,
+      opener,
       '',
       'I have already recorded my sick leave in the Evergreen HR portal. I will submit my Sehhaty certificate within 24 hours.',
       '',
@@ -67,7 +107,7 @@ export default function GetWellSoonOverlay({ open, me, employees = [], onClose }
     parts.push(`subject=${encodeURIComponent(subject)}`);
     parts.push(`body=${encodeURIComponent(body)}`);
     return `mailto:${HR_EMAIL}?${parts.join('&')}`;
-  }, [me, employees]);
+  }, [me, employees, dateRangeLabel, durationPhrase, days]);
 
   if (!open) return null;
 
@@ -139,8 +179,10 @@ export default function GetWellSoonOverlay({ open, me, employees = [], onClose }
           سلامتك
         </div>
         <div style={{ fontSize: 13, color: '#1F1B16', opacity: 0.7, marginTop: 10, lineHeight: 1.55 }}>
-          Your sick leave is recorded for today.<br />
-          Send HR a quick email to formalise.
+          {days === 1
+            ? <>Your sick leave is recorded {headerLabel}.<br />Send HR a quick email to formalise.</>
+            : <>Your sick leave is recorded {headerLabel} ({dateRangeLabel}).<br />Send HR a quick email to formalise.</>
+          }
         </div>
 
         {/* Primary action — opens prefilled email. The mail app handles

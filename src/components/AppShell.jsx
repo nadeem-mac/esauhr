@@ -188,6 +188,10 @@ export default function AppShell({ session, me, onRefreshMe }) {
   // inside the modal) so it survives the modal's remount cycle that
   // happens when the post-insert data refresh fires.
   const [getWellOpen, setGetWellOpen] = useState(false);
+  // The actual sick-leave payload that was submitted. Used by the
+  // GetWellSoonOverlay to prefill the HR/SUP email with the correct
+  // start/end dates + day count. Cleared when the overlay dismisses.
+  const [getWellSickPayload, setGetWellSickPayload] = useState(null);
   // Backwards-compatible alias so existing call sites (`onNewRequest`,
   // `onOpenNewRequest`) still open the picker. Internal callers can call
   // setRequestFlow(...) directly to skip the picker (e.g. dashboard
@@ -1136,6 +1140,12 @@ export default function AppShell({ session, me, onRefreshMe }) {
           me={me}
           employees={employees}
           onClose={() => setRequestFlow(null)}
+          onEscalateToFullForm={() => {
+            // Staff picked "more than 3 days" — close the bottom sheet
+            // and open the full SickLeaveModal which handles the
+            // cert-mandatory case for >3 day Saudi labor law rule.
+            setRequestFlow('sick_unified');
+          }}
           onSubmit={async (payload) => {
             // Insert IS the source of truth for success/failure. If the
             // post-insert loadAll() inside createRequest fails, that's a
@@ -1151,6 +1161,10 @@ export default function AppShell({ session, me, onRefreshMe }) {
             // sick-leave overlay. createRequest already set a toast —
             // suppress it now that we're showing the bigger overlay.
             setSubmissionToast(null);
+            // Capture the actual submitted payload (with the right
+            // start/end dates and day count) so the overlay's email
+            // template can describe the leave correctly.
+            setGetWellSickPayload(payload);
             setGetWellOpen(true);
           }}
         />
@@ -1337,7 +1351,15 @@ export default function AppShell({ session, me, onRefreshMe }) {
         open={getWellOpen}
         me={me}
         employees={employees}
-        onClose={() => setGetWellOpen(false)}
+        payload={getWellSickPayload}
+        onClose={() => {
+          setGetWellOpen(false);
+          // Clear the captured payload so the next time the overlay
+          // opens it doesn't show stale dates from a previous
+          // declaration. Cleared on close, not on open, so the
+          // overlay's content stays stable while it's visible.
+          setGetWellSickPayload(null);
+        }}
       />
     </div>
   );
