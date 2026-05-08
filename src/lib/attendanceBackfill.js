@@ -256,8 +256,16 @@ export async function fetchApprovedLeaves(startDate, endDate) {
     // [startDate, endDate]. PostgREST doesn't have a native overlap
     // operator that's cheap, so we use the standard interval-overlap
     // formula: leave.end_date >= window.start AND leave.start_date <= window.end
+    //
+    // IMPORTANT: select leave_type_id, NOT leave_type. PostgREST silently
+    // returns null for non-existent columns, so a stale 'leave_type'
+    // selection produces undefined values that fall through to the
+    // 'annual' default in the classifier — collapsing every approved
+    // leave (sick, maternity, paternity, hajj, emergency, unpaid) into
+    // ✓AL on the attendance grid. The 2026-05-09 multi-leave-tag
+    // incident (Aminah's maternity not showing as ✓ML) was this bug.
     const qs =
-      'select=id,employee_id,leave_type,start_date,end_date,status' +
+      'select=id,employee_id,leave_type_id,start_date,end_date,status' +
       `&end_date=gte.${startDate}` +
       `&start_date=lte.${endDate}` +
       '&status=eq.approved';
@@ -269,7 +277,12 @@ export async function fetchApprovedLeaves(startDate, endDate) {
       arr.push({
         start_date: l.start_date,
         end_date:   l.end_date,
-        leave_type: l.leave_type || 'annual',
+        // Downstream classifiers do case-insensitive substring matching
+        // on this string ('maternit', 'paternit', 'hajj', etc.) so the
+        // leave_type_id values from the leave_types table ('maternity',
+        // 'paternity', 'hajj', 'sick', 'emergency', 'unpaid') match
+        // cleanly without renaming.
+        leave_type: l.leave_type_id || 'annual',
         leave_request_id: l.id,
       });
       out.set(l.employee_id, arr);
