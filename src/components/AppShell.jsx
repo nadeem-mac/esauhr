@@ -1,42 +1,60 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, Suspense, lazy } from 'react';
 import {
   LayoutDashboard, ClipboardList, Users, Calendar as CalIcon, Settings,
   Plus, LogOut, Activity, ShieldCheck, RefreshCw
-, Clock , BarChart3, UserPlus, Database } from 'lucide-react';
+, Clock , BarChart3, UserPlus, Database, Loader2 } from 'lucide-react';
 import { supabase, directGet, directPatch, directPost } from '../supabaseClient.js';
 import { loadTemplates as loadEmailTemplates } from '../lib/emailTemplates.js';
+// EAGER — landing destinations, must paint immediately after sign-in.
+// These are the three dashboards (one of which always renders on first
+// load), the Requests tab (a common follow-up navigation), small
+// chrome elements, and the success toast.
 import Dashboard from './Dashboard.jsx';
-import Requests from './Requests.jsx';
-import ManagerMonthlyPlanner from './ManagerMonthlyPlanner.jsx';
-import ManagerShiftStatusCard from './ManagerShiftStatusCard.jsx';
-import TeamShiftMonthCard from './TeamShiftMonthCard.jsx';
-import Employees from './Employees.jsx';
-import CalendarView from './CalendarView.jsx';
-import SettingsView from './SettingsView.jsx';
-import ConnectivityTest from './ConnectivityTest.jsx';
-import NewRequestModal from './NewRequestModal.jsx';
-import RequestTypePicker from './RequestTypePicker.jsx';
-import QuickSickConfirm from './QuickSickConfirm.jsx';
-import GetWellSoonOverlay from './GetWellSoonOverlay.jsx';
-import SickLeaveModal from './SickLeaveModal.jsx';
-import PermissionRequestModal from './PermissionRequestModal.jsx';
-import SuccessToast, { bodyForStage } from './SuccessToast.jsx';
-import { getBlockingDeclarations, getExtendableDeclaration } from '../lib/sickDeclaration.js';
-import EmployeeDetailModal from './EmployeeDetailModal.jsx';
-import ShiftAcknowledgmentModal from './ShiftAcknowledgmentModal.jsx';
-import InsightsView from './InsightsView.jsx';
-import AdminPanel from './AdminPanel.jsx';
-import HiringView from './HiringView.jsx';
 import PersonalDashboard from './PersonalDashboard.jsx';
 import ManagerDashboard  from './ManagerDashboard.jsx';
-import ReviewerPanel from './ReviewerPanel.jsx';
-import BashaierTasksCard from './BashaierTasksCard.jsx';
+import Requests from './Requests.jsx';
+import SuccessToast, { bodyForStage } from './SuccessToast.jsx';
 import EvergreenLogo from './EvergreenLogo.jsx';
-import AttendanceView from './AttendanceView.jsx';
-import RefreshOverlay from './RefreshOverlay.jsx';
-import GovernmentDataSync from './GovernmentDataSync.jsx';
+// LAZY — tab pages and modals only loaded on demand. Cuts ~1MB+ from
+// the initial bundle. Each becomes its own chunk that fetches when
+// the user navigates to that tab or opens that modal. Suspense
+// fallbacks below keep the UI responsive during the small fetch.
+const ManagerMonthlyPlanner   = lazy(() => import('./ManagerMonthlyPlanner.jsx'));
+const ManagerShiftStatusCard  = lazy(() => import('./ManagerShiftStatusCard.jsx'));
+const TeamShiftMonthCard      = lazy(() => import('./TeamShiftMonthCard.jsx'));
+const Employees               = lazy(() => import('./Employees.jsx'));
+const CalendarView            = lazy(() => import('./CalendarView.jsx'));
+const SettingsView            = lazy(() => import('./SettingsView.jsx'));
+const ConnectivityTest        = lazy(() => import('./ConnectivityTest.jsx'));
+const NewRequestModal         = lazy(() => import('./NewRequestModal.jsx'));
+const RequestTypePicker       = lazy(() => import('./RequestTypePicker.jsx'));
+const QuickSickConfirm        = lazy(() => import('./QuickSickConfirm.jsx'));
+const GetWellSoonOverlay      = lazy(() => import('./GetWellSoonOverlay.jsx'));
+const SickLeaveModal          = lazy(() => import('./SickLeaveModal.jsx'));
+const PermissionRequestModal  = lazy(() => import('./PermissionRequestModal.jsx'));
+const EmployeeDetailModal     = lazy(() => import('./EmployeeDetailModal.jsx'));
+const ShiftAcknowledgmentModal = lazy(() => import('./ShiftAcknowledgmentModal.jsx'));
+const InsightsView            = lazy(() => import('./InsightsView.jsx'));
+const AdminPanel              = lazy(() => import('./AdminPanel.jsx'));
+const HiringView              = lazy(() => import('./HiringView.jsx'));
+const ReviewerPanel           = lazy(() => import('./ReviewerPanel.jsx'));
+const BashaierTasksCard       = lazy(() => import('./BashaierTasksCard.jsx'));
+const AttendanceView          = lazy(() => import('./AttendanceView.jsx'));
+const RefreshOverlay          = lazy(() => import('./RefreshOverlay.jsx'));
+const GovernmentDataSync      = lazy(() => import('./GovernmentDataSync.jsx'));
+import { getBlockingDeclarations, getExtendableDeclaration } from '../lib/sickDeclaration.js';
 import { logAction } from '../lib/audit.js';
 import { fmtDate } from '../lib/leaveLogic.js';
+
+// Fallback shown while a lazy-loaded chunk is in flight. Light-weight
+// so it doesn't compete for paint with whatever is about to mount.
+function ChunkLoader({ inline = false }) {
+  return (
+    <div className={inline ? "py-3 flex items-center justify-center" : "py-16 flex items-center justify-center"}>
+      <Loader2 className="w-4 h-4 animate-spin" style={{ color: '#0F4C2A', opacity: 0.6 }} />
+    </div>
+  );
+}
 
 function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, isHiringViewer, me }) {
   // Tab visibility rules:
@@ -308,7 +326,22 @@ export default function AppShell({ session, me, onRefreshMe }) {
     }
   }, []);
 
-  useEffect(() => { loadAll(); }, [loadAll]);
+  useEffect(() => {
+    // Initial load on mount AND a silent refresh the moment `me`
+    // first becomes available. Without this dual trigger, AppShell
+    // sometimes mounted with me=null (parent hadn't finished its
+    // auth fetch yet), did its initial loadAll(), then the dashboards
+    // rendered with whatever data had landed before me arrived. The
+    // landing page would look incomplete and a tab click was needed
+    // to remount and recover. This keeps the visible flow clean:
+    //   • silent=false on the very first call (shows spinner)
+    //   • silent=true once me is truthy (no second spinner flash)
+    if (!me?.id) {
+      loadAll();
+    } else {
+      loadAll(true);
+    }
+  }, [loadAll, me?.id]);
 
   // Hydrate email-template overrides at app start. Fire-and-forget —
   // every consumer falls back to defaults if this never resolves
@@ -766,7 +799,9 @@ export default function AppShell({ session, me, onRefreshMe }) {
           feedback that data is being pulled (and that they're NOT being
           signed out). Driven entirely by AppShell's `refreshing` state
           so the overlay's lifecycle exactly matches the data fetch. */}
-      <RefreshOverlay open={refreshing} />
+      <Suspense fallback={null}>
+        <RefreshOverlay open={refreshing} />
+      </Suspense>
 
       {/* Header — sticky so the top brand + tab nav stays visible while
           long pages (Attendance grid, calendar, request lists) are
@@ -988,6 +1023,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
         className={`mx-auto fade-in ${tab === 'attendance' ? 'w-full px-4 sm:px-5 py-2 sm:py-3' : 'max-w-7xl px-3 sm:px-6 py-6 sm:py-8'}`}
         key={tab}
       >
+        <Suspense fallback={<ChunkLoader />}>
         {tab === 'dashboard' && (
           (isAdmin || isHrReviewer) ? (
             // Admin Dashboard: Nadeem (admin) and Bashaier (HR reviewer) only.
@@ -1149,6 +1185,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
         {tab === 'admin' && isAdmin && (
           <AdminPanel session={session} me={me} onRefreshMe={onRefreshMe} />
         )}
+        </Suspense>
       </main>
 
       {/* Request flow router — picker first, then either the leave form or
@@ -1166,6 +1203,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
           while the picker is open, which is rare and cheap. Hoisting
           to a useMemo would couple AppShell's state to a per-render
           filter that 99% of renders don't use. */}
+      <Suspense fallback={null}>
       {(() => {
         const myDeclarations = (requests || []).filter(r => r.employee_id === me?.id);
         const blocking = getBlockingDeclarations(myDeclarations);
@@ -1404,6 +1442,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
           setGetWellSickPayload(null);
         }}
       />
+      </Suspense>
     </div>
   );
 }
