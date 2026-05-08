@@ -30,6 +30,17 @@ export default function QuickSickConfirm({ me, employees = [], onSubmit, onClose
   const [busy, setBusy]     = useState(false);
   const [error, setError]   = useState('');
 
+  // Diagnostic: log every render with current phase so we can see
+  // remount cycles vs state transitions in the browser console.
+  console.log('[QuickSick] render · phase=', phase, '· busy=', busy);
+
+  // Diagnostic: log mount + unmount so we can detect if the component
+  // is being torn down and rebuilt by a parent re-render.
+  useEffect(() => {
+    console.log('[QuickSick] MOUNTED');
+    return () => console.log('[QuickSick] UNMOUNTED');
+  }, []);
+
   // Lock body scroll while open + portal-mount on document.body so the
   // sheet is fully isolated from any parent's render cycle.
   useEffect(() => {
@@ -43,7 +54,11 @@ export default function QuickSickConfirm({ me, employees = [], onSubmit, onClose
   // sheet retracts and they land back on the dashboard.
   useEffect(() => {
     if (phase !== 'done') return undefined;
-    const t = setTimeout(() => onClose && onClose(), 4000);
+    console.log('[QuickSick] phase=done, scheduling auto-close in 4s');
+    const t = setTimeout(() => {
+      console.log('[QuickSick] auto-close timer fired, calling onClose');
+      onClose && onClose();
+    }, 4000);
     return () => clearTimeout(t);
   }, [phase, onClose]);
 
