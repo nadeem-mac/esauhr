@@ -69,8 +69,7 @@ export default function QuickSickConfirm({ me, employees = [], onSubmit, onClose
       // The DB trigger sync_leave_status_with_stage will derive
       // `status` from `stage` automatically.
       const stage = initialApprovalStage(me, employees);
-      const certDeadlineAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-      await onSubmit({
+      const payload = {
         employee_id:        me.id,
         leave_type_id:      'sick',
         start_date:         today,
@@ -78,16 +77,20 @@ export default function QuickSickConfirm({ me, employees = [], onSubmit, onClose
         days:               1,
         stage,
         is_half_day:        false,
-        // New cert-tracking columns (see migration_sick_cert_tracking.sql)
-        cert_received:      false,
-        cert_deadline_at:   certDeadlineAt,
-        declared_via:       'staff',
-        // Reason captures the declaration channel for the audit trail —
-        // useful for HR when reconciling against punch records.
         reason:             'Sick leave declared via dashboard quick-sick (same-day).',
-      });
+      };
+      console.log('[QuickSick] submitting', payload);
+      // Only send the essential columns. cert_received and declared_via
+      // have DB defaults from migration_sick_cert_tracking.sql
+      // ('false' and 'staff' respectively); cert_deadline_at is filled
+      // in by a backfill on the HR queue side (or a follow-up trigger).
+      // Sending unknown column names causes PostgREST to wedge silently
+      // when the schema cache hasn't refreshed yet.
+      await onSubmit(payload);
+      console.log('[QuickSick] success');
       setPhase('done');
     } catch (e) {
+      console.error('[QuickSick] submission failed', e);
       setError((e && (e.message || e.toString())) || 'Could not submit. Please try again.');
     } finally {
       setBusy(false);
