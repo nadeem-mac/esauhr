@@ -16,6 +16,7 @@ import SettingsView from './SettingsView.jsx';
 import ConnectivityTest from './ConnectivityTest.jsx';
 import NewRequestModal from './NewRequestModal.jsx';
 import RequestTypePicker from './RequestTypePicker.jsx';
+import QuickSickConfirm from './QuickSickConfirm.jsx';
 import SickLeaveModal from './SickLeaveModal.jsx';
 import PermissionRequestModal from './PermissionRequestModal.jsx';
 import SuccessToast, { bodyForStage } from './SuccessToast.jsx';
@@ -977,6 +978,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
               pendingShifts={pendingShifts}
               onOpenShiftAck={() => setShiftAckOpen(true)}
               onOpenNewRequest={() => setShowNewRequest(true)}
+              onQuickSickToday={() => setRequestFlow('quick_sick')}
             />
           )
         )}
@@ -1123,6 +1125,19 @@ export default function AppShell({ session, me, onRefreshMe }) {
           </>
         );
       })()}
+      {requestFlow === 'quick_sick' && (
+        <QuickSickConfirm
+          me={me}
+          employees={employees}
+          onClose={() => setRequestFlow(null)}
+          onSubmit={async (payload) => {
+            await createRequest(payload);
+            // Don't close immediately — QuickSickConfirm needs to show
+            // its own "Get well soon" success state for ~4s before it
+            // auto-retracts. It will call onClose itself when ready.
+          }}
+        />
+      )}
       {(requestFlow === 'leave' || (typeof requestFlow === 'string' && requestFlow.startsWith('leave:'))) && (
         <NewRequestModal
           me={me}
