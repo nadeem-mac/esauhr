@@ -332,11 +332,15 @@ function ZoneHeader({ number, kicker, title, body, accent = '#1F1B16' }) {
 
 // ESAU policy constants
 const OFFICIAL_START   = '08:00';
-const LATE_CUTOFF      = '08:15';   // after this = late
+const LATE_CUTOFF      = '08:15';   // after this = late (15-min arrival grace preserved)
 const SUP_END          = '16:00';   // SUP team scheduled end (4 PM)
-const SUP_EARLY_CUTOFF = '15:45';   // before this = early leave (SUP)
+const SUP_EARLY_CUTOFF = '16:00';   // strict — any departure before 16:00 = early
 const STD_END          = '17:00';   // other depts scheduled end (5 PM)
-const STD_EARLY_CUTOFF = '16:45';   // before this = early leave (non-SUP)
+const STD_EARLY_CUTOFF = '17:00';   // strict — any departure before 17:00 = early
+// Note (Nadeem 2026-05-10): early-departure has no grace window.
+// Check-out time is enforced strictly — leaving even one minute
+// before scheduled end is flagged. Late arrival keeps its 15-min
+// grace at LATE_CUTOFF; only the departure side is strict.
 
 // Always-CC list per company policy
 const FIXED_CC = [
@@ -737,12 +741,12 @@ function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd,
   const policyBullets = isCustomShift
     ? [
         '\u2022 Your scheduled shift end is ' + endStr12h + (isNightShiftEnd ? ' (overnight shift completed in the morning)' : '') + '.',
-        '\u2022 A 15-minute grace period is allowed; departures before ' + cutoffStr12h + ' are recorded as early leave.',
+        '\u2022 Any departure before ' + endStr12h + ' is recorded as early leave \u2014 no grace period applies on the clock-out side.',
         '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
       ]
     : [
         '\u2022 Your scheduled clock-out time is ' + endStr12h + ' on regular working days.',
-        '\u2022 A 15-minute grace period is allowed; departures before ' + cutoffStr12h + ' are recorded as early leave.',
+        '\u2022 Any departure before ' + endStr12h + ' is recorded as early leave \u2014 no grace period applies on the clock-out side.',
         '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
       ];
 
@@ -1085,12 +1089,12 @@ function earlyLeaveEmailContentTemp({ employee, dateLong, punchOutStr, scheduled
   const policyBullets = isCustomShift
     ? [
         '\u2022 Your scheduled shift end is ' + endStr12h + (isNightShiftEnd ? ' (overnight shift completed in the morning)' : '') + '.',
-        '\u2022 A 15-minute grace period is allowed; departures before ' + cutoffStr12h + ' are recorded as early leave.',
+        '\u2022 Any departure before ' + endStr12h + ' is recorded as early leave \u2014 no grace period applies on the clock-out side.',
         '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
       ]
     : [
         '\u2022 Your scheduled clock-out time is ' + endStr12h + ' on regular working days.',
-        '\u2022 A 15-minute grace period is allowed; departures before ' + cutoffStr12h + ' are recorded as early leave.',
+        '\u2022 Any departure before ' + endStr12h + ' is recorded as early leave \u2014 no grace period applies on the clock-out side.',
         '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
       ];
 
@@ -2759,11 +2763,12 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             startStr: effectiveOverride.startStr,
             endStr:   effectiveOverride.endStr,
             lateCutoffStr:  addMinutesToTime(effectiveOverride.startStr,  +15),
-            // For night shifts, the "early cutoff" on the start day
-            // is meaningless (the shift doesn't end on this date).
-            // We only use earlyCutoffStr for non-night shifts in the
-            // early-departure branch below.
-            earlyCutoffStr: addMinutesToTime(effectiveOverride.endStr,    -15),
+            // Early departure on shifts: strict, no grace. Per Nadeem
+            // 2026-05-10 — same rule for office and shift staff. If the
+            // shift ends at 17:00, leaving at 16:59 is early. The
+            // late-arrival side keeps its +15 minute grace above; only
+            // departure is strict.
+            earlyCutoffStr: effectiveOverride.endStr,
             label: isNightShiftStart
               ? 'Night shift (' + effectiveOverride.startStr + ' → ' + effectiveOverride.endStr + ' next day)'
               : 'Custom shift (' + effectiveOverride.startStr + '–' + effectiveOverride.endStr + ')',
@@ -2792,7 +2797,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       // check that would otherwise fire on this date.
       if (isNightShiftEnd) {
         const endStr      = bridgeFromPrev.endStr;
-        const endCutoffStr = addMinutesToTime(endStr, -15);
+        // Strict — early departure means any time before scheduled end
+        // (Nadeem 2026-05-10). Same rule applied across office, SUP,
+        // shift, and night-shift end-day check.
+        const endCutoffStr = endStr;
         const endCutoffMin = timeToMinutes(endCutoffStr);
         const endMin       = timeToMinutes(endStr);
         // The morning clock-out shows in punchInStr (only punch of

@@ -67,15 +67,20 @@ function isoDate(ddmmyyyy) {
 // historical dates.
 const STD_START_TIME      = '08:00:00';
 const STD_END_TIME        = '17:00:00';
-const STD_LATE_CUTOFF     = '08:15:00';  // 15-min grace
-const STD_EARLY_CUTOFF    = '16:45:00';  // 15-min grace before close
+const STD_LATE_CUTOFF     = '08:15:00';  // 15-min arrival grace (preserved)
+const STD_EARLY_CUTOFF    = '17:00:00';  // strict — equals END_TIME, no grace
 
 // SUP-team policy — same start, earlier end (no lunch break).
 // Mirrors the SUP_END / SUP_EARLY_CUTOFF constants in AttendanceView
 // so the daily flow and the historical backfill agree on what
 // "08:00-16:00" means.
+//
+// Per Nadeem 2026-05-10: early-departure has NO grace window. Setting
+// SUP_EARLY_CUTOFF = SUP_END_TIME so any departure before 16:00 is
+// flagged as early-leave. Same rule applied to STD above. Late
+// arrival keeps its grace.
 const SUP_END_TIME        = '16:00:00';
-const SUP_EARLY_CUTOFF    = '15:45:00';  // 15-min grace before close
+const SUP_EARLY_CUTOFF    = '16:00:00';  // strict — equals SUP_END_TIME, no grace
 
 function timeToMinutes(t) {
   if (!t) return null;
@@ -147,14 +152,16 @@ function policyFromShift(shift) {
   const startMin = timeToMinutes(start);
   const endMin   = timeToMinutes(end);
   if (startMin == null || endMin == null) return null;
-  // 15-minute grace either side. Compute as HH:MM strings.
+  // Late-arrival keeps its 15-minute grace on the start side. Early-
+  // departure has no grace per Nadeem 2026-05-10 — strict, even one
+  // minute before scheduled end is flagged. Compute as HH:MM strings.
   const minToHm = (m) => {
     const mm = ((m % 60) + 60) % 60;
     const hh = Math.floor(((m - mm + 1440 * 4) / 60)) % 24; // wrap safe
     return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:00`;
   };
   const lateCutoff  = minToHm(startMin + 15);
-  const earlyCutoff = minToHm(endMin - 15);
+  const earlyCutoff = minToHm(endMin); // strict — equals shift end
   return {
     startTime:   start,
     endTime:     end,
