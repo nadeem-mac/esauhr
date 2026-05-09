@@ -169,20 +169,43 @@ function buildTree(rawEmployees) {
   return [ceo];
 }
 
-// Clip the tree at a maximum depth from each subtree root.
-// Replaced children get rolled up into a _clippedCount on the
-// remaining parent so the card can show "↓ N" without recursing.
-function clipDepth(nodes, maxDepth, currentDepth = 0) {
-  return nodes.map(node => {
-    if (currentDepth >= maxDepth - 1) {
-      return { ...node, children: [], _clippedCount: countDescendants(node) };
-    }
-    return {
-      ...node,
-      children: clipDepth(node.children || [], maxDepth, currentDepth + 1),
-      _clippedCount: 0,
-    };
-  });
+// Compute the default collapsed set for "Summary" preset. Collapses
+// every node at depth >= 2 that has children, so the visible tree is
+// CEO + DJVPs + their direct reports — anything deeper is one click
+// away. The returned Set is consumed by OrgChartView's collapsedIds
+// state.
+function computeSummaryCollapsed(roots) {
+  const ids = new Set();
+  const walk = (nodes, depth) => {
+    nodes.forEach(n => {
+      if (depth >= 2 && (n.children || []).length > 0) {
+        ids.add(n.id);
+      }
+      walk(n.children || [], depth + 1);
+    });
+  };
+  walk(roots, 0);
+  return ids;
+}
+
+// Compute the "Collapse all" set — same as Summary but applied at
+// depth >= 1, so only the CEO and his direct DJVPs/peers are
+// visible. Used by the future Collapse-all toolbar button if added.
+// Currently unused; preserved here as the Summary collapser depth
+// doesn't reach this aggressive a state.
+// eslint-disable-next-line no-unused-vars
+function computeMaximalCollapsed(roots) {
+  const ids = new Set();
+  const walk = (nodes, depth) => {
+    nodes.forEach(n => {
+      if (depth >= 1 && (n.children || []).length > 0) {
+        ids.add(n.id);
+      }
+      walk(n.children || [], depth + 1);
+    });
+  };
+  walk(roots, 0);
+  return ids;
 }
 
 function countDescendants(node) {
@@ -390,20 +413,20 @@ const TREE_CSS = `
 // expansion on hover (and on a printed sheet, by reference if
 // they have access to the legend in the toolbar).
 // =============================================================================
-function NodeCard({ node, tier }) {
+function NodeCard({ node, tier, isCollapsed, onToggle }) {
   const s = styleFor(node, tier);
   const initials = initialsOf(node.name, node.id);
   const title = titleFor(node, tier);
   const titleLong = TITLE_LONG[title] || title;
   const role = roleLabel(node, tier);
   const directReports = (node.children || []).length;
-  const clippedReports = node._clippedCount || 0;
-  const totalReports = directReports + clippedReports;
+  const totalReports = directReports + countDescendants(node);
   const deptFull = DEPT_LABEL[node.department] || node.department || '';
   const locFull = LOC_LABEL[node.location] || node.location || '';
   const isCeo = tier === 0;
   const isDjvp = title === 'DJVP';
   const isSynth = !!node.isSynthetic;
+  const hasChildren = directReports > 0;
   const tooltip = `${node.name}${node.secondaryName ? ' (' + node.secondaryName + ')' : ''}\n${titleLong}${deptFull ? '\n' + deptFull : ''}${locFull ? ' · ' + locFull : ''}${isSynth ? '' : '\n' + node.id}`;
 
   return (
@@ -490,22 +513,52 @@ function NodeCard({ node, tier }) {
             {node.id}
           </span>
         )}
-        {totalReports > 0 && (
-          <span
+        {/* Toggle button — replaces the static '↓ N' chip when the
+            node has children. Click to expand/collapse the subtree
+            (Option A from the redesign meeting). When collapsed, the
+            label flips to '+ N' and the tooltip cues the user. The
+            stopPropagation guards against the parent card's hover/
+            click logic firing when the user actually wanted just the
+            toggle. */}
+        {hasChildren && onToggle && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggle(node.id);
+            }}
+            title={isCollapsed
+              ? `Expand — ${directReports} direct${totalReports > directReports ? ` (${totalReports} total below)` : ''}`
+              : `Collapse — ${directReports} direct${totalReports > directReports ? ` (${totalReports} total below)` : ''}`}
             style={{
-              fontSize: 9,
+              fontSize: 10,
               color: s.tagColor,
               fontWeight: 700,
-              padding: '1px 6px',
+              padding: '2px 8px',
               borderRadius: 999,
-              background: s.tagBg,
+              background: isCollapsed ? s.tagBg : 'transparent',
+              border: isCollapsed ? `1px solid ${s.tagColor}33` : `1px solid ${s.tagColor}33`,
               letterSpacing: '0.04em',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 3,
+              lineHeight: 1.2,
+              transition: 'background 120ms, border-color 120ms',
             }}
-            title={clippedReports > 0
-              ? `${directReports} direct + ${clippedReports} below — toggle to Full view to see all`
-              : `${directReports} direct report${directReports === 1 ? '' : 's'}`}
+            onMouseEnter={(e) => { e.currentTarget.style.background = s.tagBg; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = isCollapsed ? s.tagBg : 'transparent'; }}
           >
-            ↓ {totalReports}
+            <span style={{ fontSize: 12, fontWeight: 700, lineHeight: 1, marginTop: -1 }}>
+              {isCollapsed ? '+' : '−'}
+            </span>
+            {' '}{isCollapsed ? totalReports : directReports}
+          </button>
+        )}
+        {/* Static descriptor when no children — keeps card heights
+            roughly aligned across siblings without faking a button. */}
+        {!hasChildren && totalReports === 0 && tier > 0 && (
+          <span style={{ fontSize: 9, color: '#9B928A', fontStyle: 'italic', letterSpacing: '0.04em' }}>
+            individual contributor
           </span>
         )}
       </div>
@@ -513,14 +566,26 @@ function NodeCard({ node, tier }) {
   );
 }
 
-function TreeNode({ node, tier }) {
+function TreeNode({ node, tier, collapsedIds, onToggle }) {
+  const isCollapsed = collapsedIds && collapsedIds.has(node.id);
   return (
     <li>
-      <NodeCard node={node} tier={tier} />
-      {node.children && node.children.length > 0 && (
+      <NodeCard
+        node={node}
+        tier={tier}
+        isCollapsed={isCollapsed}
+        onToggle={onToggle}
+      />
+      {!isCollapsed && node.children && node.children.length > 0 && (
         <ul>
           {node.children.map(child => (
-            <TreeNode key={child.id} node={child} tier={tier + 1} />
+            <TreeNode
+              key={child.id}
+              node={child}
+              tier={tier + 1}
+              collapsedIds={collapsedIds}
+              onToggle={onToggle}
+            />
           ))}
         </ul>
       )}
@@ -532,7 +597,7 @@ function TreeNode({ node, tier }) {
 // ChartBody — wraps the tree with the centred header & footer.
 // Used by both the live modal and the standalone HTML export.
 // =============================================================================
-function ChartBody({ roots, mode, totalEmployees, treeRef }) {
+function ChartBody({ roots, collapsedIds, onToggle, totalEmployees, treeRef, viewLabel }) {
   const today = new Date().toLocaleDateString('en-GB', {
     day: 'numeric', month: 'long', year: 'numeric',
   });
@@ -549,14 +614,20 @@ function ChartBody({ roots, mode, totalEmployees, treeRef }) {
         </div>
         <div style={{ fontSize: 11, color: '#6B6660', marginTop: 4 }}>
           As of {today}{' · '}{totalEmployees} employee{totalEmployees === 1 ? '' : 's'}
-          {' · '}{mode === 'summary' ? 'Summary view' : 'Full view'}
+          {viewLabel ? ' · ' + viewLabel : ''}
         </div>
       </div>
 
       <div ref={treeRef} className="esau-tree-wrap">
         <ul>
           {roots.map(root => (
-            <TreeNode key={root.id} node={root} tier={0} />
+            <TreeNode
+              key={root.id}
+              node={root}
+              tier={0}
+              collapsedIds={collapsedIds}
+              onToggle={onToggle}
+            />
           ))}
         </ul>
       </div>
@@ -592,18 +663,18 @@ function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
-function renderTreeHtml(nodes, tier) {
+function renderTreeHtml(nodes, tier, collapsedIds) {
   return `<ul>${nodes.map(node => {
     const s = styleFor(node, tier);
     const initials = initialsOf(node.name, node.id);
     const title = titleFor(node, tier);
     const role = roleLabel(node, tier);
     const directReports = (node.children || []).length;
-    const clippedReports = node._clippedCount || 0;
-    const totalReports = directReports + clippedReports;
+    const totalReports = directReports + countDescendants(node);
     const isCeo = tier === 0;
     const isDjvp = title === 'DJVP';
     const isSynth = !!node.isSynthetic;
+    const isCollapsed = !!(collapsedIds && collapsedIds.has(node.id));
 
     const cardStyle = [
       `background:${s.cardBg}`,
@@ -620,6 +691,9 @@ function renderTreeHtml(nodes, tier) {
     const avatarSize = isCeo ? 42 : isDjvp ? 38 : 34;
     const avatarFontSize = isCeo ? 13 : isDjvp ? 12 : 11;
     const nameFontSize = isCeo ? 14 : isDjvp ? 13 : 12;
+    const reportLabel = directReports > 0
+      ? `<span style="font-size:10px;color:${s.tagColor};font-weight:700;padding:2px 8px;border-radius:999px;background:${s.tagBg};letter-spacing:0.04em;border:1px solid ${s.tagColor}33;">${isCollapsed ? '+' : '−'} ${isCollapsed ? totalReports : directReports}</span>`
+      : '';
 
     const cardHtml = `
       <div class="esau-card" style="${cardStyle}">
@@ -631,22 +705,25 @@ function renderTreeHtml(nodes, tier) {
         ${node.secondaryName ? `<div style="font-size:10.5px;color:#6B6660;font-style:italic;margin-top:1px;">${escapeHtml(node.secondaryName)}</div>` : ''}
         <div style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap;">
           ${!isSynth ? `<span style="font-size:10px;color:#6B6660;font-family:'SF Mono',Consolas,monospace;letter-spacing:0.02em;">${escapeHtml(node.id || '')}</span>` : ''}
-          ${totalReports > 0 ? `<span style="font-size:9px;color:${s.tagColor};font-weight:700;padding:1px 6px;border-radius:999px;background:${s.tagBg};letter-spacing:0.04em;">↓ ${totalReports}</span>` : ''}
+          ${reportLabel}
         </div>
       </div>
     `;
-    const childrenHtml = (node.children && node.children.length > 0)
-      ? renderTreeHtml(node.children, tier + 1)
+    // Hide children entirely when collapsed — same behaviour as the
+    // live React path. The user's expanded snapshot is what gets
+    // exported; recipients see exactly what the user prepared.
+    const childrenHtml = (!isCollapsed && node.children && node.children.length > 0)
+      ? renderTreeHtml(node.children, tier + 1, collapsedIds)
       : '';
     return `<li>${cardHtml}${childrenHtml}</li>`;
   }).join('')}</ul>`;
 }
 
-function buildStandaloneHtml(roots, totalEmployees, mode) {
+function buildStandaloneHtml(roots, totalEmployees, collapsedIds, viewLabel) {
   const today = new Date().toLocaleDateString('en-GB', {
     day: 'numeric', month: 'long', year: 'numeric',
   });
-  const treeHtml = renderTreeHtml(roots, 0);
+  const treeHtml = renderTreeHtml(roots, 0, collapsedIds);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -668,7 +745,7 @@ function buildStandaloneHtml(roots, totalEmployees, mode) {
     <div style="text-align:center;padding:18px 24px 4px;">
       <div style="font-size:10px;letter-spacing:0.28em;color:#2D5F3F;font-weight:600;">EVERGREEN SHIPPING AGENCY SAUDI CO. (LLC)</div>
       <div style="font-size:22px;color:#1F1B16;font-weight:500;margin-top:6px;letter-spacing:-0.01em;font-family:Georgia,serif;">Organization Chart</div>
-      <div style="font-size:11px;color:#6B6660;margin-top:4px;">As of ${today} · ${totalEmployees} employee${totalEmployees === 1 ? '' : 's'} · ${mode === 'summary' ? 'Summary view' : 'Full view'}</div>
+      <div style="font-size:11px;color:#6B6660;margin-top:4px;">As of ${today} · ${totalEmployees} employee${totalEmployees === 1 ? '' : 's'}${viewLabel ? ' · ' + viewLabel : ''}</div>
     </div>
     <div style="overflow-x:auto;padding:8px 0 0 0;">
       <div class="esau-tree-wrap" id="esau-tree-root">
@@ -723,7 +800,6 @@ function downloadHtmlFile(html, filename) {
 // OrgChartView — public component
 // =============================================================================
 export default function OrgChartView({ employees, onClose }) {
-  const [mode, setMode] = useState('summary');
   // Zoom can be a number (manual zoom) or 'fit' (auto-fit to height).
   // 'fit' is the default so the chart starts at one-page-on-screen.
   const [zoom, setZoom] = useState('fit');
@@ -733,16 +809,36 @@ export default function OrgChartView({ employees, onClose }) {
   const printTargetRef = useRef(null);
 
   const fullTree = useMemo(() => buildTree(employees || []), [employees]);
-  const displayTree = useMemo(() => (
-    mode === 'summary' ? clipDepth(fullTree, 4) : fullTree
-  ), [fullTree, mode]);
+  // Default-collapsed set computed from the live tree. Anything at
+  // depth 2 with children is collapsed by default — visible tree at
+  // open is CEO + DJVPs + their direct reports, with [+ N] toggles
+  // ready for the user to expand specific subtrees one at a time.
+  const summaryCollapsed = useMemo(() => computeSummaryCollapsed(fullTree), [fullTree]);
+  const [collapsedIds, setCollapsedIds] = useState(summaryCollapsed);
+  // Track which preset matches the current state so the toolbar can
+  // highlight the active button. 'custom' = user has manually
+  // toggled at least one node since the last preset click. Recomputed
+  // when collapsedIds changes against the canonical Summary set.
+  const preset = useMemo(() => {
+    if (collapsedIds.size === 0) return 'full';
+    if (collapsedIds.size === summaryCollapsed.size
+        && Array.from(summaryCollapsed).every(id => collapsedIds.has(id))) return 'summary';
+    return 'custom';
+  }, [collapsedIds, summaryCollapsed]);
+
+  // Re-default the collapsed set whenever the underlying tree
+  // changes (a hire/move would re-run buildTree). Keeps the user on
+  // the Summary preset unless they had moved off it intentionally.
+  useEffect(() => {
+    setCollapsedIds(summaryCollapsed);
+  }, [summaryCollapsed]);
 
   const totalEmployees = (employees || []).filter(e => e?.employment_status !== 'left').length;
 
   // Compute the fit-to-screen scale. Constraint is height only —
   // user wants horizontal scroll for wide trees, just no vertical
-  // scroll inside the modal. Recomputes on tree change and on
-  // window resize.
+  // scroll inside the modal. Recomputes on tree change, expand/
+  // collapse, and on window resize.
   useEffect(() => {
     if (zoom !== 'fit') return;
     const recompute = () => {
@@ -767,12 +863,12 @@ export default function OrgChartView({ employees, onClose }) {
       cancelAnimationFrame(id);
       window.removeEventListener('resize', recompute);
     };
-  }, [zoom, displayTree]);
+  }, [zoom, fullTree, collapsedIds]);
 
   // Print scale handler. Computes when 'beforeprint' fires so the
-  // value reflects the current chart size (post any zoom changes).
-  // Cleaned up on 'afterprint' so the screen view returns to
-  // normal scale.
+  // value reflects the current chart size (post any zoom or expand/
+  // collapse changes). Cleaned up on 'afterprint' so the screen view
+  // returns to normal scale.
   useEffect(() => {
     const computePrintScale = () => {
       const treeEl = treeRef.current;
@@ -800,11 +896,37 @@ export default function OrgChartView({ employees, onClose }) {
 
   const effectiveScale = zoom === 'fit' ? computedFit : zoom;
 
+  // Toggle a single node's collapsed state. Uses the functional
+  // setState form so concurrent clicks don't race. Drops the user
+  // into 'custom' preset implicitly — preset is derived from the
+  // resulting set, not stored separately.
+  const handleToggle = useCallback((id) => {
+    setCollapsedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handlePresetSummary = useCallback(() => {
+    setCollapsedIds(summaryCollapsed);
+  }, [summaryCollapsed]);
+
+  const handlePresetFull = useCallback(() => {
+    setCollapsedIds(new Set());
+  }, []);
+
+  const viewLabel = preset === 'summary' ? 'Summary view'
+                  : preset === 'full' ? 'Full view'
+                  : 'Custom view';
+
   const handleDownload = useCallback(() => {
-    const html = buildStandaloneHtml(displayTree, totalEmployees, mode);
+    const html = buildStandaloneHtml(fullTree, totalEmployees, collapsedIds, viewLabel);
     const stamp = new Date().toISOString().slice(0, 10);
-    downloadHtmlFile(html, `esau_org_chart_${mode}_${stamp}.html`);
-  }, [displayTree, totalEmployees, mode]);
+    const slug = preset === 'custom' ? 'custom' : preset;
+    downloadHtmlFile(html, `esau_org_chart_${slug}_${stamp}.html`);
+  }, [fullTree, totalEmployees, collapsedIds, viewLabel, preset]);
 
   const handlePrint = useCallback(() => {
     // Native print — beforeprint listener computes the scale,
@@ -891,17 +1013,18 @@ export default function OrgChartView({ employees, onClose }) {
               }}
             >
               <button
-                onClick={() => setMode('summary')}
+                onClick={handlePresetSummary}
+                title="Show CEO + DJVPs + their direct reports. Use [+ N] to expand specific subtrees."
                 style={{
                   padding: '5px 12px',
                   borderRadius: 999,
                   fontSize: 11.5,
                   fontWeight: 600,
-                  background: mode === 'summary' ? '#FFFFFF' : 'transparent',
-                  color: mode === 'summary' ? '#1F1B16' : '#6B6660',
+                  background: preset === 'summary' ? '#FFFFFF' : 'transparent',
+                  color: preset === 'summary' ? '#1F1B16' : '#6B6660',
                   border: 'none',
                   cursor: 'pointer',
-                  boxShadow: mode === 'summary' ? '0 1px 3px rgba(31, 27, 22, 0.12)' : 'none',
+                  boxShadow: preset === 'summary' ? '0 1px 3px rgba(31, 27, 22, 0.12)' : 'none',
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: 5,
@@ -910,17 +1033,18 @@ export default function OrgChartView({ employees, onClose }) {
                 <LayoutGrid className="w-3.5 h-3.5" /> Summary
               </button>
               <button
-                onClick={() => setMode('full')}
+                onClick={handlePresetFull}
+                title="Expand every subtree — show every employee."
                 style={{
                   padding: '5px 12px',
                   borderRadius: 999,
                   fontSize: 11.5,
                   fontWeight: 600,
-                  background: mode === 'full' ? '#FFFFFF' : 'transparent',
-                  color: mode === 'full' ? '#1F1B16' : '#6B6660',
+                  background: preset === 'full' ? '#FFFFFF' : 'transparent',
+                  color: preset === 'full' ? '#1F1B16' : '#6B6660',
                   border: 'none',
                   cursor: 'pointer',
-                  boxShadow: mode === 'full' ? '0 1px 3px rgba(31, 27, 22, 0.12)' : 'none',
+                  boxShadow: preset === 'full' ? '0 1px 3px rgba(31, 27, 22, 0.12)' : 'none',
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: 5,
@@ -928,6 +1052,25 @@ export default function OrgChartView({ employees, onClose }) {
               >
                 <Users2 className="w-3.5 h-3.5" /> Full
               </button>
+              {preset === 'custom' && (
+                <span
+                  title="You've manually expanded/collapsed subtrees. Click Summary or Full to reset."
+                  style={{
+                    padding: '5px 10px',
+                    borderRadius: 999,
+                    fontSize: 11.5,
+                    fontWeight: 600,
+                    background: '#FFFFFF',
+                    color: '#8B5A1F',
+                    boxShadow: '0 1px 3px rgba(31, 27, 22, 0.12)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 5,
+                  }}
+                >
+                  Custom
+                </span>
+              )}
             </div>
             <div
               style={{
@@ -1054,10 +1197,12 @@ export default function OrgChartView({ employees, onClose }) {
             }}
           >
             <ChartBody
-              roots={displayTree}
-              mode={mode}
+              roots={fullTree}
+              collapsedIds={collapsedIds}
+              onToggle={handleToggle}
               totalEmployees={totalEmployees}
               treeRef={treeRef}
+              viewLabel={viewLabel}
             />
           </div>
         </div>
