@@ -669,7 +669,6 @@ function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, schedul
   // assigned the days and time".
   const assignmentPara = (isCustomShift && (managerName || assignedBy))
     ? 'This shift schedule (start ' + startStr12h + (isNightShiftStart ? ', overnight' : '') + ') was set by your line manager'
-      + (managerName ? ' (' + managerName + ')' : '')
       + (assignedAt ? ' on ' + new Date(assignedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '')
       + ' through the ESAU HR Portal. Your acknowledgment of the shift is on file in the same system.\n\n'
     : '';
@@ -764,7 +763,6 @@ function earlyLeaveEmailContent({ employee, dateLong, punchOutStr, scheduledEnd,
     : '';
   const assignmentPara = (isCustomShift && (managerName || assignedBy))
     ? 'This shift schedule (end ' + endStr12h + (isNightShiftEnd ? ', overnight completing today' : '') + ') was set by your line manager'
-      + (managerName ? ' (' + managerName + ')' : '')
       + (assignedAt ? ' on ' + new Date(assignedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '')
       + ' through the ESAU HR Portal. Your acknowledgment of the shift is on file in the same system.\n\n'
     : '';
@@ -882,7 +880,6 @@ function missedPunchEmailContent({ employee, dateLong, missingType, isCustomShif
           ? ' (' + startStr12h + ' \u2192 ' + endStr12h + ((isNightShiftStart || isNightShiftEnd) ? ', overnight' : '') + ')'
           : '')
       + ' was set by your line manager'
-      + (managerName ? ' (' + managerName + ')' : '')
       + (assignedAt ? ' on ' + new Date(assignedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '')
       + ' through the ESAU HR Portal. Your acknowledgment of the shift is on file in the same system.\n\n'
     : '';
@@ -1028,7 +1025,6 @@ function lateEmailContentTemp({ employee, dateLong, punchInStr, minutesLate, sch
     : '';
   const assignmentPara = (isCustomShift && (managerName || assignedBy))
     ? 'This shift schedule (start ' + startStr12h + (isNightShiftStart ? ', overnight' : '') + ') was set by your line manager'
-      + (managerName ? ' (' + managerName + ')' : '')
       + (assignedAt ? ' on ' + new Date(assignedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '')
       + ' through the ESAU HR Portal. Your acknowledgment of the shift is on file in the same system.\n\n'
     : '';
@@ -1106,7 +1102,6 @@ function earlyLeaveEmailContentTemp({ employee, dateLong, punchOutStr, scheduled
     : '';
   const assignmentPara = (isCustomShift && (managerName || assignedBy))
     ? 'This shift schedule (end ' + endStr12h + (isNightShiftEnd ? ', overnight completing today' : '') + ') was set by your line manager'
-      + (managerName ? ' (' + managerName + ')' : '')
       + (assignedAt ? ' on ' + new Date(assignedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '')
       + ' through the ESAU HR Portal. Your acknowledgment of the shift is on file in the same system.\n\n'
     : '';
@@ -1450,11 +1445,14 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         }});
         window.dispatchEvent(evt);
       } catch {}
-      // Close the form. reset() also fires a silent re-eval (when there
-      // was an active session), but that's a no-op when the eval we
-      // just ran is still fresh — the calendar refresh tick covers
-      // both paths.
+      // Close the form data, then dismiss the daily-review modal that
+      // wraps the whole upload UI. The previous version called reset()
+      // alone, which cleared parsedData but left the modal open with
+      // an empty file picker — which Nadeem flagged 2026-05-10 as
+      // 'window doesn't close'. setDailyReviewOpen(false) is the
+      // actual close.
       reset();
+      setDailyReviewOpen(false);
     }
   }, [reevalState.running, triggerReevaluation]);
 
