@@ -1425,12 +1425,17 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   }, [reevalState.running]);
 
   // Save & Close — explicit handoff that finalises the upload session
-  // and triggers the 7-day re-evaluation pass. Distinct from reset:
-  // does NOT clear the form, so Bashaier can still review what she
-  // sent. The success path emits a transient toast and bumps the
-  // calendar refresh tick. Called from the FileSummary header button.
-  // Phase B+C / Decision #4 option C.
-  const handleSaveAndClose = useCallback(async () => {    if (reevalState.running) return;
+  // and triggers the 7-day re-evaluation pass. After the re-evaluation
+  // returns, also calls reset() so the upload form clears back to its
+  // 'no file loaded' state — the user can move on to the next thing
+  // without an obsolete file summary lingering on screen. The toast
+  // gives them confirmation of what just ran. Phase B+C / Decision #4
+  // option C, with the close-the-form behaviour added per Nadeem
+  // 2026-05-10 (the previous version triggered re-eval but left the
+  // page exactly as it was, which was confusing for a button labelled
+  // 'Save & Close').
+  const handleSaveAndClose = useCallback(async () => {
+    if (reevalState.running) return;
     const summary = await triggerReevaluation({ silent: false });
     if (summary) {
       try {
@@ -1441,6 +1446,11 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         }});
         window.dispatchEvent(evt);
       } catch {}
+      // Close the form. reset() also fires a silent re-eval (when there
+      // was an active session), but that's a no-op when the eval we
+      // just ran is still fresh — the calendar refresh tick covers
+      // both paths.
+      reset();
     }
   }, [reevalState.running, triggerReevaluation]);
 
@@ -5604,20 +5614,49 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
 
       {/* Duplicate-upload notice — same file content for the same
           data date has been processed before. Cheap dedupe via
-          SHA-256 hash. Doesn't block re-processing — just informs. */}
+          SHA-256 hash. Doesn't block re-processing — just informs.
+          When duplicate is detected, actionsEnabled auto-flips to
+          false (read-only) so the user doesn't accidentally re-send
+          notice emails to people who already received them. The
+          banner now explains that explicitly and offers a one-click
+          override so the user isn't left wondering why the email
+          buttons disappeared (Nadeem 2026-05-10 report:
+          'After i select tiles and click the email button, it does
+          not function' — turns out the buttons were rendered as
+          READ-ONLY badges in this state, which wasn't connected
+          back to the duplicate banner above for the user). */}
       {hasFile && existingUpload && (
         <div className="rounded-2xl border p-4 flex items-start gap-3"
              style={{ borderColor: '#A16207', background: '#FEFCE8' }}>
           <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: '#A16207' }}/>
-          <div className="text-sm" style={{ color: '#0A0A0A' }}>
+          <div className="text-sm flex-1 min-w-0" style={{ color: '#0A0A0A' }}>
             <div className="font-bold mb-1">This file was processed before.</div>
             <div>
               The same content (identical SHA-256) was uploaded for {formatDateLong(csvDate)} on{' '}
               <strong>{new Date(existingUpload.uploaded_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</strong>
-              {' '}({existingUpload.row_count} rows). Re-processing is allowed but any prior
-              violation emails are already on record — the buttons below will skip duplicates
-              automatically.
+              {' '}({existingUpload.row_count} rows).
+              {!actionsEnabled && (
+                <>
+                  {' '}<strong>Email buttons are hidden</strong> below as a guard against
+                  re-sending notices to people who already got them. Click
+                  <strong> "Enable actions"</strong> to override and send anyway.
+                </>
+              )}
             </div>
+            {!actionsEnabled && (
+              <button type="button"
+                onClick={() => setActionsEnabled(true)}
+                className="mt-2.5 inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full"
+                style={{
+                  background: '#A16207',
+                  color: '#FFFFFF',
+                  fontWeight: 600,
+                  border: 'none',
+                  cursor: 'pointer',
+                }}>
+                Enable actions anyway
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -6526,7 +6565,7 @@ function FileSummary({
               <span className="inline-block w-2 h-2 rounded-full"
                 style={{ background: actionsEnabled ? '#047857' : '#9CA3AF' }}/>
               {actionsEnabled ? 'Actions on' : 'Read-only'}
-              {isDuplicate && actionsEnabled && (
+              {isDuplicate && (
                 <span className="text-[9px] px-1 py-0.5 rounded font-bold tracking-wider"
                   style={{ background: '#FDE68A', color: '#92400E' }}>
                   DUPLICATE
