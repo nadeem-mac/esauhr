@@ -1592,21 +1592,21 @@ function GovernmentRecordsPanel({ employee, onSaved }) {
       }}
     >
       {/* MOI watermark — Saudi Ministry of Interior emblem rendered
-          as an inline SVG. Centered behind the data fields at low
-          opacity so it reads as an official-document watermark
-          rather than as decoration. The composition mirrors the
-          actual MOI seal in spirit:
-            • Outer + inner badge rings with curved Arabic text
-              along the top rim ('وزارة الداخلية' = Ministry of
-              Interior) and English along the bottom.
-            • Eagle with wings spread as the central icon — the
-              motif used across Saudi government emblems.
-            • Feather detail lines on the wings + a fanned tail
-              for the 'rendered seal' rather than 'flat silhouette'
-              feel.
-          pointer-events: none guarantees the watermark never
-          blocks clicks on Re-pull or any interactive content
-          behind it on the z-index axis. */}
+          as inline SVG. The composition follows the actual MOI logo:
+            • Outer thin circle border
+            • Laurel/palm wreath made of two curved branches of small
+              leaves, meeting at the bottom and leaving a gap at the
+              top for the Saudi national emblem
+            • Saudi national emblem in the gap: palm tree above two
+              crossed swords
+            • Arabic calligraphic text centred inside the wreath:
+              'وزارة الداخلية' (Ministry of Interior) above
+              'المملكة العربية السعودية' (Kingdom of Saudi Arabia)
+          Centred behind the data fields at low opacity so it reads
+          as an official-document watermark rather than as decoration.
+          pointer-events: none guarantees the watermark never blocks
+          clicks on Re-pull or any interactive content above it on
+          the z-index axis. */}
       <svg
         viewBox="0 0 200 200"
         aria-hidden="true"
@@ -1615,79 +1615,128 @@ function GovernmentRecordsPanel({ employee, onSaved }) {
           left: '50%',
           top: '50%',
           transform: 'translate(-50%, -50%)',
-          width: 260,
-          height: 260,
+          width: 280,
+          height: 280,
           opacity: 0.07,
           pointerEvents: 'none',
           color: '#0F4C2A',
           zIndex: 0,
         }}
       >
-        <defs>
-          {/* Curved paths for the seal text. topArc runs over the
-              top half of the inner rim (left to right); bottomArc
-              runs along the bottom half so its text reads upright. */}
-          <path id="moi-arc-top"    d="M 38 100 A 62 62 0 0 1 162 100" />
-          <path id="moi-arc-bottom" d="M 42 102 A 58 58 0 0 0 158 102" />
-        </defs>
+        {/* Outer thin ring — single border like the actual logo */}
+        <circle cx="100" cy="100" r="92" fill="none" stroke="currentColor" strokeWidth="1.5" />
 
-        {/* Badge frame — outer thicker ring + inner light-weight
-            ring + faint fill so the eagle sits on a tonal field. */}
-        <circle cx="100" cy="100" r="95" fill="none" stroke="currentColor" strokeWidth="2.5" />
-        <circle cx="100" cy="100" r="80" fill="none" stroke="currentColor" strokeWidth="0.8" />
-        <circle cx="100" cy="100" r="78" fill="currentColor" opacity="0.05" />
+        {/* Wreath — left branch leaves. Generated programmatically:
+            13 small ellipses placed along an arc from 90° (bottom-
+            centre) clockwise around the left side to 258° (just
+            below the top, leaving a gap for the emblem). Each leaf
+            rotates so its long axis points radially outward —
+            that's how laurel leaves grow on a real wreath. */}
+        {Array.from({ length: 13 }, (_, i) => {
+          const angle = 90 + i * 14;
+          const rad = (angle * Math.PI) / 180;
+          const x = 100 + 72 * Math.cos(rad);
+          const y = 100 + 72 * Math.sin(rad);
+          return (
+            <ellipse
+              key={`L${i}`}
+              cx={x}
+              cy={y}
+              rx="4.2"
+              ry="10"
+              fill="currentColor"
+              transform={`rotate(${angle - 90} ${x} ${y})`}
+            />
+          );
+        })}
 
-        {/* Curved seal text — Arabic over the top, English under
-            the bottom. Letter-spacing widened so the words breathe
-            against the thin ring above them, matching real seal
-            typography. */}
-        <text fontSize="9" fontWeight="600" fill="currentColor" fontFamily="'Segoe UI', Tahoma, Arial, sans-serif" letterSpacing="2.5">
-          <textPath href="#moi-arc-top" startOffset="50%" textAnchor="middle">
-            وزارة الداخلية
-          </textPath>
-        </text>
-        <text fontSize="6.5" fontWeight="700" fill="currentColor" fontFamily="Arial, sans-serif" letterSpacing="2.5">
-          <textPath href="#moi-arc-bottom" startOffset="50%" textAnchor="middle">
-            MINISTRY OF INTERIOR · KSA
-          </textPath>
-        </text>
+        {/* Wreath — right branch leaves, mirror of left. Skips i=0
+            to avoid drawing a duplicate leaf at the bottom-centre
+            shared point. */}
+        {Array.from({ length: 12 }, (_, i) => {
+          const angle = 90 - (i + 1) * 14;
+          const rad = (angle * Math.PI) / 180;
+          const x = 100 + 72 * Math.cos(rad);
+          const y = 100 + 72 * Math.sin(rad);
+          return (
+            <ellipse
+              key={`R${i}`}
+              cx={x}
+              cy={y}
+              rx="4.2"
+              ry="10"
+              fill="currentColor"
+              transform={`rotate(${angle - 90} ${x} ${y})`}
+            />
+          );
+        })}
 
-        {/* Eagle of Saladin — symmetric wings-spread silhouette
-            drawn entirely in currentColor. The shape is approximate
-            (real MOI uses a specific stylised falcon) but reads as
-            'Saudi government emblem' at watermark opacity. */}
+        {/* Saudi national emblem — palm tree above crossed swords,
+            sitting in the gap at the top of the wreath. Same
+            stylisation used on the Saudi flag and state seal. */}
         <g fill="currentColor">
-          {/* Head — small oval with a triangular beak pointing right */}
-          <ellipse cx="100" cy="68" rx="6" ry="7" />
-          <path d="M 100 66 L 108 69 L 100 71 Z" />
-
-          {/* Body — slim vertical oval */}
-          <ellipse cx="100" cy="100" rx="8" ry="22" />
-
-          {/* Left wing — broad curved arc with feather lines */}
-          <path d="M 100 86 Q 70 64 32 72 Q 26 86 30 102 L 38 100 Q 56 94 76 96 Q 90 96 100 100 Z" />
-          {/* Right wing — mirror of left */}
-          <path d="M 100 86 Q 130 64 168 72 Q 174 86 170 102 L 162 100 Q 144 94 124 96 Q 110 96 100 100 Z" />
-
-          {/* Fanned tail */}
-          <path d="M 100 122 L 84 148 L 90 142 L 94 150 L 100 144 L 106 150 L 110 142 L 116 148 Z" />
-
-          {/* Talon hints */}
-          <path d="M 94 122 L 91 130 M 106 122 L 109 130" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" fill="none" />
+          {/* Palm trunk */}
+          <rect x="98.5" y="22" width="3" height="22" />
+          {/* Palm fronds — 7 ellipses radiating from the crown
+              point (100, 20). Inner fronds longer, outer fronds
+              shorter, matching the natural taper of date-palm
+              fronds. */}
+          <ellipse cx="100" cy="20" rx="1.6" ry="14" />
+          <ellipse cx="100" cy="20" rx="1.6" ry="13" transform="rotate(-28 100 20)" />
+          <ellipse cx="100" cy="20" rx="1.6" ry="13" transform="rotate(28 100 20)" />
+          <ellipse cx="100" cy="20" rx="1.6" ry="11" transform="rotate(-58 100 20)" />
+          <ellipse cx="100" cy="20" rx="1.6" ry="11" transform="rotate(58 100 20)" />
+          <ellipse cx="100" cy="20" rx="1.6" ry="9" transform="rotate(-85 100 20)" />
+          <ellipse cx="100" cy="20" rx="1.6" ry="9" transform="rotate(85 100 20)" />
+          {/* Crown — small dot where the fronds emerge */}
+          <circle cx="100" cy="20" r="2.2" />
         </g>
 
-        {/* Wing feather detail lines — soft strokes across each
-            wing for a 'rendered seal' rather than 'flat silhouette'
-            feel. Drawn semi-transparent so they don't darken the
-            already-low watermark opacity further. */}
-        <g stroke="#FFFFFF" strokeWidth="0.7" strokeLinecap="round" opacity="0.5">
-          <line x1="48" y1="80" x2="46" y2="96" />
-          <line x1="62" y1="82" x2="60" y2="98" />
-          <line x1="76" y1="86" x2="76" y2="100" />
-          <line x1="152" y1="80" x2="154" y2="96" />
-          <line x1="138" y1="82" x2="140" y2="98" />
-          <line x1="124" y1="86" x2="124" y2="100" />
+        {/* Crossed swords below the palm — the curved scimitars are
+            simplified here to straight strokes for clarity at
+            watermark opacity. The pommels (small filled circles)
+            at each end break up the line ends and read as 'sword
+            handle' more clearly than naked stroke caps. */}
+        <g stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" fill="none">
+          <line x1="82" y1="58" x2="118" y2="44" />
+          <line x1="118" y1="58" x2="82" y2="44" />
         </g>
+        <g fill="currentColor">
+          <circle cx="82" cy="58" r="1.6" />
+          <circle cx="118" cy="58" r="1.6" />
+          <circle cx="82" cy="44" r="1.6" />
+          <circle cx="118" cy="44" r="1.6" />
+        </g>
+
+        {/* Arabic ministry name — 'وزارة الداخلية' (Ministry of
+            Interior) on the upper-centre line, larger weight; and
+            'المملكة العربية السعودية' (Kingdom of Saudi Arabia)
+            on the lower-centre line, smaller. Both rendered with
+            the system font stack which carries solid Arabic glyph
+            coverage on Windows / macOS / iOS / Linux without a
+            web-font fetch. direction="rtl" guarantees the
+            shaping engine treats them as right-to-left script
+            even when the surrounding flow is LTR. */}
+        <text
+          x="100" y="100"
+          textAnchor="middle"
+          fontSize="13" fontWeight="700"
+          fill="currentColor"
+          fontFamily="'Segoe UI', 'Tahoma', 'Arial', sans-serif"
+          direction="rtl"
+        >
+          وزارة الداخلية
+        </text>
+        <text
+          x="100" y="120"
+          textAnchor="middle"
+          fontSize="8" fontWeight="600"
+          fill="currentColor"
+          fontFamily="'Segoe UI', 'Tahoma', 'Arial', sans-serif"
+          direction="rtl"
+        >
+          المملكة العربية السعودية
+        </text>
       </svg>
 
       {/* All actual content sits above the watermark via z-index. */}
