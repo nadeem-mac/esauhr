@@ -1,64 +1,63 @@
-import React, { useMemo, useState, useCallback } from 'react';
-import { X, Download, LayoutGrid, Users2, Building2, ZoomIn, ZoomOut } from 'lucide-react';
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
+import { X, Download, LayoutGrid, Users2, Building2, ZoomIn, ZoomOut, Printer, Maximize2 } from 'lucide-react';
 
 // =============================================================================
-// OrgChartView — tree edition (rev. 2)
+// OrgChartView — rev. 3
 //
-// Per Nadeem 2026-05-09 (second pass): the previous tier-based layout
-// rendered each level as a flat horizontal row. That works for shallow
-// trees but stops feeling like an org chart once a parent has more
-// than 3-4 reports — the children look like a list, not a hierarchy.
+// Per Nadeem 2026-05-09 (third pass):
+//   • Tree should fit on a single screen page vertically (horizontal
+//     scroll OK for wide trees, no vertical scroll inside the modal).
+//   • Tree should print on a single A4 landscape page, shrunk to fit.
+//   • John Ho is a synthetic CEO node — not in the employees table.
+//   • All Riyadh staff (location='RUH') report to Zaher Abu Hosa
+//     (H94432) regardless of their stored manager_id.
+//   • Title taxonomy: CEO (John), DJVP (Sharique H94460,
+//     Sadakathullah H94076), AM (Nadeem H94152, Zaher H94432),
+//     M (anyone else with direct reports), S (leaf nodes).
+//   • Nadeem renders as a normal AM under Sadakathullah — no admin
+//     accent on his card.
 //
-// This rewrite renders a proper hierarchical tree using the classic
-// `<ul><li>` CSS pattern with connector lines drawn by ::before /
-// ::after pseudo-elements. Each parent sits over its children with a
-// vertical drop, a horizontal sibling bar, and short verticals down
-// to each child. Same connector convention used in printed org charts
-// for decades — instantly readable.
-//
-// Card design also got a polish pass to the visual quality the user
-// asked for: subtle gradients, layered shadows, ringed avatars,
-// refined typography hierarchy. Tier-distinct accents preserve the
-// scan-at-a-glance role recognition from rev 1.
-//
-// Two view modes via segmented toggle:
-//   • Summary — depth-limited to 3 tiers (CEO + DJVPs + managers).
-//     Clipped subtrees still surface their report count via a
-//     "↓ N reports" tail on the parent card so depth is implicit.
-//   • Full — every employee, every level. Horizontal scroll handles
-//     wide trees on narrower screens.
-//
-// Two output paths preserved from rev 1:
-//   • Modal — render in an overlay inside the portal.
-//   • Download HTML — fully self-contained file with the same tree
-//     CSS inlined, suitable for emailing or printing offline.
-//
-// Tree-build invariants:
-//   • Root = anyone with no manager_id, manager_id pointing to a
-//     non-existent employee, or manager_id pointing to themselves.
-//   • Cycle guard breaks loops within 10 hops (defense against
-//     bad data — Sharique/Sadakathullah used to point at each other).
-//   • Children sorted alphabetically inside each parent so reload
-//     order is deterministic.
+// Implementation summary:
+//   • buildTree() now synthesises the CEO root, repoints all
+//     Riyadh-located staff (except Zaher himself) at Zaher,
+//     repoints orphans/cycles at the CEO, and runs the same
+//     deterministic alphabetical sort within each parent.
+//   • titleFor() resolves the role abbreviation per the table
+//     above; PSN-specific overrides win over the heuristic.
+//   • Card styling drops the prior 'admin-distinct accent' for
+//     Nadeem since he's now an ordinary AM in the chart.
+//   • Fit-to-screen via JS-measured height ratio applied as a
+//     CSS transform; recomputes on resize and on tree change.
+//   • Print path uses beforeprint/afterprint listeners to set
+//     a CSS variable --print-scale, applied via @media print
+//     transform: scale(...). @page is A4 landscape with 8mm
+//     margins; toolbar/chrome hidden for print.
 // =============================================================================
 
-// Initials for the avatar — first letter of first + first letter of
-// last name. Fall back to the last two PSN chars if the name is
-// missing or one-word.
-function initialsOf(name, psn) {
-  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) {
-    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-  }
-  if (parts.length === 1 && parts[0].length >= 2) {
-    return parts[0].slice(0, 2).toUpperCase();
-  }
-  return String(psn || '??').slice(-2).toUpperCase();
-}
+const SYNTHETIC_CEO_ID = '__ceo_node__';
+const ZAHER_PSN        = 'H94432';
 
-// Department/location code → human label. Used in the tooltip and
-// in the card subtitle. Codes the user adds in future automatically
-// fall back to the raw code if not in the lookup.
+// PSN-specific title overrides. Anything not in this map falls
+// through to the role-from-tree heuristic in titleFor().
+const TITLE_OVERRIDES = {
+  [SYNTHETIC_CEO_ID]: 'CEO',
+  'H94460': 'DJVP', // Sharique
+  'H94076': 'DJVP', // Sadakathullah
+  'H94152': 'AM',   // Nadeem
+  'H94432': 'AM',   // Zaher
+};
+
+// Long-form labels for the title abbreviations. Surfaced in the
+// tooltip on hover so the chart is self-explanatory even when
+// printed and given to someone unfamiliar with the abbreviations.
+const TITLE_LONG = {
+  CEO:  'Chief Executive Officer',
+  DJVP: 'Deputy Junior Vice President',
+  AM:   'Assistant Manager',
+  M:    'Manager',
+  S:    'Staff',
+};
+
 const DEPT_LABEL = {
   MGT: 'Management',
   SUP: 'Supervisory',
@@ -75,50 +74,104 @@ const LOC_LABEL = {
   RUH: 'Riyadh',
 };
 
-// Build a tree from a flat employee array. Returns the array of
-// roots. See file header for invariants.
-function buildTree(employees) {
+function initialsOf(name, psn) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+  if (parts.length === 1 && parts[0].length >= 2) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+  return String(psn || '??').slice(-2).toUpperCase();
+}
+
+// Synthesise the CEO node, repoint Riyadh staff at Zaher, and tag
+// orphans/cycles for repointing at the CEO. Returns a flat array
+// the buildTree pass can index by id.
+function preprocessEmployees(rawEmployees) {
+  const ceo = {
+    id: SYNTHETIC_CEO_ID,
+    name: 'JOHN HO',
+    secondaryName: 'Chung Hsing Ho',
+    department: 'MGT',
+    location: 'DAM',
+    manager_id: null,
+    isSynthetic: true,
+  };
+
+  const out = [ceo];
+  for (const e of (rawEmployees || [])) {
+    if (!e?.id) continue;
+    if (e.id === SYNTHETIC_CEO_ID) continue; // Defensive — never happens in practice
+    // Riyadh override — anyone in RUH (except Zaher himself) reports
+    // to Zaher in the chart, regardless of their stored manager_id.
+    // This implements Nadeem's directive that Zaher coordinates the
+    // Riyadh branch even though he's also tagged as AM in the title
+    // taxonomy. Zaher's own manager_id stays as-is (he reports to
+    // Sadakathullah).
+    if (e.location === 'RUH' && e.id !== ZAHER_PSN) {
+      out.push({ ...e, manager_id: ZAHER_PSN });
+    } else {
+      out.push({ ...e });
+    }
+  }
+  return out;
+}
+
+// Build the tree. Roots collapse to a single virtual CEO node.
+// Cycles and orphans are repointed at the CEO so the chart never
+// shows dangling subtrees outside the main hierarchy.
+function buildTree(rawEmployees) {
+  const augmented = preprocessEmployees(rawEmployees);
   const byId = new Map();
-  for (const emp of employees) {
-    if (!emp?.id) continue;
+  for (const emp of augmented) {
     byId.set(emp.id, { ...emp, children: [] });
   }
-  const roots = [];
+  const ceo = byId.get(SYNTHETIC_CEO_ID);
+
   for (const node of byId.values()) {
-    const mgrId = node.manager_id;
-    if (!mgrId || !byId.has(mgrId) || mgrId === node.id) {
-      roots.push(node);
-      continue;
+    if (node.id === SYNTHETIC_CEO_ID) continue;
+
+    let mgrId = node.manager_id;
+
+    // Orphan — no manager or manager not in our employee set →
+    // attach to CEO. Covers freshly hired staff before
+    // manager_id is set, deleted-manager cases, and any other
+    // dangling reference.
+    if (!mgrId || !byId.has(mgrId)) {
+      mgrId = SYNTHETIC_CEO_ID;
+    } else {
+      // Cycle guard — walk up at most 10 hops; if we loop back
+      // to ourselves, repoint at the CEO. Defends against the
+      // known Sharique↔Sadakathullah circular reference and any
+      // future bad data.
+      let cursor = byId.get(mgrId);
+      let cyclic = false;
+      let hops = 0;
+      while (cursor && hops < 10) {
+        if (cursor.id === node.id) { cyclic = true; break; }
+        if (cursor.id === SYNTHETIC_CEO_ID) break;
+        cursor = cursor.manager_id ? byId.get(cursor.manager_id) : null;
+        hops++;
+      }
+      if (cyclic) mgrId = SYNTHETIC_CEO_ID;
     }
-    // Cycle guard — walk up the chain, abort if we hit ourselves
-    // within 10 hops. Org charts realistically never go that deep.
-    let cursor = byId.get(mgrId);
-    let cyclic = false;
-    let hops = 0;
-    while (cursor && hops < 10) {
-      if (cursor.id === node.id) { cyclic = true; break; }
-      cursor = cursor.manager_id ? byId.get(cursor.manager_id) : null;
-      hops++;
-    }
-    if (cyclic) {
-      roots.push(node);
-      continue;
-    }
+
     byId.get(mgrId).children.push(node);
   }
+
+  // Alphabetical sort within each parent for deterministic render.
   const sortRecursive = (nodes) => {
     nodes.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
     nodes.forEach(n => sortRecursive(n.children));
   };
-  sortRecursive(roots);
-  return roots;
+  sortRecursive([ceo]);
+  return [ceo];
 }
 
-// Clip the tree to a maximum depth. At the cutoff layer, children
-// are collapsed and replaced with a `_clippedCount` marker so the
-// card can render "↓ N reports" instead of recursing further. The
-// clipping happens by depth, not by tier, so each subtree gets its
-// own depth budget — works correctly for non-uniform trees.
+// Clip the tree at a maximum depth from each subtree root.
+// Replaced children get rolled up into a _clippedCount on the
+// remaining parent so the card can show "↓ N" without recursing.
 function clipDepth(nodes, maxDepth, currentDepth = 0) {
   return nodes.map(node => {
     if (currentDepth >= maxDepth - 1) {
@@ -132,9 +185,6 @@ function clipDepth(nodes, maxDepth, currentDepth = 0) {
   });
 }
 
-// Total number of descendants under a node (recursively, all levels).
-// Used by clipDepth to populate the "↓ N reports" tail when summary
-// mode hides the actual subtree.
 function countDescendants(node) {
   let n = 0;
   const walk = (kids) => {
@@ -147,13 +197,25 @@ function countDescendants(node) {
   return n;
 }
 
-// Tier-aware visual styling. Tier 0 is the CEO. The DJVPs Nadeem
-// designated (Sharique, Sadakathullah) sit at tier 1. Tier 2 is
-// usually department managers / supervisors. Tier 3+ is staff.
-// HR reviewer (Bashaier) and admin (Nadeem) get distinct accents
-// regardless of tier so they're recognisable in dense subtrees.
+// Resolve the role abbreviation for a given node. PSN overrides
+// always win; otherwise tier 0 is CEO, leaf nodes are S, and
+// anyone with at least one direct (or clipped) report is M.
+function titleFor(node, tier) {
+  if (TITLE_OVERRIDES[node.id]) return TITLE_OVERRIDES[node.id];
+  if (tier === 0) return 'CEO';
+  const reportCount = (node.children || []).length + (node._clippedCount || 0);
+  if (reportCount > 0) return 'M';
+  return 'S';
+}
+
+// Tier-aware visual styling. CEO and DJVPs get the most prominent
+// borders/shadows. The HR-reviewer accent (Bashaier) and admin
+// accent (Nadeem) are dropped per Nadeem's instruction — both
+// render as ordinary tier nodes now.
 function styleFor(node, tier) {
-  if (tier === 0) {
+  const title = titleFor(node, tier);
+
+  if (tier === 0 || title === 'CEO') {
     return {
       borderColor: '#2D5F3F',
       borderWidth: 2,
@@ -165,7 +227,7 @@ function styleFor(node, tier) {
       shadow: '0 12px 32px rgba(45, 95, 63, 0.18), 0 2px 6px rgba(31, 27, 22, 0.08)',
     };
   }
-  if (tier === 1) {
+  if (title === 'DJVP') {
     return {
       borderColor: '#8B5A1F',
       borderWidth: 2,
@@ -177,31 +239,19 @@ function styleFor(node, tier) {
       shadow: '0 8px 24px rgba(139, 90, 31, 0.14), 0 2px 4px rgba(31, 27, 22, 0.06)',
     };
   }
-  if (node.is_hr_reviewer) {
+  if (title === 'AM') {
     return {
-      borderColor: '#2D5F3F',
+      borderColor: '#A87543',
       borderWidth: 1.5,
-      avatarBg: 'linear-gradient(135deg, #3D7A52 0%, #2D5F3F 100%)',
-      avatarRing: 'rgba(45, 95, 63, 0.14)',
-      tagBg: 'rgba(45, 95, 63, 0.10)',
-      tagColor: '#2D5F3F',
+      avatarBg: 'linear-gradient(135deg, #B17D45 0%, #8B5A1F 100%)',
+      avatarRing: 'rgba(168, 117, 67, 0.16)',
+      tagBg: 'rgba(168, 117, 67, 0.12)',
+      tagColor: '#7A4F1F',
       cardBg: '#FFFFFF',
-      shadow: '0 4px 14px rgba(45, 95, 63, 0.10), 0 1px 3px rgba(31, 27, 22, 0.05)',
+      shadow: '0 5px 14px rgba(168, 117, 67, 0.14), 0 1px 3px rgba(31, 27, 22, 0.05)',
     };
   }
-  if (node.is_admin) {
-    return {
-      borderColor: '#1F1B16',
-      borderWidth: 1.5,
-      avatarBg: 'linear-gradient(135deg, #3A342B 0%, #1F1B16 100%)',
-      avatarRing: 'rgba(31, 27, 22, 0.14)',
-      tagBg: 'rgba(31, 27, 22, 0.08)',
-      tagColor: '#1F1B16',
-      cardBg: '#FFFFFF',
-      shadow: '0 4px 14px rgba(31, 27, 22, 0.10), 0 1px 3px rgba(31, 27, 22, 0.05)',
-    };
-  }
-  if (tier === 2) {
+  if (title === 'M') {
     return {
       borderColor: '#C49B61',
       borderWidth: 1.5,
@@ -213,6 +263,7 @@ function styleFor(node, tier) {
       shadow: '0 4px 12px rgba(196, 155, 97, 0.16), 0 1px 3px rgba(31, 27, 22, 0.05)',
     };
   }
+  // 'S' — staff
   return {
     borderColor: '#D4D0C7',
     borderWidth: 1.5,
@@ -225,50 +276,51 @@ function styleFor(node, tier) {
   };
 }
 
+// Role chip text. The new format (per Nadeem) appends the title
+// abbreviation after dept · loc: 'BIZ · DAM · DJVP'. CEO node
+// gets 'MGT · CEO' since location is irrelevant for him.
 function roleLabel(node, tier) {
-  if (tier === 0) return 'MGT · CEO';
+  const title = titleFor(node, tier);
+  if (tier === 0 || title === 'CEO') return `MGT · ${title}`;
   const d = node.department || '—';
   const l = node.location || '—';
-  return `${d} · ${l}`;
+  return `${d} · ${l} · ${title}`;
 }
 
 // =============================================================================
-// Tree CSS — drawn via pseudo-elements on the nested ul/li structure.
-// One <style> block kept here so the live and exported chart share
-// the exact same connector geometry. Class names are namespaced under
-// .esau-tree- so they can't collide with anything else on the page.
+// Tree CSS — connector geometry plus print/screen layout rules.
+// Both the live React path and the standalone HTML export include
+// this block so they render identically in any context.
 // =============================================================================
 const TREE_CSS = `
 .esau-tree-wrap {
   display: inline-block;
-  padding: 24px 48px 32px;
+  padding: 16px 32px 24px;
   text-align: center;
   font-family: 'Anthropic Sans', -apple-system, 'Segoe UI', sans-serif;
 }
 .esau-tree-wrap ul {
   position: relative;
-  padding: 28px 0 0 0;
+  padding: 24px 0 0 0;
   margin: 0;
   list-style: none;
   display: inline-flex;
   justify-content: center;
 }
-/* Vertical drop from the parent down into the children-row */
 .esau-tree-wrap ul::before {
   content: '';
   position: absolute;
   top: 0;
   left: 50%;
   border-left: 1.5px solid #C49B61;
-  height: 14px;
+  height: 12px;
   opacity: 0.55;
 }
 .esau-tree-wrap li {
   position: relative;
-  padding: 14px 14px 0 14px;
+  padding: 12px 10px 0 10px;
   text-align: center;
 }
-/* Horizontal bar across siblings (left and right halves) */
 .esau-tree-wrap li::before,
 .esau-tree-wrap li::after {
   content: '';
@@ -276,48 +328,73 @@ const TREE_CSS = `
   top: 0;
   border-top: 1.5px solid #C49B61;
   width: 50%;
-  height: 14px;
+  height: 12px;
   opacity: 0.55;
 }
 .esau-tree-wrap li::before { right: 50%; }
 .esau-tree-wrap li::after  { left: 50%; }
-/* Single child — drop a centred vertical only, no horizontal bar */
 .esau-tree-wrap li:only-child::before,
 .esau-tree-wrap li:only-child::after { display: none; }
-/* End-of-row siblings — half-bar is trimmed at the outer edge so
-   the connector doesn't extend past the outermost child */
 .esau-tree-wrap li:first-child::before,
 .esau-tree-wrap li:last-child::after { border: 0 none; }
-/* Rounded corners at the bend so the right-angle joins look polished */
 .esau-tree-wrap li:first-child::after  { border-radius: 6px 0 0 0; border-left: 1.5px solid #C49B61; }
 .esau-tree-wrap li:last-child::before  { border-radius: 0 6px 0 0; border-right: 1.5px solid #C49B61; }
-/* The root <ul>'s own ::before drop is unwanted — we want the
-   tree to start with the root card, not a dangling line above it. */
 .esau-tree-wrap > ul::before { display: none; }
 .esau-tree-wrap > ul > li { padding-top: 0; }
 .esau-tree-wrap > ul > li::before,
 .esau-tree-wrap > ul > li::after { display: none; }
-/* Card hover — subtle lift for interactivity */
 .esau-tree-wrap .esau-card {
   transition: transform 140ms ease-out, box-shadow 140ms ease-out;
 }
 .esau-tree-wrap .esau-card:hover {
   transform: translateY(-2px);
 }
+
+/* === Print rules ===
+   A4 landscape, 8mm margins. The tree is wrapped in
+   .esau-org-print-target which becomes the only thing visible
+   when printing. Scale is set by JS via --print-scale calculated
+   from the actual chart dimensions vs the printable area, applied
+   here via transform. transform-origin: top left is critical so
+   the scaled tree starts at the page corner instead of getting
+   clipped on the right.
+*/
+@page {
+  size: A4 landscape;
+  margin: 8mm;
+}
 @media print {
-  .esau-tree-wrap .esau-card { transition: none; }
-  .esau-tree-wrap .esau-card:hover { transform: none; }
+  body * { visibility: hidden !important; }
+  .esau-org-print-target,
+  .esau-org-print-target * { visibility: visible !important; }
+  .esau-org-print-target {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: auto !important;
+    height: auto !important;
+    background: #FFFFFF !important;
+    box-shadow: none !important;
+    transform: scale(var(--print-scale, 1));
+    transform-origin: top left;
+  }
+  .esau-tree-wrap .esau-card { transition: none !important; }
+  .esau-tree-wrap .esau-card:hover { transform: none !important; }
+  .esau-org-no-print { display: none !important; }
 }
 `;
 
 // =============================================================================
-// NodeCard — the visible block per person. Uses pre-computed style
-// from styleFor() so the card matches its tier accent without any
-// ternaries in JSX.
+// NodeCard — single visible block. tooltip exposes the long-form
+// title so anyone unfamiliar with the abbreviations gets the
+// expansion on hover (and on a printed sheet, by reference if
+// they have access to the legend in the toolbar).
 // =============================================================================
 function NodeCard({ node, tier }) {
   const s = styleFor(node, tier);
   const initials = initialsOf(node.name, node.id);
+  const title = titleFor(node, tier);
+  const titleLong = TITLE_LONG[title] || title;
   const role = roleLabel(node, tier);
   const directReports = (node.children || []).length;
   const clippedReports = node._clippedCount || 0;
@@ -325,8 +402,9 @@ function NodeCard({ node, tier }) {
   const deptFull = DEPT_LABEL[node.department] || node.department || '';
   const locFull = LOC_LABEL[node.location] || node.location || '';
   const isCeo = tier === 0;
-  const isDjvp = tier === 1;
-  const tooltip = `${node.name}\n${node.id}${deptFull ? '\n' + deptFull : ''}${locFull ? ' · ' + locFull : ''}`;
+  const isDjvp = title === 'DJVP';
+  const isSynth = !!node.isSynthetic;
+  const tooltip = `${node.name}${node.secondaryName ? ' (' + node.secondaryName + ')' : ''}\n${titleLong}${deptFull ? '\n' + deptFull : ''}${locFull ? ' · ' + locFull : ''}${isSynth ? '' : '\n' + node.id}`;
 
   return (
     <div
@@ -336,25 +414,25 @@ function NodeCard({ node, tier }) {
         background: s.cardBg,
         border: `${s.borderWidth}px solid ${s.borderColor}`,
         borderRadius: 14,
-        padding: isCeo ? '20px 18px' : isDjvp ? '16px 16px' : '14px 14px',
-        minWidth: isCeo ? 230 : isDjvp ? 200 : tier >= 3 ? 168 : 184,
-        maxWidth: isCeo ? 270 : 220,
+        padding: isCeo ? '16px 16px' : isDjvp ? '14px 14px' : '12px 12px',
+        minWidth: isCeo ? 220 : isDjvp ? 196 : tier >= 3 ? 164 : 178,
+        maxWidth: isCeo ? 260 : 216,
         boxShadow: s.shadow,
         textAlign: 'left',
         cursor: 'default',
         display: 'inline-block',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 9 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 7 }}>
         <div
           style={{
-            width: isCeo ? 46 : isDjvp ? 42 : 36,
-            height: isCeo ? 46 : isDjvp ? 42 : 36,
+            width: isCeo ? 42 : isDjvp ? 38 : 34,
+            height: isCeo ? 42 : isDjvp ? 38 : 34,
             borderRadius: '50%',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontSize: isCeo ? 14 : isDjvp ? 13 : 12,
+            fontSize: isCeo ? 13 : isDjvp ? 12 : 11,
             fontWeight: 600,
             letterSpacing: '0.04em',
             color: '#FFFFFF',
@@ -368,10 +446,10 @@ function NodeCard({ node, tier }) {
         <div style={{ minWidth: 0 }}>
           <span
             style={{
-              fontSize: 9,
+              fontSize: 8.5,
               letterSpacing: '0.18em',
               fontWeight: 600,
-              padding: '3px 9px',
+              padding: '2.5px 8px',
               borderRadius: 999,
               display: 'inline-block',
               background: s.tagBg,
@@ -385,7 +463,7 @@ function NodeCard({ node, tier }) {
       </div>
       <div
         style={{
-          fontSize: isCeo ? 15 : isDjvp ? 14 : 13,
+          fontSize: isCeo ? 14 : isDjvp ? 13 : 12,
           fontWeight: 600,
           color: '#1F1B16',
           lineHeight: 1.25,
@@ -394,24 +472,31 @@ function NodeCard({ node, tier }) {
       >
         {node.name}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 3 }}>
-        <span
-          style={{
-            fontSize: 10.5,
-            color: '#6B6660',
-            fontFamily: '"SF Mono", Consolas, monospace',
-            letterSpacing: '0.02em',
-          }}
-        >
-          {node.id}
-        </span>
+      {node.secondaryName && (
+        <div style={{ fontSize: 10.5, color: '#6B6660', fontStyle: 'italic', marginTop: 1 }}>
+          {node.secondaryName}
+        </div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
+        {!isSynth && (
+          <span
+            style={{
+              fontSize: 10,
+              color: '#6B6660',
+              fontFamily: '"SF Mono", Consolas, monospace',
+              letterSpacing: '0.02em',
+            }}
+          >
+            {node.id}
+          </span>
+        )}
         {totalReports > 0 && (
           <span
             style={{
-              fontSize: 9.5,
+              fontSize: 9,
               color: s.tagColor,
               fontWeight: 700,
-              padding: '1.5px 7px',
+              padding: '1px 6px',
               borderRadius: 999,
               background: s.tagBg,
               letterSpacing: '0.04em',
@@ -424,30 +509,10 @@ function NodeCard({ node, tier }) {
           </span>
         )}
       </div>
-      {isCeo && (
-        <div
-          style={{
-            fontSize: 10.5,
-            color: '#6B6660',
-            marginTop: 8,
-            paddingTop: 8,
-            borderTop: '1px solid #F0EBDF',
-            lineHeight: 1.35,
-            fontStyle: 'italic',
-          }}
-        >
-          Evergreen Shipping Agency Saudi Co. (LLC)
-        </div>
-      )}
     </div>
   );
 }
 
-// =============================================================================
-// TreeNode — recursive renderer. Each node is an <li> wrapping a
-// card and (if it has children) a nested <ul> that the CSS lays
-// out as a row of <li>s with the connector lines drawn between.
-// =============================================================================
 function TreeNode({ node, tier }) {
   return (
     <li>
@@ -464,11 +529,10 @@ function TreeNode({ node, tier }) {
 }
 
 // =============================================================================
-// ChartBody — wrapping element used by both the live modal view and
-// the standalone HTML export. Contains the centred header (kicker,
-// title, subtitle), the tree, and the footer mark.
+// ChartBody — wraps the tree with the centred header & footer.
+// Used by both the live modal and the standalone HTML export.
 // =============================================================================
-function ChartBody({ roots, mode, totalEmployees, headOnly = false }) {
+function ChartBody({ roots, mode, totalEmployees, treeRef }) {
   const today = new Date().toLocaleDateString('en-GB', {
     day: 'numeric', month: 'long', year: 'numeric',
   });
@@ -476,65 +540,49 @@ function ChartBody({ roots, mode, totalEmployees, headOnly = false }) {
   return (
     <div style={{ background: '#FFFBF1', borderRadius: 16, paddingBottom: 8 }}>
       <style>{TREE_CSS}</style>
-      <div style={{ textAlign: 'center', padding: '28px 24px 8px' }}>
-        <div
-          style={{
-            fontSize: 10,
-            letterSpacing: '0.28em',
-            color: '#2D5F3F',
-            fontWeight: 600,
-          }}
-        >
+      <div style={{ textAlign: 'center', padding: '18px 24px 4px' }}>
+        <div style={{ fontSize: 10, letterSpacing: '0.28em', color: '#2D5F3F', fontWeight: 600 }}>
           EVERGREEN SHIPPING AGENCY SAUDI CO. (LLC)
         </div>
-        <div
-          style={{
-            fontSize: 24,
-            color: '#1F1B16',
-            fontWeight: 500,
-            marginTop: 8,
-            letterSpacing: '-0.01em',
-            fontFamily: 'Georgia, serif',
-          }}
-        >
+        <div style={{ fontSize: 22, color: '#1F1B16', fontWeight: 500, marginTop: 6, letterSpacing: '-0.01em', fontFamily: 'Georgia, serif' }}>
           Organization Chart
         </div>
-        <div style={{ fontSize: 12, color: '#6B6660', marginTop: 6 }}>
+        <div style={{ fontSize: 11, color: '#6B6660', marginTop: 4 }}>
           As of {today}{' · '}{totalEmployees} employee{totalEmployees === 1 ? '' : 's'}
           {' · '}{mode === 'summary' ? 'Summary view' : 'Full view'}
         </div>
       </div>
 
-      <div style={{ overflowX: 'auto', overflowY: 'visible', padding: '8px 0 0 0' }}>
-        <div className="esau-tree-wrap">
-          <ul>
-            {roots.map(root => (
-              <TreeNode key={root.id} node={root} tier={0} />
-            ))}
-          </ul>
-        </div>
+      <div ref={treeRef} className="esau-tree-wrap">
+        <ul>
+          {roots.map(root => (
+            <TreeNode key={root.id} node={root} tier={0} />
+          ))}
+        </ul>
       </div>
 
       <div
         style={{
           textAlign: 'center',
-          margin: '8px 24px 0',
-          padding: '14px 0 8px',
+          margin: '4px 24px 0',
+          padding: '10px 0 6px',
           borderTop: '1px solid #F0EBDF',
-          fontSize: 10,
+          fontSize: 9,
           color: '#9B928A',
           letterSpacing: '0.18em',
           fontWeight: 600,
         }}
       >
-        GENERATED FROM EVERGREEN HR PORTAL · esauhr.netlify.app
+        CEO · DJVP · M (MANAGER) · AM (ASSISTANT MANAGER) · S (STAFF)
+        {' · '}GENERATED FROM EVERGREEN HR PORTAL · esauhr.netlify.app
       </div>
     </div>
   );
 }
 
-// Tiny escape helper for the standalone export. The live React path
-// auto-escapes; the standalone export builds raw strings.
+// =============================================================================
+// Standalone HTML export
+// =============================================================================
 function escapeHtml(s) {
   return String(s || '')
     .replace(/&/g, '&amp;')
@@ -544,63 +592,56 @@ function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
-// Recursively render tree HTML for the standalone export. Mirrors
-// the React TreeNode/NodeCard pair but emits inline styles in plain
-// HTML. Same TREE_CSS is embedded in the page <style> block for the
-// connector geometry.
 function renderTreeHtml(nodes, tier) {
   return `<ul>${nodes.map(node => {
     const s = styleFor(node, tier);
     const initials = initialsOf(node.name, node.id);
+    const title = titleFor(node, tier);
     const role = roleLabel(node, tier);
     const directReports = (node.children || []).length;
     const clippedReports = node._clippedCount || 0;
     const totalReports = directReports + clippedReports;
     const isCeo = tier === 0;
-    const isDjvp = tier === 1;
+    const isDjvp = title === 'DJVP';
+    const isSynth = !!node.isSynthetic;
 
     const cardStyle = [
       `background:${s.cardBg}`,
       `border:${s.borderWidth}px solid ${s.borderColor}`,
       `border-radius:14px`,
-      `padding:${isCeo ? '20px 18px' : isDjvp ? '16px 16px' : '14px 14px'}`,
-      `min-width:${isCeo ? 230 : isDjvp ? 200 : tier >= 3 ? 168 : 184}px`,
-      `max-width:${isCeo ? 270 : 220}px`,
+      `padding:${isCeo ? '16px 16px' : isDjvp ? '14px 14px' : '12px 12px'}`,
+      `min-width:${isCeo ? 220 : isDjvp ? 196 : tier >= 3 ? 164 : 178}px`,
+      `max-width:${isCeo ? 260 : 216}px`,
       `box-shadow:${s.shadow}`,
       `text-align:left`,
       `display:inline-block`,
     ].join(';');
 
-    const avatarSize = isCeo ? 46 : isDjvp ? 42 : 36;
-    const avatarFontSize = isCeo ? 14 : isDjvp ? 13 : 12;
-    const nameFontSize = isCeo ? 15 : isDjvp ? 14 : 13;
+    const avatarSize = isCeo ? 42 : isDjvp ? 38 : 34;
+    const avatarFontSize = isCeo ? 13 : isDjvp ? 12 : 11;
+    const nameFontSize = isCeo ? 14 : isDjvp ? 13 : 12;
 
     const cardHtml = `
-      <div class="esau-card" title="${escapeHtml(node.name)}\n${escapeHtml(node.id)}" style="${cardStyle}">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px;">
+      <div class="esau-card" style="${cardStyle}">
+        <div style="display:flex;align-items:center;gap:9px;margin-bottom:7px;">
           <div style="width:${avatarSize}px;height:${avatarSize}px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:${avatarFontSize}px;font-weight:600;letter-spacing:0.04em;color:#FFFFFF;background:${s.avatarBg};box-shadow:0 0 0 3px ${s.avatarRing};flex-shrink:0;">${escapeHtml(initials)}</div>
-          <div><span style="font-size:9px;letter-spacing:0.18em;font-weight:600;padding:3px 9px;border-radius:999px;display:inline-block;background:${s.tagBg};color:${s.tagColor};text-transform:uppercase;">${escapeHtml(role)}</span></div>
+          <div><span style="font-size:8.5px;letter-spacing:0.18em;font-weight:600;padding:2.5px 8px;border-radius:999px;display:inline-block;background:${s.tagBg};color:${s.tagColor};text-transform:uppercase;">${escapeHtml(role)}</span></div>
         </div>
         <div style="font-size:${nameFontSize}px;font-weight:600;color:#1F1B16;line-height:1.25;letter-spacing:-0.005em;">${escapeHtml(node.name || '')}</div>
-        <div style="display:flex;align-items:center;gap:8px;margin-top:3px;">
-          <span style="font-size:10.5px;color:#6B6660;font-family:'SF Mono',Consolas,monospace;letter-spacing:0.02em;">${escapeHtml(node.id || '')}</span>
-          ${totalReports > 0 ? `<span style="font-size:9.5px;color:${s.tagColor};font-weight:700;padding:1.5px 7px;border-radius:999px;background:${s.tagBg};letter-spacing:0.04em;">↓ ${totalReports}</span>` : ''}
+        ${node.secondaryName ? `<div style="font-size:10.5px;color:#6B6660;font-style:italic;margin-top:1px;">${escapeHtml(node.secondaryName)}</div>` : ''}
+        <div style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap;">
+          ${!isSynth ? `<span style="font-size:10px;color:#6B6660;font-family:'SF Mono',Consolas,monospace;letter-spacing:0.02em;">${escapeHtml(node.id || '')}</span>` : ''}
+          ${totalReports > 0 ? `<span style="font-size:9px;color:${s.tagColor};font-weight:700;padding:1px 6px;border-radius:999px;background:${s.tagBg};letter-spacing:0.04em;">↓ ${totalReports}</span>` : ''}
         </div>
-        ${isCeo ? `<div style="font-size:10.5px;color:#6B6660;margin-top:8px;padding-top:8px;border-top:1px solid #F0EBDF;line-height:1.35;font-style:italic;">Evergreen Shipping Agency Saudi Co. (LLC)</div>` : ''}
       </div>
     `;
-
     const childrenHtml = (node.children && node.children.length > 0)
       ? renderTreeHtml(node.children, tier + 1)
       : '';
-
     return `<li>${cardHtml}${childrenHtml}</li>`;
   }).join('')}</ul>`;
 }
 
-// Build a fully self-contained HTML document for download. All
-// styles (including the TREE_CSS connector pseudo-elements) are
-// embedded in a <style> tag so the file opens correctly offline.
 function buildStandaloneHtml(roots, totalEmployees, mode) {
   const today = new Date().toLocaleDateString('en-GB', {
     day: 'numeric', month: 'long', year: 'numeric',
@@ -614,30 +655,54 @@ function buildStandaloneHtml(roots, totalEmployees, mode) {
   <title>Evergreen Org Chart — ${today}</title>
   <style>
     body { margin: 0; padding: 24px; background: #F4EFE3; font-family: 'Calibri', 'Segoe UI', Arial, sans-serif; }
-    @media print {
-      body { background: #FFFFFF; padding: 0; }
-      .org-shell { box-shadow: none !important; }
-      .esau-card { transition: none !important; }
-    }
+    .org-shell { max-width: 1400px; margin: 0 auto; background: #FFFBF1; border-radius: 16px; box-shadow: 0 8px 32px rgba(31,27,22,0.10); padding-bottom: 8px; }
+    /* On-screen for the standalone file: scale-to-fit logic via JS
+       runs after window load; defaults to 1× before the script
+       sees the chart dimensions. */
+    .esau-fit-wrap { transform-origin: top center; }
     ${TREE_CSS}
   </style>
 </head>
 <body>
-  <div class="org-shell" style="max-width: 1400px; margin: 0 auto; background: #FFFBF1; border-radius: 16px; box-shadow: 0 8px 32px rgba(31,27,22,0.10); padding-bottom: 8px;">
-    <div style="text-align:center;padding:28px 24px 8px;">
+  <div class="org-shell esau-org-print-target">
+    <div style="text-align:center;padding:18px 24px 4px;">
       <div style="font-size:10px;letter-spacing:0.28em;color:#2D5F3F;font-weight:600;">EVERGREEN SHIPPING AGENCY SAUDI CO. (LLC)</div>
-      <div style="font-size:24px;color:#1F1B16;font-weight:500;margin-top:8px;letter-spacing:-0.01em;font-family:Georgia,serif;">Organization Chart</div>
-      <div style="font-size:12px;color:#6B6660;margin-top:6px;">As of ${today} · ${totalEmployees} employee${totalEmployees === 1 ? '' : 's'} · ${mode === 'summary' ? 'Summary view' : 'Full view'}</div>
+      <div style="font-size:22px;color:#1F1B16;font-weight:500;margin-top:6px;letter-spacing:-0.01em;font-family:Georgia,serif;">Organization Chart</div>
+      <div style="font-size:11px;color:#6B6660;margin-top:4px;">As of ${today} · ${totalEmployees} employee${totalEmployees === 1 ? '' : 's'} · ${mode === 'summary' ? 'Summary view' : 'Full view'}</div>
     </div>
     <div style="overflow-x:auto;padding:8px 0 0 0;">
-      <div class="esau-tree-wrap">
+      <div class="esau-tree-wrap" id="esau-tree-root">
         ${treeHtml}
       </div>
     </div>
-    <div style="text-align:center;margin:8px 24px 0;padding:14px 0 8px;border-top:1px solid #F0EBDF;font-size:10px;color:#9B928A;letter-spacing:0.18em;font-weight:600;">
-      GENERATED FROM EVERGREEN HR PORTAL · esauhr.netlify.app
+    <div style="text-align:center;margin:4px 24px 0;padding:10px 0 6px;border-top:1px solid #F0EBDF;font-size:9px;color:#9B928A;letter-spacing:0.18em;font-weight:600;">
+      CEO · DJVP · M (MANAGER) · AM (ASSISTANT MANAGER) · S (STAFF) · GENERATED FROM EVERGREEN HR PORTAL · esauhr.netlify.app
     </div>
   </div>
+  <script>
+    // Compute the print scale so the entire chart fits A4 landscape
+    // (1063 x 734 px usable after 8mm margins). Fires before each
+    // print and restores after, so users can still resize/zoom the
+    // page on screen without affecting print output.
+    (function() {
+      function computePrintScale() {
+        var tree = document.getElementById('esau-tree-root');
+        if (!tree) return;
+        var w = tree.scrollWidth;
+        var h = tree.scrollHeight;
+        // Headroom for the title block and footer in the print
+        // target — about 80px combined at 96dpi
+        var pageW = 1063;
+        var pageH = 734 - 90;
+        var s = Math.min(pageW / w, pageH / h, 1);
+        document.documentElement.style.setProperty('--print-scale', String(s));
+      }
+      window.addEventListener('beforeprint', computePrintScale);
+      // Also compute once on load so screen view can use it for
+      // the initial fit hint (CSS doesn't apply outside print).
+      window.addEventListener('load', computePrintScale);
+    })();
+  </script>
 </body>
 </html>`;
 }
@@ -655,28 +720,107 @@ function downloadHtmlFile(html, filename) {
 }
 
 // =============================================================================
-// OrgChartView — public component. Modal shell with toolbar +
-// scrollable tree body. Lazy-loaded by AppShell so its bundle cost
-// stays out of the main chunk.
+// OrgChartView — public component
 // =============================================================================
 export default function OrgChartView({ employees, onClose }) {
   const [mode, setMode] = useState('summary');
-  const [zoom, setZoom] = useState(1);
+  // Zoom can be a number (manual zoom) or 'fit' (auto-fit to height).
+  // 'fit' is the default so the chart starts at one-page-on-screen.
+  const [zoom, setZoom] = useState('fit');
+  const [computedFit, setComputedFit] = useState(1);
+  const treeRef = useRef(null);
+  const containerRef = useRef(null);
+  const printTargetRef = useRef(null);
 
-  // Build the full tree once; clip a copy for summary mode. Memoised
-  // so the heavy traversal only re-runs when employees or mode change.
   const fullTree = useMemo(() => buildTree(employees || []), [employees]);
   const displayTree = useMemo(() => (
-    mode === 'summary' ? clipDepth(fullTree, 3) : fullTree
+    mode === 'summary' ? clipDepth(fullTree, 4) : fullTree
   ), [fullTree, mode]);
 
   const totalEmployees = (employees || []).filter(e => e?.employment_status !== 'left').length;
+
+  // Compute the fit-to-screen scale. Constraint is height only —
+  // user wants horizontal scroll for wide trees, just no vertical
+  // scroll inside the modal. Recomputes on tree change and on
+  // window resize.
+  useEffect(() => {
+    if (zoom !== 'fit') return;
+    const recompute = () => {
+      const treeEl = treeRef.current;
+      const containerEl = containerRef.current;
+      if (!treeEl || !containerEl) return;
+      // Available height = modal body height (already constrained
+      // to 95vh by the parent flex). Subtract the static header +
+      // footer chrome heights so we measure only the tree area.
+      const naturalH = treeEl.scrollHeight;
+      const availableH = containerEl.clientHeight - 130; // header + footer
+      if (naturalH > 0 && availableH > 0) {
+        const scale = Math.min(1, availableH / naturalH);
+        setComputedFit(scale);
+      }
+    };
+    // Defer initial compute one frame so the tree has finished
+    // its first paint and scrollHeight is accurate.
+    const id = requestAnimationFrame(recompute);
+    window.addEventListener('resize', recompute);
+    return () => {
+      cancelAnimationFrame(id);
+      window.removeEventListener('resize', recompute);
+    };
+  }, [zoom, displayTree]);
+
+  // Print scale handler. Computes when 'beforeprint' fires so the
+  // value reflects the current chart size (post any zoom changes).
+  // Cleaned up on 'afterprint' so the screen view returns to
+  // normal scale.
+  useEffect(() => {
+    const computePrintScale = () => {
+      const treeEl = treeRef.current;
+      if (!treeEl) return;
+      const w = treeEl.scrollWidth;
+      const h = treeEl.scrollHeight;
+      // A4 landscape printable area at 96dpi minus 8mm margins
+      // and chart-header headroom (~90px combined for title +
+      // subtitle + footer + page padding)
+      const pageW = 1063;
+      const pageH = 734 - 90;
+      const s = Math.min(pageW / w, pageH / h, 1);
+      document.documentElement.style.setProperty('--print-scale', String(s));
+    };
+    const restore = () => {
+      document.documentElement.style.removeProperty('--print-scale');
+    };
+    window.addEventListener('beforeprint', computePrintScale);
+    window.addEventListener('afterprint', restore);
+    return () => {
+      window.removeEventListener('beforeprint', computePrintScale);
+      window.removeEventListener('afterprint', restore);
+    };
+  }, []);
+
+  const effectiveScale = zoom === 'fit' ? computedFit : zoom;
 
   const handleDownload = useCallback(() => {
     const html = buildStandaloneHtml(displayTree, totalEmployees, mode);
     const stamp = new Date().toISOString().slice(0, 10);
     downloadHtmlFile(html, `esau_org_chart_${mode}_${stamp}.html`);
   }, [displayTree, totalEmployees, mode]);
+
+  const handlePrint = useCallback(() => {
+    // Native print — beforeprint listener computes the scale,
+    // afterprint listener restores. The print stylesheet hides
+    // body * and shows only .esau-org-print-target.
+    window.print();
+  }, []);
+
+  const handleZoomIn = () => setZoom(z => {
+    const cur = z === 'fit' ? computedFit : z;
+    return Math.min(1.4, +(cur + 0.1).toFixed(2));
+  });
+  const handleZoomOut = () => setZoom(z => {
+    const cur = z === 'fit' ? computedFit : z;
+    return Math.max(0.4, +(cur - 0.1).toFixed(2));
+  });
 
   return (
     <div
@@ -686,33 +830,44 @@ export default function OrgChartView({ employees, onClose }) {
         zIndex: 80,
         background: 'rgba(15, 31, 26, 0.55)',
         display: 'flex',
-        alignItems: 'flex-start',
+        alignItems: 'center',
         justifyContent: 'center',
-        padding: 24,
-        overflowY: 'auto',
+        padding: '2.5vh 16px',
       }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose?.(); }}
     >
       <div
+        ref={printTargetRef}
+        className="esau-org-print-target"
         style={{
           background: '#FFFBF1',
           borderRadius: 16,
           maxWidth: 1400,
           width: '100%',
+          height: '95vh',
           boxShadow: '0 24px 64px rgba(31, 27, 22, 0.32)',
-          marginBottom: 24,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
         }}
       >
-        {/* Toolbar — branding + segmented mode toggle + zoom + actions */}
+        {/* Toolbar — flex-shrink:0 so it stays at fixed height while
+            the body fills the rest. Hidden in print via the global
+            .esau-org-no-print rule plus the parent visibility:hidden
+            print rule (which hides everything else outside the
+            print target). */}
         <div
+          className="esau-org-no-print"
           style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '16px 20px',
+            padding: '12px 18px',
             borderBottom: '1px solid #F0EBDF',
-            gap: 16,
+            gap: 12,
             flexWrap: 'wrap',
+            flexShrink: 0,
+            background: '#FFFBF1',
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -721,13 +876,12 @@ export default function OrgChartView({ employees, onClose }) {
               <div style={{ fontSize: 10, letterSpacing: '0.2em', color: '#6B6660', fontWeight: 600 }}>
                 ORG CHART
               </div>
-              <div style={{ fontSize: 14, color: '#1F1B16', fontWeight: 500 }}>
+              <div style={{ fontSize: 13, color: '#1F1B16', fontWeight: 500 }}>
                 Evergreen Shipping Agency Saudi Co.
               </div>
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            {/* Mode toggle */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <div
               style={{
                 display: 'inline-flex',
@@ -739,9 +893,9 @@ export default function OrgChartView({ employees, onClose }) {
               <button
                 onClick={() => setMode('summary')}
                 style={{
-                  padding: '6px 14px',
+                  padding: '5px 12px',
                   borderRadius: 999,
-                  fontSize: 12,
+                  fontSize: 11.5,
                   fontWeight: 600,
                   background: mode === 'summary' ? '#FFFFFF' : 'transparent',
                   color: mode === 'summary' ? '#1F1B16' : '#6B6660',
@@ -750,7 +904,7 @@ export default function OrgChartView({ employees, onClose }) {
                   boxShadow: mode === 'summary' ? '0 1px 3px rgba(31, 27, 22, 0.12)' : 'none',
                   display: 'inline-flex',
                   alignItems: 'center',
-                  gap: 6,
+                  gap: 5,
                 }}
               >
                 <LayoutGrid className="w-3.5 h-3.5" /> Summary
@@ -758,9 +912,9 @@ export default function OrgChartView({ employees, onClose }) {
               <button
                 onClick={() => setMode('full')}
                 style={{
-                  padding: '6px 14px',
+                  padding: '5px 12px',
                   borderRadius: 999,
-                  fontSize: 12,
+                  fontSize: 11.5,
                   fontWeight: 600,
                   background: mode === 'full' ? '#FFFFFF' : 'transparent',
                   color: mode === 'full' ? '#1F1B16' : '#6B6660',
@@ -769,15 +923,12 @@ export default function OrgChartView({ employees, onClose }) {
                   boxShadow: mode === 'full' ? '0 1px 3px rgba(31, 27, 22, 0.12)' : 'none',
                   display: 'inline-flex',
                   alignItems: 'center',
-                  gap: 6,
+                  gap: 5,
                 }}
               >
                 <Users2 className="w-3.5 h-3.5" /> Full
               </button>
             </div>
-            {/* Zoom controls — useful for full-view tall charts. Range
-                clamped 0.6×–1.4× so the tree never gets unreadably small
-                or crashes the modal layout. */}
             <div
               style={{
                 display: 'inline-flex',
@@ -788,24 +939,37 @@ export default function OrgChartView({ employees, onClose }) {
               }}
             >
               <button
-                onClick={() => setZoom(z => Math.max(0.6, +(z - 0.1).toFixed(2)))}
+                onClick={handleZoomOut}
                 title="Zoom out"
                 style={{
-                  width: 28, height: 28, borderRadius: 999, background: 'transparent',
+                  width: 26, height: 26, borderRadius: 999, background: 'transparent',
                   border: 'none', cursor: 'pointer', color: '#6B6660',
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                 }}
               >
                 <ZoomOut className="w-3.5 h-3.5" />
               </button>
-              <span style={{ fontSize: 11, color: '#6B6660', minWidth: 32, textAlign: 'center', fontWeight: 600 }}>
-                {Math.round(zoom * 100)}%
-              </span>
               <button
-                onClick={() => setZoom(z => Math.min(1.4, +(z + 0.1).toFixed(2)))}
+                onClick={() => setZoom('fit')}
+                title="Fit to screen"
+                style={{
+                  padding: '0 8px', height: 26, borderRadius: 999,
+                  background: zoom === 'fit' ? '#FFFFFF' : 'transparent',
+                  border: 'none', cursor: 'pointer',
+                  color: zoom === 'fit' ? '#1F1B16' : '#6B6660',
+                  fontSize: 10.5, fontWeight: 600, letterSpacing: '0.04em',
+                  boxShadow: zoom === 'fit' ? '0 1px 3px rgba(31, 27, 22, 0.12)' : 'none',
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                }}
+              >
+                <Maximize2 className="w-3 h-3" />
+                {zoom === 'fit' ? `FIT ${Math.round(effectiveScale * 100)}%` : `${Math.round(effectiveScale * 100)}%`}
+              </button>
+              <button
+                onClick={handleZoomIn}
                 title="Zoom in"
                 style={{
-                  width: 28, height: 28, borderRadius: 999, background: 'transparent',
+                  width: 26, height: 26, borderRadius: 999, background: 'transparent',
                   border: 'none', cursor: 'pointer', color: '#6B6660',
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                 }}
@@ -814,12 +978,31 @@ export default function OrgChartView({ employees, onClose }) {
               </button>
             </div>
             <button
+              onClick={handlePrint}
+              title="Print (A4 landscape, fitted to one page)"
+              style={{
+                padding: '6px 12px',
+                borderRadius: 999,
+                fontSize: 11.5,
+                fontWeight: 600,
+                background: '#FFFFFF',
+                color: '#1F1B16',
+                border: '1px solid #C49B61',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+              }}
+            >
+              <Printer className="w-3.5 h-3.5" /> Print
+            </button>
+            <button
               onClick={handleDownload}
               title="Download as standalone HTML file"
               style={{
-                padding: '7px 14px',
+                padding: '6px 12px',
                 borderRadius: 999,
-                fontSize: 12,
+                fontSize: 11.5,
                 fontWeight: 600,
                 background: '#2D5F3F',
                 color: '#FFFFFF',
@@ -827,16 +1010,16 @@ export default function OrgChartView({ employees, onClose }) {
                 cursor: 'pointer',
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: 6,
+                gap: 5,
               }}
             >
-              <Download className="w-3.5 h-3.5" /> Download HTML
+              <Download className="w-3.5 h-3.5" /> HTML
             </button>
             <button
               onClick={onClose}
               title="Close"
               style={{
-                padding: 6,
+                padding: 5,
                 borderRadius: 999,
                 background: 'transparent',
                 border: 'none',
@@ -844,24 +1027,38 @@ export default function OrgChartView({ employees, onClose }) {
                 color: '#6B6660',
               }}
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {/* Scrollable chart body. Zoom applies via CSS transform so
-            the tree connector geometry isn't affected — only the
-            visual scale. transform-origin centred-top so zooming
-            doesn't shift the CEO offscreen. */}
-        <div style={{ overflowX: 'auto', overflowY: 'visible' }}>
+        {/* Body — flex:1 fills remaining height. overflow-x:auto for
+            wide trees; overflow-y:hidden so the modal doesn't grow
+            beyond its 95vh limit. The fit-to-screen scale shrinks
+            tall trees to fit; manual zoom can push past that. */}
+        <div
+          ref={containerRef}
+          style={{
+            flex: 1,
+            overflowX: 'auto',
+            overflowY: 'hidden',
+            position: 'relative',
+          }}
+        >
           <div
             style={{
-              transform: `scale(${zoom})`,
-              transformOrigin: 'center top',
+              transform: `scale(${effectiveScale})`,
+              transformOrigin: 'top center',
               transition: 'transform 160ms ease-out',
+              minWidth: 'fit-content',
             }}
           >
-            <ChartBody roots={displayTree} mode={mode} totalEmployees={totalEmployees} />
+            <ChartBody
+              roots={displayTree}
+              mode={mode}
+              totalEmployees={totalEmployees}
+              treeRef={treeRef}
+            />
           </div>
         </div>
       </div>
