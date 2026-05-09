@@ -311,77 +311,106 @@ function roleLabel(node, tier) {
 }
 
 // =============================================================================
-// Tree CSS — connector geometry plus print/screen layout rules.
-// Both the live React path and the standalone HTML export include
-// this block so they render identically in any context.
+// Tree CSS — left-to-right horizontal layout (rev. 4, per Nadeem's
+// preference for Option B). Each node renders as a row [card |
+// children-column]. Children stack vertically to the right of the
+// parent, with a bus connector between them.
+//
+// Connector geometry:
+//   • Parent → bus: a short horizontal line on the left edge of the
+//     children container at vertical center.
+//   • Bus: a vertical line spanning from the first child's center
+//     to the last child's center. Implemented as per-child segments
+//     so the line never overhangs the outermost children.
+//   • Bus → child: a short horizontal line from the bus to each
+//     child card's left edge, at the child's vertical center.
+//
+// Single-child edge case: the bus is suppressed; the parent-to-bus
+// and bus-to-child connectors line up at the same y and visually
+// form one continuous horizontal line straight from parent to child.
 // =============================================================================
 const TREE_CSS = `
 .esau-tree-wrap {
   display: inline-block;
-  padding: 16px 32px 24px;
-  text-align: center;
+  padding: 24px 32px 24px 16px;
   font-family: 'Anthropic Sans', -apple-system, 'Segoe UI', sans-serif;
 }
-.esau-tree-wrap ul {
+
+/* Root row — same shape as recursive rows but no parent connector
+   geometry above it (the CEO has no manager visualised). */
+.esau-tree-wrap .h-row {
+  display: flex;
+  align-items: center;
   position: relative;
-  padding: 24px 0 0 0;
-  margin: 0;
+}
+
+.esau-tree-wrap .h-children {
   list-style: none;
-  display: inline-flex;
-  justify-content: center;
-}
-.esau-tree-wrap ul::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 50%;
-  border-left: 1.5px solid #C49B61;
-  height: 12px;
-  opacity: 0.55;
-}
-.esau-tree-wrap li {
+  margin: 0;
+  padding: 0 0 0 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   position: relative;
-  padding: 12px 10px 0 10px;
-  text-align: center;
 }
-.esau-tree-wrap li::before,
-.esau-tree-wrap li::after {
+
+/* Parent → bus horizontal connector */
+.esau-tree-wrap .h-children::before {
   content: '';
   position: absolute;
-  top: 0;
+  left: 0;
+  top: 50%;
+  width: 16px;
   border-top: 1.5px solid #C49B61;
-  width: 50%;
-  height: 12px;
   opacity: 0.55;
 }
-.esau-tree-wrap li::before { right: 50%; }
-.esau-tree-wrap li::after  { left: 50%; }
-.esau-tree-wrap li:only-child::before,
-.esau-tree-wrap li:only-child::after { display: none; }
-.esau-tree-wrap li:first-child::before,
-.esau-tree-wrap li:last-child::after { border: 0 none; }
-.esau-tree-wrap li:first-child::after  { border-radius: 6px 0 0 0; border-left: 1.5px solid #C49B61; }
-.esau-tree-wrap li:last-child::before  { border-radius: 0 6px 0 0; border-right: 1.5px solid #C49B61; }
-.esau-tree-wrap > ul::before { display: none; }
-.esau-tree-wrap > ul > li { padding-top: 0; }
-.esau-tree-wrap > ul > li::before,
-.esau-tree-wrap > ul > li::after { display: none; }
+
+.esau-tree-wrap .h-child {
+  position: relative;
+  padding-left: 16px;
+}
+
+/* Bus → child horizontal connector */
+.esau-tree-wrap .h-child::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 16px;
+  border-top: 1.5px solid #C49B61;
+  opacity: 0.55;
+}
+
+/* Vertical bus segment per child */
+.esau-tree-wrap .h-child::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-left: 1.5px solid #C49B61;
+  opacity: 0.55;
+}
+
+/* Trim bus at the outer edges of the first/last child so the line
+   never extends past either's vertical center. */
+.esau-tree-wrap .h-child:first-child::before { top: 50%; border-top-left-radius: 6px; }
+.esau-tree-wrap .h-child:last-child::before { bottom: 50%; border-bottom-left-radius: 6px; }
+
+/* Single-child special case: no bus needed; the parent-to-bus and
+   bus-to-child lines naturally merge into one horizontal line. */
+.esau-tree-wrap .h-child:only-child::before { display: none; }
+
+/* Card hover — gentle lift, suppressed in print. */
 .esau-tree-wrap .esau-card {
   transition: transform 140ms ease-out, box-shadow 140ms ease-out;
 }
 .esau-tree-wrap .esau-card:hover {
-  transform: translateY(-2px);
+  transform: translateX(2px);
 }
 
-/* === Print rules ===
-   A4 landscape, 8mm margins. The tree is wrapped in
-   .esau-org-print-target which becomes the only thing visible
-   when printing. Scale is set by JS via --print-scale calculated
-   from the actual chart dimensions vs the printable area, applied
-   here via transform. transform-origin: top left is critical so
-   the scaled tree starts at the page corner instead of getting
-   clipped on the right.
-*/
+/* Print rules — A4 landscape, fit-to-page via JS-set CSS variable.
+   Hide everything outside the print target so only the chart prints. */
 @page {
   size: A4 landscape;
   margin: 8mm;
@@ -568,28 +597,30 @@ function NodeCard({ node, tier, isCollapsed, onToggle }) {
 
 function TreeNode({ node, tier, collapsedIds, onToggle }) {
   const isCollapsed = collapsedIds && collapsedIds.has(node.id);
+  const hasChildren = node.children && node.children.length > 0;
   return (
-    <li>
+    <div className="h-row">
       <NodeCard
         node={node}
         tier={tier}
         isCollapsed={isCollapsed}
         onToggle={onToggle}
       />
-      {!isCollapsed && node.children && node.children.length > 0 && (
-        <ul>
+      {!isCollapsed && hasChildren && (
+        <ul className="h-children">
           {node.children.map(child => (
-            <TreeNode
-              key={child.id}
-              node={child}
-              tier={tier + 1}
-              collapsedIds={collapsedIds}
-              onToggle={onToggle}
-            />
+            <li key={child.id} className="h-child">
+              <TreeNode
+                node={child}
+                tier={tier + 1}
+                collapsedIds={collapsedIds}
+                onToggle={onToggle}
+              />
+            </li>
           ))}
         </ul>
       )}
-    </li>
+    </div>
   );
 }
 
@@ -619,17 +650,15 @@ function ChartBody({ roots, collapsedIds, onToggle, totalEmployees, treeRef, vie
       </div>
 
       <div ref={treeRef} className="esau-tree-wrap">
-        <ul>
-          {roots.map(root => (
-            <TreeNode
-              key={root.id}
-              node={root}
-              tier={0}
-              collapsedIds={collapsedIds}
-              onToggle={onToggle}
-            />
-          ))}
-        </ul>
+        {roots.map(root => (
+          <TreeNode
+            key={root.id}
+            node={root}
+            tier={0}
+            collapsedIds={collapsedIds}
+            onToggle={onToggle}
+          />
+        ))}
       </div>
 
       <div
@@ -664,7 +693,12 @@ function escapeHtml(s) {
 }
 
 function renderTreeHtml(nodes, tier, collapsedIds) {
-  return `<ul>${nodes.map(node => {
+  // Recursive renderer for the standalone export. Mirrors the
+  // React TreeNode/NodeCard pair in horizontal layout: each node
+  // becomes a div.h-row with a card and (optionally) a ul.h-children.
+  // The CSS connectors in TREE_CSS are the same ones the live React
+  // path uses, so the exported file looks identical.
+  return nodes.map(node => {
     const s = styleFor(node, tier);
     const initials = initialsOf(node.name, node.id);
     const title = titleFor(node, tier);
@@ -686,6 +720,7 @@ function renderTreeHtml(nodes, tier, collapsedIds) {
       `box-shadow:${s.shadow}`,
       `text-align:left`,
       `display:inline-block`,
+      `flex-shrink:0`,
     ].join(';');
 
     const avatarSize = isCeo ? 42 : isDjvp ? 38 : 34;
@@ -709,14 +744,15 @@ function renderTreeHtml(nodes, tier, collapsedIds) {
         </div>
       </div>
     `;
-    // Hide children entirely when collapsed — same behaviour as the
-    // live React path. The user's expanded snapshot is what gets
-    // exported; recipients see exactly what the user prepared.
+
     const childrenHtml = (!isCollapsed && node.children && node.children.length > 0)
-      ? renderTreeHtml(node.children, tier + 1, collapsedIds)
+      ? `<ul class="h-children">${node.children.map(child =>
+          `<li class="h-child">${renderTreeHtml([child], tier + 1, collapsedIds)}</li>`
+        ).join('')}</ul>`
       : '';
-    return `<li>${cardHtml}${childrenHtml}</li>`;
-  }).join('')}</ul>`;
+
+    return `<div class="h-row">${cardHtml}${childrenHtml}</div>`;
+  }).join('');
 }
 
 function buildStandaloneHtml(roots, totalEmployees, collapsedIds, viewLabel) {
