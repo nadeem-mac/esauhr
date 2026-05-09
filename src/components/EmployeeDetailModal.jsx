@@ -1591,61 +1591,102 @@ function GovernmentRecordsPanel({ employee, onSaved }) {
         padding: '10px 12px',
       }}
     >
-      {/* MOI watermark — Saudi national emblem (palm + crossed swords)
-          inside a circular badge frame. Positioned center-right at
-          very low opacity so it reads as a watermark behind the data,
-          not as decoration competing with it. pointer-events: none so
-          it never intercepts clicks meant for buttons/links above. */}
+      {/* MOI watermark — Saudi Ministry of Interior emblem rendered
+          as an inline SVG. Centered behind the data fields at low
+          opacity so it reads as an official-document watermark
+          rather than as decoration. The composition mirrors the
+          actual MOI seal in spirit:
+            • Outer + inner badge rings with curved Arabic text
+              along the top rim ('وزارة الداخلية' = Ministry of
+              Interior) and English along the bottom.
+            • Eagle with wings spread as the central icon — the
+              motif used across Saudi government emblems.
+            • Feather detail lines on the wings + a fanned tail
+              for the 'rendered seal' rather than 'flat silhouette'
+              feel.
+          pointer-events: none guarantees the watermark never
+          blocks clicks on Re-pull or any interactive content
+          behind it on the z-index axis. */}
       <svg
         viewBox="0 0 200 200"
         aria-hidden="true"
         style={{
           position: 'absolute',
-          right: -32,
+          left: '50%',
           top: '50%',
-          transform: 'translateY(-50%)',
-          width: 280,
-          height: 280,
-          opacity: 0.06,
+          transform: 'translate(-50%, -50%)',
+          width: 260,
+          height: 260,
+          opacity: 0.07,
           pointerEvents: 'none',
           color: '#0F4C2A',
           zIndex: 0,
         }}
       >
-        {/* Outer ring + inner ring — official badge frame */}
-        <circle cx="100" cy="100" r="92" fill="none" stroke="currentColor" strokeWidth="2.5" />
-        <circle cx="100" cy="100" r="78" fill="none" stroke="currentColor" strokeWidth="1" />
-        {/* Inner field background — slight tonal lift inside the rings */}
-        <circle cx="100" cy="100" r="76" fill="currentColor" opacity="0.04" />
-        {/* Two crossed swords forming the X.  Drawn as thick lines
-            with rounded caps — the curved hilt at each end is faked
-            via small circles for the pommel. */}
-        <g stroke="currentColor" strokeWidth="5" strokeLinecap="round" fill="none">
-          <line x1="40" y1="160" x2="160" y2="40" />
-          <line x1="160" y1="160" x2="40" y2="40" />
-        </g>
-        {/* Sword pommels — small accent circles at sword ends */}
+        <defs>
+          {/* Curved paths for the seal text. topArc runs over the
+              top half of the inner rim (left to right); bottomArc
+              runs along the bottom half so its text reads upright. */}
+          <path id="moi-arc-top"    d="M 38 100 A 62 62 0 0 1 162 100" />
+          <path id="moi-arc-bottom" d="M 42 102 A 58 58 0 0 0 158 102" />
+        </defs>
+
+        {/* Badge frame — outer thicker ring + inner light-weight
+            ring + faint fill so the eagle sits on a tonal field. */}
+        <circle cx="100" cy="100" r="95" fill="none" stroke="currentColor" strokeWidth="2.5" />
+        <circle cx="100" cy="100" r="80" fill="none" stroke="currentColor" strokeWidth="0.8" />
+        <circle cx="100" cy="100" r="78" fill="currentColor" opacity="0.05" />
+
+        {/* Curved seal text — Arabic over the top, English under
+            the bottom. Letter-spacing widened so the words breathe
+            against the thin ring above them, matching real seal
+            typography. */}
+        <text fontSize="9" fontWeight="600" fill="currentColor" fontFamily="'Segoe UI', Tahoma, Arial, sans-serif" letterSpacing="2.5">
+          <textPath href="#moi-arc-top" startOffset="50%" textAnchor="middle">
+            وزارة الداخلية
+          </textPath>
+        </text>
+        <text fontSize="6.5" fontWeight="700" fill="currentColor" fontFamily="Arial, sans-serif" letterSpacing="2.5">
+          <textPath href="#moi-arc-bottom" startOffset="50%" textAnchor="middle">
+            MINISTRY OF INTERIOR · KSA
+          </textPath>
+        </text>
+
+        {/* Eagle of Saladin — symmetric wings-spread silhouette
+            drawn entirely in currentColor. The shape is approximate
+            (real MOI uses a specific stylised falcon) but reads as
+            'Saudi government emblem' at watermark opacity. */}
         <g fill="currentColor">
-          <circle cx="40" cy="160" r="4" />
-          <circle cx="160" cy="160" r="4" />
-          <circle cx="40" cy="40" r="4" />
-          <circle cx="160" cy="40" r="4" />
+          {/* Head — small oval with a triangular beak pointing right */}
+          <ellipse cx="100" cy="68" rx="6" ry="7" />
+          <path d="M 100 66 L 108 69 L 100 71 Z" />
+
+          {/* Body — slim vertical oval */}
+          <ellipse cx="100" cy="100" rx="8" ry="22" />
+
+          {/* Left wing — broad curved arc with feather lines */}
+          <path d="M 100 86 Q 70 64 32 72 Q 26 86 30 102 L 38 100 Q 56 94 76 96 Q 90 96 100 100 Z" />
+          {/* Right wing — mirror of left */}
+          <path d="M 100 86 Q 130 64 168 72 Q 174 86 170 102 L 162 100 Q 144 94 124 96 Q 110 96 100 100 Z" />
+
+          {/* Fanned tail */}
+          <path d="M 100 122 L 84 148 L 90 142 L 94 150 L 100 144 L 106 150 L 110 142 L 116 148 Z" />
+
+          {/* Talon hints */}
+          <path d="M 94 122 L 91 130 M 106 122 L 109 130" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" fill="none" />
         </g>
-        {/* Palm tree centred above the swords' crossing point.
-            Stylised — trunk plus seven fronds radiating outward. */}
-        <g fill="currentColor" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-          {/* Trunk */}
-          <rect x="97" y="76" width="6" height="48" />
-          {/* Fronds — 7 ellipses rotated about the crown point (100,76) */}
-          <ellipse cx="100" cy="74" rx="3" ry="32" />
-          <ellipse cx="100" cy="74" rx="3" ry="30" transform="rotate(-30 100 74)" />
-          <ellipse cx="100" cy="74" rx="3" ry="30" transform="rotate(30 100 74)" />
-          <ellipse cx="100" cy="74" rx="3" ry="26" transform="rotate(-60 100 74)" />
-          <ellipse cx="100" cy="74" rx="3" ry="26" transform="rotate(60 100 74)" />
-          <ellipse cx="100" cy="74" rx="3" ry="22" transform="rotate(-85 100 74)" />
-          <ellipse cx="100" cy="74" rx="3" ry="22" transform="rotate(85 100 74)" />
-          {/* Crown — small dot where fronds emerge */}
-          <circle cx="100" cy="74" r="3.5" />
+
+        {/* Wing feather detail lines — soft strokes across each
+            wing for a 'rendered seal' rather than 'flat silhouette'
+            feel. Drawn semi-transparent so they don't darken the
+            already-low watermark opacity further. */}
+        <g stroke="#FFFFFF" strokeWidth="0.7" strokeLinecap="round" opacity="0.5">
+          <line x1="48" y1="80" x2="46" y2="96" />
+          <line x1="62" y1="82" x2="60" y2="98" />
+          <line x1="76" y1="86" x2="76" y2="100" />
+          <line x1="152" y1="80" x2="154" y2="96" />
+          <line x1="138" y1="82" x2="140" y2="98" />
+          <line x1="124" y1="86" x2="124" y2="100" />
         </g>
       </svg>
 
