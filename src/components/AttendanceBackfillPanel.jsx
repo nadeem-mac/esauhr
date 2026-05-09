@@ -860,7 +860,17 @@ function FilePickerHero({ onFile }) {
         type="file"
         accept=".xlsx"
         className="sr-only"
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); }}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) onFile(f);
+          // Reset the input's value so re-selecting the same file
+          // (e.g. user uploaded May.xlsx, hit "Import another", picked
+          // the same May.xlsx again) still fires onChange. Without
+          // this the browser sees the value unchanged and skips the
+          // event, leaving the panel stuck in 'empty' state with no
+          // visible feedback. Classic React file-input gotcha.
+          e.target.value = '';
+        }}
       />
     </label>
   );

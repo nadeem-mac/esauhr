@@ -217,6 +217,12 @@ export default function HrApprovalModal({ request, employee, manager, substitute
     if (file && file.type.startsWith('image/')) {
       applyOcrToForm(file);
     }
+    // Reset the input so re-selecting the same screenshot fires
+    // onChange again. Without this, if Bashaier picks a screenshot,
+    // realises it was the wrong one but then re-picks the same file
+    // after correcting (e.g. cropping in another tool to overwrite),
+    // the input sees the value unchanged and skips the OCR rerun.
+    if (e.target) e.target.value = '';
   }, [applyOcrToForm]);
 
   // Apply the verification — called from the confirmation modal

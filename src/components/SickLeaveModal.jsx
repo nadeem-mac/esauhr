@@ -935,7 +935,13 @@ export default function SickLeaveModal({
                   ref={fileInputRef}
                   type="file"
                   accept="application/pdf,.pdf"
-                  onChange={(e) => handlePdfFile(e.target.files?.[0])}
+                  onChange={(e) => {
+                    handlePdfFile(e.target.files?.[0]);
+                    // Reset so re-selecting the same PDF (e.g. user
+                    // hit cancel/back in the modal then re-picked
+                    // the same Sehhaty PDF) still fires onChange.
+                    e.target.value = '';
+                  }}
                   className="hidden"
                 />
               </div>
