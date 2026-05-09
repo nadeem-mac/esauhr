@@ -45,6 +45,11 @@ const TITLE_OVERRIDES = {
   'H94076': 'DJVP', // Sadakathullah
   'H94152': 'AM',   // Nadeem
   'H94432': 'AM',   // Zaher
+  'H94830': 'M',    // Bashaier — HR Supervisor. Forced even when
+                    // her direct reports' manager_id isn't yet
+                    // pointing at H94830 in the data, so she
+                    // renders as a manager-type rather than as
+                    // 'individual contributor' staff.
 };
 
 // Long-form labels for the title abbreviations. Surfaced in the
@@ -583,13 +588,11 @@ function NodeCard({ node, tier, isCollapsed, onToggle }) {
             {' '}{isCollapsed ? totalReports : directReports}
           </button>
         )}
-        {/* Static descriptor when no children — keeps card heights
-            roughly aligned across siblings without faking a button. */}
-        {!hasChildren && totalReports === 0 && tier > 0 && (
-          <span style={{ fontSize: 9, color: '#9B928A', fontStyle: 'italic', letterSpacing: '0.04em' }}>
-            individual contributor
-          </span>
-        )}
+        {/* Leaf cards (no children visible in the chart) intentionally
+            show no extra tag here. Previous "individual contributor"
+            label was misleading for cases where the data was simply
+            incomplete (manager_id not yet pointing at the parent),
+            and added visual noise on every staff card. */}
       </div>
     </div>
   );
@@ -838,7 +841,12 @@ function downloadHtmlFile(html, filename) {
 export default function OrgChartView({ employees, onClose }) {
   // Zoom can be a number (manual zoom) or 'fit' (auto-fit to height).
   // 'fit' is the default so the chart starts at one-page-on-screen.
-  const [zoom, setZoom] = useState('fit');
+  // Zoom can be a number (manual zoom) or 'fit' (auto-fit to height).
+  // Default 1 (100%) so cards render full-size and the chart uses
+  // the available white space at natural scale; scroll fills in for
+  // anything that overflows. Users can switch to FIT explicitly if
+  // they want shrink-to-screen behaviour.
+  const [zoom, setZoom] = useState(1);
   const [computedFit, setComputedFit] = useState(1);
   const treeRef = useRef(null);
   const containerRef = useRef(null);
@@ -1211,25 +1219,28 @@ export default function OrgChartView({ employees, onClose }) {
           </div>
         </div>
 
-        {/* Body — flex:1 fills remaining height. overflow-x:auto for
-            wide trees; overflow-y:hidden so the modal doesn't grow
-            beyond its 95vh limit. The fit-to-screen scale shrinks
-            tall trees to fit; manual zoom can push past that. */}
+        {/* Body — flex:1 fills remaining height. Both axes scroll
+            (overflow:auto) so the user can move freely up/down and
+            left/right. Default zoom is 1 (full-size cards) so cards
+            stay readable; user can switch to FIT or use the +/-
+            zoom controls if they want different scale. */}
         <div
           ref={containerRef}
           style={{
             flex: 1,
             overflowX: 'auto',
-            overflowY: 'hidden',
+            overflowY: 'auto',
             position: 'relative',
           }}
         >
           <div
             style={{
               transform: `scale(${effectiveScale})`,
-              transformOrigin: 'top center',
+              transformOrigin: 'top left',
               transition: 'transform 160ms ease-out',
               minWidth: 'fit-content',
+              minHeight: 'fit-content',
+              padding: '4px 8px',
             }}
           >
             <ChartBody
