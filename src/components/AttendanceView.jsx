@@ -2100,6 +2100,15 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // If we waited for acceptance, an unacknowledged shift would
   // default to 08:00-17:00 evaluation, which is exactly wrong for
   // shift staff on their day off.
+
+  // Refresh tick — incremented by the "Refresh from database" pill on
+  // the roster gaps card. Both this acceptedShifts hook and the
+  // shiftRosterStaff hook below depend on it, so a single click
+  // re-pulls live shift data + off-pattern without forcing the user
+  // to re-upload the attendance file. Declared up here so both hooks
+  // can list it in their deps array without TDZ trouble.
+  const [rosterRefreshTick, setRosterRefreshTick] = useState(0);
+
   useEffect(() => {
     if (!csvDate) { setAcceptedShifts([]); return; }
     let cancelled = false;
@@ -2130,7 +2139,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [csvDate, yesterdayDate]);
+  }, [csvDate, yesterdayDate, rosterRefreshTick]);
 
   // Roster-level shift plan fetch — captures staff who are flagged
   // as "shift-eligible" for the month in monthly_shift_plans, even
@@ -2143,30 +2152,52 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // roster (Nadeem 2026-05-07: "the email does not mention his
   // staff time" for Jasim was caused by exactly this gap).
   const [shiftRosterStaff, setShiftRosterStaff] = useState(new Set());
+  // Per-employee off-day pattern from monthly_shift_plans.off_weekdays.
+  // Map: empKey (uppercase PSN) → Set<number> of weekday integers
+  // (0=Sun … 6=Sat) that the manager has explicitly marked as off-days.
+  // Loaded alongside shiftRosterStaff so the roster gap detector below
+  // can skip off-pattern weekdays — manager-marked off-days were
+  // previously being counted as gaps because the detector only looked
+  // at employee_shifts (working assignments), not off_weekdays
+  // (deliberate planned-off pattern). Per Nadeem 2026-05-10 report:
+  // Fahad's 5 OFF-days in May were all flagged as gaps. Bug.
+  const [offWeekdaysByEmp, setOffWeekdaysByEmp] = useState(new Map());
   useEffect(() => {
-    if (!csvDate) { setShiftRosterStaff(new Set()); return; }
+    if (!csvDate) { setShiftRosterStaff(new Set()); setOffWeekdaysByEmp(new Map()); return; }
     let cancelled = false;
     (async () => {
       try {
         const [yy, mm] = csvDate.split('-').map(Number);
         const planMonth = `${yy}-${String(mm).padStart(2, '0')}-01`;
         const data = await directGet(
-          `monthly_shift_plans?select=employee_id&plan_month=eq.${planMonth}&shifts_count=gt.0`
+          `monthly_shift_plans?select=employee_id,off_weekdays&plan_month=eq.${planMonth}&shifts_count=gt.0`
         );
         if (!cancelled) {
           const s = new Set();
+          const offMap = new Map();
           (data || []).forEach(r => {
-            if (r?.employee_id) s.add(String(r.employee_id).toUpperCase());
+            if (!r?.employee_id) return;
+            const key = String(r.employee_id).toUpperCase();
+            s.add(key);
+            // off_weekdays is a Postgres integer[] column → returns as
+            // a JS array, or null if never set. Guard for both.
+            if (Array.isArray(r.off_weekdays) && r.off_weekdays.length) {
+              offMap.set(key, new Set(r.off_weekdays.map(Number)));
+            }
           });
           setShiftRosterStaff(s);
+          setOffWeekdaysByEmp(offMap);
         }
       } catch (e) {
         console.warn('Could not fetch monthly shift roster:', e);
-        if (!cancelled) setShiftRosterStaff(new Set());
+        if (!cancelled) {
+          setShiftRosterStaff(new Set());
+          setOffWeekdaysByEmp(new Map());
+        }
       }
     })();
     return () => { cancelled = true; };
-  }, [csvDate]);
+  }, [csvDate, rosterRefreshTick]);
 
   // Mawani visits for the CSV's month. The classifier short-circuits
   // any (employee, date) pair that's a logged Mawani visit — the
@@ -2324,7 +2355,12 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     const m = {};
     (acceptedShifts || []).forEach(s => {
       if (!s?.employee_id || !s?.start_time || !s?.end_time || !s?.shift_date) return;
-      const key = `${String(s.employee_id).toUpperCase()}|${s.shift_date}`;
+      // Defensive slice to first 10 chars: shift_date is a DATE column
+      // and PostgREST should return YYYY-MM-DD, but if anything ever
+      // returns a timestamp ('2026-05-03T00:00:00…') the gap detector
+      // key would silently miss. Slicing keeps both formats matching.
+      const datePart = String(s.shift_date).slice(0, 10);
+      const key = `${String(s.employee_id).toUpperCase()}|${datePart}`;
       m[key] = {
         startStr: String(s.start_time).slice(0, 5),
         endStr:   String(s.end_time).slice(0, 5),
@@ -2530,10 +2566,18 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       if (isSup) return;
 
       const gapDates = [];
+      // Per-employee off-pattern (from monthly_shift_plans.off_weekdays).
+      // Empty Set when none configured. Manager-marked off-weekdays
+      // are NOT gaps — they're deliberately planned non-working days,
+      // same as Fri/Sat. Pre-fix, Fahad's 4 OFF days in week 1 of
+      // May (Sun/Tue/Wed/Thu, all manager-stamped OFF) were every
+      // single one being counted as an unassigned gap. Now skipped.
+      const offSet = offWeekdaysByEmp.get(empKey) || null;
       for (let d = 1; d <= lastDay; d++) {
         const dt = new Date(year, month - 1, d);
         const dow = dt.getDay(); // 0=Sun ... 5=Fri, 6=Sat
         if (dow === 5 || dow === 6) continue; // Saudi weekend
+        if (offSet && offSet.has(dow)) continue; // manager-marked off-day for this staff
 
         const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 
@@ -2589,7 +2633,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       if (!isSup) totalShiftStaff++;
     });
     return { totalGaps, totalStaff, totalShiftStaff, byManager };
-  }, [csvDate, shiftStaffThisMonth, shiftOverrideById, empById, mawaniDays, onLeaveOnDate]);
+  }, [csvDate, shiftStaffThisMonth, shiftOverrideById, empById, mawaniDays, onLeaveOnDate, offWeekdaysByEmp]);
 
   // Index approved permissions by employee+type for O(1) lookup during
   // detection. The cross-reference layer turns a late/early flag into
@@ -5187,6 +5231,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         offRosterCount={(detection.shiftOffDay || []).length}
         offRosterEntries={detection.shiftOffDay || []}
         monthlyShiftsByEmp={monthlyShiftsByEmp}
+        onRosterRefresh={() => setRosterRefreshTick(t => t + 1)}
       />
     ),
     ...(detection.weekend.length ? { weekend: buildWeekendPanel() } : {}),
@@ -6225,6 +6270,7 @@ function UnifiedShiftStaffPanel({
   latePanel, earlyPanel, absentPanel,
   offRosterCount, offRosterEntries,
   monthlyShiftsByEmp,
+  onRosterRefresh,
 }) {
   const lateCount   = (detection.late  || []).filter(e => !!e.isCustomShift).length;
   const earlyCount  = (detection.early || []).filter(e => !!e.isCustomShift).length;
@@ -6260,12 +6306,54 @@ function UnifiedShiftStaffPanel({
           since fixing gaps prevents downstream violations. */}
       {hasShiftStaff && (
         <div>
-          <SectionHeader
-            icon="📋"
-            label="ROSTER COMPLETION"
-            count={hasGaps ? rosterGaps.totalGaps : 0}
-            tone={hasGaps ? { bg: '#FEF3C7', fg: '#78350F' } : { bg: '#DCFCE7', fg: '#14532D' }}
-          />
+          <div className="flex items-baseline gap-2 mb-2">
+            <span style={{ fontSize: 14 }} aria-hidden>📋</span>
+            <span className="text-[10px] tracking-[0.25em]" style={{ fontWeight: 700, color: '#0A0A0A' }}>
+              ROSTER COMPLETION
+            </span>
+            {hasGaps && (
+              <span style={{
+                background: '#FEF3C7', color: '#78350F',
+                padding: '1px 6px', borderRadius: 999,
+                fontSize: 10, fontWeight: 700,
+              }}>
+                {rosterGaps.totalGaps}
+              </span>
+            )}
+            {!hasGaps && (
+              <span style={{
+                background: '#DCFCE7', color: '#14532D',
+                padding: '1px 6px', borderRadius: 999,
+                fontSize: 10, fontWeight: 700,
+              }}>
+                0
+              </span>
+            )}
+            {/* Refresh pill — re-pulls live shift data + off-pattern
+                from the database without needing a CSV re-upload.
+                Per Nadeem 2026-05-10: the gap count was based on a
+                snapshot taken at upload time, so any shift assigned
+                afterwards wasn't reflected. This button bumps the
+                rosterRefreshTick state in the parent, which re-runs
+                both the acceptedShifts fetch and the shiftRosterStaff
+                fetch (which now also pulls off_weekdays). */}
+            {typeof onRosterRefresh === 'function' && (
+              <button
+                type="button"
+                onClick={onRosterRefresh}
+                className="ml-auto text-[10px] tracking-wider px-2.5 py-1 rounded-full border inline-flex items-center gap-1.5"
+                style={{
+                  borderColor: '#D4D4D4',
+                  background: '#FFFFFF',
+                  color: '#0A0A0A',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+                title="Re-pull live shift data + off-day patterns from the database. Use this if you've assigned shifts on the Shifts tab since uploading the file.">
+                ↻ REFRESH
+              </button>
+            )}
+          </div>
           <RosterGapsCard
             rosterGaps={rosterGaps}
             empById={empById}
