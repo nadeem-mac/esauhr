@@ -1591,153 +1591,34 @@ function GovernmentRecordsPanel({ employee, onSaved }) {
         padding: '10px 12px',
       }}
     >
-      {/* MOI watermark — Saudi Ministry of Interior emblem rendered
-          as inline SVG. The composition follows the actual MOI logo:
-            • Outer thin circle border
-            • Laurel/palm wreath made of two curved branches of small
-              leaves, meeting at the bottom and leaving a gap at the
-              top for the Saudi national emblem
-            • Saudi national emblem in the gap: palm tree above two
-              crossed swords
-            • Arabic calligraphic text centred inside the wreath:
-              'وزارة الداخلية' (Ministry of Interior) above
-              'المملكة العربية السعودية' (Kingdom of Saudi Arabia)
-          Centred behind the data fields at low opacity so it reads
-          as an official-document watermark rather than as decoration.
-          pointer-events: none guarantees the watermark never blocks
-          clicks on Re-pull or any interactive content above it on
-          the z-index axis. */}
-      <svg
-        viewBox="0 0 200 200"
+      {/* MOI watermark — actual KSA Ministry of Interior seal,
+          bundled as a 3.3 KB optimised 2-colour PNG with
+          transparent background. Centred behind the data fields
+          at low opacity so it reads as an official-document
+          watermark rather than as decoration. The image is the
+          real logo (wreath + palm + crossed swords + Arabic
+          calligraphy) so this matches anything Nadeem prints
+          alongside actual MOI/MOL documents. pointer-events: none
+          guarantees the watermark never blocks clicks on Re-pull
+          or any interactive content above it on the z-index axis. */}
+      <img
+        src="/moi-seal.png"
+        alt=""
         aria-hidden="true"
+        draggable={false}
         style={{
           position: 'absolute',
           left: '50%',
           top: '50%',
           transform: 'translate(-50%, -50%)',
-          width: 280,
-          height: 280,
+          width: 240,
+          height: 'auto',
           opacity: 0.07,
           pointerEvents: 'none',
-          color: '#0F4C2A',
+          userSelect: 'none',
           zIndex: 0,
         }}
-      >
-        {/* Outer thin ring — single border like the actual logo */}
-        <circle cx="100" cy="100" r="92" fill="none" stroke="currentColor" strokeWidth="1.5" />
-
-        {/* Wreath — left branch leaves. Generated programmatically:
-            13 small ellipses placed along an arc from 90° (bottom-
-            centre) clockwise around the left side to 258° (just
-            below the top, leaving a gap for the emblem). Each leaf
-            rotates so its long axis points radially outward —
-            that's how laurel leaves grow on a real wreath. */}
-        {Array.from({ length: 13 }, (_, i) => {
-          const angle = 90 + i * 14;
-          const rad = (angle * Math.PI) / 180;
-          const x = 100 + 72 * Math.cos(rad);
-          const y = 100 + 72 * Math.sin(rad);
-          return (
-            <ellipse
-              key={`L${i}`}
-              cx={x}
-              cy={y}
-              rx="4.2"
-              ry="10"
-              fill="currentColor"
-              transform={`rotate(${angle - 90} ${x} ${y})`}
-            />
-          );
-        })}
-
-        {/* Wreath — right branch leaves, mirror of left. Skips i=0
-            to avoid drawing a duplicate leaf at the bottom-centre
-            shared point. */}
-        {Array.from({ length: 12 }, (_, i) => {
-          const angle = 90 - (i + 1) * 14;
-          const rad = (angle * Math.PI) / 180;
-          const x = 100 + 72 * Math.cos(rad);
-          const y = 100 + 72 * Math.sin(rad);
-          return (
-            <ellipse
-              key={`R${i}`}
-              cx={x}
-              cy={y}
-              rx="4.2"
-              ry="10"
-              fill="currentColor"
-              transform={`rotate(${angle - 90} ${x} ${y})`}
-            />
-          );
-        })}
-
-        {/* Saudi national emblem — palm tree above crossed swords,
-            sitting in the gap at the top of the wreath. Same
-            stylisation used on the Saudi flag and state seal. */}
-        <g fill="currentColor">
-          {/* Palm trunk */}
-          <rect x="98.5" y="22" width="3" height="22" />
-          {/* Palm fronds — 7 ellipses radiating from the crown
-              point (100, 20). Inner fronds longer, outer fronds
-              shorter, matching the natural taper of date-palm
-              fronds. */}
-          <ellipse cx="100" cy="20" rx="1.6" ry="14" />
-          <ellipse cx="100" cy="20" rx="1.6" ry="13" transform="rotate(-28 100 20)" />
-          <ellipse cx="100" cy="20" rx="1.6" ry="13" transform="rotate(28 100 20)" />
-          <ellipse cx="100" cy="20" rx="1.6" ry="11" transform="rotate(-58 100 20)" />
-          <ellipse cx="100" cy="20" rx="1.6" ry="11" transform="rotate(58 100 20)" />
-          <ellipse cx="100" cy="20" rx="1.6" ry="9" transform="rotate(-85 100 20)" />
-          <ellipse cx="100" cy="20" rx="1.6" ry="9" transform="rotate(85 100 20)" />
-          {/* Crown — small dot where the fronds emerge */}
-          <circle cx="100" cy="20" r="2.2" />
-        </g>
-
-        {/* Crossed swords below the palm — the curved scimitars are
-            simplified here to straight strokes for clarity at
-            watermark opacity. The pommels (small filled circles)
-            at each end break up the line ends and read as 'sword
-            handle' more clearly than naked stroke caps. */}
-        <g stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" fill="none">
-          <line x1="82" y1="58" x2="118" y2="44" />
-          <line x1="118" y1="58" x2="82" y2="44" />
-        </g>
-        <g fill="currentColor">
-          <circle cx="82" cy="58" r="1.6" />
-          <circle cx="118" cy="58" r="1.6" />
-          <circle cx="82" cy="44" r="1.6" />
-          <circle cx="118" cy="44" r="1.6" />
-        </g>
-
-        {/* Arabic ministry name — 'وزارة الداخلية' (Ministry of
-            Interior) on the upper-centre line, larger weight; and
-            'المملكة العربية السعودية' (Kingdom of Saudi Arabia)
-            on the lower-centre line, smaller. Both rendered with
-            the system font stack which carries solid Arabic glyph
-            coverage on Windows / macOS / iOS / Linux without a
-            web-font fetch. direction="rtl" guarantees the
-            shaping engine treats them as right-to-left script
-            even when the surrounding flow is LTR. */}
-        <text
-          x="100" y="100"
-          textAnchor="middle"
-          fontSize="13" fontWeight="700"
-          fill="currentColor"
-          fontFamily="'Segoe UI', 'Tahoma', 'Arial', sans-serif"
-          direction="rtl"
-        >
-          وزارة الداخلية
-        </text>
-        <text
-          x="100" y="120"
-          textAnchor="middle"
-          fontSize="8" fontWeight="600"
-          fill="currentColor"
-          fontFamily="'Segoe UI', 'Tahoma', 'Arial', sans-serif"
-          direction="rtl"
-        >
-          المملكة العربية السعودية
-        </text>
-      </svg>
+      />
 
       {/* All actual content sits above the watermark via z-index. */}
       <div style={{ position: 'relative', zIndex: 1 }}>
