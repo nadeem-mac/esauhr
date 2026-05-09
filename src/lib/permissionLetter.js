@@ -844,7 +844,12 @@ export function buildPermissionEmailDraft({ employee, manager, hrApprover, reque
   const cc = Array.from(new Set(ccRaw.filter(e => e !== to)));
 
   const firstName = (employee?.name || '').split(' ')[0] || 'Colleague';
-  const subject   = `Permission approved · ${typeBoth.en} · ${fmtDateShort(request.permission_date)}`;
+  // Subject follows the portal-wide convention (set 2026-05-09):
+  //   TYPE: PSN — NAME — TYPE_DETAIL — DATE
+  const subjectDate = request.permission_date
+    ? new Date(request.permission_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    : '—';
+  const subject = `PERMISSION APPROVED: ${employee?.id || ''} — ${employee?.name || ''} — ${typeBoth.en} — ${subjectDate}`;
   const dur = (() => {
     if (request.time_from && request.time_to) {
       const toMin = (s) => {

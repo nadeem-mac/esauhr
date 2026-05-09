@@ -995,7 +995,12 @@ export function buildEmailDraft({ employee, request, manager, hrApprover, substi
   ].filter(Boolean);
   const cc = Array.from(new Set(ccList.filter(e => e !== to))).join(',');
 
-  const subject = `Leave approved · ${employee?.name || ''} · ${dateRange}`;
+  // Subject follows the portal-wide convention (set 2026-05-09):
+  //   TYPE: PSN — NAME — DATE_RANGE   (arrow form for ranges)
+  const subjectRange = request.start_date === request.end_date
+    ? fmtDateMed(request.start_date)
+    : `${fmtDateMed(request.start_date)} → ${fmtDateMed(request.end_date)}`;
+  const subject = `LEAVE APPROVED: ${employee?.id || ''} — ${employee?.name || ''} — ${subjectRange}`;
 
   const body = [
     `Dear ${(employee?.name || '').split(' ')[0] || 'Colleague'},`,
@@ -1096,7 +1101,10 @@ export function buildSickLeaveApprovalEmailDraft({
   ].filter(Boolean);
   const cc = Array.from(new Set(ccList.filter(e => e !== to))).join(',');
 
-  const subject = `Sick leave approved & validated on Sehhaty · ${employee?.name || ''} · ${dateRange}`;
+  const subjectRange = request.start_date === request.end_date
+    ? fmtDateMed(request.start_date)
+    : `${fmtDateMed(request.start_date)} → ${fmtDateMed(request.end_date)}`;
+  const subject = `SICK LEAVE APPROVED (Sehhaty validated): ${employee?.id || ''} — ${employee?.name || ''} — ${subjectRange}`;
 
   const managerName = manager?.name || 'your line manager';
 
@@ -1185,7 +1193,10 @@ export function buildLeaveRejectionEmailDraft({
   const ccList = [manager?.email].filter(Boolean);
   const cc = Array.from(new Set(ccList.filter(e => e !== to))).join(',');
 
-  const subject = `Leave request not approved · ${employee?.name || ''} · ${dateRange}`;
+  const subjectRange = request.start_date === request.end_date
+    ? fmtDateMed(request.start_date)
+    : `${fmtDateMed(request.start_date)} → ${fmtDateMed(request.end_date)}`;
+  const subject = `LEAVE NOT APPROVED: ${employee?.id || ''} — ${employee?.name || ''} — ${subjectRange}`;
 
   const body = [
     `Dear ${(employee?.name || '').split(' ')[0] || 'Colleague'},`,

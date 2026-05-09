@@ -162,31 +162,38 @@ function renderEmail(kind, { declaration, employee }) {
   const firstName = (employee?.name || '').split(' ')[0] || 'Colleague';
   const dr = declaration.start_date === declaration.end_date || !declaration.end_date
     ? fmtDate(declaration.start_date)
-    : `${fmtDate(declaration.start_date)} – ${fmtDate(declaration.end_date)}`;
+    : `${fmtDate(declaration.start_date)} → ${fmtDate(declaration.end_date)}`;
+
+  // Subject convention (set 2026-05-09):
+  //   TYPE: PSN — NAME — DATE_RANGE
+  // Three escalation tiers prepend their own qualifier so HR can
+  // sort by urgency at a glance, but the trailing identifiers stay
+  // identical across kinds so threading by employee+date works.
+  const idTail = `${employee?.id || ''} — ${employee?.name || ''} — ${dr}`;
 
   let subject, intro, bodyExtras = '';
   switch (kind) {
     case 'gentle_24h':
-      subject = `Reminder: Sehhaty certificate for your sick leave on ${dr}`;
+      subject = `SEHHATY CERTIFICATE REMINDER: ${idTail}`;
       intro = `This is a friendly reminder to upload your Sehhaty certificate for the sick leave you declared on <strong>${dr}</strong>.`;
       bodyExtras = `<p style="color:#1F1B16;">You can upload it via the HR portal — Sick leave → "Yes, I have it" — and it will attach automatically to your declaration.</p>`;
       break;
     case 'firmer_72h':
-      subject = `Action needed: Sehhaty certificate overdue for ${dr}`;
+      subject = `SEHHATY CERTIFICATE OVERDUE — ACTION NEEDED: ${idTail}`;
       intro = `Your Sehhaty certificate for the sick leave on <strong>${dr}</strong> is now more than 72 hours overdue.`;
       bodyExtras =
         `<p style="color:#1F1B16;">${POLICY_LINE}</p>` +
         `<p style="color:#1F1B16;">Please upload it as soon as possible via the HR portal. New leave or permission requests are blocked until it is submitted.</p>`;
       break;
     case 'final_5d':
-      subject = `Final notice: Sehhaty certificate for ${dr} — pending action`;
+      subject = `SEHHATY CERTIFICATE — FINAL NOTICE: ${idTail}`;
       intro = `This is a final reminder regarding the Sehhaty certificate for your sick leave on <strong>${dr}</strong>, which has been outstanding for five working days.`;
       bodyExtras =
         `<p style="color:#7F1D1D;"><strong>Without the certificate, the affected days will be recorded as unauthorized absence and may be deducted from your salary.</strong> ${POLICY_LINE}</p>` +
         `<p style="color:#1F1B16;">Please submit the certificate today, or contact HR if there is a documented reason it cannot be provided.</p>`;
       break;
     default:
-      subject = `Sehhaty certificate for your sick leave on ${dr}`;
+      subject = `SEHHATY CERTIFICATE FOLLOW-UP: ${idTail}`;
       intro = `Following up on the Sehhaty certificate for your sick leave on <strong>${dr}</strong>.`;
       bodyExtras = `<p style="color:#1F1B16;">You can upload it via the HR portal at your earliest convenience.</p>`;
   }

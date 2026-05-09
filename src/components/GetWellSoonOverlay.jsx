@@ -42,33 +42,49 @@ export default function GetWellSoonOverlay({ open, me, employees = [], payload, 
   // full range so the email accurately describes the absence.
   // Fallback to today if no payload passed (shouldn't happen in
   // practice but defends against state-clearing race conditions).
-  const { dateRangeLabel, durationPhrase, headerLabel, days } = useMemo(() => {
-    const fmt = (iso) => {
+  //
+  // Two formats are derived: long (with weekday) for the email body
+  // where it reads naturally, and short (no weekday) for the subject
+  // line where brevity matters.
+  const { dateRangeLabel, dateRangeShort, durationPhrase, headerLabel, days } = useMemo(() => {
+    const fmtLong = (iso) => {
       if (!iso) return '';
       // YYYY-MM-DD → Friday, 8 May 2026
       const [y, m, d] = iso.split('-').map(Number);
       const dt = new Date(y, m - 1, d);
       return dt.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
     };
+    const fmtShort = (iso) => {
+      if (!iso) return '';
+      // YYYY-MM-DD → 8 May 2026
+      const [y, m, d] = iso.split('-').map(Number);
+      const dt = new Date(y, m - 1, d);
+      return dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+    };
     const startIso = payload?.start_date;
     const endIso   = payload?.end_date;
     const n        = payload?.days || 1;
     if (!startIso || n === 1 || startIso === endIso) {
-      const label = fmt(startIso) || new Date().toLocaleDateString('en-GB', {
-        weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-      });
+      const today = new Date();
+      const fallbackIso = today.toISOString().slice(0, 10);
+      const longLabel  = fmtLong(startIso)  || fmtLong(fallbackIso);
+      const shortLabel = fmtShort(startIso) || fmtShort(fallbackIso);
       return {
-        dateRangeLabel:   label,
-        durationPhrase:   `today, ${label}`,
+        dateRangeLabel:   longLabel,
+        dateRangeShort:   shortLabel,
+        durationPhrase:   `today, ${longLabel}`,
         headerLabel:      'today',
         days:             1,
       };
     }
-    const startLabel = fmt(startIso);
-    const endLabel   = fmt(endIso);
+    const startLong  = fmtLong(startIso);
+    const endLong    = fmtLong(endIso);
+    const startShort = fmtShort(startIso);
+    const endShort   = fmtShort(endIso);
     return {
-      dateRangeLabel:   `${startLabel} → ${endLabel}`,
-      durationPhrase:   `from ${startLabel} to ${endLabel} (${n} days)`,
+      dateRangeLabel:   `${startLong} → ${endLong}`,
+      dateRangeShort:   `${startShort} → ${endShort}`,
+      durationPhrase:   `from ${startLong} to ${endLong} (${n} days)`,
       headerLabel:      `for ${n} days`,
       days:             n,
     };
@@ -90,10 +106,11 @@ export default function GetWellSoonOverlay({ open, me, employees = [], payload, 
     // link encodes the whole string and mail clients render it
     // mangled (e.g. 'Name. Surname @domain' with stray spaces).
     const managerEmail = parseEmailAddress(manager?.email || '');
-    // Subject reflects the actual range — for 2-3 day cases, this
-    // tells Bashaier at-a-glance whether it's a single day or a span
-    // without opening the email.
-    const subject = `Sick Leave — ${dateRangeLabel} — ${me.name || ''} — ${me.id || ''}`;
+    // Subject follows the portal-wide convention (set 2026-05-09):
+    //   TYPE: PSN — NAME — DATE_RANGE
+    // PSN-first so HR can spot the employee at a glance in the inbox;
+    // short date format keeps the line tidy.
+    const subject = `SICK LEAVE: ${me.id || ''} — ${me.name || ''} — ${dateRangeShort}`;
     const opener  = days === 1
       ? `This is to inform you that I will be on sick leave ${durationPhrase}.`
       : `This is to inform you that I will be on sick leave ${durationPhrase}.`;

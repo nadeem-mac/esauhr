@@ -82,7 +82,17 @@ function buildCertRequestEmail({ employee, request }) {
   const dateRange = startStr === endStr || !endStr
     ? startStr
     : `${startStr} to ${endStr}`;
-  const subject = `Sehhaty certificate required — sick leave on ${dateRange}`;
+  // Format dates short and consistent with the portal-wide subject
+  // convention (set 2026-05-09):  TYPE: PSN — NAME — DATE_RANGE
+  const fmtShort = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  };
+  const subjectRange = startStr === endStr || !endStr
+    ? fmtShort(startStr)
+    : `${fmtShort(startStr)} → ${fmtShort(endStr)}`;
+  const subject = `SEHHATY CERTIFICATE REQUIRED: ${employee?.id || ''} — ${empName} — ${subjectRange}`;
   const body =
 `Dear ${empName},
 
