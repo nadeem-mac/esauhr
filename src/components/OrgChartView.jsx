@@ -34,22 +34,34 @@ import { X, Download, LayoutGrid, Users2, Building2, ZoomIn, ZoomOut, Printer, M
 //     margins; toolbar/chrome hidden for print.
 // =============================================================================
 
-const SYNTHETIC_CEO_ID = '__ceo_node__';
-const ZAHER_PSN        = 'H94432';
+// Synthetic IDs for nodes that don't (yet) live in the employees
+// table. CEO has a real PSN now (062789 per Nadeem 2026-05-09);
+// James (country manager) and Syed Noman (BIZ Jeddah deputy) are
+// still synthetic since their PSNs haven't been provided.
+const SYNTHETIC_CEO_ID         = '062789';
+const SYNTHETIC_JAMES_ID       = '__country_mgr__';
+const SYNTHETIC_SYED_NOMAN_ID  = '__syed_noman__';
+const ZAHER_PSN                = 'H94432';
+const SADAKATH_PSN             = 'H94076';
+const SHARIQUE_PSN             = 'H94460';
+const FAHAD_PSN                = 'H94712';
+const SONNIE_PSN               = 'H94226';
 
 // PSN-specific title overrides. Anything not in this map falls
 // through to the role-from-tree heuristic in titleFor().
 const TITLE_OVERRIDES = {
-  [SYNTHETIC_CEO_ID]: 'CEO',
-  'H94460': 'DJVP', // Sharique
-  'H94076': 'DJVP', // Sadakathullah
-  'H94152': 'AM',   // Nadeem
-  'H94432': 'AM',   // Zaher
-  'H94830': 'M',    // Bashaier — HR Supervisor. Forced even when
-                    // her direct reports' manager_id isn't yet
-                    // pointing at H94830 in the data, so she
-                    // renders as a manager-type rather than as
-                    // 'individual contributor' staff.
+  [SYNTHETIC_CEO_ID]:        'CEO',
+  [SYNTHETIC_JAMES_ID]:      'CM',   // Country Manager
+  [SYNTHETIC_SYED_NOMAN_ID]: 'DM',   // Deputy Manager
+  [SADAKATH_PSN]:            'DJVP', // Sadakathullah — BIZ head KSA
+  [SHARIQUE_PSN]:            'DJVP', // Sharique — CSD/OPS/LOG head KSA
+  [FAHAD_PSN]:               'M',    // Fahad — SUP head
+  [SONNIE_PSN]:              'DM',   // Sonnie — CSD/LOG Jeddah deputy
+  'H94152':                  'AM',   // Nadeem
+  [ZAHER_PSN]:               'AM',   // Zaher — Riyadh BIZ deputy
+  // Bashaier (H94830) intentionally not overridden — she falls
+  // through to the heuristic (S when no children visible, M when
+  // her direct reports are wired correctly via manager_id).
 };
 
 // Long-form labels for the title abbreviations. Surfaced in the
@@ -57,7 +69,9 @@ const TITLE_OVERRIDES = {
 // printed and given to someone unfamiliar with the abbreviations.
 const TITLE_LONG = {
   CEO:  'Chief Executive Officer',
+  CM:   'Country Manager',
   DJVP: 'Deputy Junior Vice President',
+  DM:   'Deputy Manager',
   AM:   'Assistant Manager',
   M:    'Manager',
   S:    'Staff',
@@ -90,35 +104,114 @@ function initialsOf(name, psn) {
   return String(psn || '??').slice(-2).toUpperCase();
 }
 
-// Synthesise the CEO node, repoint Riyadh staff at Zaher, and tag
-// orphans/cycles for repointing at the CEO. Returns a flat array
-// the buildTree pass can index by id.
+// Resolve the effective manager for an employee. Priority:
+//   1. PSN-specific forced overrides (department heads, deputies)
+//   2. Department + location routing rules
+//   3. Whatever the live employees.manager_id says (fallback)
+// Returns the manager id to use, or null if the node is a root.
+//
+// Per Nadeem 2026-05-09:
+//   • All BIZ + RUH staff except Zaher → Zaher (Riyadh BIZ deputy)
+//   • All BIZ + JED staff               → Syed Noman (Jeddah BIZ deputy)
+//   • All BIZ staff (other locations)   → Sadakath (BIZ head KSA)
+//   • All CSD/OPS/LOG + JED except Sonnie → Sonnie (Jeddah deputy)
+//   • All CSD/OPS/LOG (other locations) → Sharique (CSD/OPS/LOG head)
+//   • All SUP except Fahad              → Fahad (SUP head)
+//   • Sadakath, Sharique, Fahad         → James (country manager)
+//   • Zaher, Syed Noman                 → Sadakath
+//   • Sonnie                            → Sharique
+//   • James                             → CEO
+function resolveManagerForEmployee(emp) {
+  const id = emp.id;
+
+  // Hard-coded PSN routings — always win.
+  if (id === SYNTHETIC_CEO_ID)        return null;
+  if (id === SYNTHETIC_JAMES_ID)      return SYNTHETIC_CEO_ID;
+  if (id === SYNTHETIC_SYED_NOMAN_ID) return SADAKATH_PSN;
+  if (id === SADAKATH_PSN)            return SYNTHETIC_JAMES_ID;
+  if (id === SHARIQUE_PSN)            return SYNTHETIC_JAMES_ID;
+  if (id === FAHAD_PSN)               return SYNTHETIC_JAMES_ID;
+  if (id === ZAHER_PSN)               return SADAKATH_PSN;
+  if (id === SONNIE_PSN)              return SHARIQUE_PSN;
+
+  const dept = emp.department;
+  const loc  = emp.location;
+
+  // BIZ — three branches: RUH→Zaher, JED→Syed Noman, else→Sadakath.
+  if (dept === 'BIZ') {
+    if (loc === 'RUH') return ZAHER_PSN;
+    if (loc === 'JED') return SYNTHETIC_SYED_NOMAN_ID;
+    return SADAKATH_PSN;
+  }
+
+  // CSD / OPS / LOG — JED routes through Sonnie, else direct to Sharique.
+  if (dept === 'CSD' || dept === 'OPS' || dept === 'LOG') {
+    if (loc === 'JED') return SONNIE_PSN;
+    return SHARIQUE_PSN;
+  }
+
+  // SUP — Fahad heads the function regardless of branch.
+  if (dept === 'SUP') {
+    return FAHAD_PSN;
+  }
+
+  // Unknown department — fall back to whatever the data already
+  // says. Buildtree will handle orphans by routing them to CEO.
+  return emp.manager_id || null;
+}
+
+// Synthesise the missing nodes (CEO if not in data, James, Syed
+// Noman) and route every real employee per the rules above.
 function preprocessEmployees(rawEmployees) {
-  const ceo = {
-    id: SYNTHETIC_CEO_ID,
-    name: 'JOHN HO',
-    secondaryName: 'Chung Hsing Ho',
+  const idsInData = new Set((rawEmployees || []).map(e => e?.id).filter(Boolean));
+
+  const out = [];
+
+  // CEO — synthesise only if not already in employees table. Real
+  // record (if any) gets its manager_id forced to null below so
+  // he's the unconditional root.
+  if (!idsInData.has(SYNTHETIC_CEO_ID)) {
+    out.push({
+      id: SYNTHETIC_CEO_ID,
+      name: 'CHUNG HSING HO',
+      department: 'MGT',
+      location: 'DAM',
+      manager_id: null,
+    });
+  }
+
+  // James — country manager, always synthetic since no PSN provided.
+  out.push({
+    id: SYNTHETIC_JAMES_ID,
+    name: 'JAMES',
+    secondaryName: 'Country Manager',
     department: 'MGT',
     location: 'DAM',
-    manager_id: null,
-    isSynthetic: true,
-  };
+    manager_id: SYNTHETIC_CEO_ID,
+  });
 
-  const out = [ceo];
+  // Syed Noman — BIZ Jeddah deputy, always synthetic.
+  out.push({
+    id: SYNTHETIC_SYED_NOMAN_ID,
+    name: 'SYED NOMAN',
+    secondaryName: 'Deputy Manager · BIZ Jeddah',
+    department: 'BIZ',
+    location: 'JED',
+    manager_id: SADAKATH_PSN,
+  });
+
+  // Process every real employee with the routing pipeline.
   for (const e of (rawEmployees || [])) {
     if (!e?.id) continue;
-    if (e.id === SYNTHETIC_CEO_ID) continue; // Defensive — never happens in practice
-    // Riyadh override — anyone in RUH (except Zaher himself) reports
-    // to Zaher in the chart, regardless of their stored manager_id.
-    // This implements Nadeem's directive that Zaher coordinates the
-    // Riyadh branch even though he's also tagged as AM in the title
-    // taxonomy. Zaher's own manager_id stays as-is (he reports to
-    // Sadakathullah).
-    if (e.location === 'RUH' && e.id !== ZAHER_PSN) {
-      out.push({ ...e, manager_id: ZAHER_PSN });
-    } else {
-      out.push({ ...e });
+    // Skip if the id collides with a synthetic id we're emitting.
+    if (e.id === SYNTHETIC_JAMES_ID || e.id === SYNTHETIC_SYED_NOMAN_ID) continue;
+    if (e.id === SYNTHETIC_CEO_ID) {
+      // Real CEO record: keep all their data, force manager_id null.
+      out.push({ ...e, manager_id: null });
+      continue;
     }
+    const newMgr = resolveManagerForEmployee(e);
+    out.push({ ...e, manager_id: newMgr });
   }
   return out;
 }
@@ -236,14 +329,15 @@ function titleFor(node, tier) {
   return 'S';
 }
 
-// Tier-aware visual styling. CEO and DJVPs get the most prominent
-// borders/shadows. The HR-reviewer accent (Bashaier) and admin
-// accent (Nadeem) are dropped per Nadeem's instruction — both
-// render as ordinary tier nodes now.
+// Title-driven visual styling. CEO and Country Manager get the
+// most prominent borders/shadows. DJVPs (department heads) get
+// a strong bronze accent. Deputy Managers (DM) get a slightly
+// darker tan to distinguish from AMs. Everyone else falls
+// through to managerial / staff styling.
 function styleFor(node, tier) {
   const title = titleFor(node, tier);
 
-  if (tier === 0 || title === 'CEO') {
+  if (title === 'CEO' || tier === 0) {
     return {
       borderColor: '#2D5F3F',
       borderWidth: 2,
@@ -253,6 +347,21 @@ function styleFor(node, tier) {
       tagColor: '#1F4429',
       cardBg: 'linear-gradient(180deg, #FFFFFF 0%, #F0F8F0 100%)',
       shadow: '0 12px 32px rgba(45, 95, 63, 0.18), 0 2px 6px rgba(31, 27, 22, 0.08)',
+    };
+  }
+  if (title === 'CM') {
+    // Country Manager — muted teal/sage. Sits visually between
+    // CEO (deep green) and DJVPs (bronze) so the eye reads tier
+    // depth at a glance.
+    return {
+      borderColor: '#3D6F5A',
+      borderWidth: 2,
+      avatarBg: 'linear-gradient(135deg, #4F8270 0%, #3D6F5A 100%)',
+      avatarRing: 'rgba(61, 111, 90, 0.18)',
+      tagBg: 'rgba(61, 111, 90, 0.12)',
+      tagColor: '#2A5546',
+      cardBg: 'linear-gradient(180deg, #FFFFFF 0%, #F2F8F5 100%)',
+      shadow: '0 10px 28px rgba(61, 111, 90, 0.18), 0 2px 5px rgba(31, 27, 22, 0.07)',
     };
   }
   if (title === 'DJVP') {
@@ -265,6 +374,20 @@ function styleFor(node, tier) {
       tagColor: '#5A3A14',
       cardBg: 'linear-gradient(180deg, #FFFFFF 0%, #FFF7EC 100%)',
       shadow: '0 8px 24px rgba(139, 90, 31, 0.14), 0 2px 4px rgba(31, 27, 22, 0.06)',
+    };
+  }
+  if (title === 'DM') {
+    // Deputy Manager — deeper rust/terracotta to distinguish from
+    // both AMs (warm tan) and DJVPs (bronze).
+    return {
+      borderColor: '#9B5A2D',
+      borderWidth: 1.5,
+      avatarBg: 'linear-gradient(135deg, #B8703F 0%, #9B5A2D 100%)',
+      avatarRing: 'rgba(155, 90, 45, 0.18)',
+      tagBg: 'rgba(155, 90, 45, 0.14)',
+      tagColor: '#6B3E1B',
+      cardBg: '#FFFFFF',
+      shadow: '0 5px 14px rgba(155, 90, 45, 0.14), 0 1px 3px rgba(31, 27, 22, 0.05)',
     };
   }
   if (title === 'AM') {
@@ -460,8 +583,12 @@ function NodeCard({ node, tier, isCollapsed, onToggle }) {
   const isCeo = tier === 0;
   const isDjvp = title === 'DJVP';
   const isSynth = !!node.isSynthetic;
+  // PSN row hidden only when the id is a placeholder (starts with
+  // '__'). Real PSNs — including the CEO's 062789 — render as
+  // normal so the chart matches the canonical employee record.
+  const showPsn = node.id && !node.id.startsWith('__');
   const hasChildren = directReports > 0;
-  const tooltip = `${node.name}${node.secondaryName ? ' (' + node.secondaryName + ')' : ''}\n${titleLong}${deptFull ? '\n' + deptFull : ''}${locFull ? ' · ' + locFull : ''}${isSynth ? '' : '\n' + node.id}`;
+  const tooltip = `${node.name}${node.secondaryName ? ' (' + node.secondaryName + ')' : ''}\n${titleLong}${deptFull ? '\n' + deptFull : ''}${locFull ? ' · ' + locFull : ''}${showPsn ? '\n' + node.id : ''}`;
 
   return (
     <div
@@ -535,7 +662,7 @@ function NodeCard({ node, tier, isCollapsed, onToggle }) {
         </div>
       )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
-        {!isSynth && (
+        {showPsn && (
           <span
             style={{
               fontSize: 10,
@@ -710,7 +837,7 @@ function renderTreeHtml(nodes, tier, collapsedIds) {
     const totalReports = directReports + countDescendants(node);
     const isCeo = tier === 0;
     const isDjvp = title === 'DJVP';
-    const isSynth = !!node.isSynthetic;
+    const showPsn = node.id && !node.id.startsWith('__');
     const isCollapsed = !!(collapsedIds && collapsedIds.has(node.id));
 
     const cardStyle = [
@@ -742,7 +869,7 @@ function renderTreeHtml(nodes, tier, collapsedIds) {
         <div style="font-size:${nameFontSize}px;font-weight:600;color:#1F1B16;line-height:1.25;letter-spacing:-0.005em;">${escapeHtml(node.name || '')}</div>
         ${node.secondaryName ? `<div style="font-size:10.5px;color:#6B6660;font-style:italic;margin-top:1px;">${escapeHtml(node.secondaryName)}</div>` : ''}
         <div style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap;">
-          ${!isSynth ? `<span style="font-size:10px;color:#6B6660;font-family:'SF Mono',Consolas,monospace;letter-spacing:0.02em;">${escapeHtml(node.id || '')}</span>` : ''}
+          ${showPsn ? `<span style="font-size:10px;color:#6B6660;font-family:'SF Mono',Consolas,monospace;letter-spacing:0.02em;">${escapeHtml(node.id || '')}</span>` : ''}
           ${reportLabel}
         </div>
       </div>
