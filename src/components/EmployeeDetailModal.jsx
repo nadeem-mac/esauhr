@@ -1592,15 +1592,23 @@ function GovernmentRecordsPanel({ employee, onSaved }) {
       }}
     >
       {/* MOI watermark — actual KSA Ministry of Interior seal,
-          bundled as a 3.3 KB optimised 2-colour PNG with
+          bundled as an 8.6 KB anti-aliased palette PNG with
           transparent background. Centred behind the data fields
           at low opacity so it reads as an official-document
-          watermark rather than as decoration. The image is the
-          real logo (wreath + palm + crossed swords + Arabic
-          calligraphy) so this matches anything Nadeem prints
-          alongside actual MOI/MOL documents. pointer-events: none
-          guarantees the watermark never blocks clicks on Re-pull
-          or any interactive content above it on the z-index axis. */}
+          watermark rather than as decoration.
+
+          Sizing & opacity per Nadeem 2026-05-09: the previous
+          240px @ 7% rendered too bold against the card. Reduced
+          to 170px @ 4.5% — at this scale the wreath/palm/swords
+          all stay visible but the whole seal sits like a faint
+          ghost under the data instead of fighting it for
+          attention. width:auto + maxHeight constrains the
+          square logo by its longest side without distorting.
+
+          pointer-events:none / draggable:false / userSelect:none
+          guarantee the watermark never blocks clicks on Re-pull
+          and can't be accidentally drag-selected or right-click
+          saved off the card. */}
       <img
         src="/moi-seal.png"
         alt=""
@@ -1611,9 +1619,11 @@ function GovernmentRecordsPanel({ employee, onSaved }) {
           left: '50%',
           top: '50%',
           transform: 'translate(-50%, -50%)',
-          width: 240,
+          maxWidth: 170,
+          maxHeight: 170,
+          width: 'auto',
           height: 'auto',
-          opacity: 0.07,
+          opacity: 0.045,
           pointerEvents: 'none',
           userSelect: 'none',
           zIndex: 0,
