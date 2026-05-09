@@ -193,56 +193,73 @@ export default function Requests({
 
             return (
               <div key={`${it._kind}-${it.id}`}
-                   className="rounded-xl border p-4 flex flex-wrap items-center gap-4 cursor-pointer hover:shadow-sm transition-shadow"
+                   className="rounded-lg border p-2.5 flex items-center gap-3 cursor-pointer hover:shadow-sm transition-shadow"
                    style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}
                    onClick={() => !isPerm && setTimelineRequest(it)}
                    title={!isPerm ? 'Click to see approval progress' : ''}>
-                <Avatar id={emp.id} name={emp.name} size="lg"/>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <div className="serif text-lg leading-tight" style={{ fontWeight: 500 }}>{emp.name}</div>
-                    <span className="text-xs opacity-50 mono">{emp.id}</span>
-                    {isPerm && (
-                      <span className="text-[9.5px] px-1.5 py-0.5 rounded-full"
-                        style={{ background: '#F5F3FF', color: '#6D28D9', fontWeight: 700, letterSpacing: '0.08em' }}>
-                        PERMISSION
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-xs opacity-60 mt-0.5">{emp.department} · {emp.location}</div>
-                </div>
-                <div className="text-right">
+                <Avatar id={emp.id} name={emp.name} size="sm"/>
+                {/* Slim main row — identity, type, dates, days, reason
+                    all inline with mid-dot separators. min-w-0 lets the
+                    flex item shrink so the long reason can truncate
+                    instead of pushing the right-side actions off. */}
+                <div className="min-w-0 flex-1 flex items-center gap-2 flex-wrap text-xs">
+                  <span style={{ color: '#1F1B16', fontWeight: 600, fontSize: 13 }} className="leading-tight">{emp.name}</span>
+                  <span className="mono opacity-50" style={{ fontSize: 11 }}>{emp.id}</span>
+                  <span className="opacity-50" style={{ fontSize: 11 }}>{emp.department} · {emp.location}</span>
+                  {isPerm && (
+                    <span className="px-1.5 py-0.5 rounded-full"
+                      style={{ background: '#F5F3FF', color: '#6D28D9', fontWeight: 700, letterSpacing: '0.06em', fontSize: 9.5 }}>
+                      PERMISSION
+                    </span>
+                  )}
+                  {/* Type chip — leave type or permission kind. Same
+                      coloured pill the old layout used, just inline. */}
                   {isPerm ? (
-                    <>
-                      <Pill color="#6D28D9">
-                        {it.type === 'late_arrival' ? 'Late arrival' : 'Early leave'}
-                      </Pill>
-                      <div className="text-sm mt-1">{fmtDateShort(it.permission_date)}</div>
-                      <div className="text-xs opacity-60 inline-flex items-center gap-1">
-                        <Clock className="w-3 h-3"/> {Number(it.hours)}h
-                      </div>
-                    </>
+                    <Pill color="#6D28D9">
+                      {it.type === 'late_arrival' ? 'Late arrival' : 'Early leave'}
+                    </Pill>
                   ) : (
-                    <>
-                      <Pill color={tp?.color}>{tp?.name || it.leave_type_id}</Pill>
-                      <div className="text-sm mt-1">{fmtDateShort(it.start_date)} → {fmtDateShort(it.end_date)}</div>
-                      <div className="text-xs opacity-60">{it.days} {Number(it.days) === 1 ? 'day' : 'days'}{it.is_half_day ? ' (½)' : ''}</div>
-                    </>
+                    <Pill color={tp?.color}>{tp?.name || it.leave_type_id}</Pill>
+                  )}
+                  {/* Dates + duration — inline tight string. */}
+                  {isPerm ? (
+                    <span style={{ color: '#1F1B16', fontSize: 12 }}>
+                      {fmtDateShort(it.permission_date)}
+                      {it.time_from && it.time_to && (
+                        <span className="opacity-60"> · {it.time_from}–{it.time_to}</span>
+                      )}
+                      <span className="opacity-60"> · {Number(it.hours)}h</span>
+                    </span>
+                  ) : (
+                    <span style={{ color: '#1F1B16', fontSize: 12 }}>
+                      {fmtDateShort(it.start_date)} → {fmtDateShort(it.end_date)}
+                      <span className="opacity-60"> · {it.days}{it.is_half_day ? '½' : ''} {Number(it.days) === 1 && !it.is_half_day ? 'day' : 'days'}</span>
+                    </span>
+                  )}
+                  {/* Reason — truncated inline so the line stays tight.
+                      Full reason is visible in the timeline modal on click. */}
+                  {it.reason && (
+                    <span className="italic opacity-70 truncate"
+                          style={{ fontSize: 11, maxWidth: 260 }}
+                          title={it.reason}>
+                      "{it.reason}"
+                    </span>
+                  )}
+                  {/* Decision note — only shown when present, kept brief
+                      and red so a rejection reason still stands out. */}
+                  {(it.decision_note || it.rejection_reason_note) && (
+                    <span className="px-1.5 py-0.5 rounded truncate"
+                          style={{ background: '#FEF2F2', color: '#7F1D1D', border: '1px solid #FCA5A5', fontSize: 10.5, maxWidth: 240 }}
+                          title={it.decision_note || it.rejection_reason_note}>
+                      <strong>Note:</strong> {it.decision_note || it.rejection_reason_note}
+                    </span>
                   )}
                 </div>
-                {it.reason && (
-                  <div className="w-full text-sm px-3 py-2 rounded italic opacity-75"
-                       style={{ background: 'var(--paper-2)' }}>
-                    "{it.reason}"
-                  </div>
-                )}
-                {(it.decision_note || it.rejection_reason_note) && (
-                  <div className="w-full text-xs px-3 py-2 rounded"
-                       style={{ background: '#FEF2F2', color: '#7F1D1D', border: '1px solid #FCA5A5' }}>
-                    <strong>Decision note:</strong> {it.decision_note || it.rejection_reason_note}
-                  </div>
-                )}
-                <div className="flex items-center gap-2 w-full sm:w-auto" onClick={(e) => e.stopPropagation()}>
+                {/* Right cluster — status pill + actions. flex-shrink-0
+                    so buttons never collapse when the middle row is
+                    long; onClick stop-prop so clicking buttons doesn't
+                    open the timeline modal. */}
+                <div className="flex items-center gap-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                   {it.status === 'pending' ? (
                     <Pill color="var(--copper)">
                       ⏳ {it.stage === 'pending_hr' ? 'Awaiting HR' :
