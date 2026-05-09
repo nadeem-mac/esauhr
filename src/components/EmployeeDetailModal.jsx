@@ -1575,16 +1575,82 @@ function GovernmentRecordsPanel({ employee, onSaved }) {
     <section
       className="rounded-xl"
       style={{
-        background: '#FFFFFF',
-        // Evergreen-themed green border to visually mark this as the
-        // government-data section (mirrors the green MOL · GOSI pill).
-        // Slightly heavier than var(--border-soft) so the panel reads
-        // as a deliberate accent rather than a flat divider.
+        // Iqama / National-ID plastic-card visual treatment. A diagonal
+        // mint-to-white-to-mint gradient suggests a glossy laminated
+        // surface; an inset highlight along the top reinforces the
+        // 'embossed plastic' feel; the warm green border matches the
+        // colour family used on real Saudi ID cards. Position relative
+        // so the absolutely-positioned MOI watermark below sits inside
+        // the card; overflow hidden so it can't bleed past the rounded
+        // corners.
+        position: 'relative',
+        overflow: 'hidden',
+        background: 'linear-gradient(135deg, #ECFDF5 0%, #FFFFFF 35%, #FFFFFF 65%, #F0FAF4 100%)',
         border: '1px solid #A7F3D0',
-        boxShadow: '0 0 0 3px rgba(15, 76, 42, 0.04)',
+        boxShadow: '0 0 0 3px rgba(15, 76, 42, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.9)',
         padding: '10px 12px',
       }}
     >
+      {/* MOI watermark — Saudi national emblem (palm + crossed swords)
+          inside a circular badge frame. Positioned center-right at
+          very low opacity so it reads as a watermark behind the data,
+          not as decoration competing with it. pointer-events: none so
+          it never intercepts clicks meant for buttons/links above. */}
+      <svg
+        viewBox="0 0 200 200"
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          right: -32,
+          top: '50%',
+          transform: 'translateY(-50%)',
+          width: 280,
+          height: 280,
+          opacity: 0.06,
+          pointerEvents: 'none',
+          color: '#0F4C2A',
+          zIndex: 0,
+        }}
+      >
+        {/* Outer ring + inner ring — official badge frame */}
+        <circle cx="100" cy="100" r="92" fill="none" stroke="currentColor" strokeWidth="2.5" />
+        <circle cx="100" cy="100" r="78" fill="none" stroke="currentColor" strokeWidth="1" />
+        {/* Inner field background — slight tonal lift inside the rings */}
+        <circle cx="100" cy="100" r="76" fill="currentColor" opacity="0.04" />
+        {/* Two crossed swords forming the X.  Drawn as thick lines
+            with rounded caps — the curved hilt at each end is faked
+            via small circles for the pommel. */}
+        <g stroke="currentColor" strokeWidth="5" strokeLinecap="round" fill="none">
+          <line x1="40" y1="160" x2="160" y2="40" />
+          <line x1="160" y1="160" x2="40" y2="40" />
+        </g>
+        {/* Sword pommels — small accent circles at sword ends */}
+        <g fill="currentColor">
+          <circle cx="40" cy="160" r="4" />
+          <circle cx="160" cy="160" r="4" />
+          <circle cx="40" cy="40" r="4" />
+          <circle cx="160" cy="40" r="4" />
+        </g>
+        {/* Palm tree centred above the swords' crossing point.
+            Stylised — trunk plus seven fronds radiating outward. */}
+        <g fill="currentColor" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+          {/* Trunk */}
+          <rect x="97" y="76" width="6" height="48" />
+          {/* Fronds — 7 ellipses rotated about the crown point (100,76) */}
+          <ellipse cx="100" cy="74" rx="3" ry="32" />
+          <ellipse cx="100" cy="74" rx="3" ry="30" transform="rotate(-30 100 74)" />
+          <ellipse cx="100" cy="74" rx="3" ry="30" transform="rotate(30 100 74)" />
+          <ellipse cx="100" cy="74" rx="3" ry="26" transform="rotate(-60 100 74)" />
+          <ellipse cx="100" cy="74" rx="3" ry="26" transform="rotate(60 100 74)" />
+          <ellipse cx="100" cy="74" rx="3" ry="22" transform="rotate(-85 100 74)" />
+          <ellipse cx="100" cy="74" rx="3" ry="22" transform="rotate(85 100 74)" />
+          {/* Crown — small dot where fronds emerge */}
+          <circle cx="100" cy="74" r="3.5" />
+        </g>
+      </svg>
+
+      {/* All actual content sits above the watermark via z-index. */}
+      <div style={{ position: 'relative', zIndex: 1 }}>
       <div className="flex items-start justify-between gap-3 mb-2 flex-wrap">
         <div className="text-[10px] tracking-[0.25em]" style={{ color: '#0F4C2A', fontWeight: 700 }}>
           GOVERNMENT RECORDS
@@ -1787,6 +1853,7 @@ function GovernmentRecordsPanel({ employee, onSaved }) {
           )}
         </div>
       )}
+      </div>
     </section>
   );
 }
