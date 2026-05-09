@@ -10,7 +10,7 @@ import HrShiftMonthCard from './HrShiftMonthCard.jsx';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
 import MyApplicationsCard from './MyApplicationsCard.jsx';
 
-export default function Dashboard({ me, employees, requests, typeMap, empMap, permissions, leaveTypes, onGoToRequests, onGoToReviews, onNewRequest }) {
+export default function Dashboard({ me, employees, requests, typeMap, empMap, permissions, leaveTypes, onGoToRequests, onGoToReviews, onNewRequest, onOpenOrgChart }) {
   // Personalised greeting — fully inline to eliminate any minifier scope issues.
   const _hr = new Date().getHours();
   const _period = _hr < 12 ? 'morning' : _hr < 17 ? 'afternoon' : 'evening';
@@ -333,20 +333,45 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
         <div className="text-[10px]" style={{ color: '#9D6B53', letterSpacing: '0.3em', fontWeight: 600 }}>
           {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase()}
         </div>
-        <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full"
-             title={`Last refreshed at ${new Date(lastUpdated).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`}
-             style={{
-               background: '#ECFDF5',
-               border: '1px solid #A7F3D0',
-               fontSize: '10px',
-               letterSpacing: '0.16em',
-               color: '#0F4C2A',
-               fontWeight: 700,
-             }}>
-          <span className="esau-live-dot" aria-hidden="true"/>
-          <span>LIVE</span>
-          <span style={{ opacity: 0.5 }}>·</span>
-          <span style={{ letterSpacing: '0.04em', fontWeight: 600 }}>updated {updatedRel}</span>
+        <div className="inline-flex items-center gap-2">
+          {/* Org chart trigger — admin (Nadeem) and HR reviewer
+              (Bashaier) only. Opens the OrgChartView modal that
+              renders the live tree from employees.manager_id and
+              offers Summary/Full toggle plus standalone HTML export. */}
+          {onOpenOrgChart && (me?.is_admin || me?.is_hr_reviewer) && (
+            <button
+              onClick={onOpenOrgChart}
+              title="Generate the company organization chart"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full"
+              style={{
+                background: '#FFFFFF',
+                border: '1px solid #C49B61',
+                fontSize: 10,
+                letterSpacing: '0.16em',
+                color: '#8B5A1F',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              <span aria-hidden="true">🏢</span>
+              <span>ORG CHART</span>
+            </button>
+          )}
+          <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full"
+               title={`Last refreshed at ${new Date(lastUpdated).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`}
+               style={{
+                 background: '#ECFDF5',
+                 border: '1px solid #A7F3D0',
+                 fontSize: '10px',
+                 letterSpacing: '0.16em',
+                 color: '#0F4C2A',
+                 fontWeight: 700,
+               }}>
+            <span className="esau-live-dot" aria-hidden="true"/>
+            <span>LIVE</span>
+            <span style={{ opacity: 0.5 }}>·</span>
+            <span style={{ letterSpacing: '0.04em', fontWeight: 600 }}>updated {updatedRel}</span>
+          </div>
         </div>
       </div>
 

@@ -42,6 +42,7 @@ const BashaierTasksCard       = lazy(() => import('./BashaierTasksCard.jsx'));
 const AttendanceView          = lazy(() => import('./AttendanceView.jsx'));
 const RefreshOverlay          = lazy(() => import('./RefreshOverlay.jsx'));
 const GovernmentDataSync      = lazy(() => import('./GovernmentDataSync.jsx'));
+const OrgChartView            = lazy(() => import('./OrgChartView.jsx'));
 import { getBlockingDeclarations, getExtendableDeclaration } from '../lib/sickDeclaration.js';
 import { logAction } from '../lib/audit.js';
 import { fmtDate } from '../lib/leaveLogic.js';
@@ -223,6 +224,10 @@ export default function AppShell({ session, me, onRefreshMe }) {
   // appears on PersonalDashboard whenever pendingShifts is non-empty, and
   // tapping that card flips this flag to open the modal.
   const [shiftAckOpen, setShiftAckOpen] = useState(false);
+  // Org chart modal — opened from the Dashboard via the Generate
+  // Org Chart button shown only to admin (Nadeem) and HR reviewer
+  // (Bashaier). Closes on backdrop click, X button, or Escape.
+  const [orgChartOpen, setOrgChartOpen] = useState(false);
 
   // Pending migration count — number of bundled SQL migrations that
   // haven't been applied to this database yet (status: never_run) plus
@@ -1044,6 +1049,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
               onGoToRequests={() => setTabPersistent("requests")}
               onGoToReviews={() => setTabPersistent("reviews")}
               onNewRequest={() => setShowNewRequest(true)}
+              onOpenOrgChart={() => setOrgChartOpen(true)}
             />
           ) : isManager ? (
             // ManagerDashboard: any user who has direct reports (manager_id===me.id
@@ -1412,6 +1418,17 @@ export default function AppShell({ session, me, onRefreshMe }) {
           employees={employees}
           onClose={() => setShiftAckOpen(false)}
           onResolved={() => setShiftAckOpen(false)}
+        />
+      )}
+
+      {/* Org chart modal — renders the live tree built from
+          employees.manager_id and offers a Download HTML option for
+          standalone export. Only mounted while open so the lazy
+          chunk doesn't load until the user actually opens it. */}
+      {orgChartOpen && (
+        <OrgChartView
+          employees={employees}
+          onClose={() => setOrgChartOpen(false)}
         />
       )}
 
