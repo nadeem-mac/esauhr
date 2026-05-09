@@ -1,41 +1,50 @@
 import React, { useMemo, useState, useCallback } from 'react';
-import { X, Download, LayoutGrid, Users2, Building2 } from 'lucide-react';
+import { X, Download, LayoutGrid, Users2, Building2, ZoomIn, ZoomOut } from 'lucide-react';
 
 // =============================================================================
-// OrgChartView
+// OrgChartView — tree edition (rev. 2)
 //
-// Live organizational chart for Evergreen Shipping Agency Saudi Co.
-// Pulls the employee list from the AppShell-loaded employees prop and
-// builds a parent-child tree using each employee's manager_id field.
-// Renders the tree as horizontal tiers with connecting lines, mirroring
-// the preview design Nadeem approved 2026-05-09.
+// Per Nadeem 2026-05-09 (second pass): the previous tier-based layout
+// rendered each level as a flat horizontal row. That works for shallow
+// trees but stops feeling like an org chart once a parent has more
+// than 3-4 reports — the children look like a list, not a hierarchy.
 //
-// Two view modes:
-//   • Summary — top three tiers only (CEO + their direct reports +
-//     their direct reports). Best for at-a-glance presentations.
-//   • Full    — every employee on every tier. Best for HR auditing.
+// This rewrite renders a proper hierarchical tree using the classic
+// `<ul><li>` CSS pattern with connector lines drawn by ::before /
+// ::after pseudo-elements. Each parent sits over its children with a
+// vertical drop, a horizontal sibling bar, and short verticals down
+// to each child. Same connector convention used in printed org charts
+// for decades — instantly readable.
 //
-// Two output paths:
-//   • Modal — render in an overlay inside the portal (default action
-//     when the user opens the view).
-//   • Download — produce a fully self-contained HTML file with all
-//     styles inlined, suitable for emailing or printing offline.
+// Card design also got a polish pass to the visual quality the user
+// asked for: subtle gradients, layered shadows, ringed avatars,
+// refined typography hierarchy. Tier-distinct accents preserve the
+// scan-at-a-glance role recognition from rev 1.
 //
-// Per Nadeem 2026-05-09:
-//   • All managers ultimately roll up to John Ho (the CEO is the
-//     tree's single root via manager_id = null).
-//   • Sharique (H94460) and Sadakathullah (H94076) are both DJVPs
-//     reporting directly to John Ho — peers, not stacked. A circular
-//     manager_id reference between them in the live data has been
-//     resolved by treating both as direct reports of the CEO.
-//   • Nadeem (H94152) sits in the BIZ team under Sadakathullah —
-//     his admin status is a portal flag, not an org role.
-//   • On-leave staff render plainly — no special chip in the chart.
+// Two view modes via segmented toggle:
+//   • Summary — depth-limited to 3 tiers (CEO + DJVPs + managers).
+//     Clipped subtrees still surface their report count via a
+//     "↓ N reports" tail on the parent card so depth is implicit.
+//   • Full — every employee, every level. Horizontal scroll handles
+//     wide trees on narrower screens.
+//
+// Two output paths preserved from rev 1:
+//   • Modal — render in an overlay inside the portal.
+//   • Download HTML — fully self-contained file with the same tree
+//     CSS inlined, suitable for emailing or printing offline.
+//
+// Tree-build invariants:
+//   • Root = anyone with no manager_id, manager_id pointing to a
+//     non-existent employee, or manager_id pointing to themselves.
+//   • Cycle guard breaks loops within 10 hops (defense against
+//     bad data — Sharique/Sadakathullah used to point at each other).
+//   • Children sorted alphabetically inside each parent so reload
+//     order is deterministic.
 // =============================================================================
 
-// Initials for the avatar — first letter of first name + first letter
-// of last name. Falls back to first two characters of the PSN if the
-// name is too short or missing.
+// Initials for the avatar — first letter of first + first letter of
+// last name. Fall back to the last two PSN chars if the name is
+// missing or one-word.
 function initialsOf(name, psn) {
   const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
   if (parts.length >= 2) {
@@ -47,9 +56,9 @@ function initialsOf(name, psn) {
   return String(psn || '??').slice(-2).toUpperCase();
 }
 
-// Department code → human-readable label. The chart shows the code
-// in a chip but the tooltip on hover gives the full label so people
-// unfamiliar with the codes can still read the chart.
+// Department/location code → human label. Used in the tooltip and
+// in the card subtitle. Codes the user adds in future automatically
+// fall back to the raw code if not in the lookup.
 const DEPT_LABEL = {
   MGT: 'Management',
   SUP: 'Supervisory',
@@ -66,11 +75,8 @@ const LOC_LABEL = {
   RUH: 'Riyadh',
 };
 
-// Build a tree from a flat employee array using manager_id pointers.
-// Returns the root array (people with no manager, ie the CEO). Cycles
-// in the data are broken by treating any node whose manager_id chain
-// loops back on itself as a root — this protects against the known
-// bad data where Sharique and Sadakath used to point at each other.
+// Build a tree from a flat employee array. Returns the array of
+// roots. See file header for invariants.
 function buildTree(employees) {
   const byId = new Map();
   for (const emp of employees) {
@@ -80,15 +86,12 @@ function buildTree(employees) {
   const roots = [];
   for (const node of byId.values()) {
     const mgrId = node.manager_id;
-    // No manager → root. Also root if manager_id points to a non-
-    // existent employee (e.g. retired manager not yet reassigned)
-    // or if the chain loops back to this node within 10 hops.
     if (!mgrId || !byId.has(mgrId) || mgrId === node.id) {
       roots.push(node);
       continue;
     }
     // Cycle guard — walk up the chain, abort if we hit ourselves
-    // within 10 hops (org charts realistically never go that deep).
+    // within 10 hops. Org charts realistically never go that deep.
     let cursor = byId.get(mgrId);
     let cyclic = false;
     let hops = 0;
@@ -103,8 +106,6 @@ function buildTree(employees) {
     }
     byId.get(mgrId).children.push(node);
   }
-  // Sort children alphabetically within each parent so the chart
-  // renders deterministically across reloads.
   const sortRecursive = (nodes) => {
     nodes.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
     nodes.forEach(n => sortRecursive(n.children));
@@ -113,82 +114,117 @@ function buildTree(employees) {
   return roots;
 }
 
-// Flatten the tree into tiers for horizontal-row rendering. Each
-// tier is an array of nodes at the same depth. Tier 0 is the root.
-function flattenTiers(roots) {
-  const tiers = [];
-  let current = roots;
-  while (current.length > 0) {
-    tiers.push(current);
-    current = current.flatMap(node => node.children || []);
-  }
-  return tiers;
+// Clip the tree to a maximum depth. At the cutoff layer, children
+// are collapsed and replaced with a `_clippedCount` marker so the
+// card can render "↓ N reports" instead of recursing further. The
+// clipping happens by depth, not by tier, so each subtree gets its
+// own depth budget — works correctly for non-uniform trees.
+function clipDepth(nodes, maxDepth, currentDepth = 0) {
+  return nodes.map(node => {
+    if (currentDepth >= maxDepth - 1) {
+      return { ...node, children: [], _clippedCount: countDescendants(node) };
+    }
+    return {
+      ...node,
+      children: clipDepth(node.children || [], maxDepth, currentDepth + 1),
+      _clippedCount: 0,
+    };
+  });
 }
 
-// Card colour scheme decided by tier and special roles. Tier 0 = CEO
-// (evergreen), Tier 1 = DJVPs (bronze), Tier 2 = managers (warm tan),
-// Tier 3+ = staff (neutral grey). Bashaier gets an HR-distinct green
-// border because the chart should let admin spot HR roles fast.
+// Total number of descendants under a node (recursively, all levels).
+// Used by clipDepth to populate the "↓ N reports" tail when summary
+// mode hides the actual subtree.
+function countDescendants(node) {
+  let n = 0;
+  const walk = (kids) => {
+    for (const k of (kids || [])) {
+      n++;
+      walk(k.children);
+    }
+  };
+  walk(node.children);
+  return n;
+}
+
+// Tier-aware visual styling. Tier 0 is the CEO. The DJVPs Nadeem
+// designated (Sharique, Sadakathullah) sit at tier 1. Tier 2 is
+// usually department managers / supervisors. Tier 3+ is staff.
+// HR reviewer (Bashaier) and admin (Nadeem) get distinct accents
+// regardless of tier so they're recognisable in dense subtrees.
 function styleFor(node, tier) {
   if (tier === 0) {
     return {
       borderColor: '#2D5F3F',
       borderWidth: 2,
-      avatarBg: '#2D5F3F',
-      tagBg: 'rgba(45,95,63,0.12)',
-      tagColor: '#2D5F3F',
-      gradient: true,
+      avatarBg: 'linear-gradient(135deg, #2D5F3F 0%, #1F4429 100%)',
+      avatarRing: 'rgba(45, 95, 63, 0.18)',
+      tagBg: 'rgba(45, 95, 63, 0.10)',
+      tagColor: '#1F4429',
+      cardBg: 'linear-gradient(180deg, #FFFFFF 0%, #F0F8F0 100%)',
+      shadow: '0 12px 32px rgba(45, 95, 63, 0.18), 0 2px 6px rgba(31, 27, 22, 0.08)',
     };
   }
   if (tier === 1) {
     return {
       borderColor: '#8B5A1F',
       borderWidth: 2,
-      avatarBg: '#8B5A1F',
-      tagBg: 'rgba(139,90,31,0.18)',
+      avatarBg: 'linear-gradient(135deg, #B07840 0%, #8B5A1F 100%)',
+      avatarRing: 'rgba(139, 90, 31, 0.18)',
+      tagBg: 'rgba(139, 90, 31, 0.12)',
       tagColor: '#5A3A14',
+      cardBg: 'linear-gradient(180deg, #FFFFFF 0%, #FFF7EC 100%)',
+      shadow: '0 8px 24px rgba(139, 90, 31, 0.14), 0 2px 4px rgba(31, 27, 22, 0.06)',
     };
   }
-  // HR reviewer (Bashaier) + admin (Nadeem) get distinct accents so
-  // they're recognisable in dense tier 2/3 rows even without titles.
   if (node.is_hr_reviewer) {
     return {
       borderColor: '#2D5F3F',
       borderWidth: 1.5,
-      avatarBg: '#2D5F3F',
-      tagBg: 'rgba(45,95,63,0.12)',
+      avatarBg: 'linear-gradient(135deg, #3D7A52 0%, #2D5F3F 100%)',
+      avatarRing: 'rgba(45, 95, 63, 0.14)',
+      tagBg: 'rgba(45, 95, 63, 0.10)',
       tagColor: '#2D5F3F',
+      cardBg: '#FFFFFF',
+      shadow: '0 4px 14px rgba(45, 95, 63, 0.10), 0 1px 3px rgba(31, 27, 22, 0.05)',
     };
   }
   if (node.is_admin) {
     return {
       borderColor: '#1F1B16',
       borderWidth: 1.5,
-      avatarBg: '#1F1B16',
-      tagBg: 'rgba(31,27,22,0.10)',
+      avatarBg: 'linear-gradient(135deg, #3A342B 0%, #1F1B16 100%)',
+      avatarRing: 'rgba(31, 27, 22, 0.14)',
+      tagBg: 'rgba(31, 27, 22, 0.08)',
       tagColor: '#1F1B16',
+      cardBg: '#FFFFFF',
+      shadow: '0 4px 14px rgba(31, 27, 22, 0.10), 0 1px 3px rgba(31, 27, 22, 0.05)',
     };
   }
   if (tier === 2) {
     return {
       borderColor: '#C49B61',
       borderWidth: 1.5,
-      avatarBg: '#9B6D3D',
-      tagBg: 'rgba(196,155,97,0.18)',
+      avatarBg: 'linear-gradient(135deg, #B17D45 0%, #8B5A1F 100%)',
+      avatarRing: 'rgba(196, 155, 97, 0.18)',
+      tagBg: 'rgba(196, 155, 97, 0.14)',
       tagColor: '#8B5A1F',
+      cardBg: '#FFFFFF',
+      shadow: '0 4px 12px rgba(196, 155, 97, 0.16), 0 1px 3px rgba(31, 27, 22, 0.05)',
     };
   }
   return {
-    borderColor: '#1F1B16',
+    borderColor: '#D4D0C7',
     borderWidth: 1.5,
-    avatarBg: '#6B7280',
-    tagBg: 'rgba(107,114,128,0.12)',
-    tagColor: '#4B5563',
+    avatarBg: 'linear-gradient(135deg, #8A8680 0%, #6B6660 100%)',
+    avatarRing: 'rgba(107, 102, 96, 0.14)',
+    tagBg: 'rgba(107, 102, 96, 0.10)',
+    tagColor: '#4B463F',
+    cardBg: '#FFFFFF',
+    shadow: '0 3px 10px rgba(31, 27, 22, 0.06), 0 1px 2px rgba(31, 27, 22, 0.04)',
   };
 }
 
-// Role label shown in the chip. CEO at tier 0 gets "MGT · CEO"
-// regardless of department; everyone else gets "DEPT · LOC".
 function roleLabel(node, tier) {
   if (tier === 0) return 'MGT · CEO';
   const d = node.department || '—';
@@ -196,62 +232,151 @@ function roleLabel(node, tier) {
   return `${d} · ${l}`;
 }
 
-// Render a single card. Used both for the live chart and for the
-// downloadable HTML — the standalone version inlines the same styles
-// so the file looks identical when opened offline.
+// =============================================================================
+// Tree CSS — drawn via pseudo-elements on the nested ul/li structure.
+// One <style> block kept here so the live and exported chart share
+// the exact same connector geometry. Class names are namespaced under
+// .esau-tree- so they can't collide with anything else on the page.
+// =============================================================================
+const TREE_CSS = `
+.esau-tree-wrap {
+  display: inline-block;
+  padding: 24px 48px 32px;
+  text-align: center;
+  font-family: 'Anthropic Sans', -apple-system, 'Segoe UI', sans-serif;
+}
+.esau-tree-wrap ul {
+  position: relative;
+  padding: 28px 0 0 0;
+  margin: 0;
+  list-style: none;
+  display: inline-flex;
+  justify-content: center;
+}
+/* Vertical drop from the parent down into the children-row */
+.esau-tree-wrap ul::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  border-left: 1.5px solid #C49B61;
+  height: 14px;
+  opacity: 0.55;
+}
+.esau-tree-wrap li {
+  position: relative;
+  padding: 14px 14px 0 14px;
+  text-align: center;
+}
+/* Horizontal bar across siblings (left and right halves) */
+.esau-tree-wrap li::before,
+.esau-tree-wrap li::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  border-top: 1.5px solid #C49B61;
+  width: 50%;
+  height: 14px;
+  opacity: 0.55;
+}
+.esau-tree-wrap li::before { right: 50%; }
+.esau-tree-wrap li::after  { left: 50%; }
+/* Single child — drop a centred vertical only, no horizontal bar */
+.esau-tree-wrap li:only-child::before,
+.esau-tree-wrap li:only-child::after { display: none; }
+/* End-of-row siblings — half-bar is trimmed at the outer edge so
+   the connector doesn't extend past the outermost child */
+.esau-tree-wrap li:first-child::before,
+.esau-tree-wrap li:last-child::after { border: 0 none; }
+/* Rounded corners at the bend so the right-angle joins look polished */
+.esau-tree-wrap li:first-child::after  { border-radius: 6px 0 0 0; border-left: 1.5px solid #C49B61; }
+.esau-tree-wrap li:last-child::before  { border-radius: 0 6px 0 0; border-right: 1.5px solid #C49B61; }
+/* The root <ul>'s own ::before drop is unwanted — we want the
+   tree to start with the root card, not a dangling line above it. */
+.esau-tree-wrap > ul::before { display: none; }
+.esau-tree-wrap > ul > li { padding-top: 0; }
+.esau-tree-wrap > ul > li::before,
+.esau-tree-wrap > ul > li::after { display: none; }
+/* Card hover — subtle lift for interactivity */
+.esau-tree-wrap .esau-card {
+  transition: transform 140ms ease-out, box-shadow 140ms ease-out;
+}
+.esau-tree-wrap .esau-card:hover {
+  transform: translateY(-2px);
+}
+@media print {
+  .esau-tree-wrap .esau-card { transition: none; }
+  .esau-tree-wrap .esau-card:hover { transform: none; }
+}
+`;
+
+// =============================================================================
+// NodeCard — the visible block per person. Uses pre-computed style
+// from styleFor() so the card matches its tier accent without any
+// ternaries in JSX.
+// =============================================================================
 function NodeCard({ node, tier }) {
   const s = styleFor(node, tier);
   const initials = initialsOf(node.name, node.id);
   const role = roleLabel(node, tier);
-  const reportCount = (node.children || []).length;
+  const directReports = (node.children || []).length;
+  const clippedReports = node._clippedCount || 0;
+  const totalReports = directReports + clippedReports;
   const deptFull = DEPT_LABEL[node.department] || node.department || '';
   const locFull = LOC_LABEL[node.location] || node.location || '';
   const isCeo = tier === 0;
+  const isDjvp = tier === 1;
+  const tooltip = `${node.name}\n${node.id}${deptFull ? '\n' + deptFull : ''}${locFull ? ' · ' + locFull : ''}`;
 
   return (
     <div
-      title={`${node.name}\n${node.id}\n${deptFull}${locFull ? ' · ' + locFull : ''}`}
+      className="esau-card"
+      title={tooltip}
       style={{
-        background: s.gradient
-          ? 'linear-gradient(180deg, #FFFFFF 0%, #F0F8F0 100%)'
-          : '#FFFFFF',
+        background: s.cardBg,
         border: `${s.borderWidth}px solid ${s.borderColor}`,
-        borderRadius: 12,
-        padding: isCeo ? '18px 16px' : 14,
-        minWidth: isCeo ? 240 : tier >= 3 ? 160 : 180,
-        maxWidth: isCeo ? 280 : 220,
-        boxShadow: '0 4px 14px rgba(31,27,22,0.08)',
+        borderRadius: 14,
+        padding: isCeo ? '20px 18px' : isDjvp ? '16px 16px' : '14px 14px',
+        minWidth: isCeo ? 230 : isDjvp ? 200 : tier >= 3 ? 168 : 184,
+        maxWidth: isCeo ? 270 : 220,
+        boxShadow: s.shadow,
+        textAlign: 'left',
+        cursor: 'default',
+        display: 'inline-block',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 9 }}>
         <div
           style={{
-            width: isCeo ? 44 : tier === 1 ? 40 : 36,
-            height: isCeo ? 44 : tier === 1 ? 40 : 36,
+            width: isCeo ? 46 : isDjvp ? 42 : 36,
+            height: isCeo ? 46 : isDjvp ? 42 : 36,
             borderRadius: '50%',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontSize: isCeo ? 14 : tier === 1 ? 13 : 12,
-            fontWeight: 500,
+            fontSize: isCeo ? 14 : isDjvp ? 13 : 12,
+            fontWeight: 600,
+            letterSpacing: '0.04em',
             color: '#FFFFFF',
             background: s.avatarBg,
+            boxShadow: `0 0 0 3px ${s.avatarRing}`,
             flexShrink: 0,
           }}
         >
           {initials}
         </div>
-        <div>
+        <div style={{ minWidth: 0 }}>
           <span
             style={{
               fontSize: 9,
               letterSpacing: '0.18em',
-              fontWeight: 500,
-              padding: '2px 8px',
+              fontWeight: 600,
+              padding: '3px 9px',
               borderRadius: 999,
               display: 'inline-block',
               background: s.tagBg,
               color: s.tagColor,
+              textTransform: 'uppercase',
             }}
           >
             {role}
@@ -260,126 +385,146 @@ function NodeCard({ node, tier }) {
       </div>
       <div
         style={{
-          fontSize: isCeo ? 15 : tier === 1 ? 14 : 13,
-          fontWeight: 500,
+          fontSize: isCeo ? 15 : isDjvp ? 14 : 13,
+          fontWeight: 600,
           color: '#1F1B16',
           lineHeight: 1.25,
+          letterSpacing: '-0.005em',
         }}
       >
         {node.name}
       </div>
-      <div
-        style={{
-          fontSize: 10,
-          color: '#6B6660',
-          fontFamily: 'SF Mono, Consolas, monospace',
-          marginTop: 2,
-        }}
-      >
-        {node.id}
-      </div>
-      {(reportCount > 0 || isCeo) && (
-        <div
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 3 }}>
+        <span
           style={{
-            fontSize: 11,
+            fontSize: 10.5,
             color: '#6B6660',
-            marginTop: 6,
-            paddingTop: 6,
-            borderTop: '1px solid #F0EBDF',
-            lineHeight: 1.4,
+            fontFamily: '"SF Mono", Consolas, monospace',
+            letterSpacing: '0.02em',
           }}
         >
-          {isCeo && (
-            <>{deptFull || 'Evergreen Shipping Agency Saudi Co.'}<br /></>
-          )}
-          {reportCount > 0 && (
-            <span style={{ fontSize: 10, color: '#2D5F3F', fontWeight: 500 }}>
-              ↓ {reportCount} direct report{reportCount === 1 ? '' : 's'}
-            </span>
-          )}
+          {node.id}
+        </span>
+        {totalReports > 0 && (
+          <span
+            style={{
+              fontSize: 9.5,
+              color: s.tagColor,
+              fontWeight: 700,
+              padding: '1.5px 7px',
+              borderRadius: 999,
+              background: s.tagBg,
+              letterSpacing: '0.04em',
+            }}
+            title={clippedReports > 0
+              ? `${directReports} direct + ${clippedReports} below — toggle to Full view to see all`
+              : `${directReports} direct report${directReports === 1 ? '' : 's'}`}
+          >
+            ↓ {totalReports}
+          </span>
+        )}
+      </div>
+      {isCeo && (
+        <div
+          style={{
+            fontSize: 10.5,
+            color: '#6B6660',
+            marginTop: 8,
+            paddingTop: 8,
+            borderTop: '1px solid #F0EBDF',
+            lineHeight: 1.35,
+            fontStyle: 'italic',
+          }}
+        >
+          Evergreen Shipping Agency Saudi Co. (LLC)
         </div>
       )}
     </div>
   );
 }
 
-// Render the full chart given tiers. Used both for the inline modal
-// view and for the exportable HTML — the export path serialises
-// each NodeCard via React's renderToStaticMarkup.
-function ChartBody({ tiers, mode, totalEmployees }) {
+// =============================================================================
+// TreeNode — recursive renderer. Each node is an <li> wrapping a
+// card and (if it has children) a nested <ul> that the CSS lays
+// out as a row of <li>s with the connector lines drawn between.
+// =============================================================================
+function TreeNode({ node, tier }) {
   return (
-    <div
-      style={{
-        fontFamily: '"Anthropic Sans", -apple-system, sans-serif',
-        padding: '24px 0',
-        background: '#FFFBF1',
-        borderRadius: 16,
-      }}
-    >
-      <div style={{ textAlign: 'center', marginBottom: 28, padding: '0 24px' }}>
+    <li>
+      <NodeCard node={node} tier={tier} />
+      {node.children && node.children.length > 0 && (
+        <ul>
+          {node.children.map(child => (
+            <TreeNode key={child.id} node={child} tier={tier + 1} />
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
+
+// =============================================================================
+// ChartBody — wrapping element used by both the live modal view and
+// the standalone HTML export. Contains the centred header (kicker,
+// title, subtitle), the tree, and the footer mark.
+// =============================================================================
+function ChartBody({ roots, mode, totalEmployees, headOnly = false }) {
+  const today = new Date().toLocaleDateString('en-GB', {
+    day: 'numeric', month: 'long', year: 'numeric',
+  });
+
+  return (
+    <div style={{ background: '#FFFBF1', borderRadius: 16, paddingBottom: 8 }}>
+      <style>{TREE_CSS}</style>
+      <div style={{ textAlign: 'center', padding: '28px 24px 8px' }}>
         <div
           style={{
             fontSize: 10,
             letterSpacing: '0.28em',
             color: '#2D5F3F',
-            fontWeight: 500,
+            fontWeight: 600,
           }}
         >
           EVERGREEN SHIPPING AGENCY SAUDI CO. (LLC)
         </div>
-        <div style={{ fontSize: 22, color: '#1F1B16', fontWeight: 500, marginTop: 6 }}>
+        <div
+          style={{
+            fontSize: 24,
+            color: '#1F1B16',
+            fontWeight: 500,
+            marginTop: 8,
+            letterSpacing: '-0.01em',
+            fontFamily: 'Georgia, serif',
+          }}
+        >
           Organization Chart
         </div>
-        <div style={{ fontSize: 12, color: '#6B6660', marginTop: 4 }}>
-          As of {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
-          {' · '}{totalEmployees} employee{totalEmployees === 1 ? '' : 's'}
+        <div style={{ fontSize: 12, color: '#6B6660', marginTop: 6 }}>
+          As of {today}{' · '}{totalEmployees} employee{totalEmployees === 1 ? '' : 's'}
           {' · '}{mode === 'summary' ? 'Summary view' : 'Full view'}
         </div>
       </div>
 
-      {tiers.map((tier, tierIdx) => (
-        <React.Fragment key={tierIdx}>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'center',
-              gap: tierIdx >= 3 ? 16 : 24,
-              flexWrap: 'wrap',
-              padding: '0 24px',
-              rowGap: 24,
-            }}
-          >
-            {tier.map(node => (
-              <NodeCard key={node.id} node={node} tier={tierIdx} />
+      <div style={{ overflowX: 'auto', overflowY: 'visible', padding: '8px 0 0 0' }}>
+        <div className="esau-tree-wrap">
+          <ul>
+            {roots.map(root => (
+              <TreeNode key={root.id} node={root} tier={0} />
             ))}
-          </div>
-          {/* Connector strip between tiers — single thin tan vertical
-              centred under the row, visible only when there's a next
-              tier to draw. The strip is purely decorative; the actual
-              parent-child relationship is implicit in tier ordering. */}
-          {tierIdx < tiers.length - 1 && (
-            <div
-              style={{
-                width: 1.5,
-                height: 28,
-                background: '#C49B61',
-                opacity: 0.5,
-                margin: '0 auto',
-              }}
-            />
-          )}
-        </React.Fragment>
-      ))}
+          </ul>
+        </div>
+      </div>
 
       <div
         style={{
           textAlign: 'center',
-          marginTop: 24,
-          padding: '12px 24px 0',
+          margin: '8px 24px 0',
+          padding: '14px 0 8px',
           borderTop: '1px solid #F0EBDF',
           fontSize: 10,
           color: '#9B928A',
-          letterSpacing: '0.15em',
+          letterSpacing: '0.18em',
+          fontWeight: 600,
         }}
       >
         GENERATED FROM EVERGREEN HR PORTAL · esauhr.netlify.app
@@ -388,62 +533,79 @@ function ChartBody({ tiers, mode, totalEmployees }) {
   );
 }
 
-// Generate a self-contained HTML string for download. Inlines all
-// styles using styled spans rather than referencing external CSS, so
-// the recipient can open the .html file offline and see the chart
-// exactly as it appears in the portal. Uses the same NodeCard
-// renderer via React's static-markup serialiser so the HTML output
-// stays in sync with the live view automatically.
-function buildStandaloneHtml(tiers, totalEmployees, mode) {
-  const today = new Date().toLocaleDateString('en-GB', {
-    day: 'numeric', month: 'long', year: 'numeric',
-  });
-  // Render each tier to inline HTML strings. Cards use the same
-  // styling logic as the live chart so the file is visually
-  // identical to what's on screen.
-  const renderCardHtml = (node, tier) => {
+// Tiny escape helper for the standalone export. The live React path
+// auto-escapes; the standalone export builds raw strings.
+function escapeHtml(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Recursively render tree HTML for the standalone export. Mirrors
+// the React TreeNode/NodeCard pair but emits inline styles in plain
+// HTML. Same TREE_CSS is embedded in the page <style> block for the
+// connector geometry.
+function renderTreeHtml(nodes, tier) {
+  return `<ul>${nodes.map(node => {
     const s = styleFor(node, tier);
     const initials = initialsOf(node.name, node.id);
     const role = roleLabel(node, tier);
-    const reportCount = (node.children || []).length;
-    const deptFull = DEPT_LABEL[node.department] || node.department || '';
+    const directReports = (node.children || []).length;
+    const clippedReports = node._clippedCount || 0;
+    const totalReports = directReports + clippedReports;
     const isCeo = tier === 0;
+    const isDjvp = tier === 1;
+
     const cardStyle = [
-      `background:${s.gradient ? 'linear-gradient(180deg,#FFFFFF 0%,#F0F8F0 100%)' : '#FFFFFF'}`,
+      `background:${s.cardBg}`,
       `border:${s.borderWidth}px solid ${s.borderColor}`,
-      `border-radius:12px`,
-      `padding:${isCeo ? '18px 16px' : '14px'}`,
-      `min-width:${isCeo ? 240 : tier >= 3 ? 160 : 180}px`,
-      `max-width:${isCeo ? 280 : 220}px`,
-      `box-shadow:0 4px 14px rgba(31,27,22,0.08)`,
+      `border-radius:14px`,
+      `padding:${isCeo ? '20px 18px' : isDjvp ? '16px 16px' : '14px 14px'}`,
+      `min-width:${isCeo ? 230 : isDjvp ? 200 : tier >= 3 ? 168 : 184}px`,
+      `max-width:${isCeo ? 270 : 220}px`,
+      `box-shadow:${s.shadow}`,
+      `text-align:left`,
+      `display:inline-block`,
     ].join(';');
-    const avatarSize = isCeo ? 44 : tier === 1 ? 40 : 36;
-    const avatarFontSize = isCeo ? 14 : tier === 1 ? 13 : 12;
-    const nameFontSize = isCeo ? 15 : tier === 1 ? 14 : 13;
-    return `
-    <div style="${cardStyle}" title="${escapeHtml(node.name)}\n${escapeHtml(node.id)}">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
-        <div style="width:${avatarSize}px;height:${avatarSize}px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:${avatarFontSize}px;font-weight:500;color:#FFFFFF;background:${s.avatarBg};flex-shrink:0;">${escapeHtml(initials)}</div>
-        <div><span style="font-size:9px;letter-spacing:0.18em;font-weight:500;padding:2px 8px;border-radius:999px;display:inline-block;background:${s.tagBg};color:${s.tagColor};">${escapeHtml(role)}</span></div>
-      </div>
-      <div style="font-size:${nameFontSize}px;font-weight:500;color:#1F1B16;line-height:1.25;">${escapeHtml(node.name || '')}</div>
-      <div style="font-size:10px;color:#6B6660;font-family:SF Mono,Consolas,monospace;margin-top:2px;">${escapeHtml(node.id || '')}</div>
-      ${(reportCount > 0 || isCeo) ? `
-      <div style="font-size:11px;color:#6B6660;margin-top:6px;padding-top:6px;border-top:1px solid #F0EBDF;line-height:1.4;">
-        ${isCeo ? `${escapeHtml(deptFull || 'Evergreen Shipping Agency Saudi Co.')}<br/>` : ''}
-        ${reportCount > 0 ? `<span style="font-size:10px;color:#2D5F3F;font-weight:500;">↓ ${reportCount} direct report${reportCount === 1 ? '' : 's'}</span>` : ''}
-      </div>
-      ` : ''}
-    </div>`;
-  };
 
-  const tiersHtml = tiers.map((tier, tierIdx) => `
-    <div style="display:flex;justify-content:center;gap:${tierIdx >= 3 ? 16 : 24}px;flex-wrap:wrap;padding:0 24px;row-gap:24px;">
-      ${tier.map(node => renderCardHtml(node, tierIdx)).join('\n')}
-    </div>
-    ${tierIdx < tiers.length - 1 ? `<div style="width:1.5px;height:28px;background:#C49B61;opacity:0.5;margin:0 auto;"></div>` : ''}
-  `).join('\n');
+    const avatarSize = isCeo ? 46 : isDjvp ? 42 : 36;
+    const avatarFontSize = isCeo ? 14 : isDjvp ? 13 : 12;
+    const nameFontSize = isCeo ? 15 : isDjvp ? 14 : 13;
 
+    const cardHtml = `
+      <div class="esau-card" title="${escapeHtml(node.name)}\n${escapeHtml(node.id)}" style="${cardStyle}">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px;">
+          <div style="width:${avatarSize}px;height:${avatarSize}px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:${avatarFontSize}px;font-weight:600;letter-spacing:0.04em;color:#FFFFFF;background:${s.avatarBg};box-shadow:0 0 0 3px ${s.avatarRing};flex-shrink:0;">${escapeHtml(initials)}</div>
+          <div><span style="font-size:9px;letter-spacing:0.18em;font-weight:600;padding:3px 9px;border-radius:999px;display:inline-block;background:${s.tagBg};color:${s.tagColor};text-transform:uppercase;">${escapeHtml(role)}</span></div>
+        </div>
+        <div style="font-size:${nameFontSize}px;font-weight:600;color:#1F1B16;line-height:1.25;letter-spacing:-0.005em;">${escapeHtml(node.name || '')}</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:3px;">
+          <span style="font-size:10.5px;color:#6B6660;font-family:'SF Mono',Consolas,monospace;letter-spacing:0.02em;">${escapeHtml(node.id || '')}</span>
+          ${totalReports > 0 ? `<span style="font-size:9.5px;color:${s.tagColor};font-weight:700;padding:1.5px 7px;border-radius:999px;background:${s.tagBg};letter-spacing:0.04em;">↓ ${totalReports}</span>` : ''}
+        </div>
+        ${isCeo ? `<div style="font-size:10.5px;color:#6B6660;margin-top:8px;padding-top:8px;border-top:1px solid #F0EBDF;line-height:1.35;font-style:italic;">Evergreen Shipping Agency Saudi Co. (LLC)</div>` : ''}
+      </div>
+    `;
+
+    const childrenHtml = (node.children && node.children.length > 0)
+      ? renderTreeHtml(node.children, tier + 1)
+      : '';
+
+    return `<li>${cardHtml}${childrenHtml}</li>`;
+  }).join('')}</ul>`;
+}
+
+// Build a fully self-contained HTML document for download. All
+// styles (including the TREE_CSS connector pseudo-elements) are
+// embedded in a <style> tag so the file opens correctly offline.
+function buildStandaloneHtml(roots, totalEmployees, mode) {
+  const today = new Date().toLocaleDateString('en-GB', {
+    day: 'numeric', month: 'long', year: 'numeric',
+  });
+  const treeHtml = renderTreeHtml(roots, 0);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -455,18 +617,24 @@ function buildStandaloneHtml(tiers, totalEmployees, mode) {
     @media print {
       body { background: #FFFFFF; padding: 0; }
       .org-shell { box-shadow: none !important; }
+      .esau-card { transition: none !important; }
     }
+    ${TREE_CSS}
   </style>
 </head>
 <body>
-  <div class="org-shell" style="max-width: 1100px; margin: 0 auto; background: #FFFBF1; border-radius: 16px; box-shadow: 0 8px 32px rgba(31,27,22,0.10); padding: 24px 0; font-family: 'Calibri','Segoe UI',Arial,sans-serif;">
-    <div style="text-align:center;margin-bottom:28px;padding:0 24px;">
-      <div style="font-size:10px;letter-spacing:0.28em;color:#2D5F3F;font-weight:500;">EVERGREEN SHIPPING AGENCY SAUDI CO. (LLC)</div>
-      <div style="font-size:22px;color:#1F1B16;font-weight:500;margin-top:6px;">Organization Chart</div>
-      <div style="font-size:12px;color:#6B6660;margin-top:4px;">As of ${today} · ${totalEmployees} employee${totalEmployees === 1 ? '' : 's'} · ${mode === 'summary' ? 'Summary view' : 'Full view'}</div>
+  <div class="org-shell" style="max-width: 1400px; margin: 0 auto; background: #FFFBF1; border-radius: 16px; box-shadow: 0 8px 32px rgba(31,27,22,0.10); padding-bottom: 8px;">
+    <div style="text-align:center;padding:28px 24px 8px;">
+      <div style="font-size:10px;letter-spacing:0.28em;color:#2D5F3F;font-weight:600;">EVERGREEN SHIPPING AGENCY SAUDI CO. (LLC)</div>
+      <div style="font-size:24px;color:#1F1B16;font-weight:500;margin-top:8px;letter-spacing:-0.01em;font-family:Georgia,serif;">Organization Chart</div>
+      <div style="font-size:12px;color:#6B6660;margin-top:6px;">As of ${today} · ${totalEmployees} employee${totalEmployees === 1 ? '' : 's'} · ${mode === 'summary' ? 'Summary view' : 'Full view'}</div>
     </div>
-    ${tiersHtml}
-    <div style="text-align:center;margin-top:24px;padding:12px 24px 0;border-top:1px solid #F0EBDF;font-size:10px;color:#9B928A;letter-spacing:0.15em;">
+    <div style="overflow-x:auto;padding:8px 0 0 0;">
+      <div class="esau-tree-wrap">
+        ${treeHtml}
+      </div>
+    </div>
+    <div style="text-align:center;margin:8px 24px 0;padding:14px 0 8px;border-top:1px solid #F0EBDF;font-size:10px;color:#9B928A;letter-spacing:0.18em;font-weight:600;">
       GENERATED FROM EVERGREEN HR PORTAL · esauhr.netlify.app
     </div>
   </div>
@@ -474,21 +642,6 @@ function buildStandaloneHtml(tiers, totalEmployees, mode) {
 </html>`;
 }
 
-// Tiny HTML-escape helper for the static export. The live chart
-// uses React which auto-escapes; the standalone export builds raw
-// strings so it needs explicit escaping to prevent injection.
-function escapeHtml(s) {
-  return String(s || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-// Trigger a browser download for the given HTML content. Creates a
-// Blob, an object URL, and a synthetic anchor click — same pattern
-// used elsewhere in the portal for docx/pdf exports.
 function downloadHtmlFile(html, filename) {
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -498,31 +651,32 @@ function downloadHtmlFile(html, filename) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  // Revoke the URL on the next tick so the browser has finished the
-  // download dialog by the time we clean up.
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-// Public component. Rendered as a fullscreen modal — wraps the chart
-// in a card with toolbar (mode toggle + download + close) and a
-// scrollable body so wide tiers don't push the toolbar off-screen.
+// =============================================================================
+// OrgChartView — public component. Modal shell with toolbar +
+// scrollable tree body. Lazy-loaded by AppShell so its bundle cost
+// stays out of the main chunk.
+// =============================================================================
 export default function OrgChartView({ employees, onClose }) {
   const [mode, setMode] = useState('summary');
-  const tree = useMemo(() => buildTree(employees || []), [employees]);
-  const allTiers = useMemo(() => flattenTiers(tree), [tree]);
-  // Summary cuts off at three tiers (CEO + DJVPs + their reports).
-  // Anything deeper rolls up into a "↓ N reports" count on the
-  // tier-2 cards rather than rendering its own row.
-  const tiers = useMemo(() => (
-    mode === 'summary' ? allTiers.slice(0, 3) : allTiers
-  ), [allTiers, mode]);
+  const [zoom, setZoom] = useState(1);
+
+  // Build the full tree once; clip a copy for summary mode. Memoised
+  // so the heavy traversal only re-runs when employees or mode change.
+  const fullTree = useMemo(() => buildTree(employees || []), [employees]);
+  const displayTree = useMemo(() => (
+    mode === 'summary' ? clipDepth(fullTree, 3) : fullTree
+  ), [fullTree, mode]);
+
   const totalEmployees = (employees || []).filter(e => e?.employment_status !== 'left').length;
 
   const handleDownload = useCallback(() => {
-    const html = buildStandaloneHtml(tiers, totalEmployees, mode);
+    const html = buildStandaloneHtml(displayTree, totalEmployees, mode);
     const stamp = new Date().toISOString().slice(0, 10);
     downloadHtmlFile(html, `esau_org_chart_${mode}_${stamp}.html`);
-  }, [tiers, totalEmployees, mode]);
+  }, [displayTree, totalEmployees, mode]);
 
   return (
     <div
@@ -530,7 +684,7 @@ export default function OrgChartView({ employees, onClose }) {
         position: 'fixed',
         inset: 0,
         zIndex: 80,
-        background: 'rgba(15,31,26,0.55)',
+        background: 'rgba(15, 31, 26, 0.55)',
         display: 'flex',
         alignItems: 'flex-start',
         justifyContent: 'center',
@@ -543,15 +697,13 @@ export default function OrgChartView({ employees, onClose }) {
         style={{
           background: '#FFFBF1',
           borderRadius: 16,
-          maxWidth: 1100,
+          maxWidth: 1400,
           width: '100%',
-          boxShadow: '0 24px 64px rgba(31,27,22,0.32)',
+          boxShadow: '0 24px 64px rgba(31, 27, 22, 0.32)',
           marginBottom: 24,
         }}
       >
-        {/* Toolbar — sticky-ish header with the mode toggle and
-            download/close actions. Stays at the top of the modal so
-            it's always visible even when the chart scrolls vertically. */}
+        {/* Toolbar — branding + segmented mode toggle + zoom + actions */}
         <div
           style={{
             display: 'flex',
@@ -575,8 +727,7 @@ export default function OrgChartView({ employees, onClose }) {
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            {/* Mode toggle. Two-button segmented control — keeps the
-                summary/full distinction obvious without a dropdown. */}
+            {/* Mode toggle */}
             <div
               style={{
                 display: 'inline-flex',
@@ -596,7 +747,7 @@ export default function OrgChartView({ employees, onClose }) {
                   color: mode === 'summary' ? '#1F1B16' : '#6B6660',
                   border: 'none',
                   cursor: 'pointer',
-                  boxShadow: mode === 'summary' ? '0 1px 3px rgba(31,27,22,0.12)' : 'none',
+                  boxShadow: mode === 'summary' ? '0 1px 3px rgba(31, 27, 22, 0.12)' : 'none',
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: 6,
@@ -615,7 +766,7 @@ export default function OrgChartView({ employees, onClose }) {
                   color: mode === 'full' ? '#1F1B16' : '#6B6660',
                   border: 'none',
                   cursor: 'pointer',
-                  boxShadow: mode === 'full' ? '0 1px 3px rgba(31,27,22,0.12)' : 'none',
+                  boxShadow: mode === 'full' ? '0 1px 3px rgba(31, 27, 22, 0.12)' : 'none',
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: 6,
@@ -624,9 +775,47 @@ export default function OrgChartView({ employees, onClose }) {
                 <Users2 className="w-3.5 h-3.5" /> Full
               </button>
             </div>
+            {/* Zoom controls — useful for full-view tall charts. Range
+                clamped 0.6×–1.4× so the tree never gets unreadably small
+                or crashes the modal layout. */}
+            <div
+              style={{
+                display: 'inline-flex',
+                background: '#F0EBDF',
+                borderRadius: 999,
+                padding: 3,
+                alignItems: 'center',
+              }}
+            >
+              <button
+                onClick={() => setZoom(z => Math.max(0.6, +(z - 0.1).toFixed(2)))}
+                title="Zoom out"
+                style={{
+                  width: 28, height: 28, borderRadius: 999, background: 'transparent',
+                  border: 'none', cursor: 'pointer', color: '#6B6660',
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                <ZoomOut className="w-3.5 h-3.5" />
+              </button>
+              <span style={{ fontSize: 11, color: '#6B6660', minWidth: 32, textAlign: 'center', fontWeight: 600 }}>
+                {Math.round(zoom * 100)}%
+              </span>
+              <button
+                onClick={() => setZoom(z => Math.min(1.4, +(z + 0.1).toFixed(2)))}
+                title="Zoom in"
+                style={{
+                  width: 28, height: 28, borderRadius: 999, background: 'transparent',
+                  border: 'none', cursor: 'pointer', color: '#6B6660',
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                <ZoomIn className="w-3.5 h-3.5" />
+              </button>
+            </div>
             <button
               onClick={handleDownload}
-              title="Download as standalone HTML"
+              title="Download as standalone HTML file"
               style={{
                 padding: '7px 14px',
                 borderRadius: 999,
@@ -660,13 +849,20 @@ export default function OrgChartView({ employees, onClose }) {
           </div>
         </div>
 
-        {/* Scrollable chart body. The full-mode chart can grow tall
-            on a 28-employee company; the modal handles this with
-            its own outer scroll. The horizontal overflow comes from
-            the chart container itself when a tier is wider than
-            the modal. */}
-        <div style={{ overflowX: 'auto' }}>
-          <ChartBody tiers={tiers} mode={mode} totalEmployees={totalEmployees} />
+        {/* Scrollable chart body. Zoom applies via CSS transform so
+            the tree connector geometry isn't affected — only the
+            visual scale. transform-origin centred-top so zooming
+            doesn't shift the CEO offscreen. */}
+        <div style={{ overflowX: 'auto', overflowY: 'visible' }}>
+          <div
+            style={{
+              transform: `scale(${zoom})`,
+              transformOrigin: 'center top',
+              transition: 'transform 160ms ease-out',
+            }}
+          >
+            <ChartBody roots={displayTree} mode={mode} totalEmployees={totalEmployees} />
+          </div>
         </div>
       </div>
     </div>
