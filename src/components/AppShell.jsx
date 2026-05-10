@@ -183,6 +183,11 @@ export default function AppShell({ session, me, onRefreshMe }) {
   const [permissions, setPermissions]   = useState([]);
   const [balances, setBalances]         = useState([]);
   const [holidays, setHolidays]         = useState([]);
+  // Recent 'present' attendance rows — drives the urgent
+  // "back-at-work-without-cert" flag for sick-cert chasing. Only
+  // present-status rows from the last 60 days; absent/leave rows
+  // aren't needed for this signal. Keeps the payload small.
+  const [attendancePresent, setAttendancePresent] = useState([]);
   const [loading, setLoading]           = useState(true);
   const [refreshing, setRefreshing]     = useState(false);
   const [error, setError]               = useState('');
@@ -280,13 +285,20 @@ export default function AppShell({ session, me, onRefreshMe }) {
       // to avoid the gotrue-js Web Lock wedge that intermittently hangs the first
       // query after sign-in. Each call has a hard timeout; failures degrade to [].
       const safe = (p) => p.catch((err) => { console.warn('load failed:', err); return []; });
-      const [e, t, r, b, h, p] = await Promise.all([
+      // Attendance window for the urgent back-at-work signal — last
+      // 60 days is plenty (any sick declaration older than that is
+      // either resolved or in admin-cleanup territory).
+      const attWindowFrom = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
+      const [e, t, r, b, h, p, ad] = await Promise.all([
         safe(directGet('employees',           'select=*&order=name',                  { timeoutMs: 12000 })),
         safe(directGet('leave_types',         'select=*&order=sort_order',            { timeoutMs: 8000  })),
         safe(directGet('leave_requests',      'select=*&order=requested_at.desc',     { timeoutMs: 12000 })),
         safe(directGet('leave_balances',      'select=*',                             { timeoutMs: 8000  })),
         safe(directGet('public_holidays',     'select=*&order=date',                  { timeoutMs: 8000  })),
         safe(directGet('permission_requests', 'select=*&order=permission_date.desc',  { timeoutMs: 8000  })),
+        safe(directGet('attendance_daily',
+          `select=employee_id,attendance_date,status&status=eq.present&attendance_date=gte.${attWindowFrom}`,
+          { timeoutMs: 10000 })),
       ]);
 
       setEmployees(Array.isArray(e) ? e : []);
@@ -295,6 +307,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
       setBalances(Array.isArray(b) ? b : []);
       setHolidays(Array.isArray(h) ? h : []);
       setPermissions(Array.isArray(p) ? p : []);
+      setAttendancePresent(Array.isArray(ad) ? ad : []);
 
       // ── Auto-expire stale pending permissions ─────────────────────────
       // Rows still in pending_manager / pending_hr whose permission_date
@@ -507,6 +520,41 @@ export default function AppShell({ session, me, onRefreshMe }) {
     return scoped.filter(r => r.status === 'pending').length;
   }, [requests, isAdmin, me?.id]);
 
+  // Set of employee_ids who have an active pending_certificate sick
+  // declaration AND have shown up to work since their declared
+  // start_date — i.e. they're back at the office but haven't uploaded
+  // the Sehhaty cert yet. Bashaier gets a visual nudge (red pulsing
+  // bell on the row) plus a tab badge bump for these. Recomputed in
+  // memory from the data already loaded — no extra fetch.
+  const urgentCertEmpIds = useMemo(() => {
+    const out = new Set();
+    if (!requests?.length || !attendancePresent?.length) return out;
+    // Group present-attendance dates by employee for O(1) lookup.
+    const presentByEmp = new Map();
+    for (const row of attendancePresent) {
+      if (!row?.employee_id || !row?.attendance_date) continue;
+      if (!presentByEmp.has(row.employee_id)) presentByEmp.set(row.employee_id, []);
+      presentByEmp.get(row.employee_id).push(row.attendance_date);
+    }
+    for (const req of requests) {
+      if (req.leave_type_id !== 'sick') continue;
+      if (req.stage !== 'pending_certificate') continue;
+      if (req.sehhaty_code) continue;
+      if (req.sick_cert_exempt) continue;
+      const presentDates = presentByEmp.get(req.employee_id);
+      if (!presentDates?.length) continue;
+      // Back-at-work if any 'present' day falls on or after the
+      // declared start_date. Covers both 'returned post-leave' and
+      // 'declared sick but actually came in' scenarios.
+      const startDate = req.start_date;
+      if (!startDate) continue;
+      if (presentDates.some(d => d >= startDate)) {
+        out.add(req.employee_id);
+      }
+    }
+    return out;
+  }, [requests, attendancePresent]);
+
   // Count of items waiting for THIS user's review action — drives the
   // notification badge on the Reviews tab. Each role sees its own
   // queue:
@@ -530,6 +578,10 @@ export default function AppShell({ session, me, onRefreshMe }) {
       count += (requests    || []).filter(r => /^pending/.test(r.stage || '')).length;
       count += (permissions || []).filter(p => /^pending/.test(p.stage || '')).length;
       count += (requests    || []).filter(r => r.return_stage === 'pending_hr' || r.return_stage === 'pending_manager').length;
+      // Urgent: pending_certificate sick rows where staff is back at
+      // work. These don't show in /^pending/ regex above (pending_hr
+      // / pending_manager only) but they need Bashaier's nudge action.
+      count += urgentCertEmpIds.size;
     } else if (isHrReviewer) {
       count += (requests    || []).filter(r => r.stage === 'pending_hr').length;
       count += (permissions || []).filter(p => p.stage === 'pending_hr').length;
@@ -538,6 +590,8 @@ export default function AppShell({ session, me, onRefreshMe }) {
       // landing-page card design). The badge surfaces both so she
       // never misses the new ones rolling in.
       count += (requests    || []).filter(r => r.return_stage === 'pending_hr' || r.return_stage === 'pending_manager').length;
+      // Urgent back-at-work cert chases — see comment above.
+      count += urgentCertEmpIds.size;
     } else if (directReportIds.size > 0) {
       // Manager — only their direct reports' pending_manager rows
       count += (requests    || []).filter(r => r.stage === 'pending_manager' && directReportIds.has(r.employee_id)).length;
@@ -545,7 +599,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
       count += (requests    || []).filter(r => r.return_stage === 'pending_manager' && directReportIds.has(r.employee_id)).length;
     }
     return count;
-  }, [requests, permissions, employees, me, isAdmin, isHrReviewer]);
+  }, [requests, permissions, employees, me, isAdmin, isHrReviewer, urgentCertEmpIds]);
 
   // Today-on-calendar count for the badge on the Calendar tab. Counts
   // distinct people with any approved event happening today — leaves
@@ -1100,7 +1154,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
           <BashaierTasksCard employees={employees} requests={requests} permissions={permissions} />
         )}
         {tab === 'reviews' && (
-          <ReviewerPanel me={me} />
+          <ReviewerPanel me={me} urgentCertEmpIds={urgentCertEmpIds} />
         )}
         {tab === 'attendance' && (() => {
           // Defense in depth: even if someone forces tab='attendance' via URL or

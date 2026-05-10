@@ -62,7 +62,7 @@ const LEAVE_TYPE_COLOURS = {
 };
 const pickLeaveTypeColor = (id) => LEAVE_TYPE_COLOURS[id] || '#6B7280';
 
-export default function ReviewerPanel({ me }) {
+export default function ReviewerPanel({ me, urgentCertEmpIds }) {
   const [leave, setLeave]             = useState([]);
   const [perms, setPerms]             = useState([]);
   const [empMap, setEmpMap]           = useState({});
@@ -1065,6 +1065,7 @@ export default function ReviewerPanel({ me }) {
           empMap={empMap}
           me={me}
           loading={loading}
+          urgentCertEmpIds={urgentCertEmpIds}
           onRowOpen={(req) => setHrModalReq(req)}
           onChanged={load}
         />

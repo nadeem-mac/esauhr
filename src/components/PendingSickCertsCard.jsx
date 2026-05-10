@@ -146,6 +146,9 @@ export default function PendingSickCertsCard({
   me,              // current viewer; used as actor for the exempt action
   reminders = [],  // sick_reminders rows for the visible declarations
   violations = [], // attendance_violations rows of type unauthorized_absence
+  // Set of employee_ids back at work without cert — drives the red
+  // pulsing bell on those rows. Empty Set is fine.
+  urgentCertEmpIds = new Set(),
   onRowOpen,       // (req) => void  — invoked when a row is tapped, opens HrApprovalModal
   onChanged,       // () => void     — invoked after exempt or reminder send
   loading,         // boolean — showing spinner while initial data arrives
@@ -268,6 +271,31 @@ export default function PendingSickCertsCard({
         borderColor: 'var(--border-soft)',
       }}
     >
+      {/* Scoped keyframes — drives the red-pulse animation on the
+          REMIND bell + the BACK AT WORK · CERT OVERDUE pill for rows
+          where the staff has shown up to work without uploading the
+          Sehhaty cert. The bell scales and changes opacity in a
+          looped 1.4s cycle; the pill mirrors the same pulse on its
+          background colour. Kept inline so the styles travel with the
+          component — no global CSS dependency. */}
+      <style>{`
+        @keyframes pending-cert-bell-pulse {
+          0%, 100% { transform: scale(1);   opacity: 1;    }
+          50%      { transform: scale(1.25); opacity: 0.5;  }
+        }
+        .pending-cert-bell-pulse {
+          animation: pending-cert-bell-pulse 1.2s ease-in-out infinite;
+          transform-origin: center;
+        }
+        @keyframes pending-cert-urgent-pulse {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.55); }
+          50%      { box-shadow: 0 0 0 4px rgba(220, 38, 38, 0);   }
+        }
+        .pending-cert-urgent-pulse {
+          animation: pending-cert-urgent-pulse 1.4s ease-out infinite;
+        }
+      `}</style>
+
       {/* Header bar — title + counts + soft caption. The counts pills
           give Bashaier the urgent summary in one glance. */}
       <header
@@ -440,6 +468,12 @@ export default function PendingSickCertsCard({
               pressure === 'soft_overdue' ||
               pressure === 'hard_overdue';
             const reminderDue = reminderable && !reminder.alreadySent;
+            // Urgent: this staff has shown up to work but still owes
+            // the Sehhaty cert. Computed upstream in AppShell from
+            // attendance_daily 'present' rows ≥ start_date. When set,
+            // the REMIND bell pulses red and the row gets a "BACK AT
+            // WORK · CERT OVERDUE" pill alongside the pressure tags.
+            const isUrgent = !!urgentCertEmpIds?.has?.(req.employee_id);
 
             return (
               <li
@@ -482,6 +516,23 @@ export default function PendingSickCertsCard({
                           outstanding is the Sehhaty cert from the staff.
                           Higher visual priority than pressure pill since
                           this means "case is open, not yet closed". */}
+                      {/* BACK AT WORK · CERT OVERDUE — highest-priority
+                          pill on a row. Surfaces when the staff has been
+                          marked 'present' on attendance for any day ≥
+                          their declared sick start_date, yet still owes
+                          the Sehhaty cert. Driven by urgentCertEmpIds
+                          (computed in AppShell from attendance_daily).
+                          Tells Bashaier this needs a reminder NOW. */}
+                      {isUrgent && (
+                        <span
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider pending-cert-urgent-pulse"
+                          style={{ background: '#7F1D1D', color: '#FFFFFF' }}
+                          title="This staff is back at work (marked present on attendance) but has not uploaded the Sehhaty cert. Send a reminder."
+                        >
+                          <AlertTriangle className="w-2.5 h-2.5" />
+                          BACK AT WORK · CERT OVERDUE
+                        </span>
+                      )}
                       {req.stage === 'approved' && req.sick_cert_exempt && (
                         <span
                           className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider"
@@ -617,11 +668,26 @@ export default function PendingSickCertsCard({
                         <button
                           type="button"
                           onClick={(e) => { e.stopPropagation(); setRemindingReq(req); }}
-                          className="px-3 py-2 flex items-center gap-1 text-[10px] tracking-wider opacity-70 hover:opacity-100"
-                          style={{ color: '#0A0A0A', borderColor: tint.border }}
-                          title="Send a Sehhaty cert reminder email to this employee"
+                          className={
+                            isUrgent
+                              ? 'px-3 py-2 flex items-center gap-1 text-[10px] tracking-wider opacity-100'
+                              : 'px-3 py-2 flex items-center gap-1 text-[10px] tracking-wider opacity-70 hover:opacity-100'
+                          }
+                          style={{
+                            color: isUrgent ? '#B91C1C' : '#0A0A0A',
+                            borderColor: tint.border,
+                            fontWeight: isUrgent ? 700 : 500,
+                          }}
+                          title={
+                            isUrgent
+                              ? 'URGENT: This staff has been marked present on attendance. Send a Sehhaty cert reminder now.'
+                              : 'Send a Sehhaty cert reminder email to this employee'
+                          }
                         >
-                          <Bell className="w-3.5 h-3.5" />
+                          <Bell
+                            className={isUrgent ? 'w-3.5 h-3.5 pending-cert-bell-pulse' : 'w-3.5 h-3.5'}
+                            style={isUrgent ? { color: '#DC2626' } : undefined}
+                          />
                           REMIND
                         </button>
                       </>
