@@ -752,15 +752,12 @@ export default function HrApprovalModal({ request, employee, manager, substitute
                     Cancel
                   </button>
                   <button onClick={() => {
-                            // Smart Approve — picks the right path:
-                            //   • Sick + no cert → mark cert-exempt + approve
-                            //   • Sick + cert + not yet verified → open verify confirm
-                            //   • Otherwise (verified, or non-sick) → approve directly
-                            // Bashaier just clicks one button; the system
-                            // figures out which workflow applies.
-                            if (isSick && !request.sehhaty_code && !request.sick_cert_exempt) {
-                              approveAsCertExempt();
-                            } else if (approvalBlocked) {
+                            // 2026-05-10 (Nadeem): cert-exempt path removed.
+                            // For sick rows the new flow requires the cert
+                            // before Bashaier sees the row for verification.
+                            // She either verifies + approves (cert is in),
+                            // approves directly (non-sick), or rejects.
+                            if (approvalBlocked) {
                               openVerifyConfirm();
                             } else {
                               approve();
@@ -773,9 +770,7 @@ export default function HrApprovalModal({ request, employee, manager, substitute
                             cursor: 'pointer',
                           }}>
                     <Check className="w-3.5 h-3.5" />
-                    {(isSick && !request.sehhaty_code && !request.sick_cert_exempt)
-                      ? 'Approve (cert-exempt)'
-                      : approvalBlocked
+                    {approvalBlocked
                       ? 'Verify & approve'
                       : 'Approve & continue'}
                   </button>

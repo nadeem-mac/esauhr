@@ -607,7 +607,12 @@ export default function PendingSickCertsCard({
                       </>
                     ) : (
                       // PRE-APPROVAL row — sick declaration without cert
-                      // still in active review. REMIND + EXEMPT as before.
+                      // still in active review. Just REMIND now —
+                      // EXEMPT was removed 2026-05-10 per Nadeem: the
+                      // new flow doesn't accommodate cert-exempt at
+                      // this stage. Edge cases (no Sehhaty cert issued
+                      // for genuine reasons) handled via direct SQL by
+                      // admin, not by an in-card click.
                       <>
                         <button
                           type="button"
@@ -618,16 +623,6 @@ export default function PendingSickCertsCard({
                         >
                           <Bell className="w-3.5 h-3.5" />
                           REMIND
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); setExemptingReq(req); }}
-                          className="px-3 py-1.5 flex items-center gap-1 text-[10px] tracking-wider opacity-70 hover:opacity-100"
-                          style={{ color: '#0A0A0A', borderColor: tint.border }}
-                          title="Mark this declaration as cert-exempt (skip the Sehhaty requirement)"
-                        >
-                          <ShieldCheck className="w-3.5 h-3.5" />
-                          EXEMPT
                         </button>
                       </>
                     )}
