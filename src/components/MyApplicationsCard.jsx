@@ -74,11 +74,21 @@ function pillFor(item) {
   if (stage === 'pending_substitutes')    return { label: 'Awaiting substitutes',    color: '#92400E', bg: '#FEF3C7' };
   if (stage === 'pending_manager')        return { label: 'Awaiting manager',        color: '#9A3412', bg: '#FFEDD5' };
   if (stage === 'pending_hr')             return { label: 'Awaiting HR',             color: '#7C2D12', bg: '#FED7AA' };
-  // Sick declaration sitting in 'pending_certificate' stage —
-  // staff has registered the sick day but hasn't uploaded a Sehhaty
-  // cert yet. Distinct from pending_manager so the staff knows what
-  // they need to do (submit the cert) vs. wait for someone else.
-  if (stage === 'pending_certificate')    return { label: 'Awaiting certificate',    color: '#991B1B', bg: '#FEE2E2' };
+  // Sick declaration sitting in 'pending_certificate' stage. Two
+  // sub-states surface here:
+  //   • Fresh declaration awaiting cert (no manager action yet) —
+  //     legacy pre-2026-05-06 rows. Pill says "Awaiting certificate".
+  //   • Post-manager-approval awaiting cert (2026-05-10 architectural
+  //     change) — manager_decided_at is stamped, the row is now between
+  //     staff and HR. Pill says "Approved by manager · Awaiting cert"
+  //     so the staff knows two things: their manager already approved
+  //     them out, AND they still owe the Sehhaty cert.
+  if (stage === 'pending_certificate') {
+    if (item.manager_decided_at) {
+      return { label: 'Approved by manager · Awaiting cert', color: '#9A3412', bg: '#FFEDD5' };
+    }
+    return { label: 'Awaiting certificate', color: '#991B1B', bg: '#FEE2E2' };
+  }
   if (stage === 'rejected_by_substitute') return { label: 'Substitute declined',     color: '#B91C1C', bg: '#FEE2E2' };
   if (stage === 'rejected_by_manager')    return { label: 'Rejected by manager',     color: '#B91C1C', bg: '#FEE2E2' };
   if (stage === 'rejected_by_hr')         return { label: 'Rejected by HR',          color: '#B91C1C', bg: '#FEE2E2' };
