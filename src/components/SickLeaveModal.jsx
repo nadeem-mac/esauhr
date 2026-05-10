@@ -909,7 +909,7 @@ export default function SickLeaveModal({
                   Drop your Sehhaty PDF here, or click to choose
                 </div>
                 <div className="text-[11px] mt-1.5" style={{ color: '#0A0A0A', opacity: 0.7 }}>
-                  The system will read the leave ID, dates, and doctor automatically.
+                  The PDF is read on your device — only the Leave ID and Iqama are submitted to HR.
                 </div>
                 <div className="text-[10px] mt-2" style={{ color: '#0A0A0A', opacity: 0.55 }}>
                   Original PDF from Seha.sa only. Photos and screenshots aren't accepted.
@@ -952,7 +952,7 @@ export default function SickLeaveModal({
                      style={{ background: '#ECFDF5', borderColor: '#A7F3D0' }}>
                   <div className="flex items-center gap-2 text-[11px]" style={{ color: '#065F46', fontWeight: 600 }}>
                     <Check className="w-3.5 h-3.5" />
-                    Certificate read successfully
+                    Certificate read on your device
                     {extracted.source === 'ocr_fallback' && (
                       <span className="text-[9px] tracking-wider opacity-70">VIA OCR</span>
                     )}
@@ -964,48 +964,76 @@ export default function SickLeaveModal({
                     className="text-[10px] inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-white"
                     style={{ color: '#065F46' }}
                   >
-                    <RefreshCw className="w-3 h-3" /> Looks wrong? Upload another
+                    <RefreshCw className="w-3 h-3" /> Use a different file
                   </button>
                 </div>
-                <div className="p-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
-                  {/* Patient name appears first so the staff can
-                      immediately verify the cert belongs to them.
-                      Spans both columns since Saudi names are typically
-                      4-5 words long.
-                      The 'matchEmployee' prop turns on a small badge:
-                        ✓ green = name on cert matches the logged-in
-                                  employee (case/diacritic-insensitive)
-                        ⚠ amber = no match found — soft warning, NOT
-                                  a block; legitimate edge cases exist
-                                  (recently changed name, OCR misread,
-                                  staff submitting on behalf of family
-                                  member in some private setups). */}
+                <div className="p-3 space-y-3 text-[11px]">
+                  {/* Name — sanity-check that this is the staff's own cert.
+                      Read-only display. The matchStatus badge flags any
+                      mismatch with the employee record so staff can spot
+                      "wrong PDF picked" mistakes before submitting. */}
                   <PreviewField
                     label="Name"
                     value={extracted.name || '—'}
                     wide
                     matchStatus={nameMatchStatus}
                   />
-                  <PreviewField label="Leave ID"   value={extracted.leaveId} mono required />
-                  <PreviewField label="Iqama / ID" value={extracted.idNumber || '—'} mono />
-                  <PreviewField label="Start"      value={extracted.startDate || '—'} />
-                  <PreviewField label="End"        value={extracted.endDate || '—'} />
-                  <PreviewField label="Days"       value={extracted.days || '—'} />
-                  <PreviewField label="Issue date" value={extracted.issueDate || '—'} />
-                  <PreviewField label="Doctor"     value={extracted.doctor || '—'} wide />
-                  <PreviewField label="Specialty"  value={extracted.specialty || '—'} wide />
+
+                  {/* Leave ID — the Sehhaty service code. Editable so OCR
+                      misreads can be corrected on the spot. This is the
+                      key value HR uses to look up the cert on Sehhaty. */}
+                  <div>
+                    <div className="text-[9px] tracking-[0.18em] mb-1" style={{ color: '#0A0A0A', opacity: 0.7, fontWeight: 700 }}>
+                      LEAVE ID <span style={{ color: '#B91C1C' }}>*</span>
+                    </div>
+                    <input
+                      type="text"
+                      value={extracted.leaveId || ''}
+                      onChange={(e) => setExtracted({ ...extracted, leaveId: e.target.value.trim() })}
+                      placeholder="SLXXXXXXXXXX"
+                      className="w-full px-3 py-2 rounded-lg text-[14px] focus:outline-none focus:ring-2"
+                      style={{
+                        border: '1px solid #A7F3D0',
+                        fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                        fontWeight: 600,
+                        color: '#0A0A0A',
+                      }}
+                    />
+                  </div>
+
+                  {/* Iqama / National ID — the staff's identity number.
+                      Editable for the same reason. HR uses this with the
+                      Leave ID to look up the cert on Sehhaty. */}
+                  <div>
+                    <div className="text-[9px] tracking-[0.18em] mb-1" style={{ color: '#0A0A0A', opacity: 0.7, fontWeight: 700 }}>
+                      IQAMA / NATIONAL ID
+                    </div>
+                    <input
+                      type="text"
+                      value={extracted.idNumber || ''}
+                      onChange={(e) => setExtracted({ ...extracted, idNumber: e.target.value.trim() })}
+                      placeholder="1XXXXXXXXX"
+                      className="w-full px-3 py-2 rounded-lg text-[14px] focus:outline-none focus:ring-2"
+                      style={{
+                        border: '1px solid #A7F3D0',
+                        fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                        fontWeight: 600,
+                        color: '#0A0A0A',
+                      }}
+                    />
+                  </div>
                 </div>
                 {nameMatchStatus === 'mismatch' && (
                   <div className="mx-3 mb-3 px-3 py-2 rounded-lg text-[11px] flex items-start gap-2"
                        style={{ background: '#FEF3C7', color: '#92400E' }}>
                     <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
                     <div>
-                      The name on the certificate doesn't appear to match your profile name (<strong>{employee?.name}</strong>). HR will verify this when they review your submission. If you uploaded the wrong PDF, click "Upload another" above.
+                      The name on the certificate doesn't appear to match your profile name (<strong>{employee?.name}</strong>). HR will verify this on Sehhaty when they review. If you picked the wrong PDF, click "Use a different file" above.
                     </div>
                   </div>
                 )}
                 <div className="px-3 pb-3 text-[10px]" style={{ color: '#0A0A0A', opacity: 0.6 }}>
-                  These values are read from the PDF and cannot be edited. If anything looks wrong, click "Upload another" above.
+                  Your PDF stays on this device — only the Leave ID and Iqama are submitted. HR will verify on the official Sehhaty portal.
                 </div>
 
                 {/* TEMPORARY DIAGNOSTIC PANEL.
