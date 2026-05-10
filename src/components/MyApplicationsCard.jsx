@@ -437,13 +437,23 @@ function Row({ item, empMap, leaveTypes, onClick, onUploadCert }) {
   // staff can upload the cert at any point in the request's life —
   // before manager review, after manager approval but before HR final
   // approval, or even after final approval if the cert came in late.
+  // 2026-05-10 fix: gate on STAGE not status. The leave_requests
+  // status column is a legacy field that's supposed to mirror stage
+  // via a DB trigger, but in practice it can get out-of-sync when
+  // rows transition through stages the trigger doesn't recognise
+  // (we hit this on a sick row that landed at stage='pending_certificate'
+  // with status='rejected', hiding the UPLOAD button when it should
+  // have shown). Stage is the authoritative field for "where is this
+  // row" — every approval action writes to it directly. Status is
+  // informational.
   const isSickAwaitingCert =
     item._kind === 'leave' &&
     item.leave_type_id === 'sick' &&
     !item.sehhaty_code &&
     !item.sick_cert_exempt &&
-    item.status !== 'rejected' &&
-    item.status !== 'cancelled';
+    !((item.stage || '').startsWith('rejected_')) &&
+    item.stage !== 'cancelled' &&
+    item.stage !== 'expired';
 
   // Title varies by kind. For leaves, use the leave-type name. For
   // permissions, 'Late Arrival' / 'Early Leave'. For rejoinings,

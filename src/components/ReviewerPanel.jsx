@@ -742,6 +742,13 @@ export default function ReviewerPanel({ me }) {
           && !req.sick_cert_exempt;
         if (isSickAwaitingCert) {
           nextStage = 'pending_certificate';
+          // Explicit status set — the legacy status column trigger
+          // may not recognise 'pending_certificate' and leaves the
+          // value stale (we saw it stuck at 'rejected' from a prior
+          // path). 2026-05-10 fix: write status='pending' alongside
+          // the stage so downstream filters that still read status
+          // see the row as in-flight.
+          patch.status = 'pending';
         } else {
           nextStage = requesterIsExclusiveHr ? 'approved' : 'pending_hr';
           if (requesterIsExclusiveHr) {
