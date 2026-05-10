@@ -483,6 +483,23 @@ export default function SickLeaveModal({
 
       const useAttach = !!(priorPending && attachToPrior);
 
+      // 2026-05-10 fix: when forceCertPath=true (the staff clicked
+      // UPLOAD CERTIFICATE on a specific row), they're attaching a cert
+      // to an EXISTING declaration. If priorPending is null here, it
+      // means the lookup failed to find the row they intended to attach
+      // to. Falling through to Branch 2 would silently create a
+      // duplicate sick row — which is exactly what Nadeem reported on
+      // 2026-05-10. Surface the failure instead.
+      if (forceCertPath && !useAttach) {
+        setError(
+          priorPending
+            ? 'Please confirm whether to attach to your existing declaration.'
+            : 'Could not find your existing sick declaration. Please refresh the page and try again. If the problem persists, contact HR.'
+        );
+        setBusy(false);
+        return;
+      }
+
       if (useAttach) {
         // Branch 1: PATCH the prior sick row that's missing a cert.
         //
