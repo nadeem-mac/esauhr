@@ -1050,6 +1050,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
               onGoToReviews={() => setTabPersistent("reviews")}
               onNewRequest={() => setShowNewRequest(true)}
               onOpenOrgChart={() => setOrgChartOpen(true)}
+              onUploadCert={() => setRequestFlow('sick_unified_cert_only')}
             />
           ) : isManager ? (
             // ManagerDashboard: any user who has direct reports (manager_id===me.id

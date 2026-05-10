@@ -10,7 +10,7 @@ import HrShiftMonthCard from './HrShiftMonthCard.jsx';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
 import MyApplicationsCard from './MyApplicationsCard.jsx';
 
-export default function Dashboard({ me, employees, requests, typeMap, empMap, permissions, leaveTypes, onGoToRequests, onGoToReviews, onNewRequest, onOpenOrgChart }) {
+export default function Dashboard({ me, employees, requests, typeMap, empMap, permissions, leaveTypes, onGoToRequests, onGoToReviews, onNewRequest, onOpenOrgChart, onUploadCert }) {
   // Personalised greeting — fully inline to eliminate any minifier scope issues.
   const _hr = new Date().getHours();
   const _period = _hr < 12 ? 'morning' : _hr < 17 ? 'afternoon' : 'evening';
@@ -748,6 +748,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           permissions={permissions}
           empMap={empMap}
           leaveTypes={leaveTypes}
+          onUploadCert={onUploadCert}
         />
       )}
 
