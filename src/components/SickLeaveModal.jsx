@@ -180,21 +180,32 @@ export default function SickLeaveModal({
     let cancelled = false;
     (async () => {
       try {
-        // Find recent sick row from this employee that's still in flight
-        // and missing a cert — this used to gate on stage='pending_certificate'
-        // but Path A now starts at pending_manager (per "ALL STAFF →
-        // MANAGER → BASHAIER" routing), so we look up by the cert
-        // column instead. This way Path B's "attach to prior" prompt
-        // still finds the right row regardless of which stage it's
-        // sitting at.
+        // Find recent sick row from this employee that's still missing a
+        // cert. The 2026-05-06 architectural decision routed all sick
+        // declarations through initialApprovalStage (pending_manager /
+        // pending_hr) and dropped the dedicated 'pending_certificate'
+        // stage for new rows. Cert tracking is now done out-of-band via
+        // sehhaty_code IS NULL — same signal the chase emails and the
+        // MyApplicationsCard cert-button filter use.
+        //
+        // 2026-05-10 widening: the lookup now includes ANY sick row
+        // missing its cert, not just in-flight ones. Reason — staff may
+        // submit a late cert AFTER the request was already approved
+        // (Bashaier doesn't always wait for the cert before approving;
+        // the chase flow handles late certs separately). With the
+        // narrower stage filter, those late submissions used to fall
+        // through to Branch 2 and create a duplicate row. Now we attach
+        // to the existing row regardless of stage. The submit handler
+        // is responsible for not overwriting stage on already-closed
+        // rows.
         const rows = await directGet(
           'leave_requests',
-          `select=id,start_date,end_date,reason,sick_declared_at,stage&employee_id=eq.${employee.id}` +
+          `select=id,start_date,end_date,reason,sick_declared_at,stage,status&employee_id=eq.${employee.id}` +
           `&leave_type_id=eq.sick` +
           `&sehhaty_code=is.null` +
           `&sick_cert_exempt=eq.false` +
-          `&stage=in.(pending_certificate,pending_manager,pending_hr)` +
-          `&order=sick_declared_at.desc&limit=1`,
+          `&status=not.in.(rejected,cancelled)` +
+          `&order=sick_declared_at.desc.nullslast,start_date.desc&limit=1`,
           { timeoutMs: 8000 }
         );
         if (!cancelled && Array.isArray(rows) && rows.length) {
@@ -473,16 +484,33 @@ export default function SickLeaveModal({
       const useAttach = !!(priorPending && attachToPrior);
 
       if (useAttach) {
-        // Branch 1: PATCH the prior pending_certificate row.
+        // Branch 1: PATCH the prior sick row that's missing a cert.
+        //
+        // Stage handling depends on the row's current state:
+        //   • Legacy 'pending_certificate' rows (pre-2026-05-06) — bump
+        //     to initialApprovalStage so they enter normal review now
+        //     that the cert has arrived.
+        //   • Already-approved rows ('closed', 'pending_manager',
+        //     'pending_hr') — leave the stage alone. The cert is just
+        //     additional documentation; we don't want to reopen an
+        //     already-closed approval just because the cert came in
+        //     late. Same reasoning for in-flight rows: the manager and
+        //     HR are already reviewing, the cert just gives them more
+        //     context.
+        const shouldBumpStage = priorPending.stage === 'pending_certificate';
         const patch = {
-          // Stage routing — managers (anyone with direct reports)
-          // skip the manager-approval step and go straight to HR.
-          // Non-managers: normal pending_manager flow.
-          stage:                  initialApprovalStage(employee, employees),
+          ...(shouldBumpStage ? { stage: initialApprovalStage(employee, employees) } : {}),
           sehhaty_code:           ex.leaveId,
-          start_date:             startDate,
-          end_date:               endDate,
-          days:                   days,
+          // Don't overwrite start_date/end_date on already-approved rows —
+          // the staff already declared, the manager and HR approved
+          // those exact dates, and the cert is just attaching evidence.
+          // Only update dates for legacy pending_certificate rows where
+          // the original declaration was a placeholder awaiting the cert.
+          ...(shouldBumpStage ? {
+            start_date:           startDate,
+            end_date:             endDate,
+            days:                 days,
+          } : {}),
           // Cross-check fields — same shape Bashaier types into the
           // HrApprovalModal cross-check view. Pre-populating these from
           // the staff-side extraction means Bashaier's cross-check is
