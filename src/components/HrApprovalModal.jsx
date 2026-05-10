@@ -5,6 +5,7 @@ import { fmtDate } from '../lib/leaveLogic.js';
 import { logAction } from '../lib/audit.js';
 import { generateVacationFormBlob, buildEmailDraft, buildSickLeaveApprovalEmailDraft, downloadBlob } from '../lib/vacationForm.js';
 import { SEHHATY_VERIFY_URL, classifySickLeaveBracket, diagnoseSehhatyCode, crossCheckSehhaty } from '../lib/sehhaty.js';
+import { markLeaveDaysAttendance } from '../lib/markLeaveAttendance.js';
 
 // Friendly label for a leave type id. Falls back to title-casing the
 // id when we don't have a curated name. The leaveTypes table stores
@@ -231,7 +232,14 @@ export default function HrApprovalModal({ request, employee, manager, substitute
   // structured certificate data she saw on Sehhaty), and the
   // optional note. Refuses to write if the cross-check has any
   // 'block' severity mismatches.
-  const applyVerification = useCallback(async () => {
+  // Verify the cert: write the cross-check fields back to the row,
+  // stamp sehhaty_verified_at + sehhaty_verified_by, and (if
+  // chainApprove=true) immediately proceed to the final approve step.
+  // Bashaier's flow is a single Verify-and-approve click — verification
+  // and approval should not be two separate decisions for her, since
+  // she's already cross-checked the cert against Sehhaty by the time
+  // the verify button is enabled.
+  const applyVerification = useCallback(async ({ chainApprove = false } = {}) => {
     if (verifying) return;
     if (!crossCheck.allOk) {
       setVerifyError('Resolve mismatches above before saving.');
@@ -272,6 +280,16 @@ export default function HrApprovalModal({ request, employee, manager, substitute
           },
         });
       } catch { /* audit best-effort */ }
+      // Chain into approve if requested. We pass the just-verified
+      // flag because React state hasn't flushed yet (verifiedAt is
+      // set above but the closure inside approve() reads the OLD
+      // value). Approve will use { fromVerify: true } to know it can
+      // skip the verifyAt check it would otherwise do.
+      if (chainApprove) {
+        // Defer to next tick so React commits the verifiedAt state
+        // before approve runs (approve reads it via the closure).
+        setTimeout(() => approve({ fromVerify: true }), 0);
+      }
     } catch (err) {
       setVerifyError(err?.message || String(err));
     } finally {
@@ -316,16 +334,22 @@ export default function HrApprovalModal({ request, employee, manager, substitute
   // 2026-05-10 final architecture (Nadeem): Bashaier cannot approve
   // a sick row from this modal without a Sehhaty cert. The new flow
   // requires the cert before HR closes the case — short of admin SQL,
-  // there is no in-app bypass.
+  // there is no in-app bypass. AND once the cert is in, she must
+  // verify it on Sehhaty before approving (the Verify & approve flow).
   //
-  // Sick rows in pending_certificate stage that she opens (via the
-  // PendingSickCertsCard click-through) show the AWAITING SEHHATY
-  // CERT panel and reach this modal in approvalBlockedNoCert mode.
-  // From there she can only Reject or close the modal. The actual
-  // approve happens later when the cert arrives and the row enters
-  // her main pending_hr queue with Verify & approve flow.
-  const isSickWithoutCert = isSick && !request.sehhaty_code && !request.sick_cert_exempt;
-  const approvalBlocked = isSickWithoutCert;
+  // Two flavours of "blocked":
+  //   • isSickWithoutCert  — sick row with no cert at all. Approve
+  //                          button is HIDDEN entirely (only Reject /
+  //                          Close available). Staff must upload first.
+  //   • isSickNeedsVerify  — sick row WITH cert but not yet verified.
+  //                          Approve button shows 'Verify & approve';
+  //                          clicking it opens the verify confirm panel.
+  //                          On successful verification, the patch
+  //                          chains directly into approve() so it's
+  //                          a single click for Bashaier.
+  const isSickWithoutCert  = isSick && !request.sehhaty_code && !request.sick_cert_exempt;
+  const isSickNeedsVerify  = isSick && request.sehhaty_code && !verifiedAt;
+  const approvalBlocked    = isSickWithoutCert || isSickNeedsVerify;
 
   const approveAsCertExempt = useCallback(async () => {
     setStep('approving');
@@ -374,7 +398,7 @@ export default function HrApprovalModal({ request, employee, manager, substitute
     }
   }, [request, employee, manager, me, sickBracket, empMap, confirmNote]);
 
-  const approve = useCallback(async () => {
+  const approve = useCallback(async ({ fromVerify = false } = {}) => {
     setStep('approving');
     setError('');
     try {
@@ -383,6 +407,7 @@ export default function HrApprovalModal({ request, employee, manager, substitute
       // pattern where the lazy query builder never executes the network call.
       await directPatch('leave_requests', 'id', request.id, {
         stage: 'approved',
+        status: 'approved',  // explicit status sync (the status column is legacy but used by some filters)
         hr_decided_at: now,
         hr_decided_by: me?.auth_user_id || me?.id || null,
       }, { timeoutMs: 15000 });
@@ -392,9 +417,24 @@ export default function HrApprovalModal({ request, employee, manager, substitute
           targetType: 'leave_request',
           targetId: request.id,
           targetLabel: `${employee?.name || request.employee_id} · approved`,
-          details: { stage: 'approved', action: 'approved' },
+          details: { stage: 'approved', action: 'approved', fromVerify: !!fromVerify },
         });
       } catch { /* audit log is best-effort */ }
+
+      // 2026-05-10 (Nadeem): mark attendance_daily for the approved
+      // leave days. Without this, a sick row stays marked 'present'
+      // (from a back-at-work attendance upload) or 'absent' (no
+      // upload yet) on the monthly grid even though it's an approved
+      // leave. Best-effort — failures don't unwind the approval.
+      try {
+        const attResult = await markLeaveDaysAttendance(request);
+        console.info(
+          `Attendance updated for leave ${request.id}:`,
+          `${attResult.updated} day(s) marked, ${attResult.skipped} weekend(s) skipped, ${attResult.errors} error(s)`,
+        );
+      } catch (e) {
+        console.warn('Attendance update failed (non-fatal):', e?.message || e);
+      }
 
       setDraft(isSick
         ? buildSickLeaveApprovalEmailDraft({
@@ -1051,9 +1091,9 @@ export default function HrApprovalModal({ request, employee, manager, substitute
                   style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', color: '#0A0A0A' }}>
                   Cancel
                 </button>
-                <button onClick={applyVerification}
+                <button onClick={() => applyVerification({ chainApprove: true })}
                   disabled={verifying || codeDiag.severity === 'error' || !crossCheck.allOk}
-                  title={!crossCheck.allOk ? 'Resolve mismatches first' : ''}
+                  title={!crossCheck.allOk ? 'Resolve mismatches first' : 'Verifies the cert and finalises the approval in one step.'}
                   className="text-[11px] inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full"
                   style={{
                     background: (codeDiag.severity === 'error' || !crossCheck.allOk) ? '#9CA3AF' : '#0F4C2A',
@@ -1063,8 +1103,8 @@ export default function HrApprovalModal({ request, employee, manager, substitute
                     opacity: (verifying || codeDiag.severity === 'error' || !crossCheck.allOk) ? 0.7 : 1,
                   }}>
                   {verifying
-                    ? <><Loader2 className="w-3 h-3 animate-spin"/> Saving…</>
-                    : <><Check className="w-3 h-3"/> All matches — verify</>}
+                    ? <><Loader2 className="w-3 h-3 animate-spin"/> Verifying & approving…</>
+                    : <><Check className="w-3 h-3"/> Verify & approve</>}
                 </button>
               </div>
             </div>
