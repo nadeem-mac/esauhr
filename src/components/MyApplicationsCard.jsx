@@ -406,15 +406,32 @@ function Row({ item, empMap, leaveTypes, onClick, onUploadCert }) {
   const { Icon, color, bg } = iconFor(item);
   const pill = pillFor(item);
 
-  // Sick-leave declaration awaiting certificate — surface a dedicated
-  // "Upload certificate" button so the staff doesn't have to wait for
-  // the soft-block escape hatch to find the upload UI. Clicks here
-  // bypass the row's onClick (which opens a read-only timeline) and
-  // route to the cert-upload modal instead.
-  const isPendingCertSick =
+  // Sick-leave declaration missing its Sehhaty cert — surface a
+  // dedicated "Upload certificate" button so the staff doesn't have to
+  // wait for the soft-block escape hatch to find the upload UI. Clicks
+  // here bypass the row's onClick (which opens a read-only timeline)
+  // and route to the cert-upload modal instead.
+  //
+  // 2026-05-10 fix (Nadeem): the previous filter checked
+  // `stage === 'pending_certificate'`, but per the 2026-05-06
+  // architectural decision in SickLeaveModal.jsx (line 303-322), new
+  // sick declarations no longer use that stage — they go through
+  // initialApprovalStage like every other leave type and land in
+  // 'pending_manager' or 'pending_hr'. With the old filter, the button
+  // never rendered for new rows. Cert tracking is now done via
+  // `sehhaty_code IS NULL`, so we mirror that here: show the button
+  // whenever a sick row is missing its cert, isn't exempt, and the
+  // request is still active (not rejected or cancelled). This way
+  // staff can upload the cert at any point in the request's life —
+  // before manager review, after manager approval but before HR final
+  // approval, or even after final approval if the cert came in late.
+  const isSickAwaitingCert =
     item._kind === 'leave' &&
     item.leave_type_id === 'sick' &&
-    item.stage === 'pending_certificate';
+    !item.sehhaty_code &&
+    !item.sick_cert_exempt &&
+    item.status !== 'rejected' &&
+    item.status !== 'cancelled';
 
   // Title varies by kind. For leaves, use the leave-type name. For
   // permissions, 'Late Arrival' / 'Early Leave'. For rejoinings,
@@ -548,7 +565,7 @@ function Row({ item, empMap, leaveTypes, onClick, onUploadCert }) {
           staff doesn't fill anything new — just picks the PDF.
           Stops propagation so the row's onClick (read-only timeline)
           doesn't also fire. */}
-      {isPendingCertSick && typeof onUploadCert === 'function' && (
+      {isSickAwaitingCert && typeof onUploadCert === 'function' && (
         <div className="mt-2 ml-12">
           <button
             type="button"
