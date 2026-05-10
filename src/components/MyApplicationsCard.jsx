@@ -70,45 +70,26 @@ function pillFor(item) {
   // "Rejected" on an in-progress row.
   const stage = item.stage;
 
-  // Approved sick leave with a cert obligation still pending — this
-  // is the post-approval state where the row is fully approved
-  // (manager + HR done) but the Sehhaty cert hasn't been uploaded
-  // yet. Per Nadeem 2026-05-10: the staff sees "Approved · Awaiting
-  // Sehhaty cert" + the UPLOAD CERTIFICATE button on this row.
-  // Sub-states once cert IS uploaded but not yet verified by HR:
-  //   • sehhaty_code set + sehhaty_verified_at null → "Cert under review"
-  //   • sehhaty_verified_at set OR sick_cert_exempt true → clean "Approved"
-  if (stage === 'approved' && item.leave_type_id === 'sick') {
-    const hasCert = !!item.sehhaty_code;
-    const isVerified = !!item.sehhaty_verified_at;
-    const isExempt = !!item.sick_cert_exempt;
-    if (!hasCert && !isExempt) {
-      return { label: 'Approved · Awaiting Sehhaty cert', color: '#9A3412', bg: '#FFEDD5' };
-    }
-    if (hasCert && !isVerified) {
-      return { label: 'Approved · Cert under HR review', color: '#1E40AF', bg: '#DBEAFE' };
-    }
-    // Either verified, or exempt — clean approved.
-  }
-
   if (stage === 'approved')               return { label: 'Approved',                color: '#0F4C2A', bg: '#ECFDF5' };
   if (stage === 'pending_substitutes')    return { label: 'Awaiting substitutes',    color: '#92400E', bg: '#FEF3C7' };
   if (stage === 'pending_manager')        return { label: 'Awaiting manager',        color: '#9A3412', bg: '#FFEDD5' };
+  // For sick rows in pending_hr the verifier is Bashaier checking the
+  // Sehhaty cert that was just uploaded — call it out so the staff
+  // knows the cert is in HR's hands now and there's nothing more for
+  // them to do. Other leave types in pending_hr show "Awaiting HR".
+  if (stage === 'pending_hr' && item.leave_type_id === 'sick') {
+    return { label: 'Awaiting HR verify', color: '#1E40AF', bg: '#DBEAFE' };
+  }
   if (stage === 'pending_hr')             return { label: 'Awaiting HR',             color: '#7C2D12', bg: '#FED7AA' };
-  // Sick declaration sitting in 'pending_certificate' stage. Two
-  // sub-states surface here:
-  //   • Fresh declaration awaiting cert (no manager action yet) —
-  //     legacy pre-2026-05-06 rows. Pill says "Awaiting certificate".
-  //   • Post-manager-approval awaiting cert (2026-05-10 architectural
-  //     change) — manager_decided_at is stamped, the row is now between
-  //     staff and HR. Pill says "Approved by manager · Awaiting cert"
-  //     so the staff knows two things: their manager already approved
-  //     them out, AND they still owe the Sehhaty cert.
+  // 'pending_certificate' is the 'manager approved, awaiting staff
+  // to upload the Sehhaty cert' state (2026-05-10 architecture).
+  // Distinct from pending_manager so the staff knows what they need
+  // to do (submit the cert) vs. wait for someone else.
   if (stage === 'pending_certificate') {
     if (item.manager_decided_at) {
-      return { label: 'Approved by manager · Awaiting cert', color: '#9A3412', bg: '#FFEDD5' };
+      return { label: 'Approved by manager · Awaiting your cert', color: '#9A3412', bg: '#FFEDD5' };
     }
-    return { label: 'Awaiting certificate', color: '#991B1B', bg: '#FEE2E2' };
+    return { label: 'Awaiting your cert', color: '#991B1B', bg: '#FEE2E2' };
   }
   if (stage === 'rejected_by_substitute') return { label: 'Substitute declined',     color: '#B91C1C', bg: '#FEE2E2' };
   if (stage === 'rejected_by_manager')    return { label: 'Rejected by manager',     color: '#B91C1C', bg: '#FEE2E2' };

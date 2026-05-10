@@ -700,17 +700,39 @@ export default function ReviewerPanel({ me }) {
       // HR reviewer who isn't admin). Per Nadeem (2026-05-06): "BASHAIER
       // → FAHAD H94712" (her request finalises at Fahad's manager
       // approval) but "ALL STAFF → MANAGER → BASHAIER" applies to
-      // everyone else including admin/Nadeem. We must NOT collapse
-      // Nadeem's flow at the manager step just because his record
-      // happens to have is_hr_reviewer=true. Only Bashaier (HR-only,
-      // not also admin) gets the self-approval shortcut.
+      // everyone else including admin/Nadeem.
       const requester = empMap[req.employee_id];
       const requesterIsExclusiveHr = !!(requester?.is_hr_reviewer && !requester?.is_admin);
       if (action === 'approved') {
-        nextStage = requesterIsExclusiveHr ? 'approved' : 'pending_hr';
-        if (requesterIsExclusiveHr) {
-          patch.hr_decided_at = now;
-          patch.hr_decided_by = deciderId;
+        // 2026-05-10 final architecture (Nadeem): sick leaves get a
+        // dedicated 'awaiting cert' holding state between manager
+        // approval and HR verification. The four-event flow is:
+        //   1. Staff declares sick           → pending_manager
+        //   2. Manager approves              → pending_certificate
+        //   3. Staff uploads Sehhaty cert    → pending_hr
+        //   4. Bashaier verifies on Sehhaty  → approved (closed)
+        //
+        // Bashaier acts exactly once — at the verify step. No initial
+        // HR approval; the cert upload is what advances the row to
+        // her queue. Manager + verify together constitute full
+        // approval; no further click from Bashaier is needed at the
+        // 'approve initially' step (it doesn't exist any more).
+        //
+        // Sick rows already carrying a cert at manager-approval time
+        // (rare: declare + upload in one form) skip the holding state
+        // and go straight to pending_hr.
+        const isSickAwaitingCert =
+          req.leave_type_id === 'sick'
+          && !req.sehhaty_code
+          && !req.sick_cert_exempt;
+        if (isSickAwaitingCert) {
+          nextStage = 'pending_certificate';
+        } else {
+          nextStage = requesterIsExclusiveHr ? 'approved' : 'pending_hr';
+          if (requesterIsExclusiveHr) {
+            patch.hr_decided_at = now;
+            patch.hr_decided_by = deciderId;
+          }
         }
       } else {
         nextStage = 'rejected_by_manager';
