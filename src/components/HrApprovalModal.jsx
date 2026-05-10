@@ -313,22 +313,19 @@ export default function HrApprovalModal({ request, employee, manager, substitute
   // request; the Approve button is what's locked.
   //
   // Exception (per Nadeem 2026-05-10): the approval flow for sick
-  // leaves no longer requires the cert in hand. Bashaier can approve
-  // a sick row even without a Sehhaty cert — the cert obligation
-  // transfers to a post-approval state. Once approved, the row sits
-  // as stage='approved' with sehhaty_code=null and the staff sees a
-  // dedicated "Sick leave approved · Awaiting Sehhaty cert" pill plus
-  // an UPLOAD CERTIFICATE button on their own dashboard. When the
-  // cert eventually comes in, Bashaier sees the row again in a
-  // separate "cert review" queue to verify against Sehhaty and close
-  // the audit. Cert-exempt remains a deliberate manual override for
-  // the rare 1-day-rest cases where no cert is issued.
+  // 2026-05-10 final architecture (Nadeem): Bashaier cannot approve
+  // a sick row from this modal without a Sehhaty cert. The new flow
+  // requires the cert before HR closes the case — short of admin SQL,
+  // there is no in-app bypass.
   //
-  // Result: sick approval no longer blocks on cert presence. The
-  // approve button is enabled for all sick rows; the cert path is
-  // tracked separately via the sehhaty_code/sehhaty_verified_at
-  // columns.
-  const approvalBlocked = false;
+  // Sick rows in pending_certificate stage that she opens (via the
+  // PendingSickCertsCard click-through) show the AWAITING SEHHATY
+  // CERT panel and reach this modal in approvalBlockedNoCert mode.
+  // From there she can only Reject or close the modal. The actual
+  // approve happens later when the cert arrives and the row enters
+  // her main pending_hr queue with Verify & approve flow.
+  const isSickWithoutCert = isSick && !request.sehhaty_code && !request.sick_cert_exempt;
+  const approvalBlocked = isSickWithoutCert;
 
   const approveAsCertExempt = useCallback(async () => {
     setStep('approving');
@@ -574,29 +571,29 @@ export default function HrApprovalModal({ request, employee, manager, substitute
               {isSick && !request.sehhaty_code && !verifiedAt && (
                 <div className="rounded-xl p-4"
                   style={{
-                    background: request.sick_cert_exempt ? '#F0FDF4' : '#FFFBEB',
-                    border: '1px solid ' + (request.sick_cert_exempt ? '#86EFAC' : '#FCD34D'),
+                    background: request.sick_cert_exempt ? '#F0FDF4' : '#FEF2F2',
+                    border: '1px solid ' + (request.sick_cert_exempt ? '#86EFAC' : '#FCA5A5'),
                   }}>
                   <div className="flex items-center gap-2 mb-2">
-                    <ShieldCheck className="w-4 h-4" style={{ color: request.sick_cert_exempt ? '#047857' : '#B45309' }}/>
-                    <div className="text-xs tracking-widest" style={{ fontWeight: 700, color: request.sick_cert_exempt ? '#047857' : '#B45309' }}>
-                      {request.sick_cert_exempt ? 'CERT-EXEMPT' : 'NO SEHHATY CERT'}
+                    <ShieldCheck className="w-4 h-4" style={{ color: request.sick_cert_exempt ? '#047857' : '#B91C1C' }}/>
+                    <div className="text-xs tracking-widest" style={{ fontWeight: 700, color: request.sick_cert_exempt ? '#047857' : '#B91C1C' }}>
+                      {request.sick_cert_exempt ? 'CERT-EXEMPT (LEGACY)' : 'AWAITING SEHHATY CERT'}
                     </div>
                   </div>
                   {request.sick_cert_exempt ? (
                     <div className="text-[12px]" style={{ color: '#14532D' }}>
-                      ✓ This row has been marked exempt from Sehhaty cert. Approve below to finalise.
+                      ✓ This row was marked exempt under the old flow. Approve below to finalise.
                     </div>
                   ) : (
-                    <div className="text-[12px]" style={{ color: '#7C2D12' }}>
-                      Short illnesses (typically 1-day rest) don't get a Sehhaty cert. If that's
-                      the case here, click <strong>Approve</strong> below — the row will be marked
-                      cert-exempt automatically. If a cert was actually issued, ask the staff
-                      member to add the service code first. Use <strong>Reject</strong> to decline.
+                    <div className="text-[12px]" style={{ color: '#7F1D1D' }}>
+                      The staff hasn't uploaded the Sehhaty certificate yet. You'll see this row again
+                      in your main approval queue once the cert is in. From here you can <strong>send
+                      a reminder</strong> via the Pending Certificates card on the dashboard, or
+                      <strong> reject</strong> if the declaration is invalid.
                     </div>
                   )}
                   {sickBracket && (
-                    <div className="mt-2 text-[10px]" style={{ color: '#7C2D12' }}>
+                    <div className="mt-2 text-[10px]" style={{ color: '#7F1D1D' }}>
                       YTD usage: {sickBracket.startTotal}/120 → {sickBracket.endTotal} after this ({sickBracket.endBracket?.label})
                     </div>
                   )}
@@ -749,34 +746,41 @@ export default function HrApprovalModal({ request, employee, manager, substitute
                   <button onClick={onClose}
                           className="px-4 py-2 rounded-full text-xs font-semibold border"
                           style={{ borderColor: 'var(--border-soft, #E8E5D8)' }}>
-                    Cancel
+                    {isSickWithoutCert ? 'Close' : 'Cancel'}
                   </button>
-                  <button onClick={() => {
-                            // 2026-05-10 (Nadeem): cert-exempt path removed.
-                            // For sick rows the new flow requires the cert
-                            // before Bashaier sees the row for verification.
-                            // She either verifies + approves (cert is in),
-                            // approves directly (non-sick), or rejects.
-                            if (approvalBlocked) {
-                              openVerifyConfirm();
-                            } else {
-                              approve();
-                            }
-                          }}
-                          className="inline-flex items-center gap-1.5 px-5 py-2 rounded-full text-xs font-semibold"
-                          style={{
-                            background: 'linear-gradient(135deg, #2D5F3F 0%, #1F4530 100%)',
-                            color: '#fff',
-                            cursor: 'pointer',
-                          }}>
-                    <Check className="w-3.5 h-3.5" />
-                    {approvalBlocked
-                      ? 'Verify & approve'
-                      : 'Approve & continue'}
-                  </button>
+                  {!isSickWithoutCert && (
+                    <button onClick={() => {
+                              // 2026-05-10 (Nadeem): cert-exempt path removed.
+                              // For sick rows the new flow requires the cert
+                              // before Bashaier sees the row for verification.
+                              // She either verifies + approves (cert is in),
+                              // approves directly (non-sick), or rejects.
+                              if (approvalBlocked) {
+                                openVerifyConfirm();
+                              } else {
+                                approve();
+                              }
+                            }}
+                            className="inline-flex items-center gap-1.5 px-5 py-2 rounded-full text-xs font-semibold"
+                            style={{
+                              background: 'linear-gradient(135deg, #2D5F3F 0%, #1F4530 100%)',
+                              color: '#fff',
+                              cursor: 'pointer',
+                            }}>
+                      <Check className="w-3.5 h-3.5" />
+                      {approvalBlocked
+                        ? 'Verify & approve'
+                        : 'Approve & continue'}
+                    </button>
+                  )}
                 </div>
               </div>
-              {approvalBlocked && (
+              {isSickWithoutCert && (
+                <div className="text-[10px] text-right" style={{ color: '#B91C1C', fontWeight: 600 }}>
+                  Approve becomes available once the staff uploads the Sehhaty certificate.
+                </div>
+              )}
+              {!isSickWithoutCert && approvalBlocked && (
                 <div className="text-[10px] text-right" style={{ color: '#B45309', fontWeight: 600 }}>
                   Approve will first ask you to confirm the Sehhaty certificate is valid.
                 </div>
