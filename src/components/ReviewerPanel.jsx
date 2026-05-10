@@ -300,10 +300,25 @@ export default function ReviewerPanel({ me }) {
       // EXCLUDED — those are fully resolved (cert was provided after
       // approval and verified). The card auto-clears as cert arrives.
       if (isHrReviewer || isAdmin) {
+        // Bashaier sees the cert-tracking card only AFTER the manager
+        // has approved (2026-05-10 Nadeem). Before manager approval
+        // it's the manager's concern, not HR's — surfacing rows in
+        // 'pending_manager' here lets her chase staff for certs on
+        // declarations that haven't even cleared the manager step yet.
+        //
+        // Stage scope:
+        //   • pending_certificate — manager approved, awaiting cert (visible)
+        //   • pending_hr          — cert just uploaded, awaiting verify
+        //                            (excluded — those land in her main
+        //                            approval queue, not the chase card)
+        //   • approved            — legacy / cert-exempt-pending rows
+        //                            (visible if cert column is still null)
+        // pending_manager and earlier stages are intentionally OUT —
+        // those belong to the line manager's review.
         const certQs =
           'select=*&leave_type_id=eq.sick' +
           '&sehhaty_code=is.null' +
-          '&stage=in.(pending_certificate,pending_manager,pending_hr,approved)' +
+          '&stage=in.(pending_certificate,approved)' +
           `&employee_id=neq.${encodeURIComponent(me.id)}` +
           '&order=sick_declared_at.desc';
         const cr = await directGet('leave_requests', certQs, { timeoutMs: 10000 }).catch(() => []);
