@@ -411,11 +411,15 @@ function buildManagerStep(stage, request, empMap) {
       break;
 
     case 'pending_hr':
+    case 'pending_certificate':
     case 'approved':
     case 'rejected_by_hr':
-      // Manager has approved (downstream stages presume manager_decided_at
-      // is populated). If the timestamp is missing for any reason, fall
-      // back to a generic "approved" detail without dates.
+      // Manager has approved. In the new 2026-05-10 architecture,
+      // sick leaves transit through pending_certificate AFTER the
+      // manager has approved (manager_decided_at is stamped), so
+      // pending_certificate joins the downstream-stages bucket here.
+      // If the timestamp is missing for any reason, fall back to a
+      // generic "approved" detail without dates.
       status = 'done';
       detail = request.manager_decided_at
         ? `Approved by ${approverName} · ${fmtDateTime(request.manager_decided_at)}`
@@ -425,11 +429,6 @@ function buildManagerStep(stage, request, empMap) {
     case 'pending_substitutes':
       status = 'next';
       detail = 'Manager will review once substitutes confirm';
-      break;
-
-    case 'pending_certificate':
-      status = 'next';
-      detail = 'Manager will review once the Sehhaty certificate is uploaded';
       break;
 
     case 'rejected_by_substitute':
@@ -488,12 +487,27 @@ function buildHrStep(stage, request, empMap) {
 
     case 'pending_hr':
       status = 'now';
-      detail = 'HR will review this next';
+      // Sick rows reaching pending_hr have just had their cert
+      // uploaded — Bashaier's next action is to verify it on Sehhaty.
+      // Other leave types use the generic 'reviewing' copy.
+      detail = request.leave_type_id === 'sick'
+        ? 'HR will verify the Sehhaty certificate next'
+        : 'HR will review this next';
+      break;
+
+    case 'pending_certificate':
+      // 2026-05-10 architecture: pending_certificate means the manager
+      // has already approved and the row is waiting on the staff to
+      // upload the Sehhaty cert. From HR's perspective this is "next"
+      // — they'll act once the cert arrives. Distinct copy from the
+      // pre-manager-approval bucket because the action ball is with
+      // the staff member, not the manager.
+      status = 'next';
+      detail = 'HR will verify once the Sehhaty certificate is uploaded';
       break;
 
     case 'pending_manager':
     case 'pending_substitutes':
-    case 'pending_certificate':
     case 'rejected_by_manager':
     case 'rejected_by_substitute':
       // Hasn't reached HR yet (or was closed before reaching it).
