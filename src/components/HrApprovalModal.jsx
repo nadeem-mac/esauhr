@@ -312,14 +312,23 @@ export default function HrApprovalModal({ request, employee, manager, substitute
   // never reach 'approved' stage. HR can still see and review the
   // request; the Approve button is what's locked.
   //
-  // Exception (per Nadeem 2026-05-06): for very short sick declarations
-  // where no Sehhaty cert is required (e.g. 1-day "today only" rest),
-  // Bashaier can mark the row as cert-exempt and approve in one step.
-  // The approveAsCertExempt path below stamps sick_cert_exempt=true
-  // before running the normal approve flow, so the policy "sick must
-  // be verified" still holds — exempt rows are explicitly waived
-  // rather than silently bypassed.
-  const approvalBlocked = isSick && !verifiedAt && !request.sick_cert_exempt;
+  // Exception (per Nadeem 2026-05-10): the approval flow for sick
+  // leaves no longer requires the cert in hand. Bashaier can approve
+  // a sick row even without a Sehhaty cert — the cert obligation
+  // transfers to a post-approval state. Once approved, the row sits
+  // as stage='approved' with sehhaty_code=null and the staff sees a
+  // dedicated "Sick leave approved · Awaiting Sehhaty cert" pill plus
+  // an UPLOAD CERTIFICATE button on their own dashboard. When the
+  // cert eventually comes in, Bashaier sees the row again in a
+  // separate "cert review" queue to verify against Sehhaty and close
+  // the audit. Cert-exempt remains a deliberate manual override for
+  // the rare 1-day-rest cases where no cert is issued.
+  //
+  // Result: sick approval no longer blocks on cert presence. The
+  // approve button is enabled for all sick rows; the cert path is
+  // tracked separately via the sehhaty_code/sehhaty_verified_at
+  // columns.
+  const approvalBlocked = false;
 
   const approveAsCertExempt = useCallback(async () => {
     setStep('approving');

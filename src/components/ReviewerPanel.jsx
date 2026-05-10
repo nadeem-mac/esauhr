@@ -707,30 +707,10 @@ export default function ReviewerPanel({ me }) {
       const requester = empMap[req.employee_id];
       const requesterIsExclusiveHr = !!(requester?.is_hr_reviewer && !requester?.is_admin);
       if (action === 'approved') {
-        // 2026-05-10 architectural change (Nadeem): sick leaves enter
-        // a 'pending_certificate' holding state after manager approval
-        // when no Sehhaty cert is on the row yet. Manager has approved
-        // operationally — "yes, this person was sick" — and the case
-        // sits awaiting cert from the staff. Once cert is uploaded the
-        // stage advances directly to pending_hr (skipping manager —
-        // they've already approved). Cert review and final approval
-        // stay between staff and Bashaier.
-        //
-        // For sick rows that already have a cert attached (rare —
-        // staff submitted the declaration and cert in one flow), the
-        // normal pending_hr advance still applies.
-        const isSickAwaitingCert =
-          req.leave_type_id === 'sick'
-          && !req.sehhaty_code
-          && !req.sick_cert_exempt;
-        if (isSickAwaitingCert) {
-          nextStage = 'pending_certificate';
-        } else {
-          nextStage = requesterIsExclusiveHr ? 'approved' : 'pending_hr';
-          if (requesterIsExclusiveHr) {
-            patch.hr_decided_at = now;
-            patch.hr_decided_by = deciderId;
-          }
+        nextStage = requesterIsExclusiveHr ? 'approved' : 'pending_hr';
+        if (requesterIsExclusiveHr) {
+          patch.hr_decided_at = now;
+          patch.hr_decided_by = deciderId;
         }
       } else {
         nextStage = 'rejected_by_manager';

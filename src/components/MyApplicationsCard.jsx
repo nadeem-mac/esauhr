@@ -70,6 +70,27 @@ function pillFor(item) {
   // "Rejected" on an in-progress row.
   const stage = item.stage;
 
+  // Approved sick leave with a cert obligation still pending — this
+  // is the post-approval state where the row is fully approved
+  // (manager + HR done) but the Sehhaty cert hasn't been uploaded
+  // yet. Per Nadeem 2026-05-10: the staff sees "Approved · Awaiting
+  // Sehhaty cert" + the UPLOAD CERTIFICATE button on this row.
+  // Sub-states once cert IS uploaded but not yet verified by HR:
+  //   • sehhaty_code set + sehhaty_verified_at null → "Cert under review"
+  //   • sehhaty_verified_at set OR sick_cert_exempt true → clean "Approved"
+  if (stage === 'approved' && item.leave_type_id === 'sick') {
+    const hasCert = !!item.sehhaty_code;
+    const isVerified = !!item.sehhaty_verified_at;
+    const isExempt = !!item.sick_cert_exempt;
+    if (!hasCert && !isExempt) {
+      return { label: 'Approved · Awaiting Sehhaty cert', color: '#9A3412', bg: '#FFEDD5' };
+    }
+    if (hasCert && !isVerified) {
+      return { label: 'Approved · Cert under HR review', color: '#1E40AF', bg: '#DBEAFE' };
+    }
+    // Either verified, or exempt — clean approved.
+  }
+
   if (stage === 'approved')               return { label: 'Approved',                color: '#0F4C2A', bg: '#ECFDF5' };
   if (stage === 'pending_substitutes')    return { label: 'Awaiting substitutes',    color: '#92400E', bg: '#FEF3C7' };
   if (stage === 'pending_manager')        return { label: 'Awaiting manager',        color: '#9A3412', bg: '#FFEDD5' };
@@ -542,12 +563,39 @@ function Row({ item, empMap, leaveTypes, onClick, onUploadCert }) {
             {dateStr}
           </div>
         </div>
-        <span
-          className="text-[11px] px-2.5 py-1 rounded-full whitespace-nowrap flex-shrink-0"
-          style={{ background: pill.bg, color: pill.color, fontWeight: 600 }}
-        >
-          {pill.label}
-        </span>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <span
+            className="text-[11px] px-2.5 py-1 rounded-full whitespace-nowrap"
+            style={{ background: pill.bg, color: pill.color, fontWeight: 600 }}
+          >
+            {pill.label}
+          </span>
+          {/* Upload-certificate action — appears INLINE with the
+              status pill (per Nadeem 2026-05-10) so an approved sick
+              row shows both "Approved · Awaiting Sehhaty cert" pill
+              AND the green UPLOAD CERTIFICATE button on the same
+              line. Stops propagation so the row's onClick (which
+              opens a read-only timeline) doesn't also fire when the
+              user is going for the button. */}
+          {isSickAwaitingCert && typeof onUploadCert === 'function' && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onUploadCert(item); }}
+              className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1 rounded-full whitespace-nowrap"
+              style={{
+                background: '#0F4C2A',
+                color: '#FFFFFF',
+                fontWeight: 600,
+                letterSpacing: '0.04em',
+                border: 'none',
+                cursor: 'pointer',
+              }}
+              title="Upload your Sehhaty certificate to attach to this declaration">
+              <Upload className="w-3 h-3" />
+              UPLOAD CERTIFICATE
+            </button>
+          )}
+        </div>
       </div>
 
       {showRejection && (
@@ -569,32 +617,10 @@ function Row({ item, empMap, leaveTypes, onClick, onUploadCert }) {
         </div>
       )}
 
-      {/* Upload-certificate action — only on sick-leave rows in
-          'pending_certificate' stage. Clicking opens the cert-upload
-          modal with the existing declaration pre-attached, so the
-          staff doesn't fill anything new — just picks the PDF.
-          Stops propagation so the row's onClick (read-only timeline)
-          doesn't also fire. */}
-      {isSickAwaitingCert && typeof onUploadCert === 'function' && (
-        <div className="mt-2 ml-12">
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onUploadCert(item); }}
-            className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-full"
-            style={{
-              background: '#0F4C2A',
-              color: '#FFFFFF',
-              fontWeight: 600,
-              letterSpacing: '0.04em',
-              border: 'none',
-              cursor: 'pointer',
-            }}
-            title="Upload your Sehhaty certificate to attach to this declaration">
-            <Upload className="w-3 h-3" />
-            UPLOAD CERTIFICATE
-          </button>
-        </div>
-      )}
+      {/* Upload-certificate button is rendered inline with the
+          status pill above (per Nadeem 2026-05-10). Old below-row
+          placement removed. */}
+
 
       {showSubProgress && (
         <div className="mt-2 pl-12 flex items-center gap-1.5 flex-wrap">
