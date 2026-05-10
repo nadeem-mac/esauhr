@@ -215,6 +215,12 @@ export default function PersonalDashboard({
       } catch (e) {
         console.warn('[handleExtend] attendance write failed (non-blocking)', e);
       }
+      // 2026-05-10 diagnostic — Nadeem reported page reload-loop. This is the
+      // only window.location.reload() in the codebase, but it should only fire
+      // when the user clicks the "Still sick — extend by 1 day" button. If the
+      // loop is real, this log will appear in the console every cycle, telling
+      // us handleExtend is being auto-invoked. Stack trace shows the caller.
+      console.error('[handleExtend] About to reload — caller stack:', new Error().stack);
       window.location.reload();
     } catch (e) {
       console.error('[handleExtend] failed', e);
