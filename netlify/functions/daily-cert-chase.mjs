@@ -176,26 +176,26 @@ function renderEmail(kind, { declaration, employee }) {
     case 'gentle_24h':
       subject = `SEHHATY CERTIFICATE REMINDER: ${idTail}`;
       intro = `This is a friendly reminder to upload your Sehhaty certificate for the sick leave you declared on <strong>${dr}</strong>.`;
-      bodyExtras = `<p style="color:#1F1B16;">You can upload it via the HR portal — Sick leave → "Yes, I have it" — and it will attach automatically to your declaration.</p>`;
+      bodyExtras = `<p style="color:#1F1B16;">Sign in to the HR portal and look for your sick declaration in <strong>My Applications</strong>. Click the green <strong>UPLOAD CERTIFICATE</strong> button to attach the PDF — it will be linked to this declaration automatically.</p>`;
       break;
     case 'firmer_72h':
       subject = `SEHHATY CERTIFICATE OVERDUE — ACTION NEEDED: ${idTail}`;
       intro = `Your Sehhaty certificate for the sick leave on <strong>${dr}</strong> is now more than 72 hours overdue.`;
       bodyExtras =
         `<p style="color:#1F1B16;">${POLICY_LINE}</p>` +
-        `<p style="color:#1F1B16;">Please upload it as soon as possible via the HR portal. New leave or permission requests are blocked until it is submitted.</p>`;
+        `<p style="color:#1F1B16;">Please sign in to the HR portal, find this declaration in <strong>My Applications</strong>, and use the <strong>UPLOAD CERTIFICATE</strong> button to submit it. New leave or permission requests are blocked until it is provided.</p>`;
       break;
     case 'final_5d':
       subject = `SEHHATY CERTIFICATE — FINAL NOTICE: ${idTail}`;
       intro = `This is a final reminder regarding the Sehhaty certificate for your sick leave on <strong>${dr}</strong>, which has been outstanding for five working days.`;
       bodyExtras =
         `<p style="color:#7F1D1D;"><strong>Without the certificate, the affected days will be recorded as unauthorized absence and may be deducted from your salary.</strong> ${POLICY_LINE}</p>` +
-        `<p style="color:#1F1B16;">Please submit the certificate today, or contact HR if there is a documented reason it cannot be provided.</p>`;
+        `<p style="color:#1F1B16;">Please submit the certificate today via the <strong>UPLOAD CERTIFICATE</strong> button in <strong>My Applications</strong>, or contact HR if there is a documented reason it cannot be provided.</p>`;
       break;
     default:
       subject = `SEHHATY CERTIFICATE FOLLOW-UP: ${idTail}`;
       intro = `Following up on the Sehhaty certificate for your sick leave on <strong>${dr}</strong>.`;
-      bodyExtras = `<p style="color:#1F1B16;">You can upload it via the HR portal at your earliest convenience.</p>`;
+      bodyExtras = `<p style="color:#1F1B16;">Sign in to the HR portal and use the <strong>UPLOAD CERTIFICATE</strong> button on your declaration in <strong>My Applications</strong> at your earliest convenience.</p>`;
   }
 
   const html = `

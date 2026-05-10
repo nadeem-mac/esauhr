@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import {
   RefreshCw, Clock, CheckCircle2, XCircle, AlertTriangle,
   Palmtree, Sunrise, Sunset, Users2, Check, X, ArrowLeftCircle, HeartPulse,
+  Upload,
 } from 'lucide-react';
 import { fmtDateShort, findRejectionReason } from '../lib/leaveLogic.js';
 import { PERMISSION_TYPES } from '../lib/permissionLogic.js';
@@ -170,6 +171,7 @@ export default function MyApplicationsCard({
   empMap = {},
   leaveTypes = [],
   onRefresh,
+  onUploadCert,
 }) {
   const [filter, setFilter]       = useState('all');
   const [openLeave, setOpenLeave] = useState(null);
@@ -351,6 +353,7 @@ export default function MyApplicationsCard({
                 else if (item._kind === 'rejoin') setOpenRejoin(item);
                 else                              setOpenPerm(item);
               }}
+              onUploadCert={onUploadCert}
             />
           ))}
         </ul>
@@ -399,9 +402,19 @@ export default function MyApplicationsCard({
 }
 
 // ─── Row ──────────────────────────────────────────────────────────────────────
-function Row({ item, empMap, leaveTypes, onClick }) {
+function Row({ item, empMap, leaveTypes, onClick, onUploadCert }) {
   const { Icon, color, bg } = iconFor(item);
   const pill = pillFor(item);
+
+  // Sick-leave declaration awaiting certificate — surface a dedicated
+  // "Upload certificate" button so the staff doesn't have to wait for
+  // the soft-block escape hatch to find the upload UI. Clicks here
+  // bypass the row's onClick (which opens a read-only timeline) and
+  // route to the cert-upload modal instead.
+  const isPendingCertSick =
+    item._kind === 'leave' &&
+    item.leave_type_id === 'sick' &&
+    item.stage === 'pending_certificate';
 
   // Title varies by kind. For leaves, use the leave-type name. For
   // permissions, 'Late Arrival' / 'Early Leave'. For rejoinings,
@@ -526,6 +539,33 @@ function Row({ item, empMap, leaveTypes, onClick }) {
               "{rejectionNote}"
             </div>
           )}
+        </div>
+      )}
+
+      {/* Upload-certificate action — only on sick-leave rows in
+          'pending_certificate' stage. Clicking opens the cert-upload
+          modal with the existing declaration pre-attached, so the
+          staff doesn't fill anything new — just picks the PDF.
+          Stops propagation so the row's onClick (read-only timeline)
+          doesn't also fire. */}
+      {isPendingCertSick && typeof onUploadCert === 'function' && (
+        <div className="mt-2 ml-12">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onUploadCert(item); }}
+            className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-full"
+            style={{
+              background: '#0F4C2A',
+              color: '#FFFFFF',
+              fontWeight: 600,
+              letterSpacing: '0.04em',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+            title="Upload your Sehhaty certificate to attach to this declaration">
+            <Upload className="w-3 h-3" />
+            UPLOAD CERTIFICATE
+          </button>
         </div>
       )}
 

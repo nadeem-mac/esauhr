@@ -48,6 +48,7 @@ export default function ManagerDashboard({
   allPermissions = [],
   leaveTypes = [],
   onGoToReviews, onGoToRequests, onGoToShifts,
+  onUploadCert,         // (request) => void — opens cert upload modal for a pending_certificate sick declaration
 }) {
   const [requests, setRequests] = useState([]);
   const [shifts, setShifts]     = useState([]);
@@ -427,6 +428,7 @@ export default function ManagerDashboard({
         permissions={allPermissions}
         empMap={empMap}
         leaveTypes={leaveTypes}
+        onUploadCert={onUploadCert}
       />
 
       {/* Direct reports list */}

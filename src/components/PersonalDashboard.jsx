@@ -29,6 +29,7 @@ export default function PersonalDashboard({
   pendingShifts,        // employee_shifts rows with status='pending' for me
   onOpenShiftAck,       // callback that opens the ShiftAcknowledgmentModal
   onOpenNewRequest,
+  onUploadCert,         // (request) => void — opens cert upload modal for a pending_certificate sick declaration
 }) {
   const [adjustments, setAdjustments] = useState({});
   // Local fetch state used only when the parent didn't pass the data in.
@@ -531,6 +532,7 @@ export default function PersonalDashboard({
         permissions={permissions}
         empMap={empMap}
         leaveTypes={leaveTypes}
+        onUploadCert={onUploadCert}
       />
       {/* Self-service attendance record. Auto-hides when there are no
           violations on file — clean records don't need this card. */}

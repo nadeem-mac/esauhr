@@ -87,11 +87,16 @@ export default function SickLeaveModal({
   forceCertPath = false,
   myDeclarations = [],
 }) {
-  // path: null until the staff picks. 'declare' = Path A, 'submit' = Path B.
-  // When forceCertPath=true we initialise straight to 'submit', skipping
-  // the picker — the staff is on the cert-only escape route from the
-  // soft block and the picker would be a useless extra click.
-  const [path, setPath] = useState(forceCertPath ? 'submit' : null);
+  // path: always either 'declare' (front-door declaration) or 'submit'
+  // (cert upload). Pre-2026-05-10 this started as null and the staff
+  // picked one via a fork at the top of the modal. Per Nadeem the
+  // fork was confusing — every normal sick day starts the same way
+  // (declare first; upload cert later via the dedicated button on
+  // MyApplicationsCard), and the only time 'submit' is appropriate is
+  // the soft-block escape hatch (forceCertPath=true). So now there's
+  // no choice to make on entry: forceCertPath determines the path,
+  // and once chosen it never changes — derived const, not state.
+  const path = forceCertPath ? 'submit' : 'declare';
 
   // Path A state — declare-now flow
   const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -592,35 +597,13 @@ export default function SickLeaveModal({
             choice that drives the rest of the form. The previously-
             chosen path stays highlighted at the top so the staff can
             switch back if they realised they picked wrong. */}
-        <div className="px-6 py-5 border-b" style={{ borderColor: 'var(--border-soft)' }}>
-          <div className="text-[11px] tracking-wider font-bold mb-2" style={{ color: '#0A0A0A' }}>
-            DO YOU HAVE YOUR SEHHATY CERTIFICATE READY?
-          </div>
-          <div className="text-[10px] mb-3" dir="rtl" style={{ color: '#0A0A0A', opacity: 0.7 }}>
-            هل لديك شهادة صحتي جاهزة؟
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <PathButton
-              selected={path === 'declare'}
-              accent="#B91C1C"
-              onClick={() => { setPath('declare'); setError(''); }}
-              title="Not yet"
-              titleArabic="ليس بعد"
-              hint="I'm declaring sick today — I'll upload the certificate later"
-              icon={<HeartPulse className="w-4 h-4" />}
-            />
-            <PathButton
-              selected={path === 'submit'}
-              accent="#0F4C2A"
-              onClick={() => { setPath('submit'); setError(''); }}
-              title="Yes, I have it"
-              titleArabic="نعم، لدي الشهادة"
-              hint="I have my Sehhaty certificate PDF and I'm submitting it now"
-              icon={<Check className="w-4 h-4" />}
-            />
-          </div>
-        </div>
+        {/* Picker removed 2026-05-10 — single flow on entry. The
+            forceCertPath prop pre-routes to Path B (cert upload) for
+            the soft-block escape hatch; everyone else lands directly
+            in Path A (declare-now). Staff who want to upload a cert
+            for an already-declared sick day click the dedicated
+            'Upload certificate' button on MyApplicationsCard, which
+            sets forceCertPath=true on entry. */}
 
         {/* PATH A — declare-now flow */}
         {path === 'declare' && (
@@ -1122,38 +1105,6 @@ export default function SickLeaveModal({
       </div>
     </div>,
     document.body
-  );
-}
-
-// Path selector button — the visual choice that drives the rest of
-// the form. Selected state uses a coloured top border + tinted
-// background so it reads clearly against the cream paper.
-function PathButton({ selected, accent, onClick, title, titleArabic, hint, icon }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="text-left rounded-lg border-2 px-3.5 py-3 transition-all"
-      style={{
-        borderColor: selected ? accent : 'var(--border-soft)',
-        background:  selected ? '#FEFAF3' : '#FFFFFF',
-        boxShadow:   selected ? `0 0 0 4px ${accent}20` : 'none',
-      }}
-    >
-      <div className="flex items-center gap-2 mb-1">
-        <span style={{ color: accent }}>{icon}</span>
-        <span className="text-[13px]" style={{ fontWeight: 600, color: '#0A0A0A' }}>
-          {title}
-        </span>
-      </div>
-      <div className="text-[11px] mb-1" dir="rtl"
-           style={{ color: '#0A0A0A', fontWeight: 500 }}>
-        {titleArabic}
-      </div>
-      <div className="text-[10px]" style={{ color: '#0A0A0A', opacity: 0.65 }}>
-        {hint}
-      </div>
-    </button>
   );
 }
 

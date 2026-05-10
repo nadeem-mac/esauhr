@@ -1070,6 +1070,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
               onGoToReviews={() => setTabPersistent("reviews")}
               onGoToRequests={() => setTabPersistent("requests")}
               onGoToShifts={() => setTabPersistent("shifts")}
+              onUploadCert={() => setRequestFlow('sick_unified_cert_only')}
             />
           ) : (
             <PersonalDashboard
@@ -1086,6 +1087,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
               pendingShifts={pendingShifts}
               onOpenShiftAck={() => setShiftAckOpen(true)}
               onOpenNewRequest={() => setShowNewRequest(true)}
+              onUploadCert={() => setRequestFlow('sick_unified_cert_only')}
             />
           )
         )}
