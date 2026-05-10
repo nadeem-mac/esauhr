@@ -433,6 +433,25 @@ function Row({ item, empMap, leaveTypes, onClick, onUploadCert }) {
     item.status !== 'rejected' &&
     item.status !== 'cancelled';
 
+  // 2026-05-10 diagnostic — Nadeem reports button isn't appearing on his
+  // approved sick row even after clearing sick_cert_exempt. Logging the
+  // full item state for any sick row so we can see exactly what data the
+  // browser has when the filter runs. Remove this log once button
+  // visibility is confirmed working.
+  if (item._kind === 'leave' && item.leave_type_id === 'sick') {
+    // eslint-disable-next-line no-console
+    console.log('[CertButton diag]', {
+      id: item.id,
+      start_date: item.start_date,
+      sehhaty_code: item.sehhaty_code,
+      sick_cert_exempt: item.sick_cert_exempt,
+      status: item.status,
+      stage: item.stage,
+      isSickAwaitingCert,
+      onUploadCertType: typeof onUploadCert,
+    });
+  }
+
   // Title varies by kind. For leaves, use the leave-type name. For
   // permissions, 'Late Arrival' / 'Early Leave'. For rejoinings,
   // 'Rejoining (<leave type>)'.
