@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { supabase, directGet, directPost, directPatch } from '../supabaseClient.js';
 import {
   Calendar, Clock, Plus, AlertTriangle, Sun, Sunrise, Sunset,
@@ -38,6 +38,35 @@ export default function PersonalDashboard({
   const [localPermissions, setLocalPermissions] = useState([]);
   const [loading,     setLoading]     = useState(true);
 
+  // 2026-05-10 fix (Nadeem): the page-flicker-every-20s bug on staff
+  // dashboards was caused by `load` having requestsProp/permissionsProp
+  // in its useCallback deps. AppShell's 20-second loadAll poll (plus
+  // every realtime event) handed PersonalDashboard a NEW array
+  // reference for those props every cycle — same content, different
+  // identity. That bumped `load`'s identity, which made both useEffects
+  // below (`[load]` and `[me?.id, load]`) re-fire. Each fire re-ran
+  // load(), which started with setLoading(true), briefly showing a
+  // loader before the fetch settled and setLoading(false) restored the
+  // dashboard. Visually: a flicker every 20s + every realtime event.
+  //
+  // Admin/HR (Dashboard.jsx) and managers (ManagerDashboard.jsx) didn't
+  // hit this — they don't run PersonalDashboard's load callback.
+  //
+  // Fix: stash the props in a ref so load can read them at runtime
+  // without listing them as deps. load's identity now only changes
+  // when me?.id changes. The two useEffects stay stable across re-
+  // renders. Realtime subscriptions only refresh load() via direct
+  // event handlers, never via cascading dep churn.
+  //
+  // Also: setLoading(true) is now skipped on follow-up loads (gated
+  // on the loadedOnceRef). Initial mount still shows the loader; the
+  // background polling/realtime-driven refreshes happen silently.
+  const propsRef = useRef({ requestsProp, permissionsProp });
+  const loadedOnceRef = useRef(false);
+  useEffect(() => {
+    propsRef.current = { requestsProp, permissionsProp };
+  });
+
   // The arrays we actually render with — props win when present, scoped
   // to me.id because AppShell hands us the whole table. Server-side
   // filtering happens in directGet for the local-fetch fallback path,
@@ -54,7 +83,10 @@ export default function PersonalDashboard({
 
   const load = useCallback(async () => {
     if (!me?.id) return;
-    setLoading(true);
+    // Only show the loader on the FIRST load. Subsequent refreshes
+    // (polling, realtime, prop changes) happen silently in the
+    // background so the dashboard doesn't flicker.
+    if (!loadedOnceRef.current) setLoading(true);
     try {
       const year  = new Date().getFullYear();
       const month = new Date().toISOString().slice(0, 7);
@@ -63,9 +95,11 @@ export default function PersonalDashboard({
       // Skip the leaves/permissions fetch when the parent passed them
       // in — AppShell is the source of truth for those, and re-fetching
       // here would just waste round-trips. We always need balances
-      // because AppShell doesn't load those.
-      const skipLeaves = Array.isArray(requestsProp);
-      const skipPerms  = Array.isArray(permissionsProp);
+      // because AppShell doesn't load those. Read props from the ref
+      // so this callback's identity stays stable across re-renders.
+      const { requestsProp: rp, permissionsProp: pp } = propsRef.current;
+      const skipLeaves = Array.isArray(rp);
+      const skipPerms  = Array.isArray(pp);
       const [bal, reqs, perms] = await Promise.all([
         safe(directGet('leave_balances',     `select=*&employee_id=eq.${me.id}&year=eq.${year}&leave_type_id=eq.annual&limit=1`, { timeoutMs: 10000 })),
         skipLeaves ? Promise.resolve(null) :
@@ -78,8 +112,11 @@ export default function PersonalDashboard({
       if (!skipPerms)  setLocalPermissions(Array.isArray(perms) ? perms : []);
     } catch (err) {
       console.warn('PersonalDashboard load failed:', err);
-    } finally { setLoading(false); }
-  }, [me?.id, requestsProp, permissionsProp]);
+    } finally {
+      loadedOnceRef.current = true;
+      setLoading(false);
+    }
+  }, [me?.id]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -215,12 +252,6 @@ export default function PersonalDashboard({
       } catch (e) {
         console.warn('[handleExtend] attendance write failed (non-blocking)', e);
       }
-      // 2026-05-10 diagnostic — Nadeem reported page reload-loop. This is the
-      // only window.location.reload() in the codebase, but it should only fire
-      // when the user clicks the "Still sick — extend by 1 day" button. If the
-      // loop is real, this log will appear in the console every cycle, telling
-      // us handleExtend is being auto-invoked. Stack trace shows the caller.
-      console.error('[handleExtend] About to reload — caller stack:', new Error().stack);
       window.location.reload();
     } catch (e) {
       console.error('[handleExtend] failed', e);
