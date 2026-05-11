@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, X, Clock, Users2, UserCheck, Briefcase, Crown } from 'lucide-react';
+import { Check, X, Clock, Users2, UserCheck, Briefcase, Crown, HeartPulse } from 'lucide-react';
 import { fmtDateShort } from '../lib/leaveLogic.js';
 
 // =============================================================================
@@ -8,12 +8,21 @@ import { fmtDateShort } from '../lib/leaveLogic.js';
 //
 // Read-only timeline showing the full approval chain for a single leave
 // request. Opens when a staff member clicks one of their own leave rows
-// (e.g. on the PersonalDashboard recent list). Renders four ordered
-// steps:
+// (e.g. on the PersonalDashboard recent list). Renders ordered steps:
 //   1. Submitted by staff
 //   2. Substitutes — per-person accept/decline/pending pills
 //   3. Manager review
-//   4. HR (SUP) final approval
+//   4. Sehhaty certificate (SICK LEAVES ONLY — inserted between Manager
+//                            and HR steps so the staff sees the cert
+//                            obligation as a discrete tracked step)
+//   5. HR (SUP) final approval
+//
+// For non-sick leave types, step 4 is skipped and the timeline reads
+// as a 4-step chain. For sick leaves the cert step shows:
+//   • next      — manager hasn't approved yet
+//   • now       — pending_certificate stage, awaiting staff upload
+//   • done      — cert uploaded (sehhaty_code present)
+//   • verified  — cert verified by HR on Sehhaty (sehhaty_verified_at)
 //
 // Each step has a status: complete (green tick), in-progress (amber clock),
 // rejected (red cross), or upcoming (neutral). Status is derived from the
@@ -91,6 +100,13 @@ export default function LeaveTimelineModal({ request, empMap = {}, leaveTypes = 
     buildSubmitStep(request, empMap),
     buildSubsStep(stage, ids, anyDeclined, allAccepted, subDecisions, empMap),
     buildManagerStep(stage, request, empMap),
+    // Sehhaty cert step — sick leaves only. Slotted BETWEEN manager
+    // and HR steps so the staff sees the cert obligation as its own
+    // discrete tracked tile. Drives the "what should I do next" cue
+    // when the row is in pending_certificate.
+    ...(request.leave_type_id === 'sick'
+      ? [buildCertStep(stage, request, empMap)]
+      : []),
     buildHrStep(stage, request, empMap),
   ];
 
@@ -468,6 +484,78 @@ function buildManagerStep(stage, request, empMap) {
 }
 
 // ── Step 4 — HR final approval ──────────────────────────────────────────────
+// Sehhaty certificate step (sick leaves only). Shows where the cert
+// is in its lifecycle:
+//   • next      — manager hasn't approved yet (cert obligation isn't
+//                  live yet; the staff doesn't need to upload while
+//                  the manager is still reviewing)
+//   • now       — pending_certificate stage (manager approved, ball
+//                  is in the staff member's court to upload)
+//   • done      — sehhaty_code present (cert uploaded). Shows the
+//                  cert code as the detail.
+//   • verified  — sehhaty_verified_at set (HR cross-checked the cert
+//                  on Sehhaty). Same icon as 'done' but the detail
+//                  notes the verification timestamp.
+//   • rejected  — row rejected before cert was supplied. Reads
+//                  'No certificate required (rejected)'.
+function buildCertStep(stage, request, empMap) {
+  const verifierName = empMap[request.sehhaty_verified_by]?.name || 'HR';
+  let status, detail;
+
+  // Verified beats everything else — once Bashaier cross-checked the
+  // cert, the step is done regardless of what stage came after.
+  if (request.sehhaty_verified_at) {
+    status = 'done';
+    detail = `Cross-checked on Sehhaty by ${verifierName} · ${fmtDateTime(request.sehhaty_verified_at)}`;
+    if (request.sehhaty_code) {
+      detail += ` · Code ${request.sehhaty_code}`;
+    }
+  } else if (request.sehhaty_code) {
+    // Cert uploaded but HR hasn't verified yet — still 'done' from
+    // the staff's perspective (they did their part).
+    status = 'done';
+    detail = `Certificate uploaded · Code ${request.sehhaty_code} · Awaiting HR verification`;
+  } else if (stage === 'pending_certificate') {
+    status = 'now';
+    detail = 'Upload your Sehhaty certificate to continue';
+  } else if (stage === 'rejected_by_manager' || stage === 'rejected_by_substitute') {
+    status = 'rejected';
+    detail = 'Not required (request was rejected before reaching this step)';
+  } else if (stage === 'cancelled' || stage === 'expired') {
+    status = 'rejected';
+    detail = stage === 'cancelled'
+      ? 'Not required (request was cancelled)'
+      : 'Not required (request expired)';
+  } else if (
+    stage === 'pending_manager' ||
+    stage === 'pending_substitutes'
+  ) {
+    status = 'next';
+    detail = 'Sehhaty certificate due once manager approves';
+  } else {
+    // Fallback (approved with no cert — exempt-marked legacy rows,
+    // or rejected_by_hr without ever supplying a cert).
+    if (request.sick_cert_exempt) {
+      status = 'done';
+      detail = 'Marked cert-exempt';
+    } else if (stage === 'approved') {
+      status = 'done';
+      detail = 'Approved without certificate (legacy)';
+    } else {
+      status = 'next';
+      detail = 'Sehhaty certificate pending';
+    }
+  }
+
+  return {
+    key: 'cert',
+    icon: HeartPulse,
+    titleEn: 'Sehhaty certificate',
+    detail,
+    status,
+  };
+}
+
 function buildHrStep(stage, request, empMap) {
   const hrName = empMap[request.hr_decided_by]?.name || 'HR';
   let status, detail;
