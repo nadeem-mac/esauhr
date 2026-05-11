@@ -620,7 +620,7 @@ export default function PendingSickCertsCard({
                     Both buttons stop click propagation so the row's
                     underlying onRowOpen doesn't fire. */}
                 {!!me?.is_hr_reviewer && (
-                  <div className="flex flex-col border-l divide-y"
+                  <div className="flex flex-col justify-center border-l divide-y"
                        style={{ borderColor: tint.border }}>
                     {req.stage === 'approved' && req.sick_cert_exempt ? (
                       // POST-APPROVAL row — manager and HR have already
