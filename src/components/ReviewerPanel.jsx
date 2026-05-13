@@ -1505,11 +1505,38 @@ export default function ReviewerPanel({ me, urgentCertEmpIds }) {
         </>
         );
       })()}
-          {hrModalReq && (
+          {hrModalReq && (() => {
+            // Manager resolution for the form (used in DEPT MGR signature
+            // box). Multi-step fallback so the box never ends up blank:
+            //   1. resolveApprover(manager_decided_by) — most reliable,
+            //      this is the actual person who approved the row,
+            //      stored either as PSN or auth_user_id.
+            //   2. empMap[employee.manager_id] — directory lookup,
+            //      works for unapproved rows or when decided_by is null.
+            //   3. undefined (form falls back to empty string).
+            // Nadeem 2026-05-10: the manager name was missing from the
+            // downloaded form because the employee record's manager_id
+            // wasn't populated for some staff, so the box came out blank.
+            // Now we always try the decided_by route first, since that's
+            // the canonical record of who approved.
+            const emp = empMap[hrModalReq.employee_id];
+            let mgr = null;
+            if (hrModalReq.manager_decided_by) {
+              // Inline replica of resolveApprover from vacationForm.js
+              // (avoid the import cycle here). Try direct key, then
+              // scan for matching auth_user_id (UUID case).
+              mgr = empMap[hrModalReq.manager_decided_by]
+                || Object.values(empMap).find(e => e.auth_user_id === hrModalReq.manager_decided_by)
+                || null;
+            }
+            if (!mgr && emp?.manager_id) {
+              mgr = empMap[emp.manager_id] || null;
+            }
+            return (
         <HrApprovalModal
           request={hrModalReq}
-          employee={empMap[hrModalReq.employee_id]}
-          manager={empMap[empMap[hrModalReq.employee_id]?.manager_id]}
+          employee={emp}
+          manager={mgr}
           substitutes={(hrModalReq.substitute_ids || []).map(sid => empMap[sid]).filter(Boolean)}
           me={me}
           allRequests={leave}
@@ -1526,7 +1553,8 @@ export default function ReviewerPanel({ me, urgentCertEmpIds }) {
             setRejectLeaveReq(target);
           }}
         />
-      )}
+            );
+          })()}
       {rejectLeaveReq && (
         <RejectLeaveModal
           request={rejectLeaveReq}

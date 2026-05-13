@@ -155,14 +155,18 @@ export async function generateVacationFormPdfBlob(args) {
       windowHeight: renderedHeightPx,
     });
 
-    // ── 5. Wrap the canvas as a SINGLE-PAGE A4 PDF — FILL the page ──────────
-    // Nadeem 2026-05-10: the PDF MUST fit on exactly one page AND
-    // make full use of the page (no whitespace strips, no
-    // letterboxing). We stretch the canvas to fill A4 portrait
-    // exactly: 210mm × 297mm. Since docx-preview already rendered
-    // the docx at its native A4 ratio, this stretch is effectively
-    // a no-op in shape — but it guarantees zero gap between the
-    // page bounds and the form content.
+    // ── 5. Wrap the canvas as a SINGLE-PAGE A4 PDF — preserve ratio ─────────
+    // Nadeem 2026-05-10: previous stretch-to-fill distorted the form
+    // because the rendered docx aspect ratio doesn't always perfectly
+    // match A4 (210:297 = 1:1.414). Now we preserve the canvas aspect
+    // ratio and let small whitespace bands appear at top/bottom if
+    // the docx is slightly wider, or left/right if slightly taller —
+    // both far less visually disruptive than stretching.
+    //
+    // To "fill the page" cleanly: use full width, let height be
+    // proportional. If the resulting height exceeds 297mm, scale
+    // down to fit. The form sits flush to the top of the page; any
+    // small bottom band is just blank.
     const pdf = new jsPDF({
       orientation: 'portrait',
       unit: 'mm',
@@ -173,8 +177,21 @@ export async function generateVacationFormPdfBlob(args) {
     const pageWidthMm  = 210;
     const pageHeightMm = 297;
 
+    // Aspect-preserved fit: fill the width, height proportional.
+    let imgWidthMm  = pageWidthMm;
+    let imgHeightMm = (canvas.height * pageWidthMm) / canvas.width;
+
+    // If filling the width makes it too tall, scale down to fit
+    // height instead — keeps everything on one page.
+    if (imgHeightMm > pageHeightMm) {
+      const scale = pageHeightMm / imgHeightMm;
+      imgWidthMm  *= scale;
+      imgHeightMm  = pageHeightMm;
+    }
+    const xOffsetMm = (pageWidthMm  - imgWidthMm)  / 2;
+
     const imgData = canvas.toDataURL('image/jpeg', 0.95);
-    pdf.addImage(imgData, 'JPEG', 0, 0, pageWidthMm, pageHeightMm, undefined, 'FAST');
+    pdf.addImage(imgData, 'JPEG', xOffsetMm, 0, imgWidthMm, imgHeightMm, undefined, 'FAST');
 
     // ── 6. Metadata + return ────────────────────────────────────────────────
     pdf.setProperties({
