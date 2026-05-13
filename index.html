@@ -1,11 +1,29 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" translate="no" class="notranslate">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0F2818" />
     <meta name="description" content="Evergreen HR — vacation and absence tracking platform" />
+    <!--
+      Suppress browser auto-translate (Chrome, Edge, Safari).
+      Bashaier sees the 🌐 ترجم prompt because Arabic text appears
+      throughout the UI (form labels, bilingual headers, leave-type
+      names). The translate prompt is unhelpful here — the Arabic is
+      intentional bilingual content, not foreign text she needs
+      translated. Three flavours of opt-out tag for broad coverage:
+        • <meta name="google" content="notranslate"> — Chrome's
+          recognised signal to never offer translation on this site.
+        • <meta name="robots" content="notranslate"> — older Google
+          variant, harmless duplicate.
+        • <html translate="no" class="notranslate"> set further down
+          in main.jsx if needed; the meta covers the page-wide case.
+      Individual elements with Arabic that should NEVER be touched
+      (PSN codes, brand names) can still use translate="no" inline.
+    -->
+    <meta name="google" content="notranslate" />
+    <meta name="robots" content="notranslate" />
     <title>Evergreen HR</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
