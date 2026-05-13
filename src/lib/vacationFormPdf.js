@@ -84,8 +84,12 @@ const C = {
 
 const PAGE_W    = 210;
 const PAGE_H    = 297;
-const MARGIN_X  = 14;     // a touch wider margins than before for breathing room
-const MARGIN_T  = 14;
+const MARGIN_X  = 14;     // 14mm side margins (readability/safe zone)
+const MARGIN_T  = 5;      // 5mm top margin — minimum for printer-safe
+                          // unprintable-area, but otherwise full bleed.
+                          // Nadeem 2026-05-10: 'when the print is given
+                          // make sure the full page is used' — was 14mm,
+                          // reclaimed 9mm of vertical space.
 const CONTENT_W = PAGE_W - (MARGIN_X * 2);   // 182mm
 
 // ─── formatters ────────────────────────────────────────────────────────────
@@ -575,19 +579,18 @@ function drawSignatureGrid(pdf, startY, { employee, request, manager, hrApprover
   for (let i = 0; i < colCount; i++) {
     const cx = MARGIN_X + i * colW;
 
-    // Tight bottom block (Nadeem 2026-05-10):
-    //   [0  .. 26mm]   empty signing area (most of the cell — sign here)
-    //   [26mm]         signature line — stuck directly to the name top
-    //   [27 .. 30mm]   printed name (cap 2 lines, top-anchored against line)
+    // Bottom block (Nadeem 2026-05-10):
+    //   [0  .. 24mm]   empty signing area (most of the cell — sign here)
+    //   [24mm]         signature line — small breathing gap above the name
+    //   [27 .. 30mm]   printed name (cap 2 lines)
     //   [33mm]         footer baseline (timestamp / CEO title)
     //
-    // No gap between the line and the name — they read as a single
-    // labeled stamp. The previous version had 3mm of space between
-    // line and first name baseline; that gap is now zero (the line
-    // sits at offset 26, the name's first line ascender reaches up
-    // to ~26.1, so they visually touch).
+    // Small 1.5mm gap between line and name top. Previous build had
+    // them stuck (line at 26, name top at 26.1); Nadeem reported that
+    // as too close. Now line at 24, name top at ~26.1 — a clean
+    // 2mm visible gap.
 
-    const SIG_LINE_Y       = 26;   // signature line offset — stuck to name
+    const SIG_LINE_Y       = 24;   // signature line offset
     const NAME_FIRST_Y     = 28;   // first name baseline (text top ~26.1)
     const NAME_LINE_HEIGHT = 3;
     const FOOTER_Y         = 32.5;
