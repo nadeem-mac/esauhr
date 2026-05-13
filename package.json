@@ -12,6 +12,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
     "docx": "^8.5.0",
+    "docx-preview": "^0.3.7",
     "html2canvas-pro": "^2.0.2",
     "jspdf": "^2.5.2",
     "jspdf-autotable": "^3.8.4",
