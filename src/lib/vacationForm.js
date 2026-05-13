@@ -1265,7 +1265,19 @@ export async function downloadVacationFormForRequest(request, empMap) {
   if (!empMap)  throw new Error('Employee directory unavailable');
   const employee = empMap[request.employee_id];
   if (!employee) throw new Error('Employee not found in directory');
-  const manager     = resolveApprover(request.manager_decided_by, empMap);
+  // 2026-05-10 fix (Nadeem): manager name was missing from the form
+  // when manager_decided_by lookup returned null. Now we cascade
+  // through three sources before giving up:
+  //   1. resolveApprover(request.manager_decided_by) — canonical
+  //      (the actual person who approved the row).
+  //   2. empMap[employee.manager_id] — directory fallback for rows
+  //      that haven't been manager-approved yet, or where decided_by
+  //      stored a value that no longer matches.
+  //   3. null — form generator emits empty string in the cell.
+  let manager = resolveApprover(request.manager_decided_by, empMap);
+  if (!manager && employee.manager_id) {
+    manager = empMap[employee.manager_id] || null;
+  }
   const hrApprover  = resolveApprover(request.hr_decided_by,      empMap);
   const substitutes = (request.substitute_ids || [])
     .map((psn) => empMap[psn])
