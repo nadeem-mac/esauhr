@@ -501,15 +501,17 @@ function drawSubstitutesTable(pdf, startY, substitutes, request) {
       size: 7.5, color: C.muted, font: 'courier',
     });
     cx += colWidths[1];
-    // Signature: small online-accept caption + an actual ink-signature line
-    drawText(pdf, '✓  Accepted online', cx + 2, y + 4, {
-      size: 7, color: C.brand, style: 'italic',
-    });
+    // Signature: blank ink-signature line, no caption (moved to Date col).
     drawLine(pdf, cx + 2, y + 9.5, cx + colWidths[2] - 3, y + 9.5,
       { color: C.border, width: 0.3 });
     cx += colWidths[2];
-    // Date
-    drawText(pdf, fmtStampCompact(request.requested_at), cx + 2, y + 7, {
+    // Date column — '✓ Accepted online' caption sits ABOVE the date
+    // per Nadeem 2026-05-10. Pairs the digital-accept trail with the
+    // timestamp where it happened, rather than next to the ink line.
+    drawText(pdf, '✓  Accepted online', cx + 2, y + 5, {
+      size: 7, color: C.brand, style: 'italic',
+    });
+    drawText(pdf, fmtStampCompact(request.requested_at), cx + 2, y + 9, {
       size: 8.5, color: C.text,
     });
     y += bodyH;
@@ -559,29 +561,35 @@ function drawSignatureGrid(pdf, startY, { employee, request, manager, hrApprover
 
   for (let i = 0; i < colCount; i++) {
     const cx = MARGIN_X + i * colW;
-    // Name — wrapped and centred. Centring per Nadeem 2026-05-10:
-    // names sit on the column's central axis so the four columns
-    // read as a balanced grid, not a left-flush list.
+
+    // Layout pattern (Nadeem 2026-05-10):
+    //   • Top ~22mm of the cell is intentionally EMPTY — that's
+    //     where the actual ink signature / HQ stamp lands.
+    //   • A faint horizontal line marks the "sign on the line"
+    //     affordance.
+    //   • Below the line, the printed name and the timestamp /
+    //     title sit padded to the BOTTOM of the cell. Fonts smaller
+    //     than before (8pt name, 6.5pt footer) so the bottom block
+    //     stays compact and the signing area on top stays generous.
+
+    // Faint horizontal signature line at ~11mm from the cell bottom.
+    drawLine(pdf, cx + 4, by + bodyH - 11, cx + colW - 4, by + bodyH - 11,
+      { color: C.border, width: 0.3 });
+
+    // Printed name (centred, ~7mm from the bottom).
     pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(9.5);
+    pdf.setFontSize(8);
     pdf.setTextColor(...C.text);
     const wrappedName = pdf.splitTextToSize(cols[i].name, colW - 4);
-    pdf.text(wrappedName, cx + colW / 2, by + 5, { align: 'center' });
+    const nameLines   = Array.isArray(wrappedName) ? wrappedName.length : 1;
+    // First baseline so the LAST line lands at bodyH - 7.
+    const nameTopY    = by + bodyH - 7 - ((nameLines - 1) * 3.4);
+    pdf.text(wrappedName, cx + colW / 2, nameTopY, { align: 'center' });
 
-    // Footer (submitted / approved timestamp or CEO title) — also centred,
-    // sits below the name, copper italic for the soft accent.
-    const nameLines = Array.isArray(wrappedName) ? wrappedName.length : 1;
-    const footerY = by + 5 + (nameLines * 4) + 2;
-    drawText(pdf, cols[i].footer, cx + colW / 2, footerY, {
-      size: 7.5, color: C.copper, style: 'italic', align: 'center',
+    // Footer (timestamp / CEO title), 6.5pt copper italic, ~3mm from bottom.
+    drawText(pdf, cols[i].footer, cx + colW / 2, by + bodyH - 3, {
+      size: 6.5, color: C.copper, style: 'italic', align: 'center',
     });
-
-    // Signature line at the bottom of the cell. The "Signature" word
-    // label below it was removed per Nadeem 2026-05-10 — the line
-    // alone is sufficient affordance, and the extra label was eating
-    // vertical breathing room from the 35.4mm signature box.
-    drawLine(pdf, cx + 4, by + bodyH - 3, cx + colW - 4, by + bodyH - 3,
-      { color: C.border, width: 0.3 });
   }
   return by + bodyH;
 }
