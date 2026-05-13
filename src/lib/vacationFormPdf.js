@@ -84,15 +84,16 @@ export async function generateVacationFormPdfBlob(args) {
   const { renderAsync } = await import('docx-preview');
 
   const container = document.createElement('div');
-  // A4 width at 96 DPI is 794px. Match it so the rendered docx
-  // matches the eventual PDF page width without rescaling.
-  // left:-9999px keeps the container off-screen while still letting
-  // the browser lay it out for font metrics and image loading.
+  // Let docx-preview decide page width from the docx itself — don't
+  // force 794px. The previous attempt clamped to 96-DPI A4 width but
+  // docx-preview renders at the document's native page size (with
+  // internal margins from the docx), and forcing a narrower container
+  // caused text reflow that didn't match Word's layout. Now we just
+  // make the container off-screen and let it lay out naturally.
   container.style.cssText = `
     position: absolute;
     left: -9999px;
     top: 0;
-    width: 794px;
     background: #FFFFFF;
   `;
   document.body.appendChild(container);
@@ -126,33 +127,42 @@ export async function generateVacationFormPdfBlob(args) {
     // were referenced.
     await waitForImages(container, 2500);
 
-    // ── 4. Rasterise the rendered container ─────────────────────────────────
-    // docx-preview wraps its output in a div with class
-    // 'docx-wrapper' that contains one or more page divs. We capture
-    // the wrapper so all pages are rendered.
-    const renderRoot = container.querySelector('.docx-wrapper') || container;
+    // ── 4. Rasterise the rendered PAGE — not the wrapper ────────────────────
+    // docx-preview produces: .docx-wrapper > section.docx (one per
+    // page). The wrapper adds its own padding/background for the
+    // preview UX; the section IS the page (A4-sized, with the docx's
+    // own margins). Capturing the section directly gives us the
+    // actual page bounds — no extra whitespace around it.
+    const pageSection = container.querySelector('.docx-wrapper section.docx, .docx-wrapper > section, .docx-wrapper > div, section.docx');
+    const renderRoot = pageSection || container.querySelector('.docx-wrapper') || container;
+
+    // Use the rendered element's actual computed dimensions. These
+    // come from the docx (A4 portrait = ~794×1123px @ 96 DPI), not
+    // from a hard-coded value. If the docx uses Letter or any other
+    // size, we honour it.
+    const rect = renderRoot.getBoundingClientRect();
+    const renderedWidthPx  = rect.width  || renderRoot.scrollWidth  || 794;
+    const renderedHeightPx = rect.height || renderRoot.scrollHeight || 1123;
 
     const canvas = await html2canvas(renderRoot, {
-      scale: 2,
+      scale: 2,                       // 2x for crisp print quality
       backgroundColor: '#FFFFFF',
       useCORS: true,
       logging: false,
-      windowWidth: 794,
-      // The wrapper from docx-preview can be taller than the viewport.
-      // html2canvas defaults to the window's scroll height; explicit
-      // height ensures the whole thing is captured.
-      height: renderRoot.scrollHeight,
-      windowHeight: renderRoot.scrollHeight,
+      width:  renderedWidthPx,
+      height: renderedHeightPx,
+      windowWidth:  renderedWidthPx,
+      windowHeight: renderedHeightPx,
     });
 
-    // ── 5. Wrap the canvas as a SINGLE-PAGE A4 PDF ──────────────────────────
-    // Nadeem 2026-05-10: the vacation form MUST fit on one page —
-    // splitting across two pages breaks the visual integrity of the
-    // signature grid + footer policy block. If the rendered docx is
-    // taller than A4 portrait, we scale the image down proportionally
-    // so it fits exactly in 297mm of height. The whole form ends up
-    // slightly smaller than print-scale but remains readable; this is
-    // the same approach Word's "fit to one page" print option uses.
+    // ── 5. Wrap the canvas as a SINGLE-PAGE A4 PDF — FILL the page ──────────
+    // Nadeem 2026-05-10: the PDF MUST fit on exactly one page AND
+    // make full use of the page (no whitespace strips, no
+    // letterboxing). We stretch the canvas to fill A4 portrait
+    // exactly: 210mm × 297mm. Since docx-preview already rendered
+    // the docx at its native A4 ratio, this stretch is effectively
+    // a no-op in shape — but it guarantees zero gap between the
+    // page bounds and the form content.
     const pdf = new jsPDF({
       orientation: 'portrait',
       unit: 'mm',
@@ -160,26 +170,11 @@ export async function generateVacationFormPdfBlob(args) {
       compress: true,
     });
 
-    const pageWidthMm     = 210;
-    const pageHeightMm    = 297;
-    // Natural dimensions if we used the full page width.
-    const naturalWidthMm  = pageWidthMm;
-    const naturalHeightMm = (canvas.height * naturalWidthMm) / canvas.width;
+    const pageWidthMm  = 210;
+    const pageHeightMm = 297;
 
-    // Compute final dimensions — preserve aspect ratio, fit within
-    // the page if too tall, leave as-is if it already fits. Horizontal
-    // centring keeps the form visually balanced when scaled down.
-    let imgWidthMm  = naturalWidthMm;
-    let imgHeightMm = naturalHeightMm;
-    if (naturalHeightMm > pageHeightMm) {
-      const scale = pageHeightMm / naturalHeightMm;
-      imgWidthMm  = naturalWidthMm  * scale;
-      imgHeightMm = pageHeightMm;
-    }
-    const xOffsetMm = (pageWidthMm - imgWidthMm) / 2;
-
-    const imgData = canvas.toDataURL('image/jpeg', 0.92);
-    pdf.addImage(imgData, 'JPEG', xOffsetMm, 0, imgWidthMm, imgHeightMm, undefined, 'FAST');
+    const imgData = canvas.toDataURL('image/jpeg', 0.95);
+    pdf.addImage(imgData, 'JPEG', 0, 0, pageWidthMm, pageHeightMm, undefined, 'FAST');
 
     // ── 6. Metadata + return ────────────────────────────────────────────────
     pdf.setProperties({
