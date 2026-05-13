@@ -145,7 +145,14 @@ export async function generateVacationFormPdfBlob(args) {
       windowHeight: renderRoot.scrollHeight,
     });
 
-    // ── 5. Wrap the canvas as a PDF ─────────────────────────────────────────
+    // ── 5. Wrap the canvas as a SINGLE-PAGE A4 PDF ──────────────────────────
+    // Nadeem 2026-05-10: the vacation form MUST fit on one page —
+    // splitting across two pages breaks the visual integrity of the
+    // signature grid + footer policy block. If the rendered docx is
+    // taller than A4 portrait, we scale the image down proportionally
+    // so it fits exactly in 297mm of height. The whole form ends up
+    // slightly smaller than print-scale but remains readable; this is
+    // the same approach Word's "fit to one page" print option uses.
     const pdf = new jsPDF({
       orientation: 'portrait',
       unit: 'mm',
@@ -153,38 +160,26 @@ export async function generateVacationFormPdfBlob(args) {
       compress: true,
     });
 
-    const pageWidthMm  = 210;
-    const pageHeightMm = 297;
-    const imgWidthMm   = pageWidthMm;
-    const imgHeightMm  = (canvas.height * imgWidthMm) / canvas.width;
+    const pageWidthMm     = 210;
+    const pageHeightMm    = 297;
+    // Natural dimensions if we used the full page width.
+    const naturalWidthMm  = pageWidthMm;
+    const naturalHeightMm = (canvas.height * naturalWidthMm) / canvas.width;
+
+    // Compute final dimensions — preserve aspect ratio, fit within
+    // the page if too tall, leave as-is if it already fits. Horizontal
+    // centring keeps the form visually balanced when scaled down.
+    let imgWidthMm  = naturalWidthMm;
+    let imgHeightMm = naturalHeightMm;
+    if (naturalHeightMm > pageHeightMm) {
+      const scale = pageHeightMm / naturalHeightMm;
+      imgWidthMm  = naturalWidthMm  * scale;
+      imgHeightMm = pageHeightMm;
+    }
+    const xOffsetMm = (pageWidthMm - imgWidthMm) / 2;
 
     const imgData = canvas.toDataURL('image/jpeg', 0.92);
-
-    if (imgHeightMm <= pageHeightMm) {
-      // Single page — image fits within A4 height.
-      pdf.addImage(imgData, 'JPEG', 0, 0, imgWidthMm, imgHeightMm, undefined, 'FAST');
-    } else {
-      // Multi-page split. The same image is added to each page with
-      // a negative y-offset; jsPDF clips to the page bounds so the
-      // result is one continuous form across multiple pages.
-      let renderedHeight = 0;
-      let isFirstPage = true;
-      while (renderedHeight < imgHeightMm) {
-        if (!isFirstPage) pdf.addPage();
-        pdf.addImage(
-          imgData,
-          'JPEG',
-          0,
-          -renderedHeight,
-          imgWidthMm,
-          imgHeightMm,
-          undefined,
-          'FAST',
-        );
-        renderedHeight += pageHeightMm;
-        isFirstPage = false;
-      }
-    }
+    pdf.addImage(imgData, 'JPEG', xOffsetMm, 0, imgWidthMm, imgHeightMm, undefined, 'FAST');
 
     // ── 6. Metadata + return ────────────────────────────────────────────────
     pdf.setProperties({
