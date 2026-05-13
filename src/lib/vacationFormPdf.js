@@ -305,10 +305,12 @@ export async function generateVacationFormPdfBlob({
   y = drawSectionHeader(pdf, y, 'Approval chain');
   y = drawSignatureGrid(pdf, y, { employee, request, manager, hrApprover });
 
-  // 8) FOOTER stamp
-  const stamp = `Generated ${fmtDateShort(new Date().toISOString())} · ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} GMT+3   ·   ESAU HR Portal`;
-  drawText(pdf, stamp, PAGE_W / 2, PAGE_H - 9, {
-    size: 7.5, color: C.muted, style: 'italic', align: 'center',
+  // 8) GENERATED stamp — bottom-right corner per Nadeem 2026-05-10.
+  // Single horizontal line, small grey text, includes the HR approver's
+  // name. Right-aligned so it sits flush to the page margin.
+  const stamp = `Generated ${fmtDateShort(new Date().toISOString())} · ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} GMT+3   ·   ${hrApprover?.name || HR_DEFAULT}`;
+  drawText(pdf, stamp, PAGE_W - MARGIN_X, PAGE_H - 6, {
+    size: 6.5, color: C.muted, align: 'right',
   });
 
   pdf.setProperties({
@@ -565,50 +567,41 @@ function drawSignatureGrid(pdf, startY, { employee, request, manager, hrApprover
   for (let i = 0; i < colCount; i++) {
     const cx = MARGIN_X + i * colW;
 
-    // Vertical anchoring (Nadeem 2026-05-10):
-    // The 35.4mm cell is divided into three zones:
-    //   [0  .. 20]   — empty signing area (sign with ink here)
-    //   [20]         — faint horizontal signature line
-    //   [21 .. 30]   — printed name (up to 3 lines, anchored to
-    //                  bottom of band at by + 30)
-    //   [33]         — footer baseline (timestamp or CEO title)
-    //   [33.4 .. 35.4] — 2mm bottom padding
+    // Tight bottom block (Nadeem 2026-05-10):
+    //   [0  .. 24mm]  — empty signing area (most of the cell — sign here)
+    //   [24mm]        — faint signature line
+    //   [25 .. 30mm]  — printed name (capped at 2 lines, top-anchored
+    //                   right below the line so the block stays tight)
+    //   [33mm]        — footer baseline (timestamp / CEO title)
     //
-    // Critical: signature line sits ABOVE the name band, not in the
-    // middle of it. The previous version positioned the line in the
-    // name band centre, so a 4-line wrap of a long name overlapped
-    // the line and ran into adjacent cells. Now the name has its
-    // own dedicated 9mm strip and cannot collide with the line.
-    //
-    // For names that wrap to 4+ lines (rare — only happens at very
-    // long names like 'SADAKATHULLAH SHADULY PALAYAM MEERA SAHIB' at
-    // narrow column width), we cap at 3 lines and let jsPDF truncate.
-    // To minimise wrapping, name font is 7pt (was 8pt) — small but
-    // still readable; this fits most full names in 1-2 lines.
+    // Saved space vs the previous layout: the line was at offset 20
+    // with a 10mm gap above the name. Now the gap is 3mm (line to
+    // first name line) and the signing area is 24mm instead of 20.
+    // Net result: more space for the ink signature, tighter info
+    // block at the bottom, no overlap risk because names are hard-
+    // capped at 2 lines and top-anchored from the line down.
 
-    const SIGN_LINE_OFFSET   = 20;   // signature line Y inside cell
-    const NAME_BOTTOM_OFFSET = 30;   // last name line baseline Y
-    const FOOTER_OFFSET      = 33.5; // footer baseline Y
-    const NAME_LINE_HEIGHT   = 3;    // 7pt name spacing
+    const SIG_LINE_Y       = 24;   // signature line offset
+    const NAME_FIRST_Y     = 27;   // first name baseline (3mm below line)
+    const NAME_LINE_HEIGHT = 3;
+    const FOOTER_Y         = 33;
 
-    // 1) Signature line (faint, near top).
-    drawLine(pdf, cx + 4, by + SIGN_LINE_OFFSET,
-                  cx + colW - 4, by + SIGN_LINE_OFFSET,
+    // 1) Signature line.
+    drawLine(pdf, cx + 4, by + SIG_LINE_Y,
+                  cx + colW - 4, by + SIG_LINE_Y,
       { color: C.border, width: 0.3 });
 
-    // 2) Printed name — wrap, cap at 3 lines, centre, anchor to bottom.
+    // 2) Printed name (cap at 2 lines, top-anchored just below the line).
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(7);
     pdf.setTextColor(...C.text);
     const wrapped     = pdf.splitTextToSize(cols[i].name, colW - 4);
     const allLines    = Array.isArray(wrapped) ? wrapped : [wrapped];
-    const displayLines = allLines.slice(0, 3);
-    const lineCount   = displayLines.length;
-    const nameTopY    = by + NAME_BOTTOM_OFFSET - (lineCount - 1) * NAME_LINE_HEIGHT;
-    pdf.text(displayLines, cx + colW / 2, nameTopY, { align: 'center' });
+    const displayLines = allLines.slice(0, 2);
+    pdf.text(displayLines, cx + colW / 2, by + NAME_FIRST_Y, { align: 'center' });
 
-    // 3) Footer (timestamp / title) — copper italic, 6pt, centred.
-    drawText(pdf, cols[i].footer, cx + colW / 2, by + FOOTER_OFFSET, {
+    // 3) Footer (timestamp / title).
+    drawText(pdf, cols[i].footer, cx + colW / 2, by + FOOTER_Y, {
       size: 6, color: C.copper, style: 'italic', align: 'center',
     });
   }
