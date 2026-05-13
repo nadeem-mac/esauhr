@@ -244,18 +244,22 @@ export async function generateVacationFormPdfBlob({
     : `${fmtDateLong(request.start_date)}   →   ${fmtDateLong(request.end_date)}`;
 
   // === RENDER ===
+  // Spacing pass tuned 2026-05-10 to ensure the form always fits in
+  // one A4 page even with the maximum 3 substitutes AND the 35.4mm
+  // signature box. Section gaps trimmed from 5/6mm to 3mm, internal
+  // row heights kept comfortable but no longer luxurious.
 
   let y = MARGIN_T;
 
   // 1) HEADER — 28mm tall, three columns: logo+brand · ref · QR
   y = drawHeader(pdf, y, { logoUrl, qrDataUrl, request });
 
-  y += 6;
+  y += 4;
 
   // 2) TITLE — large, centred, single line
   y = drawTitle(pdf, y, ltKey);
 
-  y += 6;
+  y += 4;
 
   // 3) EMPLOYEE INFORMATION
   y = drawSectionHeader(pdf, y, 'Employee information');
@@ -267,7 +271,7 @@ export async function generateVacationFormPdfBlob({
     ['Joined',        `${fmtDateShort(employee?.join_date)}   ·   ${yearsOfService(employee?.join_date)}`],
   ]);
 
-  y += 5;
+  y += 3;
 
   // 4) LEAVE DETAILS
   y = drawSectionHeader(pdf, y, 'Leave details');
@@ -280,20 +284,20 @@ export async function generateVacationFormPdfBlob({
     ['Submitted',  fmtStampCompact(request.requested_at)],
   ]);
 
-  y += 5;
+  y += 3;
 
   // 5) SUBSTITUTE COVERAGE (only if any)
   if (substitutes && substitutes.length > 0) {
     y = drawSectionHeader(pdf, y, 'Substitute coverage');
     y = drawSubstitutesTable(pdf, y, substitutes, request);
-    y += 5;
+    y += 3;
   }
 
-  // 6) APPROVAL CHAIN
+  // 6) APPROVAL CHAIN — 3.54cm signature box per company stationery std
   y = drawSectionHeader(pdf, y, 'Approval chain');
   y = drawSignatureGrid(pdf, y, { employee, request, manager, hrApprover });
 
-  y += 5;
+  y += 3;
 
   // 7) POLICY (KSA Labor Law)
   y = drawSectionHeader(pdf, y, 'Leave policy · KSA Labor Law');
@@ -388,61 +392,80 @@ function drawSectionHeader(pdf, y, text) {
 }
 
 function drawLabelValueTable(pdf, startY, rows) {
+  // 7mm minimum row (was 8mm) to keep page-fit tight even with the
+  // 35.4mm signature box and 3 substitutes. Multiline rows (long
+  // reason) still grow as needed.
   const labelW = 42;
   const valueW = CONTENT_W - labelW;
   let y = startY;
   for (const [label, value] of rows) {
     const wrapped = pdf.splitTextToSize(String(value || '—'), valueW - 6);
     const lineCount = Array.isArray(wrapped) ? wrapped.length : 1;
-    const rowH = Math.max(8, lineCount * 4.5 + 3);
+    const rowH = Math.max(7, lineCount * 4.3 + 2.5);
 
-    // Hairline divider above each row (except first — section header already separates).
     if (y > startY) {
       drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
         { color: C.border, width: 0.15 });
     }
 
-    drawText(pdf, label, MARGIN_X + 1, y + 5.5, {
+    drawText(pdf, label, MARGIN_X + 1, y + 4.8, {
       size: 8.5, color: C.muted, style: 'bold',
     });
     pdf.setFont('helvetica', 'normal');
     pdf.setFontSize(10);
     pdf.setTextColor(...C.text);
-    pdf.text(wrapped, MARGIN_X + labelW + 2, y + 5.5);
+    pdf.text(wrapped, MARGIN_X + labelW + 2, y + 4.8);
 
     y += rowH;
   }
-  // Final divider closes the block.
   drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
     { color: C.border, width: 0.15 });
   return y;
 }
 
 function drawLeaveTypeRow(pdf, startY, ltKey) {
+  // 10 leave types don't fit on a single line at readable size — they
+  // wrap onto multiple rows. The row grows in height to accommodate
+  // however many wraps are needed. Label "Leave type" sits at the top
+  // of the block; checkboxes flow left-to-right, wrapping when they'd
+  // hit the right margin.
   const labelW = 42;
-  const rowH   = 10;
+  const lineH  = 5.2;
   drawLine(pdf, MARGIN_X, startY, MARGIN_X + CONTENT_W, startY,
     { color: C.border, width: 0.15 });
 
-  drawText(pdf, 'Leave type', MARGIN_X + 1, startY + 6.5, {
+  drawText(pdf, 'Leave type', MARGIN_X + 1, startY + 5.5, {
     size: 8.5, color: C.muted, style: 'bold',
   });
 
-  let cx = MARGIN_X + labelW + 2;
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(8.5);
+  const leftBound  = MARGIN_X + labelW + 2;
+  const rightBound = MARGIN_X + CONTENT_W - 3;
+  let cx = leftBound;
+  let cy = startY + 5.5;
+
   for (const k of TYPE_CHECKBOX_ORDER) {
     const label = LEAVE_TYPE_LABEL[k];
-    drawTickbox(pdf, cx, startY + 7.5, k === ltKey);
-    drawText(pdf, label, cx + 4, startY + 7, {
-      size: 9, color: C.text,
+    const itemW = pdf.getTextWidth(label) + 8;   // tickbox + label + trailing gap
+    if (cx + itemW > rightBound) {
+      cx = leftBound;
+      cy += lineH;
+    }
+    drawTickbox(pdf, cx, cy + 1, k === ltKey);
+    drawText(pdf, label, cx + 4, cy, {
+      size: 8.5, color: C.text,
     });
-    cx += pdf.getTextWidth(label) + 9;
+    cx += itemW;
   }
-  return startY + rowH;
+  return cy + 4;
 }
 
 function drawSubstitutesTable(pdf, startY, substitutes, request) {
-  const headerH = 6;
-  const bodyH   = 10;
+  // Row height tightened to 8mm (was 10mm) so 3 substitutes fit in
+  // the available space alongside the 35.4mm signature box.
+  const headerH = 5.5;
+  const bodyH   = 8;
   const colWidths = [10, 75, 50, CONTENT_W - 10 - 75 - 50];
   let y = startY;
 
@@ -450,7 +473,7 @@ function drawSubstitutesTable(pdf, startY, substitutes, request) {
   let cx = MARGIN_X;
   const headers = ['#', 'Substitute', 'Status', 'Date'];
   for (let i = 0; i < headers.length; i++) {
-    drawText(pdf, headers[i], cx + 2, y + 4.2, {
+    drawText(pdf, headers[i], cx + 2, y + 3.8, {
       size: 8, color: C.muted, style: 'bold',
     });
     cx += colWidths[i];
@@ -461,22 +484,22 @@ function drawSubstitutesTable(pdf, startY, substitutes, request) {
     drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
       { color: C.border, width: 0.15 });
     cx = MARGIN_X;
-    drawText(pdf, String(i + 1), cx + 2, y + 6, {
+    drawText(pdf, String(i + 1), cx + 2, y + 5, {
       size: 9, color: C.text, style: 'bold',
     });
     cx += colWidths[0];
-    drawText(pdf, sub?.name || '—', cx + 2, y + 5, {
+    drawText(pdf, sub?.name || '—', cx + 2, y + 4, {
       size: 9.5, color: C.text, style: 'bold',
     });
-    drawText(pdf, sub?.id || sub?.employee_id || '', cx + 2, y + 8.5, {
+    drawText(pdf, sub?.id || sub?.employee_id || '', cx + 2, y + 7, {
       size: 7.5, color: C.muted, font: 'courier',
     });
     cx += colWidths[1];
-    drawText(pdf, '✓  Accepted online', cx + 2, y + 6, {
+    drawText(pdf, '✓  Accepted online', cx + 2, y + 5, {
       size: 8.5, color: C.brand, style: 'italic',
     });
     cx += colWidths[2];
-    drawText(pdf, fmtStampCompact(request.requested_at), cx + 2, y + 6, {
+    drawText(pdf, fmtStampCompact(request.requested_at), cx + 2, y + 5, {
       size: 8.5, color: C.text,
     });
     y += bodyH;
@@ -487,10 +510,13 @@ function drawSubstitutesTable(pdf, startY, substitutes, request) {
 }
 
 function drawSignatureGrid(pdf, startY, { employee, request, manager, hrApprover }) {
+  // 35.4mm body — Nadeem 2026-05-10: signature box must be exactly
+  // 3.54cm tall to match the company's stationery standard. Header
+  // band stays at 6mm; body fills the rest.
   const colCount = 4;
   const colW = CONTENT_W / colCount;
   const headerH = 6;
-  const bodyH   = 24;
+  const bodyH   = 35.4;
 
   const cols = [
     { title: 'Employee', name: employee?.name || '—',
