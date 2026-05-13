@@ -286,22 +286,24 @@ export async function generateVacationFormPdfBlob({
 
   y += 3;
 
-  // 5) SUBSTITUTE COVERAGE (only if any)
+  // 5) LEAVE POLICY (moved before substitutes per Nadeem 2026-05-10
+  //     — policy is the standing context, substitute coverage is the
+  //     case-specific record; reading order makes more sense this way)
+  y = drawSectionHeader(pdf, y, 'Leave policy · KSA Labor Law');
+  y = drawPolicyBullets(pdf, y);
+
+  y += 3;
+
+  // 6) SUBSTITUTE COVERAGE (only if any)
   if (substitutes && substitutes.length > 0) {
     y = drawSectionHeader(pdf, y, 'Substitute coverage');
     y = drawSubstitutesTable(pdf, y, substitutes, request);
     y += 3;
   }
 
-  // 6) APPROVAL CHAIN — 3.54cm signature box per company stationery std
+  // 7) APPROVAL CHAIN — 3.54cm signature box per company stationery std
   y = drawSectionHeader(pdf, y, 'Approval chain');
   y = drawSignatureGrid(pdf, y, { employee, request, manager, hrApprover });
-
-  y += 3;
-
-  // 7) POLICY (KSA Labor Law)
-  y = drawSectionHeader(pdf, y, 'Leave policy · KSA Labor Law');
-  y = drawPolicyBullets(pdf, y);
 
   // 8) FOOTER stamp
   const stamp = `Generated ${fmtDateShort(new Date().toISOString())} · ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} GMT+3   ·   ESAU HR Portal`;
@@ -462,16 +464,18 @@ function drawLeaveTypeRow(pdf, startY, ltKey) {
 }
 
 function drawSubstitutesTable(pdf, startY, substitutes, request) {
-  // Row height tightened to 8mm (was 10mm) so 3 substitutes fit in
-  // the available space alongside the 35.4mm signature box.
+  // Row taller (12mm) to fit name+PSN on the left + a real signature
+  // line in the middle column — substitutes can ink-sign on a printed
+  // copy. "✓ Accepted online" becomes a small caption above the line
+  // so the digital + physical paths both have a place.
   const headerH = 5.5;
-  const bodyH   = 8;
-  const colWidths = [10, 75, 50, CONTENT_W - 10 - 75 - 50];
+  const bodyH   = 12;
+  const colWidths = [10, 60, 65, CONTENT_W - 10 - 60 - 65];
   let y = startY;
 
   drawRect(pdf, MARGIN_X, y, CONTENT_W, headerH, { fill: C.labelBg });
   let cx = MARGIN_X;
-  const headers = ['#', 'Substitute', 'Status', 'Date'];
+  const headers = ['#', 'Substitute', 'Signature', 'Date'];
   for (let i = 0; i < headers.length; i++) {
     drawText(pdf, headers[i], cx + 2, y + 3.8, {
       size: 8, color: C.muted, style: 'bold',
@@ -484,22 +488,28 @@ function drawSubstitutesTable(pdf, startY, substitutes, request) {
     drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
       { color: C.border, width: 0.15 });
     cx = MARGIN_X;
-    drawText(pdf, String(i + 1), cx + 2, y + 5, {
+    // # column
+    drawText(pdf, String(i + 1), cx + 2, y + 7, {
       size: 9, color: C.text, style: 'bold',
     });
     cx += colWidths[0];
-    drawText(pdf, sub?.name || '—', cx + 2, y + 4, {
+    // Substitute name + PSN
+    drawText(pdf, sub?.name || '—', cx + 2, y + 5, {
       size: 9.5, color: C.text, style: 'bold',
     });
-    drawText(pdf, sub?.id || sub?.employee_id || '', cx + 2, y + 7, {
+    drawText(pdf, sub?.id || sub?.employee_id || '', cx + 2, y + 9, {
       size: 7.5, color: C.muted, font: 'courier',
     });
     cx += colWidths[1];
-    drawText(pdf, '✓  Accepted online', cx + 2, y + 5, {
-      size: 8.5, color: C.brand, style: 'italic',
+    // Signature: small online-accept caption + an actual ink-signature line
+    drawText(pdf, '✓  Accepted online', cx + 2, y + 4, {
+      size: 7, color: C.brand, style: 'italic',
     });
+    drawLine(pdf, cx + 2, y + 9.5, cx + colWidths[2] - 3, y + 9.5,
+      { color: C.border, width: 0.3 });
     cx += colWidths[2];
-    drawText(pdf, fmtStampCompact(request.requested_at), cx + 2, y + 5, {
+    // Date
+    drawText(pdf, fmtStampCompact(request.requested_at), cx + 2, y + 7, {
       size: 8.5, color: C.text,
     });
     y += bodyH;
@@ -532,8 +542,8 @@ function drawSignatureGrid(pdf, startY, { employee, request, manager, hrApprover
   drawRect(pdf, MARGIN_X, startY, CONTENT_W, headerH, { fill: C.labelBg });
   for (let i = 0; i < colCount; i++) {
     const cx = MARGIN_X + i * colW;
-    drawText(pdf, cols[i].title, cx + 2, startY + 4.2, {
-      size: 8, color: C.muted, style: 'bold',
+    drawText(pdf, cols[i].title, cx + colW / 2, startY + 4.2, {
+      size: 8, color: C.muted, style: 'bold', align: 'center',
     });
   }
 
@@ -549,20 +559,29 @@ function drawSignatureGrid(pdf, startY, { employee, request, manager, hrApprover
 
   for (let i = 0; i < colCount; i++) {
     const cx = MARGIN_X + i * colW;
+    // Name — wrapped and centred. Centring per Nadeem 2026-05-10:
+    // names sit on the column's central axis so the four columns
+    // read as a balanced grid, not a left-flush list.
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(9.5);
     pdf.setTextColor(...C.text);
     const wrappedName = pdf.splitTextToSize(cols[i].name, colW - 4);
-    pdf.text(wrappedName, cx + 2, by + 5);
+    pdf.text(wrappedName, cx + colW / 2, by + 5, { align: 'center' });
 
-    drawText(pdf, cols[i].footer, cx + 2, by + bodyH - 7, {
-      size: 7.5, color: C.copper, style: 'italic',
+    // Footer (submitted / approved timestamp or CEO title) — also centred,
+    // sits below the name, copper italic for the soft accent.
+    const nameLines = Array.isArray(wrappedName) ? wrappedName.length : 1;
+    const footerY = by + 5 + (nameLines * 4) + 2;
+    drawText(pdf, cols[i].footer, cx + colW / 2, footerY, {
+      size: 7.5, color: C.copper, style: 'italic', align: 'center',
     });
-    drawLine(pdf, cx + 2, by + bodyH - 3.5, cx + colW - 2, by + bodyH - 3.5,
-      { color: C.border, width: 0.25 });
-    drawText(pdf, 'Signature', cx + 2, by + bodyH - 1, {
-      size: 6.5, color: C.muted,
-    });
+
+    // Signature line at the bottom of the cell. The "Signature" word
+    // label below it was removed per Nadeem 2026-05-10 — the line
+    // alone is sufficient affordance, and the extra label was eating
+    // vertical breathing room from the 35.4mm signature box.
+    drawLine(pdf, cx + 4, by + bodyH - 3, cx + colW - 4, by + bodyH - 3,
+      { color: C.border, width: 0.3 });
   }
   return by + bodyH;
 }
