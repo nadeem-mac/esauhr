@@ -1271,11 +1271,18 @@ export async function downloadVacationFormForRequest(request, empMap) {
     .map((psn) => empMap[psn])
     .filter(Boolean);
 
-  const blob = await generateVacationFormBlob({
+  // 2026-05-10 (Nadeem): switched from docx → pdf so the approved
+  // vacation form cannot be edited by the recipient. The generator
+  // lives in vacationFormPdf.js and uses an HTML template + jsPDF +
+  // html2canvas-pro to render a flat PDF page. The legacy
+  // generateVacationFormBlob() is still exported for any caller
+  // that explicitly wants docx, but no in-app code path uses it.
+  const { generateVacationFormPdfBlob } = await import('./vacationFormPdf.js');
+  const blob = await generateVacationFormPdfBlob({
     request, employee, manager, hrApprover, substitutes,
   });
   const safeName = (employee.name || request.employee_id).replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '');
-  const filename = `Vacation_Form_${safeName}_${request.start_date}.docx`;
+  const filename = `Vacation_Form_${safeName}_${request.start_date}.pdf`;
   downloadBlob(blob, filename);
   return { blob, filename };
 }

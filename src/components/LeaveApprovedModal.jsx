@@ -184,7 +184,7 @@ export default function LeaveApprovedModal({ request, employee, manager, hrAppro
               ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</>
               : downloaded
                 ? <><CheckCircle2 className="w-4 h-4" style={{ color: '#047857' }} /> Form downloaded</>
-                : <><Download className="w-4 h-4" /> Download form (.docx)</>
+                : <><Download className="w-4 h-4" /> Download form (PDF)</>
             }
           </button>
           <button
@@ -209,7 +209,7 @@ export default function LeaveApprovedModal({ request, employee, manager, hrAppro
 
         {/* Tip */}
         <div className="px-5 pb-5 text-[11px]" style={{ color: '#1F1B16', opacity: 0.7 }}>
-          Tip: download the form first, then open the email draft and attach the .docx before sending. Email attachments cannot be pre-filled by the browser.
+          Tip: download the form first, then open the email draft and attach the PDF before sending. Email attachments cannot be pre-filled by the browser.
         </div>
       </div>
     </div>,

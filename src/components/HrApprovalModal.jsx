@@ -481,9 +481,16 @@ export default function HrApprovalModal({ request, employee, manager, substitute
   const downloadForm = useCallback(async () => {
     setFormGenerating(true);
     try {
-      const blob = await generateVacationFormBlob({ request, employee, manager, hrApprover: me, substitutes });
+      // 2026-05-10 (Nadeem): switched the approved-form download from
+      // docx to PDF. The PDF is a flat rasterised page so the recipient
+      // can't edit individual fields; everything below the title strip
+      // is locked. Same form layout, same fields, same APPROVED stamp
+      // — just non-editable. The dynamic import keeps the html2canvas
+      // + jspdf bundle out of the modal's initial chunk.
+      const { generateVacationFormPdfBlob } = await import('../lib/vacationFormPdf.js');
+      const blob = await generateVacationFormPdfBlob({ request, employee, manager, hrApprover: me, substitutes });
       const safeName = (employee?.name || request.employee_id).replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '');
-      const filename = `Vacation_Form_${safeName}_${request.start_date}.docx`;
+      const filename = `Vacation_Form_${safeName}_${request.start_date}.pdf`;
       downloadBlob(blob, filename);
       setDownloaded(true);
     } catch (err) {
