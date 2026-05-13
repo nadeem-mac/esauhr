@@ -241,7 +241,7 @@ export async function generateVacationFormPdfBlob({
   const daysLabel  = `${dayCount} day${dayCount === 1 ? '' : 's'}${request.is_half_day ? '   ·   half day' : ''}`;
   const periodValue = request.start_date === request.end_date
     ? fmtDateLong(request.start_date)
-    : `${fmtDateLong(request.start_date)}   →   ${fmtDateLong(request.end_date)}`;
+    : `${fmtDateLong(request.start_date)}   ->   ${fmtDateLong(request.end_date)}`;
 
   // === RENDER ===
   // Spacing pass tuned 2026-05-10 to ensure the form always fits in
@@ -505,14 +505,17 @@ function drawSubstitutesTable(pdf, startY, substitutes, request) {
     drawLine(pdf, cx + 2, y + 9.5, cx + colWidths[2] - 3, y + 9.5,
       { color: C.border, width: 0.3 });
     cx += colWidths[2];
-    // Date column — '✓ Accepted online' caption sits ABOVE the date
-    // per Nadeem 2026-05-10. Pairs the digital-accept trail with the
-    // timestamp where it happened, rather than next to the ink line.
-    drawText(pdf, '✓  Accepted online', cx + 2, y + 5, {
-      size: 7, color: C.brand, style: 'italic',
+    // Date column — 'Accepted online' caption sits ABOVE the date,
+    // both centred horizontally + vertically in the cell. Dropped the
+    // ✓ glyph because it doesn't render in standard Helvetica encoding
+    // (renders as a corrupted ! or blank). The italic green colour
+    // alone communicates the accepted state.
+    const dateColCenter = cx + colWidths[3] / 2;
+    drawText(pdf, 'Accepted online', dateColCenter, y + 5, {
+      size: 7, color: C.brand, style: 'italic', align: 'center',
     });
-    drawText(pdf, fmtStampCompact(request.requested_at), cx + 2, y + 9, {
-      size: 8.5, color: C.text,
+    drawText(pdf, fmtStampCompact(request.requested_at), dateColCenter, y + 9, {
+      size: 8.5, color: C.text, align: 'center',
     });
     y += bodyH;
   });
@@ -562,33 +565,51 @@ function drawSignatureGrid(pdf, startY, { employee, request, manager, hrApprover
   for (let i = 0; i < colCount; i++) {
     const cx = MARGIN_X + i * colW;
 
-    // Layout pattern (Nadeem 2026-05-10):
-    //   • Top ~22mm of the cell is intentionally EMPTY — that's
-    //     where the actual ink signature / HQ stamp lands.
-    //   • A faint horizontal line marks the "sign on the line"
-    //     affordance.
-    //   • Below the line, the printed name and the timestamp /
-    //     title sit padded to the BOTTOM of the cell. Fonts smaller
-    //     than before (8pt name, 6.5pt footer) so the bottom block
-    //     stays compact and the signing area on top stays generous.
+    // Vertical anchoring (Nadeem 2026-05-10):
+    // The 35.4mm cell is divided into three zones:
+    //   [0  .. 20]   — empty signing area (sign with ink here)
+    //   [20]         — faint horizontal signature line
+    //   [21 .. 30]   — printed name (up to 3 lines, anchored to
+    //                  bottom of band at by + 30)
+    //   [33]         — footer baseline (timestamp or CEO title)
+    //   [33.4 .. 35.4] — 2mm bottom padding
+    //
+    // Critical: signature line sits ABOVE the name band, not in the
+    // middle of it. The previous version positioned the line in the
+    // name band centre, so a 4-line wrap of a long name overlapped
+    // the line and ran into adjacent cells. Now the name has its
+    // own dedicated 9mm strip and cannot collide with the line.
+    //
+    // For names that wrap to 4+ lines (rare — only happens at very
+    // long names like 'SADAKATHULLAH SHADULY PALAYAM MEERA SAHIB' at
+    // narrow column width), we cap at 3 lines and let jsPDF truncate.
+    // To minimise wrapping, name font is 7pt (was 8pt) — small but
+    // still readable; this fits most full names in 1-2 lines.
 
-    // Faint horizontal signature line at ~11mm from the cell bottom.
-    drawLine(pdf, cx + 4, by + bodyH - 11, cx + colW - 4, by + bodyH - 11,
+    const SIGN_LINE_OFFSET   = 20;   // signature line Y inside cell
+    const NAME_BOTTOM_OFFSET = 30;   // last name line baseline Y
+    const FOOTER_OFFSET      = 33.5; // footer baseline Y
+    const NAME_LINE_HEIGHT   = 3;    // 7pt name spacing
+
+    // 1) Signature line (faint, near top).
+    drawLine(pdf, cx + 4, by + SIGN_LINE_OFFSET,
+                  cx + colW - 4, by + SIGN_LINE_OFFSET,
       { color: C.border, width: 0.3 });
 
-    // Printed name (centred, ~7mm from the bottom).
+    // 2) Printed name — wrap, cap at 3 lines, centre, anchor to bottom.
     pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(8);
+    pdf.setFontSize(7);
     pdf.setTextColor(...C.text);
-    const wrappedName = pdf.splitTextToSize(cols[i].name, colW - 4);
-    const nameLines   = Array.isArray(wrappedName) ? wrappedName.length : 1;
-    // First baseline so the LAST line lands at bodyH - 7.
-    const nameTopY    = by + bodyH - 7 - ((nameLines - 1) * 3.4);
-    pdf.text(wrappedName, cx + colW / 2, nameTopY, { align: 'center' });
+    const wrapped     = pdf.splitTextToSize(cols[i].name, colW - 4);
+    const allLines    = Array.isArray(wrapped) ? wrapped : [wrapped];
+    const displayLines = allLines.slice(0, 3);
+    const lineCount   = displayLines.length;
+    const nameTopY    = by + NAME_BOTTOM_OFFSET - (lineCount - 1) * NAME_LINE_HEIGHT;
+    pdf.text(displayLines, cx + colW / 2, nameTopY, { align: 'center' });
 
-    // Footer (timestamp / CEO title), 6.5pt copper italic, ~3mm from bottom.
-    drawText(pdf, cols[i].footer, cx + colW / 2, by + bodyH - 3, {
-      size: 6.5, color: C.copper, style: 'italic', align: 'center',
+    // 3) Footer (timestamp / title) — copper italic, 6pt, centred.
+    drawText(pdf, cols[i].footer, cx + colW / 2, by + FOOTER_OFFSET, {
+      size: 6, color: C.copper, style: 'italic', align: 'center',
     });
   }
   return by + bodyH;
