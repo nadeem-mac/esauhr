@@ -305,13 +305,21 @@ export async function generateVacationFormPdfBlob({
   y = drawSectionHeader(pdf, y, 'Approval chain');
   y = drawSignatureGrid(pdf, y, { employee, request, manager, hrApprover });
 
-  // 8) GENERATED stamp — bottom-right corner per Nadeem 2026-05-10.
-  // Single horizontal line, small grey text, includes the HR approver's
-  // name. Right-aligned so it sits flush to the page margin.
+  // 8) GENERATED stamp — rotated 90° along the right edge of the page
+  // per Nadeem 2026-05-10. Reads bottom-to-top, sits in the margin
+  // outside the form's content area. Single horizontal line of small
+  // grey text, includes the HR approver's name.
+  //   angle: 90 rotates the text counterclockwise so it reads upward
+  //          from the start point.
+  //   x = PAGE_W - 5  — 5mm from the right edge; after rotation the
+  //                     text body sits in the 14mm right margin.
+  //   y = PAGE_H - 14 — starts near the bottom of the page; the text
+  //                     grows upward from there.
   const stamp = `Generated ${fmtDateShort(new Date().toISOString())} · ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} GMT+3   ·   ${hrApprover?.name || HR_DEFAULT}`;
-  drawText(pdf, stamp, PAGE_W - MARGIN_X, PAGE_H - 6, {
-    size: 6.5, color: C.muted, align: 'right',
-  });
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(6.5);
+  pdf.setTextColor(...C.muted);
+  pdf.text(stamp, PAGE_W - 5, PAGE_H - 14, { angle: 90 });
 
   pdf.setProperties({
     title:    `Vacation Form ${shortRef(request.id)}`,
@@ -568,23 +576,21 @@ function drawSignatureGrid(pdf, startY, { employee, request, manager, hrApprover
     const cx = MARGIN_X + i * colW;
 
     // Tight bottom block (Nadeem 2026-05-10):
-    //   [0  .. 24mm]  — empty signing area (most of the cell — sign here)
-    //   [24mm]        — faint signature line
-    //   [25 .. 30mm]  — printed name (capped at 2 lines, top-anchored
-    //                   right below the line so the block stays tight)
-    //   [33mm]        — footer baseline (timestamp / CEO title)
+    //   [0  .. 26mm]   empty signing area (most of the cell — sign here)
+    //   [26mm]         signature line — stuck directly to the name top
+    //   [27 .. 30mm]   printed name (cap 2 lines, top-anchored against line)
+    //   [33mm]         footer baseline (timestamp / CEO title)
     //
-    // Saved space vs the previous layout: the line was at offset 20
-    // with a 10mm gap above the name. Now the gap is 3mm (line to
-    // first name line) and the signing area is 24mm instead of 20.
-    // Net result: more space for the ink signature, tighter info
-    // block at the bottom, no overlap risk because names are hard-
-    // capped at 2 lines and top-anchored from the line down.
+    // No gap between the line and the name — they read as a single
+    // labeled stamp. The previous version had 3mm of space between
+    // line and first name baseline; that gap is now zero (the line
+    // sits at offset 26, the name's first line ascender reaches up
+    // to ~26.1, so they visually touch).
 
-    const SIG_LINE_Y       = 24;   // signature line offset
-    const NAME_FIRST_Y     = 27;   // first name baseline (3mm below line)
+    const SIG_LINE_Y       = 26;   // signature line offset — stuck to name
+    const NAME_FIRST_Y     = 28;   // first name baseline (text top ~26.1)
     const NAME_LINE_HEIGHT = 3;
-    const FOOTER_Y         = 33;
+    const FOOTER_Y         = 32.5;
 
     // 1) Signature line.
     drawLine(pdf, cx + 4, by + SIG_LINE_Y,
