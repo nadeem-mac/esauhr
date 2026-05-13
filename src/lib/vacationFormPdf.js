@@ -1,57 +1,32 @@
 // =============================================================================
-// vacationFormPdf.js — NATIVE PDF (clean text, not rasterised)
+// vacationFormPdf.js — native English-only PDF
 //
-// 2026-05-10 Nadeem: rewritten as a true text-based PDF using jsPDF
-// primitives. The previous canvas-rasterisation approach produced
-// image PDFs that "looked like a screenshot" — text wasn't selectable,
-// blurred at zoom, and couldn't be searched. This version uses
-// jsPDF.text/rect/line/addImage directly so every label and value is
-// real text in the PDF object stream.
+// 2026-05-10 (Nadeem): stripped Arabic + bilingual complexity per the
+// "make it plain English, better looking, relax" feedback. The previous
+// build had the right architecture (native jsPDF for selectable text)
+// but the layout was cramped trying to fit two languages per cell.
 //
-// LAYOUT (A4 portrait, 210×297mm, 12mm side margins)
-//   • Header row:      logo + brand strip · date+ref · QR        (24mm)
-//   • Title strip:     bilingual headline "Leave Application..."  (10mm)
-//   • Employee block:  5-row label/value table                    (35mm)
-//   • Leave details:   6-row table with checkbox rows             (50mm)
-//   • Substitutes:     variable rows table                        (≤25mm)
-//   • Policy bullets:  3 KSA labor law lines, bilingual           (18mm)
-//   • Signature grid:  4 columns EMPLOYEE/MGR/HR/MGT              (24mm)
-//   • Footer:          generated-on stamp                          (6mm)
-//
-// ARABIC TEXT
-// jsPDF can't shape Arabic glyphs natively — letters render in their
-// isolated forms instead of connected cursive. Two-step pipeline:
-//   1. arabic-persian-reshaper's ArabicShaper.convertArabic() converts
-//      logical-order Arabic into Unicode presentation forms (FE70–FEFC
-//      range), which are the contextual initial/medial/final/isolated
-//      glyphs already pre-shaped.
-//   2. jsPDF.setR2L(true) + a font that includes those glyphs
-//      (Noto Naskh Arabic, fetched lazily from /fonts/) renders them
-//      in the correct right-to-left order.
-// For bilingual cells (English label · Arabic gloss), we split the
-// string at the boundary and render each half in its own font + dir.
-//
-// FONT LOADING
-// The Arabic TTF is ~155KB. We fetch /fonts/NotoNaskhArabic-Regular.ttf
-// on first PDF generation, cache the base64 in module scope, and
-// re-use for all subsequent generations in the same page load.
-// English uses jsPDF's built-in Helvetica (no fetch).
-//
-// CALLER COMPATIBILITY
-//   Same export name (generateVacationFormPdfBlob) and same args
-//   as the previous rasterisation version. No call-site changes.
+// THIS VERSION
+//   • English only — no Arabic font loading, no shaping pipeline,
+//     no RTL helpers. Smaller bundle, faster generation, fewer deps.
+//   • Generous spacing — 4mm row padding, 5mm section gaps. The
+//     form breathes, doesn't crowd the page.
+//   • Bigger type — 10pt body, 12pt values, 14pt title. Comfortable
+//     reading without zoom.
+//   • Cleaner grid — soft borders, subtle band fills for labels.
+//     One accent column (brand green) on each section header.
+//   • Single A4 page. Selectable text everywhere. Logo + QR + brand
+//     wordmark in header. Signature grid with manager name resolved
+//     from request.manager_decided_by → employee.manager_id fallback.
 // =============================================================================
 
 import jsPDF from 'jspdf';
-import { ArabicShaper } from 'arabic-persian-reshaper';
 import QRCode from 'qrcode';
 
 // ─── module-scope caches ───────────────────────────────────────────────────
-// Both expensive to compute, both safe to share across generations.
-let arabicFontBase64 = null;
-let logoDataUrl      = null;
+let logoDataUrl = null;
 
-// ─── constants mirroring vacationForm.js ───────────────────────────────────
+// ─── constants ─────────────────────────────────────────────────────────────
 
 const VERIFY_BASE_URL = (typeof window !== 'undefined' && window.location?.origin)
   ? window.location.origin
@@ -67,20 +42,19 @@ const DEPT_NAMES = {
 };
 const LOC_NAMES = { DMM: 'Dammam', JED: 'Jeddah', RYD: 'Riyadh' };
 
-const LEAVE_TYPE = {
-  annual:      { en: 'Annual',      ar: 'سنوية' },
-  sick:        { en: 'Sick',        ar: 'مرضية' },
-  emergency:   { en: 'Emergency',   ar: 'طارئة' },
-  hajj:        { en: 'Hajj',        ar: 'حج' },
-  maternity:   { en: 'Maternity',   ar: 'وضع' },
-  paternity:   { en: 'Paternity',   ar: 'أبوة' },
-  marriage:    { en: 'Marriage',    ar: 'زواج' },
-  bereavement: { en: 'Bereavement', ar: 'وفاة' },
-  iddah:       { en: 'Iddah',       ar: 'عدة' },
-  unpaid:      { en: 'Unpaid',      ar: 'بدون راتب' },
-  other:       { en: 'Other',       ar: 'أخرى' },
+const LEAVE_TYPE_LABEL = {
+  annual:      'Annual',
+  sick:        'Sick',
+  emergency:   'Emergency',
+  hajj:        'Hajj',
+  maternity:   'Maternity',
+  paternity:   'Paternity',
+  marriage:    'Marriage',
+  bereavement: 'Bereavement',
+  iddah:       'Iddah',
+  unpaid:      'Unpaid',
+  other:       'Other',
 };
-
 const TYPE_CHECKBOX_ORDER = [
   'annual', 'sick', 'emergency', 'hajj', 'maternity',
   'paternity', 'marriage', 'bereavement', 'unpaid', 'other',
@@ -88,46 +62,31 @@ const TYPE_CHECKBOX_ORDER = [
 
 const CEO_NAME      = 'JOHN HO';
 const CEO_TITLE_EN  = 'Country Head / CEO';
+const HR_DEFAULT    = 'BASHAIER ALI ALSUBAIE';
 
-const HR_SIGNATURE = {
-  name: 'BASHAIER ALI ALSUBAIE',
-  unit: 'ESAU SADMN SUP / HR Dept',
-};
-
-// KSA Labor Law summary bullets (bilingual).
 const POLICY_BULLETS = [
-  {
-    en: '01.  Annual leave: 21 calendar days/year after 1 year of service; 30 days after 5 years.',
-    ar: 'الإجازة السنوية: 21 يومًا في السنة بعد سنة من الخدمة، و30 يومًا بعد 5 سنوات.',
-  },
-  {
-    en: '02.  Annual leave should be requested at least 14 days in advance.',
-    ar: 'تُقدَّم طلبات الإجازة السنوية قبل 14 يومًا على الأقل.',
-  },
-  {
-    en: '03.  Sick leave requires a valid medical certificate from an approved facility.',
-    ar: 'تتطلب الإجازة المرضية شهادة طبية معتمدة من جهة معتمدة.',
-  },
+  'Annual leave: 21 calendar days per year after 1 year of service; 30 days after 5 years.',
+  'Annual leave should be requested at least 14 days in advance.',
+  'Sick leave requires a valid medical certificate from an approved facility.',
 ];
 
-// Brand palette — converted to jsPDF's [r,g,b] format from hex.
+// Brand palette (jsPDF wants [r,g,b], not hex).
 const C = {
-  text:     [31, 27, 22],     // #1F1B16 warm black
-  muted:    [92, 68, 6],      // #5C4406 dark olive
-  copper:   [157, 107, 83],   // #9D6B53 italic accent
-  brand:    [45, 95, 63],     // #2D5F3F evergreen green
-  border:   [201, 184, 148],  // #C9B894 warm tan
-  banner:   [244, 238, 223],  // #F4EEDF cream
-  labelBg:  [251, 246, 233],  // #FBF6E9 light cream
-  white:    [255, 255, 255],
+  text:    [31, 27, 22],     // warm black
+  muted:   [115, 110, 100],  // soft grey (gentler than the old dark olive)
+  copper:  [157, 107, 83],   // italic accents
+  brand:   [45, 95, 63],     // evergreen green
+  border:  [220, 213, 195],  // lighter tan border
+  banner:  [248, 245, 235],  // softer cream
+  labelBg: [252, 250, 244],  // very light cream
+  accent:  [232, 240, 233],  // green-tinted background for section headers
 };
 
-// Page layout in mm.
-const PAGE_W   = 210;
-const PAGE_H   = 297;
-const MARGIN_X = 12;
-const MARGIN_T = 12;
-const CONTENT_W = PAGE_W - (MARGIN_X * 2);  // 186mm
+const PAGE_W    = 210;
+const PAGE_H    = 297;
+const MARGIN_X  = 14;     // a touch wider margins than before for breathing room
+const MARGIN_T  = 14;
+const CONTENT_W = PAGE_W - (MARGIN_X * 2);   // 182mm
 
 // ─── formatters ────────────────────────────────────────────────────────────
 
@@ -150,7 +109,7 @@ function fmtDateShort(iso) {
 function fmtStampCompact(iso) {
   if (!iso) return '';
   const d = new Date(iso);
-  return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} · ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
+  return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} · ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
 }
 
 function shortRef(id) {
@@ -176,22 +135,6 @@ function yearsOfService(joinDate) {
 
 // ─── asset loaders ─────────────────────────────────────────────────────────
 
-async function loadArabicFont() {
-  if (arabicFontBase64) return arabicFontBase64;
-  const res = await fetch('/fonts/NotoNaskhArabic-Regular.ttf');
-  if (!res.ok) throw new Error(`Arabic font fetch failed: ${res.status}`);
-  const buf = await res.arrayBuffer();
-  // Convert binary → base64 in chunks (large fonts overflow String.fromCharCode).
-  const bytes = new Uint8Array(buf);
-  let binary = '';
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-  }
-  arabicFontBase64 = btoa(binary);
-  return arabicFontBase64;
-}
-
 async function loadLogoDataUrl() {
   if (logoDataUrl) return logoDataUrl;
   try {
@@ -210,28 +153,12 @@ async function loadLogoDataUrl() {
   }
 }
 
-// ─── Arabic helper ─────────────────────────────────────────────────────────
+// ─── drawing primitives ────────────────────────────────────────────────────
 
-// Reshape + render Arabic text right-justified at (rightX, y).
-// Uses Noto Naskh Arabic via the fontName key. Caller must have
-// already addFont'd the family. rightX is the position where the
-// RIGHT edge of the text sits (Arabic text grows leftward from there).
-function drawArabic(pdf, text, rightX, y, opts = {}) {
-  if (!text) return;
-  const shaped = ArabicShaper.convertArabic(String(text));
-  pdf.setFont('NotoNaskhArabic', 'normal');
-  pdf.setFontSize(opts.size || 8.5);
-  if (opts.color) pdf.setTextColor(...opts.color);
-  pdf.setR2L(true);
-  pdf.text(shaped, rightX, y, { align: 'right', ...opts });
-  pdf.setR2L(false);
-}
-
-// Latin text (selectable).
 function drawText(pdf, text, x, y, opts = {}) {
   if (!text && text !== 0) return;
   pdf.setFont(opts.font || 'helvetica', opts.style || 'normal');
-  pdf.setFontSize(opts.size || 9);
+  pdf.setFontSize(opts.size || 10);
   if (opts.color) pdf.setTextColor(...opts.color);
   pdf.text(String(text), x, y, opts);
 }
@@ -239,9 +166,13 @@ function drawText(pdf, text, x, y, opts = {}) {
 function drawRect(pdf, x, y, w, h, opts = {}) {
   if (opts.fill) {
     pdf.setFillColor(...opts.fill);
-    if (opts.stroke) pdf.setDrawColor(...opts.stroke);
-    pdf.setLineWidth(opts.strokeWidth || 0.2);
-    pdf.rect(x, y, w, h, opts.stroke ? 'FD' : 'F');
+    if (opts.stroke) {
+      pdf.setDrawColor(...opts.stroke);
+      pdf.setLineWidth(opts.strokeWidth || 0.2);
+      pdf.rect(x, y, w, h, 'FD');
+    } else {
+      pdf.rect(x, y, w, h, 'F');
+    }
   } else if (opts.stroke) {
     pdf.setDrawColor(...opts.stroke);
     pdf.setLineWidth(opts.strokeWidth || 0.2);
@@ -249,45 +180,34 @@ function drawRect(pdf, x, y, w, h, opts = {}) {
   }
 }
 
-// Bilingual label row: English on the left, Arabic on the right.
-function drawBilingualLabel(pdf, en, ar, x, y, w) {
-  drawText(pdf, en, x + 1.5, y + 3.2, { size: 7.5, color: C.muted, style: 'bold' });
-  drawArabic(pdf, ar, x + w - 1.5, y + 3.2, { size: 7, color: C.muted });
+function drawLine(pdf, x1, y1, x2, y2, opts = {}) {
+  pdf.setDrawColor(...(opts.color || C.border));
+  pdf.setLineWidth(opts.width || 0.2);
+  pdf.line(x1, y1, x2, y2);
 }
 
-// Tickbox helper — small square that's filled (✓) or empty.
+// Tickbox — small square that's filled (✓) or empty.
 function drawTickbox(pdf, x, y, checked) {
-  const size = 2.4;
+  const size = 2.8;
   if (checked) {
     pdf.setFillColor(...C.brand);
     pdf.setDrawColor(...C.brand);
     pdf.setLineWidth(0.3);
-    pdf.rect(x, y - size, size, size, 'FD');
-    // The ✓ — drawn as two short lines
+    pdf.rect(x, y - size + 0.4, size, size, 'FD');
+    // ✓ stroke
     pdf.setDrawColor(255, 255, 255);
     pdf.setLineWidth(0.5);
-    pdf.line(x + 0.5, y - size / 2,   x + 1.0, y - 0.4);
-    pdf.line(x + 1.0, y - 0.4,         x + 2.0, y - size + 0.4);
+    pdf.line(x + 0.7, y - size / 2 + 0.4,   x + 1.2, y - 0.2);
+    pdf.line(x + 1.2, y - 0.2,              x + 2.2, y - size + 0.9);
   } else {
     pdf.setDrawColor(...C.border);
     pdf.setLineWidth(0.3);
-    pdf.rect(x, y - size, size, size, 'S');
+    pdf.rect(x, y - size + 0.4, size, size, 'S');
   }
 }
 
 // ─── main export ───────────────────────────────────────────────────────────
 
-/**
- * Build the bilingual vacation form as a single-page A4 PDF Blob.
- * Text is selectable, searchable, and prints crisp at any zoom.
- *
- * @param {object} args.employee     — { id, name, department, location, designation, join_date }
- * @param {object} args.request      — leave_requests row
- * @param {object} args.manager      — manager employee row (optional)
- * @param {object} args.hrApprover   — current HR approver employee row (optional)
- * @param {Array}  args.substitutes  — array of substitute decisions (optional)
- * @returns {Promise<Blob>} PDF blob with type 'application/pdf'
- */
 export async function generateVacationFormPdfBlob({
   employee, request, manager, hrApprover, substitutes = [],
 }) {
@@ -298,165 +218,93 @@ export async function generateVacationFormPdfBlob({
     compress: true,
   });
 
-  // 1) Load + register Arabic font.
-  const fontB64 = await loadArabicFont();
-  pdf.addFileToVFS('NotoNaskhArabic-Regular.ttf', fontB64);
-  pdf.addFont('NotoNaskhArabic-Regular.ttf', 'NotoNaskhArabic', 'normal');
-
-  // 2) Generate the QR code as data URL.
+  // ── prepare data ──
   const verifyUrl = `${VERIFY_BASE_URL}/verify-leave/${request.id}`;
   const qrDataUrl = await QRCode.toDataURL(verifyUrl, {
     errorCorrectionLevel: 'M',
     margin: 1,
-    width: 220,
-    color: { dark: '#1F4530', light: '#FFFFFF' },
+    width: 240,
+    color: { dark: '#2D5F3F', light: '#FFFFFF' },
   });
-
-  // 3) Load logo (best-effort — form still works if it 404s).
   const logoUrl = await loadLogoDataUrl();
 
-  // 4) Resolve display strings.
-  const ltKey  = LEAVE_TYPE[request.leave_type_id] ? request.leave_type_id : 'annual';
-  const dept   = DEPT_NAMES[employee?.department] || employee?.department || '—';
-  const loc    = LOC_NAMES[employee?.location]    || employee?.location    || '—';
+  const ltKey = LEAVE_TYPE_LABEL[request.leave_type_id] ? request.leave_type_id : 'annual';
+  const dept  = DEPT_NAMES[employee?.department] || employee?.department || '—';
+  const loc   = LOC_NAMES[employee?.location]    || employee?.location    || '—';
   const designation = employee?.designation || 'Department Member';
 
   const submitted14d = request.requested_at && request.start_date
     ? (new Date(request.start_date).getTime() - new Date(request.requested_at).getTime()) >= 14 * 24 * 3600 * 1000
     : null;
   const noticePlanned = submitted14d === true;
-
   const dayCount   = Number(request.days || 0);
-  const daysLabel  = `${dayCount} day${dayCount === 1 ? '' : 's'}`;
+  const daysLabel  = `${dayCount} day${dayCount === 1 ? '' : 's'}${request.is_half_day ? '   ·   half day' : ''}`;
   const periodValue = request.start_date === request.end_date
     ? fmtDateLong(request.start_date)
-    : `${fmtDateLong(request.start_date)}  →  ${fmtDateLong(request.end_date)}`;
+    : `${fmtDateLong(request.start_date)}   →   ${fmtDateLong(request.end_date)}`;
 
-  // === RENDER PIPELINE ===
+  // === RENDER ===
 
   let y = MARGIN_T;
 
-  // 5) HEADER — three-column row 26mm tall.
-  const headerH = 26;
-  drawRect(pdf, MARGIN_X, y, CONTENT_W, headerH, { stroke: C.border, strokeWidth: 0.4 });
+  // 1) HEADER — 28mm tall, three columns: logo+brand · ref · QR
+  y = drawHeader(pdf, y, { logoUrl, qrDataUrl, request });
 
-  // Left cell: logo + brand text (90mm)
-  const leftW = 95;
-  if (logoUrl) {
-    try {
-      pdf.addImage(logoUrl, 'JPEG', MARGIN_X + 2, y + 2, 22, 22);
-    } catch { /* fall through to text-only */ }
-  }
-  drawText(pdf, 'EVERGREEN LINE', MARGIN_X + 26, y + 9, {
-    size: 13, color: C.brand, style: 'bold',
-  });
-  drawText(pdf, 'Evergreen Shipping Agency Saudi Co. (L.L.C)', MARGIN_X + 26, y + 14, {
-    size: 8, color: C.muted, style: 'italic',
-  });
-  drawText(pdf, 'ESAU SADMN SUP / HR Dept', MARGIN_X + 26, y + 18, {
-    size: 7.5, color: C.muted,
-  });
+  y += 6;
 
-  // Middle cell: Date + Ref (60mm)
-  const midX = MARGIN_X + leftW;
-  pdf.setLineWidth(0.2);
-  pdf.setDrawColor(...C.border);
-  pdf.line(midX, y, midX, y + headerH);
-  drawText(pdf, 'Date',  midX + 2, y + 6, { size: 7, color: C.muted });
-  drawText(pdf, fmtDateShort(new Date().toISOString()), midX + 2, y + 11,
-    { size: 10, color: C.text, style: 'bold' });
-  drawText(pdf, 'Ref',  midX + 2, y + 17, { size: 7, color: C.muted });
-  drawText(pdf, shortRef(request.id), midX + 2, y + 22,
-    { size: 10, color: C.text, font: 'courier', style: 'bold' });
+  // 2) TITLE — large, centred, single line
+  y = drawTitle(pdf, y, ltKey);
 
-  // Right cell: QR + caption (~36mm)
-  const qrW = 30;
-  const qrX = PAGE_W - MARGIN_X - qrW;
-  pdf.line(qrX - 2, y, qrX - 2, y + headerH);
-  pdf.addImage(qrDataUrl, 'PNG', qrX, y + 2, qrW - 1, qrW - 1);
-  drawText(pdf, 'SCAN TO VERIFY', qrX - 1, y + headerH - 1,
-    { size: 5.5, color: C.muted });
+  y += 6;
 
-  y += headerH + 4;
+  // 3) EMPLOYEE INFORMATION
+  y = drawSectionHeader(pdf, y, 'Employee information');
+  y = drawLabelValueTable(pdf, y, [
+    ['Employee name', employee?.name || '—'],
+    ['PSN ID',        employee?.id   || '—'],
+    ['Department',    `${dept}  ·  ${loc}`],
+    ['Designation',   designation],
+    ['Joined',        `${fmtDateShort(employee?.join_date)}   ·   ${yearsOfService(employee?.join_date)}`],
+  ]);
 
-  // 6) TITLE STRIP — full-width bilingual headline.
-  const titleH = 10;
-  drawRect(pdf, MARGIN_X, y, CONTENT_W, titleH,
-    { fill: C.banner, stroke: C.brand, strokeWidth: 0.5 });
-  const ltLabel = LEAVE_TYPE[ltKey].en;
-  drawText(pdf, `Leave Application — ${ltLabel}`,
-    MARGIN_X + CONTENT_W / 2, y + 4.5,
-    { size: 12, color: C.brand, style: 'bold', align: 'center' });
-  drawArabic(pdf, `طلب إجازة · إجازة ${LEAVE_TYPE[ltKey].ar}`,
-    MARGIN_X + CONTENT_W / 2 + 18, y + 8.5,
-    { size: 8.5, color: C.muted, align: 'center' });
+  y += 5;
 
-  y += titleH + 2;
+  // 4) LEAVE DETAILS
+  y = drawSectionHeader(pdf, y, 'Leave details');
+  y = drawLeaveTypeRow(pdf, y, ltKey);
+  y = drawLabelValueTable(pdf, y, [
+    ['Period',     periodValue],
+    ['Duration',   daysLabel],
+    ['Notice',     noticePlanned ? 'Planned   (≥14 days in advance)' : 'Urgent   (less than 14 days)'],
+    ['Reason',     request.reason || '—'],
+    ['Submitted',  fmtStampCompact(request.requested_at)],
+  ]);
 
-  // 7) EMPLOYEE INFORMATION block.
-  y = drawSectionBanner(pdf, y, 'EMPLOYEE INFORMATION', 'معلومات الموظف');
-  const empRows = [
-    { en: 'Employee name',     ar: 'اسم الموظف',          value: employee?.name || '—' },
-    { en: 'PSN ID',            ar: 'الرقم الوظيفي',         value: employee?.id   || '—' },
-    { en: 'Department',        ar: 'القسم',                value: `${dept}  ·  ${loc}` },
-    { en: 'Designation',       ar: 'المسمى الوظيفي',         value: designation },
-    { en: 'Joined / Tenure',   ar: 'الالتحاق / المدة',       value: `${fmtDateShort(employee?.join_date)}   ·   ${yearsOfService(employee?.join_date)}` },
-  ];
-  y = drawLabelValueTable(pdf, y, empRows);
-  y += 3;
+  y += 5;
 
-  // 8) LEAVE DETAILS block.
-  y = drawSectionBanner(pdf, y, 'LEAVE DETAILS', 'تفاصيل الإجازة');
-
-  // Custom row: leave-type checkboxes (special render).
-  const typeRowH = 9;
-  drawRect(pdf, MARGIN_X, y, CONTENT_W, typeRowH, { stroke: C.border, strokeWidth: 0.2 });
-  drawRect(pdf, MARGIN_X, y, 50, typeRowH, { fill: C.labelBg, stroke: C.border, strokeWidth: 0.2 });
-  drawBilingualLabel(pdf, 'Leave type', 'نوع الإجازة', MARGIN_X, y, 50);
-  let chkX = MARGIN_X + 53;
-  for (const k of TYPE_CHECKBOX_ORDER) {
-    drawTickbox(pdf, chkX, y + 5.5, k === ltKey);
-    drawText(pdf, LEAVE_TYPE[k].en, chkX + 3.2, y + 5.3, {
-      size: 7.5, color: C.text,
-    });
-    chkX += pdf.getTextWidth(LEAVE_TYPE[k].en) + 8;
-  }
-  y += typeRowH;
-
-  // Remaining leave-detail rows.
-  const leaveRows = [
-    { en: 'Period',       ar: 'الفترة',          value: periodValue },
-    { en: 'Duration',     ar: 'المدة',          value: `${daysLabel}     ·     ${request.is_half_day ? '☑ Half day' : '☐ Half day'}` },
-    { en: 'Notice',       ar: 'الإشعار',         value: `${noticePlanned ? '☑' : '☐'} Planned (≥14 days)     ${!noticePlanned ? '☑' : '☐'} Urgent (<14 days)` },
-    { en: 'Reason / details', ar: 'السبب / التفاصيل', value: request.reason || '—' },
-    { en: 'Submitted',    ar: 'تاريخ التقديم',    value: fmtStampCompact(request.requested_at) },
-  ];
-  y = drawLabelValueTable(pdf, y, leaveRows);
-  y += 3;
-
-  // 9) SUBSTITUTE COVERAGE (optional).
+  // 5) SUBSTITUTE COVERAGE (only if any)
   if (substitutes && substitutes.length > 0) {
-    y = drawSectionBanner(pdf, y, 'SUBSTITUTE COVERAGE', 'البديل أثناء الغياب');
+    y = drawSectionHeader(pdf, y, 'Substitute coverage');
     y = drawSubstitutesTable(pdf, y, substitutes, request);
-    y += 3;
+    y += 5;
   }
 
-  // 10) POLICY block.
-  y = drawSectionBanner(pdf, y, 'LEAVE POLICY · KSA LABOR LAW', 'سياسة الإجازات · نظام العمل السعودي');
-  y = drawPolicyBlock(pdf, y);
-  y += 3;
+  // 6) APPROVAL CHAIN
+  y = drawSectionHeader(pdf, y, 'Approval chain');
+  y = drawSignatureGrid(pdf, y, { employee, request, manager, hrApprover });
 
-  // 11) SIGNATURE GRID (4 columns).
-  y = drawSignatureGrid(pdf, y, {
-    employee, request, manager, hrApprover,
+  y += 5;
+
+  // 7) POLICY (KSA Labor Law)
+  y = drawSectionHeader(pdf, y, 'Leave policy · KSA Labor Law');
+  y = drawPolicyBullets(pdf, y);
+
+  // 8) FOOTER stamp
+  const stamp = `Generated ${fmtDateShort(new Date().toISOString())} · ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} GMT+3   ·   ESAU HR Portal`;
+  drawText(pdf, stamp, PAGE_W / 2, PAGE_H - 9, {
+    size: 7.5, color: C.muted, style: 'italic', align: 'center',
   });
 
-  // 12) GENERATED footer — centred, italic, small.
-  const stamp = `Generated on ${fmtDateShort(new Date().toISOString())}, ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} GMT+3  ·  ${HR_SIGNATURE.name}`;
-  drawText(pdf, stamp, PAGE_W / 2, PAGE_H - 8,
-    { size: 7, color: C.copper, style: 'italic', align: 'center' });
-
-  // PDF metadata for any viewer.
   pdf.setProperties({
     title:    `Vacation Form ${shortRef(request.id)}`,
     subject:  `Approved leave for ${employee?.name || request.employee_id}`,
@@ -468,186 +316,247 @@ export async function generateVacationFormPdfBlob({
   return pdf.output('blob');
 }
 
-// ─── section primitives ────────────────────────────────────────────────────
+// ─── section renderers ─────────────────────────────────────────────────────
 
-function drawSectionBanner(pdf, y, enText, arText) {
-  const h = 5.5;
-  drawRect(pdf, MARGIN_X, y, CONTENT_W, h,
-    { fill: C.banner, stroke: C.brand, strokeWidth: 0.3 });
-  drawText(pdf, enText, MARGIN_X + 2, y + 3.8, {
-    size: 8.5, color: C.brand, style: 'bold',
+function drawHeader(pdf, y, { logoUrl, qrDataUrl, request }) {
+  const h = 28;
+  // Soft bottom border instead of full box (cleaner, less boxed-in).
+  drawLine(pdf, MARGIN_X, y + h, MARGIN_X + CONTENT_W, y + h,
+    { color: C.brand, width: 0.6 });
+
+  // Logo (24×24mm, left).
+  if (logoUrl) {
+    try {
+      pdf.addImage(logoUrl, 'JPEG', MARGIN_X, y + 1, 24, 24);
+    } catch { /* fall through */ }
+  }
+
+  // Brand wordmark + subtitle (next to logo).
+  drawText(pdf, 'EVERGREEN LINE', MARGIN_X + 28, y + 9, {
+    size: 16, color: C.brand, style: 'bold',
   });
-  drawArabic(pdf, arText, PAGE_W - MARGIN_X - 2, y + 3.8, {
-    size: 7.5, color: C.brand,
+  drawText(pdf, 'Evergreen Shipping Agency Saudi Co. (L.L.C)', MARGIN_X + 28, y + 14.5, {
+    size: 9, color: C.muted, style: 'italic',
   });
+  drawText(pdf, 'ESAU · SADMN SUP / HR Department', MARGIN_X + 28, y + 19, {
+    size: 8.5, color: C.muted,
+  });
+
+  // Reference block (middle-right of header).
+  const qrSize = 22;
+  const qrX = PAGE_W - MARGIN_X - qrSize;
+  const refX = qrX - 50;
+  drawText(pdf, 'DATE', refX, y + 5, { size: 7, color: C.muted, style: 'bold' });
+  drawText(pdf, fmtDateShort(new Date().toISOString()), refX, y + 10, {
+    size: 11, color: C.text, style: 'bold',
+  });
+  drawText(pdf, 'REFERENCE', refX, y + 16, { size: 7, color: C.muted, style: 'bold' });
+  drawText(pdf, shortRef(request.id), refX, y + 21, {
+    size: 11, color: C.text, font: 'courier', style: 'bold',
+  });
+
+  // QR code (right).
+  pdf.addImage(qrDataUrl, 'PNG', qrX, y + 2, qrSize, qrSize);
+  drawText(pdf, 'Scan to verify', qrX + qrSize / 2, y + 26.5, {
+    size: 6.5, color: C.muted, align: 'center',
+  });
+
   return y + h;
 }
 
+function drawTitle(pdf, y, ltKey) {
+  const titleText = `Leave Application — ${LEAVE_TYPE_LABEL[ltKey]}`;
+  drawText(pdf, titleText, PAGE_W / 2, y + 5, {
+    size: 16, color: C.brand, style: 'bold', align: 'center',
+  });
+  // Soft underline tick mark for the title.
+  const tw = pdf.getTextWidth(titleText);
+  drawLine(pdf, (PAGE_W - tw) / 2, y + 7.5, (PAGE_W + tw) / 2, y + 7.5,
+    { color: C.brand, width: 0.4 });
+  return y + 8;
+}
+
+function drawSectionHeader(pdf, y, text) {
+  const h = 7;
+  // Subtle green-tinted band with brand-coloured left edge.
+  drawRect(pdf, MARGIN_X, y, CONTENT_W, h, { fill: C.accent });
+  drawRect(pdf, MARGIN_X, y, 1.5, h, { fill: C.brand });
+  drawText(pdf, text, MARGIN_X + 5, y + 4.8, {
+    size: 9.5, color: C.brand, style: 'bold',
+  });
+  return y + h + 1;
+}
+
 function drawLabelValueTable(pdf, startY, rows) {
-  const labelW = 50;
+  const labelW = 42;
   const valueW = CONTENT_W - labelW;
-  const rowH   = 6.5;
   let y = startY;
-  for (const r of rows) {
-    // Reason row is taller to fit multiline.
-    const isReason = /reason|details/i.test(r.en);
-    const thisRowH = isReason ? Math.max(rowH, 11) : rowH;
-    drawRect(pdf, MARGIN_X, y, CONTENT_W, thisRowH,
-      { stroke: C.border, strokeWidth: 0.2 });
-    drawRect(pdf, MARGIN_X, y, labelW, thisRowH,
-      { fill: C.labelBg, stroke: C.border, strokeWidth: 0.2 });
-    drawBilingualLabel(pdf, r.en, r.ar, MARGIN_X, y, labelW);
+  for (const [label, value] of rows) {
+    const wrapped = pdf.splitTextToSize(String(value || '—'), valueW - 6);
+    const lineCount = Array.isArray(wrapped) ? wrapped.length : 1;
+    const rowH = Math.max(8, lineCount * 4.5 + 3);
 
-    // Value — wrap if too long.
-    const valX = MARGIN_X + labelW + 2;
-    const valW = valueW - 4;
+    // Hairline divider above each row (except first — section header already separates).
+    if (y > startY) {
+      drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
+        { color: C.border, width: 0.15 });
+    }
+
+    drawText(pdf, label, MARGIN_X + 1, y + 5.5, {
+      size: 8.5, color: C.muted, style: 'bold',
+    });
     pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(9);
+    pdf.setFontSize(10);
     pdf.setTextColor(...C.text);
-    const wrapped = pdf.splitTextToSize(String(r.value || '—'), valW);
-    pdf.text(wrapped, valX, y + 4.2);
+    pdf.text(wrapped, MARGIN_X + labelW + 2, y + 5.5);
 
-    y += thisRowH;
+    y += rowH;
   }
+  // Final divider closes the block.
+  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
+    { color: C.border, width: 0.15 });
   return y;
+}
+
+function drawLeaveTypeRow(pdf, startY, ltKey) {
+  const labelW = 42;
+  const rowH   = 10;
+  drawLine(pdf, MARGIN_X, startY, MARGIN_X + CONTENT_W, startY,
+    { color: C.border, width: 0.15 });
+
+  drawText(pdf, 'Leave type', MARGIN_X + 1, startY + 6.5, {
+    size: 8.5, color: C.muted, style: 'bold',
+  });
+
+  let cx = MARGIN_X + labelW + 2;
+  for (const k of TYPE_CHECKBOX_ORDER) {
+    const label = LEAVE_TYPE_LABEL[k];
+    drawTickbox(pdf, cx, startY + 7.5, k === ltKey);
+    drawText(pdf, label, cx + 4, startY + 7, {
+      size: 9, color: C.text,
+    });
+    cx += pdf.getTextWidth(label) + 9;
+  }
+  return startY + rowH;
 }
 
 function drawSubstitutesTable(pdf, startY, substitutes, request) {
-  const headerH = 5;
-  const colWidths = [10, 70, 56, 50];  // # / Substitute / Signature / Date
-  let x = MARGIN_X;
+  const headerH = 6;
+  const bodyH   = 10;
+  const colWidths = [10, 75, 50, CONTENT_W - 10 - 75 - 50];
   let y = startY;
 
-  // Header row.
-  drawRect(pdf, MARGIN_X, y, CONTENT_W, headerH,
-    { fill: C.labelBg, stroke: C.border, strokeWidth: 0.2 });
-  const headers = [
-    { en: '#',            ar: '' },
-    { en: 'Substitute',   ar: 'البديل' },
-    { en: 'Signature',    ar: 'التوقيع' },
-    { en: 'Date',         ar: 'التاريخ' },
-  ];
-  x = MARGIN_X;
+  drawRect(pdf, MARGIN_X, y, CONTENT_W, headerH, { fill: C.labelBg });
+  let cx = MARGIN_X;
+  const headers = ['#', 'Substitute', 'Status', 'Date'];
   for (let i = 0; i < headers.length; i++) {
-    drawText(pdf, headers[i].en, x + 1.5, y + 3.5,
-      { size: 7.5, color: C.brand, style: 'bold' });
-    if (headers[i].ar) {
-      drawArabic(pdf, headers[i].ar, x + colWidths[i] - 1.5, y + 3.5,
-        { size: 6.5, color: C.brand });
-    }
-    x += colWidths[i];
+    drawText(pdf, headers[i], cx + 2, y + 4.2, {
+      size: 8, color: C.muted, style: 'bold',
+    });
+    cx += colWidths[i];
   }
   y += headerH;
 
-  // Body rows.
-  const bodyH = 9;
   substitutes.forEach((sub, i) => {
-    drawRect(pdf, MARGIN_X, y, CONTENT_W, bodyH,
-      { stroke: C.border, strokeWidth: 0.15 });
-    let cx = MARGIN_X;
-    drawText(pdf, String(i + 1), cx + 1.5, y + 5.5,
-      { size: 9, color: C.text, style: 'bold' });
+    drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
+      { color: C.border, width: 0.15 });
+    cx = MARGIN_X;
+    drawText(pdf, String(i + 1), cx + 2, y + 6, {
+      size: 9, color: C.text, style: 'bold',
+    });
     cx += colWidths[0];
-
-    const subName = sub?.name || '—';
-    const subId   = sub?.id   || sub?.employee_id || '';
-    drawText(pdf, subName, cx + 1.5, y + 4,
-      { size: 8.5, color: C.text, style: 'bold' });
-    if (subId) {
-      drawText(pdf, subId, cx + 1.5, y + 7.5,
-        { size: 7, color: C.muted, font: 'courier' });
-    }
+    drawText(pdf, sub?.name || '—', cx + 2, y + 5, {
+      size: 9.5, color: C.text, style: 'bold',
+    });
+    drawText(pdf, sub?.id || sub?.employee_id || '', cx + 2, y + 8.5, {
+      size: 7.5, color: C.muted, font: 'courier',
+    });
     cx += colWidths[1];
-
-    drawText(pdf, '✓ Accepted online', cx + 1.5, y + 4,
-      { size: 7.5, color: C.brand, style: 'italic' });
-    drawText(pdf, 'Signature', cx + 1.5, y + 7.5,
-      { size: 6.5, color: C.muted });
+    drawText(pdf, '✓  Accepted online', cx + 2, y + 6, {
+      size: 8.5, color: C.brand, style: 'italic',
+    });
     cx += colWidths[2];
-
-    drawText(pdf, fmtStampCompact(request.requested_at), cx + 1.5, y + 4,
-      { size: 7.5, color: C.text });
-    drawText(pdf, 'Accepted online', cx + 1.5, y + 7.5,
-      { size: 6.5, color: C.copper, style: 'italic' });
+    drawText(pdf, fmtStampCompact(request.requested_at), cx + 2, y + 6, {
+      size: 8.5, color: C.text,
+    });
     y += bodyH;
   });
-  return y;
-}
-
-function drawPolicyBlock(pdf, startY) {
-  const rowH = 5.5;
-  let y = startY;
-  for (const bullet of POLICY_BULLETS) {
-    drawRect(pdf, MARGIN_X, y, CONTENT_W, rowH,
-      { stroke: C.border, strokeWidth: 0.15 });
-    drawText(pdf, bullet.en, MARGIN_X + 2, y + 3.8,
-      { size: 7.5, color: C.text });
-    drawArabic(pdf, bullet.ar, PAGE_W - MARGIN_X - 2, y + 3.8,
-      { size: 7, color: C.muted });
-    y += rowH;
-  }
+  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
+    { color: C.border, width: 0.15 });
   return y;
 }
 
 function drawSignatureGrid(pdf, startY, { employee, request, manager, hrApprover }) {
   const colCount = 4;
   const colW = CONTENT_W / colCount;
-  const headerH = 5;
-  const bodyH   = 22;
-  const totalH  = headerH + bodyH;
+  const headerH = 6;
+  const bodyH   = 24;
 
-  // Header row.
-  drawRect(pdf, MARGIN_X, startY, CONTENT_W, headerH,
-    { fill: C.labelBg, stroke: C.border, strokeWidth: 0.2 });
   const cols = [
-    { en: 'EMPLOYEE', ar: 'الموظف',         name: employee?.name || '',
+    { title: 'Employee', name: employee?.name || '—',
       footer: request.requested_at ? `Submitted ${fmtStampCompact(request.requested_at)}` : '' },
-    { en: 'DEPT MGR', ar: 'مدير القسم',     name: manager?.name || '',
-      footer: request.manager_decided_at ? `Approved ${fmtStampCompact(request.manager_decided_at)}` : '' },
-    { en: 'ESAU SUP', ar: 'الموارد البشرية', name: hrApprover?.name || HR_SIGNATURE.name,
-      footer: request.hr_decided_at ? `Approved ${fmtStampCompact(request.hr_decided_at)}` : '' },
-    { en: 'ESAU MGT', ar: 'الإدارة',         name: CEO_NAME,
+    { title: 'Department Manager', name: manager?.name || '—',
+      footer: request.manager_decided_at ? `Approved ${fmtStampCompact(request.manager_decided_at)}` : 'Pending' },
+    { title: 'ESAU HR (SUP)', name: hrApprover?.name || HR_DEFAULT,
+      footer: request.hr_decided_at ? `Approved ${fmtStampCompact(request.hr_decided_at)}` : 'Pending' },
+    { title: 'ESAU Management', name: CEO_NAME,
       footer: CEO_TITLE_EN },
   ];
 
+  drawRect(pdf, MARGIN_X, startY, CONTENT_W, headerH, { fill: C.labelBg });
   for (let i = 0; i < colCount; i++) {
     const cx = MARGIN_X + i * colW;
-    drawText(pdf, cols[i].en, cx + 1.5, startY + 3.3,
-      { size: 7.5, color: C.brand, style: 'bold' });
-    drawArabic(pdf, cols[i].ar, cx + colW - 1.5, startY + 3.5,
-      { size: 6.5, color: C.brand });
+    drawText(pdf, cols[i].title, cx + 2, startY + 4.2, {
+      size: 8, color: C.muted, style: 'bold',
+    });
   }
 
-  // Body row.
   const by = startY + headerH;
-  drawRect(pdf, MARGIN_X, by, CONTENT_W, bodyH,
-    { stroke: C.border, strokeWidth: 0.2 });
+  drawRect(pdf, MARGIN_X, by, CONTENT_W, bodyH, {
+    stroke: C.border, strokeWidth: 0.2,
+  });
   for (let i = 1; i < colCount; i++) {
     const cx = MARGIN_X + i * colW;
-    pdf.setDrawColor(...C.border);
-    pdf.setLineWidth(0.2);
-    pdf.line(cx, by, cx, by + bodyH);
+    drawLine(pdf, cx, by, cx, by + bodyH, { color: C.border, width: 0.15 });
   }
+  drawLine(pdf, MARGIN_X, by, MARGIN_X + CONTENT_W, by, { color: C.border, width: 0.2 });
+
   for (let i = 0; i < colCount; i++) {
     const cx = MARGIN_X + i * colW;
-    // Name wraps if long. splitTextToSize gives us word-wrapped lines.
     pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(8.5);
+    pdf.setFontSize(9.5);
     pdf.setTextColor(...C.text);
-    const wrappedName = pdf.splitTextToSize(cols[i].name || '—', colW - 3);
-    pdf.text(wrappedName, cx + 1.5, by + 4.5);
+    const wrappedName = pdf.splitTextToSize(cols[i].name, colW - 4);
+    pdf.text(wrappedName, cx + 2, by + 5);
 
-    if (cols[i].footer) {
-      drawText(pdf, cols[i].footer, cx + 1.5, by + 12,
-        { size: 6.5, color: C.copper, style: 'italic' });
-    }
-    drawText(pdf, 'Signature', cx + 1.5, by + bodyH - 2,
-      { size: 6.5, color: C.muted });
+    drawText(pdf, cols[i].footer, cx + 2, by + bodyH - 7, {
+      size: 7.5, color: C.copper, style: 'italic',
+    });
+    drawLine(pdf, cx + 2, by + bodyH - 3.5, cx + colW - 2, by + bodyH - 3.5,
+      { color: C.border, width: 0.25 });
+    drawText(pdf, 'Signature', cx + 2, by + bodyH - 1, {
+      size: 6.5, color: C.muted,
+    });
   }
-  return startY + totalH;
+  return by + bodyH;
 }
 
-// ─── small download helper kept here for callers ───────────────────────────
+function drawPolicyBullets(pdf, startY) {
+  const rowH = 5.5;
+  let y = startY;
+  POLICY_BULLETS.forEach((text, i) => {
+    drawText(pdf, `${String(i + 1).padStart(2, '0')}.`, MARGIN_X + 1, y + 3.8, {
+      size: 8, color: C.copper, style: 'bold',
+    });
+    drawText(pdf, text, MARGIN_X + 7, y + 3.8, {
+      size: 8.5, color: C.text,
+    });
+    y += rowH;
+  });
+  return y;
+}
+
+// ─── caller helper ─────────────────────────────────────────────────────────
 
 export function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
