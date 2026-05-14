@@ -31,7 +31,7 @@
 // =============================================================================
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Clock, Download, ChevronDown, ChevronRight, FileText, Users } from 'lucide-react';
+import { Clock, Download, ChevronDown, ChevronRight, FileText, Users, Mail } from 'lucide-react';
 import { directGet } from '../supabaseClient.js';
 import { todayLocal, addDaysIso } from '../lib/dateUtils.js';
 
@@ -73,6 +73,86 @@ function fmtHoursMins(minutes) {
   return `${h}h ${m}m`;
 }
 
+// ── status label & punch-type detection ────────────────────────────────────
+//
+// attendance_daily.status is one of: present|late|short|absent|annual_leave|
+// sick_leave|off_day|off_roster. 'short' covers both "left early" and
+// "missing one punch" — Bashaier needs to distinguish them because the
+// follow-up conversation is different:
+//   • missing in-punch  → forgot to scan on arrival (low severity)
+//   • missing out-punch → left without scanning out (medium severity)
+//   • early leave       → arrived fine but left before shift end (high)
+//
+// Detection (client-side from punches):
+//   • only first_punch       → missing OUT
+//   • only last_punch        → missing IN
+//   • both punches + 'short' → genuine early leave (early_leave_minutes>0)
+function classifyShort(row) {
+  const hasIn  = !!row.first_punch;
+  const hasOut = !!row.last_punch;
+  if (hasIn && !hasOut) return { kind: 'missed_out', label: 'No out-punch',  short: 'No out' };
+  if (!hasIn && hasOut) return { kind: 'missed_in',  label: 'No in-punch',   short: 'No in'  };
+  return                       { kind: 'early',      label: 'Left early',    short: 'Early'  };
+}
+
+// Build a human label for the Status column. Adds minute counts where
+// available so 'Late' becomes 'Late · 47 min' and 'Short' becomes
+// 'No out-punch' / 'No in-punch' / 'Left early · 32 min'.
+function detailedStatusLabel(row) {
+  switch (row.status) {
+    case 'present':      return 'Present';
+    case 'late': {
+      const m = Number(row.late_minutes) || 0;
+      return m > 0 ? `Late · ${m} min` : 'Late';
+    }
+    case 'short': {
+      const { kind, label } = classifyShort(row);
+      if (kind === 'early') {
+        const m = Number(row.early_leave_minutes) || 0;
+        return m > 0 ? `${label} · ${m} min` : label;
+      }
+      return label;
+    }
+    case 'absent':       return 'Absent';
+    case 'sick_leave':   return 'Sick leave';
+    case 'annual_leave': return 'Annual leave';
+    case 'off_day':      return 'Off day';
+    case 'off_roster':   return 'Off roster';
+    default:             return row.status || '—';
+  }
+}
+
+// Pill colours by status family (used both inline + in the HTML report).
+function statusPill(status) {
+  switch (status) {
+    case 'present':      return { bg: '#DCFCE7', fg: '#166534' };
+    case 'late':
+    case 'short':        return { bg: '#FEF3C7', fg: '#92400E' };
+    case 'absent':       return { bg: '#FEE2E2', fg: '#991B1B' };
+    case 'sick_leave':
+    case 'annual_leave': return { bg: '#DBEAFE', fg: '#1E40AF' };
+    case 'off_day':
+    case 'off_roster':   return { bg: '#F3F4F6', fg: '#374151' };
+    default:             return { bg: '#F3F4F6', fg: '#374151' };
+  }
+}
+
+// Walk a date window and emit YYYY-MM-DD strings for every weekday
+// (skipping KSA weekend Fri+Sat). Used to detect days where a flagged
+// shift staff has NO attendance row at all — those are silent absences.
+function eachWeekday(fromIso, toIso) {
+  const out = [];
+  if (!fromIso || !toIso) return out;
+  const start = new Date(fromIso + 'T00:00:00');
+  const end   = new Date(toIso   + 'T00:00:00');
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const dow = d.getDay();   // Fri=5, Sat=6
+    if (dow === 5 || dow === 6) continue;
+    out.push(d.toISOString().slice(0, 10));
+  }
+  return out;
+}
+
 // Parse a 'HH:MM:SS' or 'HH:MM' time string to minutes-since-midnight.
 // Returns null for empty / malformed values.
 function timeToMinutes(t) {
@@ -102,22 +182,11 @@ function computeWorkedMinutes(firstPunch, lastPunch) {
   return diff;
 }
 
-// Status badge colours (matches AttendanceMonthGrid vocabulary).
-const STATUS_PILL = {
-  present:       { bg: '#DCFCE7', fg: '#166534', label: 'Present'     },
-  late:          { bg: '#FEF3C7', fg: '#92400E', label: 'Late'        },
-  short:         { bg: '#FEF3C7', fg: '#92400E', label: 'Short'       },
-  absent:        { bg: '#FEE2E2', fg: '#991B1B', label: 'Absent'      },
-  sick_leave:    { bg: '#DBEAFE', fg: '#1E40AF', label: 'Sick leave'  },
-  annual_leave:  { bg: '#DBEAFE', fg: '#1E40AF', label: 'Annual leave'},
-  off_day:       { bg: '#F3F4F6', fg: '#374151', label: 'Off day'     },
-  off_roster:    { bg: '#F3F4F6', fg: '#374151', label: 'Off roster'  },
-};
-
 // ─── main component ────────────────────────────────────────────────────────
 
 /**
- * @param {Array} employees — full employees list (we filter for is_shift_staff)
+ * @param {Array} employees — full employees list (we filter for is_shift_staff
+ *                            AND use it as a lookup table for managers)
  * @param {object} me — current user (for the "generated by" stamp)
  */
 export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
@@ -148,6 +217,53 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     () => shiftStaff.map(e => e.id).sort().join(','),
     [shiftStaff]
   );
+
+  // Manager lookup for the "email manager" button — empMap[id] -> employee.
+  const empMap = useMemo(() => {
+    const m = {};
+    for (const e of (employees || [])) m[e.id] = e;
+    return m;
+  }, [employees]);
+
+  // Build mailto: link for a per-staff escalation email to the line manager.
+  // Pre-fills subject and body with the problem rows so Bashaier doesn't
+  // copy-paste — one tap opens her email client with everything filled.
+  const emailManager = useCallback((summary) => {
+    const emp     = summary.emp;
+    const manager = emp.manager_id ? empMap[emp.manager_id] : null;
+    if (!manager?.email) {
+      alert(`No email address on file for ${emp.name}'s manager. Update the manager's email on their employee record first.`);
+      return;
+    }
+    const periodLabel = `${fmtDate(from)} – ${fmtDate(to)}`;
+    const lines = [];
+    lines.push(`Dear ${manager.name?.split(' ')[0] || manager.name},`);
+    lines.push('');
+    lines.push(`Please review the attendance anomalies below for ${emp.name} (${emp.id}) covering ${periodLabel}, pulled from the fingerprint records.`);
+    lines.push('');
+    lines.push(`Summary: ${summary.daysLate} late · ${summary.daysShort} short · ${summary.daysAbsent} absent · ${summary.daysPresent} days present in window.`);
+    lines.push('');
+    if (summary.problemRows.length > 0) {
+      lines.push('Anomalies:');
+      for (const r of summary.problemRows) {
+        const tIn  = fmtTime(r.first_punch) || '—';
+        const tOut = fmtTime(r.last_punch)  || '—';
+        const tot  = fmtHoursMins(r.total_minutes);
+        lines.push(`  • ${fmtDateLong(r.attendance_date)}   In: ${tIn}   Out: ${tOut}   Total: ${tot}   ${detailedStatusLabel(r)}`);
+      }
+      lines.push('');
+    }
+    lines.push('Day-to-day supervision stays with you as their line manager — please let me know if any of these need to be formalised into a notice from HR side.');
+    lines.push('');
+    lines.push('Best regards,');
+    lines.push(me?.name || 'ESAU HR');
+    lines.push('HR / Admin Supervisory · ESAU Dammam');
+
+    const subject = `Attendance review – ${emp.name} (${emp.id}) · ${periodLabel}`;
+    const body    = lines.join('\n');
+    const href    = `mailto:${encodeURIComponent(manager.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.location.href = href;
+  }, [empMap, from, to, me]);
 
   // Fetch attendance_daily rows for the date window + flagged staff.
   // attendance_daily has first_punch + last_punch as TIME columns; the
@@ -197,7 +313,10 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // Group attendance by employee_id.
+  // Group attendance by employee_id, then for each flagged staff fill
+  // missing weekdays in the window as synthetic 'absent' rows so the
+  // drill-down shows silent absences instead of just omitting the day.
+  // KSA weekend (Fri + Sat) is skipped — staff aren't expected there.
   const byEmployee = useMemo(() => {
     const map = new Map();
     for (const row of attendance) {
@@ -205,24 +324,79 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       list.push(row);
       map.set(row.employee_id, list);
     }
+    // Synthesize absences for each flagged staff.
+    const weekdays = eachWeekday(from, to);
+    for (const emp of shiftStaff) {
+      const existing  = map.get(emp.id) || [];
+      const haveDates = new Set(existing.map(r => r.attendance_date));
+      const synthetic = [];
+      for (const d of weekdays) {
+        if (!haveDates.has(d)) {
+          synthetic.push({
+            employee_id:        emp.id,
+            attendance_date:    d,
+            status:             'absent',
+            first_punch:        null,
+            last_punch:         null,
+            late_minutes:       0,
+            early_leave_minutes:0,
+            total_minutes:      null,
+            _synthetic:         true,   // flag so we can render differently
+          });
+        }
+      }
+      // Sort merged: real rows + synthetic, by date ascending.
+      const merged = [...existing, ...synthetic].sort((a, b) =>
+        a.attendance_date < b.attendance_date ? -1 : a.attendance_date > b.attendance_date ? 1 : 0
+      );
+      map.set(emp.id, merged);
+    }
     return map;
-  }, [attendance]);
+  }, [attendance, shiftStaff, from, to]);
 
-  // Per-employee summary stats.
+  // Per-employee summary stats — adds dedicated counts for late, short
+  // (with sub-classification), and absent. These power the anomaly
+  // chips in each staff header so Bashaier can triage by severity.
   const summaries = useMemo(() => {
     return shiftStaff.map(emp => {
       const rows = byEmployee.get(emp.id) || [];
-      const present  = rows.filter(r => ['present', 'late', 'short'].includes(r.status));
-      const leaveD   = rows.filter(r => r.status === 'sick_leave' || r.status === 'annual_leave');
-      const absent   = rows.filter(r => r.status === 'absent');
-      const totalMin = present.reduce((sum, r) => sum + (Number(r.total_minutes) || 0), 0);
-      const avgMin   = present.length > 0 ? Math.round(totalMin / present.length) : 0;
+      const present   = rows.filter(r => r.status === 'present');
+      const late      = rows.filter(r => r.status === 'late');
+      const shortRows = rows.filter(r => r.status === 'short');
+      const absentReal = rows.filter(r => r.status === 'absent' && !r._synthetic);
+      const absentSilent = rows.filter(r => r.status === 'absent' &&  r._synthetic);
+      const leaveD    = rows.filter(r => r.status === 'sick_leave' || r.status === 'annual_leave');
+
+      // Short sub-breakdown for the chip + per-staff email body.
+      let missedIn = 0, missedOut = 0, leftEarly = 0;
+      for (const r of shortRows) {
+        const k = classifyShort(r).kind;
+        if (k === 'missed_in')  missedIn++;
+        else if (k === 'missed_out') missedOut++;
+        else leftEarly++;
+      }
+
+      // Hours: from worked rows (any status with both punches).
+      const worked   = rows.filter(r => r.total_minutes != null);
+      const totalMin = worked.reduce((s, r) => s + r.total_minutes, 0);
+      const avgMin   = worked.length > 0 ? Math.round(totalMin / worked.length) : 0;
+
+      // "Problem rows" — what we'd put in an escalation email to the
+      // manager. Late + short (any sub-kind) + silent absences.
+      const problemRows = rows.filter(r =>
+        r.status === 'late' || r.status === 'short' || r.status === 'absent'
+      );
+
       return {
         emp, rows,
-        daysPresent: present.length,
+        daysPresent: present.length + late.length + shortRows.length,
+        daysLate:    late.length,
+        daysShort:   shortRows.length,
+        missedIn, missedOut, leftEarly,
+        daysAbsent:  absentReal.length + absentSilent.length,
         daysLeave:   leaveD.length,
-        daysAbsent:  absent.length,
         totalMin, avgMin,
+        problemRows,
       };
     });
   }, [shiftStaff, byEmployee]);
@@ -315,50 +489,84 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
         <div className="text-center text-xs opacity-50 py-4">Loading attendance…</div>
       ) : (
         <div className="space-y-2">
-          {summaries.map(s => (
+          {summaries.map(s => {
+            const manager = s.emp.manager_id ? empMap[s.emp.manager_id] : null;
+            const hasManagerEmail = !!manager?.email;
+            return (
             <div key={s.emp.id} className="rounded-lg border bg-white overflow-hidden"
                  style={{ borderColor: 'var(--border-soft)' }}>
               {/* Summary row */}
-              <button type="button" onClick={() => toggleExpand(s.emp.id)}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-amber-50 transition text-left">
-                {expanded.has(s.emp.id)
-                  ? <ChevronDown className="w-4 h-4 flex-shrink-0" style={{ color: '#1F1B16' }} />
-                  : <ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: '#1F1B16' }} />}
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold" style={{ color: '#1F1B16' }}>
-                    {s.emp.name}
+              <div className="flex items-center gap-3 px-3 py-2.5">
+                <button type="button" onClick={() => toggleExpand(s.emp.id)}
+                        className="flex items-center gap-3 flex-1 min-w-0 text-left hover:opacity-80 transition">
+                  {expanded.has(s.emp.id)
+                    ? <ChevronDown className="w-4 h-4 flex-shrink-0" style={{ color: '#1F1B16' }} />
+                    : <ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: '#1F1B16' }} />}
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold" style={{ color: '#1F1B16' }}>
+                      {s.emp.name}
+                    </div>
+                    <div className="text-[10px] flex items-center gap-2 flex-wrap mt-0.5" style={{ color: '#1F1B16' }}>
+                      <span>{s.emp.id} · {s.emp.department || '—'} · {s.emp.location || '—'}</span>
+                      {manager && (
+                        <span className="opacity-70">· Manager: {manager.name}</span>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-[10px]" style={{ color: '#1F1B16' }}>
-                    {s.emp.id} · {s.emp.department || '—'} · {s.emp.location || '—'}
-                  </div>
+                </button>
+
+                {/* Anomaly chip row — quick triage. Each chip shows count
+                    and is colour-coded by severity. Renders only when count>0. */}
+                <div className="hidden md:flex items-center gap-1.5">
+                  {s.daysLate > 0 && (
+                    <Chip count={s.daysLate} label="LATE" bg="#FEF3C7" fg="#92400E" />
+                  )}
+                  {s.daysShort > 0 && (
+                    <Chip count={s.daysShort} label="SHORT" bg="#FEF3C7" fg="#92400E"
+                          title={`${s.missedIn ? `${s.missedIn} no in-punch · ` : ''}${s.missedOut ? `${s.missedOut} no out-punch · ` : ''}${s.leftEarly ? `${s.leftEarly} left early` : ''}`.replace(/ · $/, '')} />
+                  )}
+                  {s.daysAbsent > 0 && (
+                    <Chip count={s.daysAbsent} label="ABSENT" bg="#FEE2E2" fg="#991B1B" />
+                  )}
+                  {s.daysLeave > 0 && (
+                    <Chip count={s.daysLeave} label="LEAVE" bg="#DBEAFE" fg="#1E40AF" />
+                  )}
                 </div>
-                <div className="hidden sm:flex items-center gap-4 text-[11px]" style={{ color: '#1F1B16' }}>
+
+                {/* Stats — desktop only */}
+                <div className="hidden lg:flex items-center gap-4 text-[11px] pl-2" style={{ color: '#1F1B16' }}>
                   <div className="text-center">
                     <div className="font-semibold text-sm" style={{ color: '#0F4C2A' }}>{s.daysPresent}</div>
-                    <div className="text-[9px]">DAYS PRESENT</div>
+                    <div className="text-[9px]">DAYS</div>
                   </div>
                   <div className="text-center">
                     <div className="font-semibold text-sm" style={{ color: '#1F1B16' }}>{fmtHoursMins(s.totalMin)}</div>
-                    <div className="text-[9px]">TOTAL HOURS</div>
+                    <div className="text-[9px]">TOTAL</div>
                   </div>
                   <div className="text-center">
                     <div className="font-semibold text-sm" style={{ color: '#1F1B16' }}>{fmtHoursMins(s.avgMin)}</div>
-                    <div className="text-[9px]">AVG / DAY</div>
+                    <div className="text-[9px]">AVG</div>
                   </div>
-                  {s.daysLeave > 0 && (
-                    <div className="text-center">
-                      <div className="font-semibold text-sm" style={{ color: '#1E40AF' }}>{s.daysLeave}</div>
-                      <div className="text-[9px]">LEAVE</div>
-                    </div>
-                  )}
-                  {s.daysAbsent > 0 && (
-                    <div className="text-center">
-                      <div className="font-semibold text-sm" style={{ color: '#991B1B' }}>{s.daysAbsent}</div>
-                      <div className="text-[9px]">ABSENT</div>
-                    </div>
-                  )}
                 </div>
-              </button>
+
+                {/* Email manager button — single tap fires a mailto:
+                    with subject + anomaly rows pre-filled. */}
+                <button
+                  type="button"
+                  onClick={() => emailManager(s)}
+                  disabled={!hasManagerEmail}
+                  className="flex items-center gap-1 px-2 py-1.5 rounded-md text-[10px] font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+                  style={{
+                    background: hasManagerEmail ? '#0F4C2A' : '#F3F4F6',
+                    color:      hasManagerEmail ? '#FFFFFF' : '#9CA3AF',
+                  }}
+                  title={hasManagerEmail
+                    ? `Email ${manager.name} about ${s.emp.name}'s anomalies (mailto: opens your default email client)`
+                    : `No email on file for ${s.emp.name}'s manager`}>
+                  <Mail className="w-3 h-3" />
+                  EMAIL MGR
+                </button>
+              </div>
 
               {/* Drill-down: per-day rows */}
               {expanded.has(s.emp.id) && (
@@ -380,17 +588,32 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
                       </thead>
                       <tbody>
                         {s.rows.map(r => {
-                          const pill = STATUS_PILL[r.status] || { bg: '#F3F4F6', fg: '#374151', label: r.status };
+                          const pill = statusPill(r.status);
+                          const label = detailedStatusLabel(r);
+                          const isSilent = !!r._synthetic;
                           return (
-                            <tr key={r.attendance_date} className="border-t" style={{ borderColor: 'var(--border-soft)' }}>
-                              <td className="py-1.5 pr-2 font-mono">{fmtDateLong(r.attendance_date)}</td>
+                            <tr key={r.attendance_date}
+                                className="border-t"
+                                style={{
+                                  borderColor: 'var(--border-soft)',
+                                  opacity: isSilent ? 0.85 : 1,
+                                }}>
+                              <td className="py-1.5 pr-2 font-mono">
+                                {fmtDateLong(r.attendance_date)}
+                                {isSilent && (
+                                  <span className="ml-1.5 text-[9px] uppercase tracking-wide"
+                                        style={{ color: '#991B1B' }}>
+                                    no record
+                                  </span>
+                                )}
+                              </td>
                               <td className="py-1.5 pr-2 font-mono">{fmtTime(r.first_punch)}</td>
                               <td className="py-1.5 pr-2 font-mono">{fmtTime(r.last_punch)}</td>
                               <td className="py-1.5 pr-2 font-mono">{fmtHoursMins(r.total_minutes)}</td>
                               <td className="py-1.5 pr-2">
                                 <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold"
                                       style={{ background: pill.bg, color: pill.fg }}>
-                                  {pill.label}
+                                  {label}
                                 </span>
                               </td>
                             </tr>
@@ -402,7 +625,8 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
                 </div>
               )}
             </div>
-          ))}
+          );
+          })}
         </div>
       )}
     </div>
@@ -434,8 +658,10 @@ function renderReportHtml({ summaries, from, to, me }) {
           <div><strong>${s.daysPresent}</strong><span>days present</span></div>
           <div><strong>${fmtHoursMins(s.totalMin)}</strong><span>total hours</span></div>
           <div><strong>${fmtHoursMins(s.avgMin)}</strong><span>avg / day</span></div>
-          ${s.daysLeave  > 0 ? `<div class="leave"><strong>${s.daysLeave}</strong><span>leave</span></div>` : ''}
+          ${s.daysLate   > 0 ? `<div class="late"><strong>${s.daysLate}</strong><span>late</span></div>`     : ''}
+          ${s.daysShort  > 0 ? `<div class="short"><strong>${s.daysShort}</strong><span>short</span></div>`  : ''}
           ${s.daysAbsent > 0 ? `<div class="absent"><strong>${s.daysAbsent}</strong><span>absent</span></div>` : ''}
+          ${s.daysLeave  > 0 ? `<div class="leave"><strong>${s.daysLeave}</strong><span>leave</span></div>`  : ''}
         </div>
       </header>
       ${s.rows.length === 0 ? `
@@ -449,12 +675,12 @@ function renderReportHtml({ summaries, from, to, me }) {
           </thead>
           <tbody>
             ${s.rows.map(r => `
-              <tr>
-                <td class="mono">${escapeHtml(fmtDateLong(r.attendance_date))}</td>
+              <tr${r._synthetic ? ' class="silent"' : ''}>
+                <td class="mono">${escapeHtml(fmtDateLong(r.attendance_date))}${r._synthetic ? ' <span class="badge-silent">no record</span>' : ''}</td>
                 <td class="mono">${escapeHtml(fmtTime(r.first_punch))}</td>
                 <td class="mono">${escapeHtml(fmtTime(r.last_punch))}</td>
                 <td class="mono">${escapeHtml(fmtHoursMins(r.total_minutes))}</td>
-                <td><span class="pill ${escapeHtml(r.status || '')}">${escapeHtml((STATUS_PILL[r.status] || { label: r.status || '—' }).label)}</span></td>
+                <td><span class="pill ${escapeHtml(r.status || '')}">${escapeHtml(detailedStatusLabel(r))}</span></td>
               </tr>
             `).join('')}
           </tbody>
@@ -514,6 +740,8 @@ function renderReportHtml({ summaries, from, to, me }) {
   .stats span { font-size: 7.5pt; color: #5C4406; text-transform: uppercase; letter-spacing: 0.5px; }
   .stats .leave strong  { color: #1E40AF; }
   .stats .absent strong { color: #991B1B; }
+  .stats .late strong   { color: #92400E; }
+  .stats .short strong  { color: #92400E; }
   table { width: 100%; border-collapse: collapse; font-size: 10pt; }
   thead th {
     text-align: left; padding: 6px 8px;
@@ -532,6 +760,12 @@ function renderReportHtml({ summaries, from, to, me }) {
   .pill.absent { background: #FEE2E2; color: #991B1B; }
   .pill.sick_leave, .pill.annual_leave { background: #DBEAFE; color: #1E40AF; }
   .pill.off_day, .pill.off_roster { background: #F3F4F6; color: #374151; }
+  tr.silent td { opacity: 0.7; }
+  .badge-silent {
+    display: inline-block; margin-left: 8px;
+    font-size: 8pt; font-weight: 700; color: #991B1B;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
   .empty { padding: 12px; text-align: center; font-style: italic; color: #5C4406; }
   footer.foot {
     border-top: 1px solid #D4C7AB; margin-top: 28px; padding-top: 12px;
@@ -572,4 +806,20 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
+}
+
+// Small pill that shows a count + a short label. Used in each staff
+// header for the LATE / SHORT / ABSENT / LEAVE anomaly chips. Hover
+// title can carry sub-detail (e.g. SHORT chip shows the missed-in /
+// missed-out / left-early breakdown on hover).
+function Chip({ count, label, bg, fg, title }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-bold tracking-wide"
+      style={{ background: bg, color: fg }}
+      title={title || undefined}>
+      <span style={{ fontSize: '11px', lineHeight: 1 }}>{count}</span>
+      <span>{label}</span>
+    </span>
+  );
 }
