@@ -113,27 +113,43 @@ function detailedStatusLabel(row) {
       }
       return label;
     }
-    case 'absent':       return 'Absent';
-    case 'sick_leave':   return 'Sick leave';
-    case 'annual_leave': return 'Annual leave';
-    case 'off_day':      return 'Off day';
-    case 'off_roster':   return 'Off roster';
-    default:             return row.status || '—';
+    case 'absent':            return 'Absent';
+    case 'sick_leave':        return 'Sick leave';
+    case 'annual_leave':      return 'Annual leave';
+    case 'maternity_leave':   return 'Maternity leave';
+    case 'paternity_leave':   return 'Paternity leave';
+    case 'hajj_leave':        return 'Hajj leave';
+    case 'marriage_leave':    return 'Marriage leave';
+    case 'bereavement_leave': return 'Bereavement leave';
+    case 'unpaid_leave':      return 'Unpaid leave';
+    case 'emergency_leave':   return 'Emergency leave';
+    case 'iddah_leave':       return 'Iddah leave';
+    case 'off_day':           return 'Off day';
+    case 'off_roster':        return 'Off roster';
+    default:                  return row.status || '—';
   }
 }
 
 // Pill colours by status family (used both inline + in the HTML report).
 function statusPill(status) {
   switch (status) {
-    case 'present':      return { bg: '#DCFCE7', fg: '#166534' };
+    case 'present':           return { bg: '#DCFCE7', fg: '#166534' };
     case 'late':
-    case 'short':        return { bg: '#FEF3C7', fg: '#92400E' };
-    case 'absent':       return { bg: '#FEE2E2', fg: '#991B1B' };
-    case 'sick_leave':
-    case 'annual_leave': return { bg: '#DBEAFE', fg: '#1E40AF' };
+    case 'short':             return { bg: '#FEF3C7', fg: '#92400E' };
+    case 'absent':            return { bg: '#FEE2E2', fg: '#991B1B' };
+    case 'sick_leave':        return { bg: '#EDE9FE', fg: '#5B21B6' };
+    case 'annual_leave':      return { bg: '#CCFBF1', fg: '#115E59' };
+    case 'maternity_leave':   return { bg: '#FCE7F3', fg: '#9D174D' };
+    case 'paternity_leave':   return { bg: '#E0F2FE', fg: '#075985' };
+    case 'hajj_leave':        return { bg: '#FEF3C7', fg: '#854F0B' };
+    case 'marriage_leave':    return { bg: '#FCE7F3', fg: '#831843' };
+    case 'bereavement_leave': return { bg: '#E5E7EB', fg: '#374151' };
+    case 'unpaid_leave':      return { bg: '#F3F4F6', fg: '#374151' };
+    case 'emergency_leave':   return { bg: '#FEE2E2', fg: '#7F1D1D' };
+    case 'iddah_leave':       return { bg: '#F3E8FF', fg: '#6B21A8' };
     case 'off_day':
-    case 'off_roster':   return { bg: '#F3F4F6', fg: '#374151' };
-    default:             return { bg: '#F3F4F6', fg: '#374151' };
+    case 'off_roster':        return { bg: '#F3F4F6', fg: '#374151' };
+    default:                  return { bg: '#F3F4F6', fg: '#374151' };
   }
 }
 
@@ -758,7 +774,16 @@ function renderReportHtml({ summaries, from, to, me }) {
   .pill.present { background: #DCFCE7; color: #166534; }
   .pill.late, .pill.short { background: #FEF3C7; color: #92400E; }
   .pill.absent { background: #FEE2E2; color: #991B1B; }
-  .pill.sick_leave, .pill.annual_leave { background: #DBEAFE; color: #1E40AF; }
+  .pill.sick_leave        { background: #EDE9FE; color: #5B21B6; }
+  .pill.annual_leave      { background: #CCFBF1; color: #115E59; }
+  .pill.maternity_leave   { background: #FCE7F3; color: #9D174D; }
+  .pill.paternity_leave   { background: #E0F2FE; color: #075985; }
+  .pill.hajj_leave        { background: #FEF3C7; color: #854F0B; }
+  .pill.marriage_leave    { background: #FCE7F3; color: #831843; }
+  .pill.bereavement_leave { background: #E5E7EB; color: #374151; }
+  .pill.unpaid_leave      { background: #F3F4F6; color: #374151; }
+  .pill.emergency_leave   { background: #FEE2E2; color: #7F1D1D; }
+  .pill.iddah_leave       { background: #F3E8FF; color: #6B21A8; }
   .pill.off_day, .pill.off_roster { background: #F3F4F6; color: #374151; }
   tr.silent td { opacity: 0.7; }
   .badge-silent {

@@ -34,6 +34,40 @@
 
 import { directPost } from '../supabaseClient.js';
 
+// Map leave_type_id → attendance_daily.status. Identical mapping to
+// markLeaveAttendance.js — same per-type vocabulary so the recorder
+// and the on-approval write produce the same row shape for the same
+// leave. typeName is a soft fallback for legacy rows that have a
+// type string but no canonical id ("Sick leave", "Maternity leave",
+// etc. — match by keyword).
+function statusForLeaveType(leaveTypeId, typeName) {
+  switch (leaveTypeId) {
+    case 'sick':         return 'sick_leave';
+    case 'annual':       return 'annual_leave';
+    case 'maternity':    return 'maternity_leave';
+    case 'paternity':    return 'paternity_leave';
+    case 'hajj':         return 'hajj_leave';
+    case 'marriage':     return 'marriage_leave';
+    case 'bereavement':  return 'bereavement_leave';
+    case 'unpaid':       return 'unpaid_leave';
+    case 'emergency':    return 'emergency_leave';
+    case 'iddah':        return 'iddah_leave';
+  }
+  // Fallback: keyword-match the type name. Catches legacy rows where
+  // typeId wasn't populated but type ("Maternity leave") was.
+  const t = String(typeName || '').toLowerCase();
+  if (t.includes('matern'))     return 'maternity_leave';
+  if (t.includes('patern'))     return 'paternity_leave';
+  if (t.includes('hajj'))       return 'hajj_leave';
+  if (t.includes('marri'))      return 'marriage_leave';
+  if (t.includes('bereave'))    return 'bereavement_leave';
+  if (t.includes('unpaid'))     return 'unpaid_leave';
+  if (t.includes('emergen'))    return 'emergency_leave';
+  if (t.includes('iddah'))      return 'iddah_leave';
+  if (t.includes('sick'))       return 'sick_leave';
+  return 'annual_leave';
+}
+
 // HH:MM[:SS] → HH:MM:SS for Postgres `time`. Returns null for empty.
 function toTime(s) {
   if (!s || typeof s !== 'string') return null;
@@ -210,9 +244,8 @@ export function buildAttendanceRows({
     .forEach(e => {
       const empId = e.employee?.id;
       const leave = leaveByEmpDate.get(empId);
-      const isSick = (leave?.type || '').toLowerCase().includes('sick');
       pushRow(empId, {
-        status: isSick ? 'sick_leave' : 'annual_leave',
+        status: statusForLeaveType(leave?.typeId, leave?.type),
         first_punch: null,
         last_punch:  null,
         punch_count: 0,
@@ -230,9 +263,8 @@ export function buildAttendanceRows({
     // Was on leave?
     const leave = leaveByEmpDate.get(empId);
     if (leave) {
-      const isSick = (leave.type || '').toLowerCase().includes('sick');
       pushRow(empId, {
-        status: isSick ? 'sick_leave' : 'annual_leave',
+        status: statusForLeaveType(leave.typeId, leave.type),
         leave_request_id: leave.requestId || null,
       });
       continue;

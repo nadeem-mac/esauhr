@@ -54,18 +54,24 @@ function* dateRange(startISO, endISO) {
 }
 
 // Map leave_type_id → attendance_daily.status value.
-// The attendance_daily.status column has a CHECK constraint that
-// only allows these values: 'present', 'late', 'short', 'absent',
-// 'annual_leave', 'sick_leave', 'off_day', 'off_roster'. Anything
-// outside that fails with a 23514. So we collapse non-sick/annual
-// leave types into 'annual_leave' — not perfect taxonomy, but it
-// keeps the row insertable. A future migration could widen the
-// constraint to include maternity_leave, unpaid_leave, etc.
+// migration_widen_attendance_status_full.sql widens the CHECK
+// constraint to allow all leave types — so this mapping is 1:1
+// with leave_request.leave_type_id. The attendance calendar +
+// Shift Staff Attendance Report already render distinct chips
+// (ML pink, PL blue, HJ amber, etc.) for each one.
 function statusForLeaveType(leaveTypeId) {
   switch (leaveTypeId) {
-    case 'sick':            return 'sick_leave';
-    case 'annual':          return 'annual_leave';
-    default:                return 'annual_leave';
+    case 'sick':         return 'sick_leave';
+    case 'annual':       return 'annual_leave';
+    case 'maternity':    return 'maternity_leave';
+    case 'paternity':    return 'paternity_leave';
+    case 'hajj':         return 'hajj_leave';
+    case 'marriage':     return 'marriage_leave';
+    case 'bereavement':  return 'bereavement_leave';
+    case 'unpaid':       return 'unpaid_leave';
+    case 'emergency':    return 'emergency_leave';
+    case 'iddah':        return 'iddah_leave';
+    default:             return 'annual_leave';
   }
 }
 

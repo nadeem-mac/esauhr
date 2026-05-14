@@ -3371,9 +3371,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     return m;
   }, [leaveTypes]);
 
-  // empId|date → { type, requestId } — only for dates inside the
-  // upload window. Used by buildAttendanceRows to set annual_leave
-  // vs sick_leave correctly.
+  // empId|date → { type, typeId, requestId } — only for dates inside the
+  // upload window. Used by buildAttendanceRows to set the per-leave-type
+  // status (annual_leave / sick_leave / maternity_leave / etc.) correctly.
+  // typeId is the canonical leave_type_id; typeName is human-readable.
   const leaveByEmpDateMap = useMemo(() => {
     const m = new Map();
     (approvedLeaves || []).forEach(l => {
@@ -3389,7 +3390,11 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         d.setDate(start.getDate() + i);
         if (d > end) break;
         const k = `${l.employee_id}|${localDateString(d)}`;
-        m.set(k, { type: typeName, requestId: l.id });
+        m.set(k, {
+          type:      typeName,
+          typeId:    l.leave_type_id,    // canonical id for per-type status mapping
+          requestId: l.id,
+        });
       }
     });
     return m;
