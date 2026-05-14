@@ -198,7 +198,7 @@ function computeWorkedMinutes(firstPunch, lastPunch) {
   return diff;
 }
 
-// ── shift compliance ──────────────────────────────────────────────────────
+// ── shift compliance + overnight handling ─────────────────────────────────
 //
 // "Did the staff follow the proper procedure for their assigned shift?"
 // Three checks, computed against attendance_daily.expected_start /
@@ -206,57 +206,131 @@ function computeWorkedMinutes(firstPunch, lastPunch) {
 // end_time — see attendanceRecorder.js). All three with a 15-min
 // grace window so a small data entry slip doesn't flag a clean day.
 //
-//   onTime:    first_punch <= expected_start + 15min grace
-//   fullShift: last_punch  >= expected_end   - 15min grace
-//   bothPunch: first_punch AND last_punch both recorded
+//   onTime:    in_punch  <= expected_start + 15min grace
+//   fullShift: out_punch >= expected_end   - 15min grace
+//   bothPunch: in_punch AND out_punch both recorded
 //
-// A "clean shift day" is when all three are true. Per-staff compliance
-// score is (clean days / shift days) × 100, rounded.
+// A "clean shift day" is when all three are true.
 //
-// Skipped (returns null flags) when:
-//   • The row is a synthetic absence (no expected window — no shift
-//     was assigned, can't evaluate compliance)
-//   • expected_start or expected_end is null (no shift assignment
-//     was active for that day — most commonly because the staff is
-//     on leave, off_day, or off_roster)
-//   • Status is any leave/off variant — compliance only makes sense
-//     for working days
+// OVERNIGHT SHIFTS (Abdulrahman case 2026-05-10):
+// When expected_end < expected_start (e.g. 20:00 → 05:00), the shift
+// crosses midnight. The system stores punches keyed by calendar date,
+// so the shift's IN is on day D's row but the OUT is on day D+1's row
+// (the next morning). Standard logic compared today's first_punch /
+// last_punch — which for overnight means it compared yesterday's
+// shift-end against today's expected_start. Garbage. This helper:
+//   • detects overnight via expected_end < expected_start
+//   • for IN, uses today's evening-side punch (last_punch if first
+//     looks like a morning carry-out; first_punch otherwise)
+//   • for OUT, uses tomorrow's first_punch (passed in as nextDayRow)
+//   • computes worked minutes across the two-day pair
+// Skipped (no compliance flags) when:
+//   • expected_start / expected_end is null (no shift assigned that day)
+//   • status is a leave variant or off_day / off_roster
+//   • row is a synthetic absence (no record at all)
+
 const GRACE_MIN = 15;
-function computeCompliance(row) {
-  const flags = { onTime: null, fullShift: null, bothPunch: null, isShiftDay: false };
-  // Skip non-working days entirely.
-  if (!row.expected_start || !row.expected_end) return flags;
-  if (row.status === 'off_day' || row.status === 'off_roster') return flags;
-  if (row.status && row.status.endsWith('_leave')) return flags;
-  flags.isShiftDay = true;
-  const expStart = timeToMinutes(row.expected_start);
-  const expEnd   = timeToMinutes(row.expected_end);
-  const inMin    = timeToMinutes(row.first_punch);
-  const outMin   = timeToMinutes(row.last_punch);
-  flags.bothPunch = !!(row.first_punch && row.last_punch);
-  // Late = in-punch later than the grace window. Handles overnight
-  // shifts where shift starts at 22:00 — in-punch at 21:50 is on time.
-  if (inMin != null && expStart != null) {
-    let diff = inMin - expStart;
-    if (diff < -12 * 60) diff += 24 * 60;   // probably overnight rollover
-    flags.onTime = diff <= GRACE_MIN;
-  }
-  // Early-leave = out-punch earlier than (expected_end - grace).
-  if (outMin != null && expEnd != null) {
-    let diff = outMin - expEnd;
-    if (diff < -12 * 60) diff += 24 * 60;   // overnight: out at 06:00 for end at 06:00
-    flags.fullShift = diff >= -GRACE_MIN;
-  }
-  return flags;
+
+function isNextCalendarDay(aDate, bDate) {
+  if (!aDate || !bDate) return false;
+  const a = new Date(aDate + 'T00:00:00');
+  const b = new Date(bDate + 'T00:00:00');
+  return (b.getTime() - a.getTime()) === 24 * 3600 * 1000;
 }
 
-// Format an expected window as "06:00 → 18:00". Returns null when
-// neither edge is set (no shift assigned).
+function enrichForShift(row, nextDayRow) {
+  const out = {
+    isShiftDay:        false,
+    isOvernight:       false,
+    onTime:            null,
+    fullShift:         null,
+    bothPunch:         null,
+    effective_in:      row.first_punch,
+    effective_out:     row.last_punch,
+    effective_carry:   null,  // morning carry-out punch from previous shift
+    total_minutes:     computeWorkedMinutes(row.first_punch, row.last_punch),
+  };
+  // Skip non-working days.
+  if (!row.expected_start || !row.expected_end) return out;
+  if (row.status === 'off_day' || row.status === 'off_roster') return out;
+  if (row.status && row.status.endsWith('_leave')) return out;
+  out.isShiftDay = true;
+
+  const expStart = timeToMinutes(row.expected_start);
+  const expEnd   = timeToMinutes(row.expected_end);
+  out.isOvernight = expEnd < expStart;
+
+  if (!out.isOvernight) {
+    // ─── Day shift — straightforward ───────────────────────────
+    const inMin    = timeToMinutes(row.first_punch);
+    const outMin   = timeToMinutes(row.last_punch);
+    out.bothPunch  = !!(row.first_punch && row.last_punch);
+    if (inMin != null) out.onTime    = (inMin  - expStart) <= GRACE_MIN;
+    if (outMin != null) out.fullShift = (outMin - expEnd)   >= -GRACE_MIN;
+    return out;
+  }
+
+  // ─── Overnight shift ─────────────────────────────────────────
+  // Determine which of today's punches is the actual shift-IN. If
+  // first_punch is in the morning hours, it's the carry-out from
+  // yesterday's shift, so today's shift-IN is in last_punch. If
+  // first_punch is already in the evening, that's the only punch we
+  // have and it IS the shift-IN. Carry-out from yesterday is captured
+  // separately so the table can still show it.
+  const fpMin = timeToMinutes(row.first_punch);
+  const lpMin = timeToMinutes(row.last_punch);
+  // "Evening" = 12:00 onwards. Conservative — handles shifts starting
+  // anywhere from noon to midnight.
+  const fpEvening = fpMin != null && fpMin >= 12 * 60;
+  const lpEvening = lpMin != null && lpMin >= 12 * 60;
+
+  let actualIn = null;
+  if (fpEvening) {
+    actualIn = row.first_punch;
+    // No carry-out punch on this row.
+  } else if (lpEvening) {
+    actualIn = row.last_punch;
+    // first_punch was a morning carry-out from yesterday's shift.
+    out.effective_carry = row.first_punch;
+  } else if (row.first_punch) {
+    // Both punches are morning — both are carry-outs, no IN today.
+    out.effective_carry = row.first_punch;
+  }
+
+  // OUT is on tomorrow's row as its first_punch (the morning end).
+  const actualOut = nextDayRow?.first_punch || null;
+
+  out.effective_in   = actualIn;
+  out.effective_out  = actualOut;
+  out.bothPunch      = !!(actualIn && actualOut);
+  out.total_minutes  = computeWorkedMinutes(actualIn, actualOut);
+
+  // On-time check: actualIn vs expected_start, with grace.
+  if (actualIn) {
+    const inMin = timeToMinutes(actualIn);
+    const diff  = inMin - expStart;
+    out.onTime  = diff <= GRACE_MIN && diff >= -3 * 60;   // within 3h before is fine
+  }
+  // Full-shift check: actualOut (next morning) vs expected_end.
+  if (actualOut) {
+    const outMin = timeToMinutes(actualOut);
+    const diff   = outMin - expEnd;
+    out.fullShift = diff >= -GRACE_MIN;
+  }
+  return out;
+}
+
+// Format an expected window as "06:00 → 18:00" (or "20:00 → 05:00 (+1)"
+// for overnight shifts so the next-day end is visually obvious).
 function fmtShiftWindow(start, end) {
   const s = start ? String(start).slice(0, 5) : null;
   const e = end   ? String(end).slice(0, 5)   : null;
   if (!s && !e) return null;
-  return `${s || '—'}  →  ${e || '—'}`;
+  if (!s || !e)  return `${s || '—'}  →  ${e || '—'}`;
+  const sMin = timeToMinutes(s);
+  const eMin = timeToMinutes(e);
+  const overnight = sMin != null && eMin != null && eMin < sMin;
+  return overnight ? `${s}  →  ${e}  (+1)` : `${s}  →  ${e}`;
 }
 
 // ─── main component ────────────────────────────────────────────────────────
@@ -367,18 +441,42 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
              + `&attendance_date=lte.${to}`
              + `&order=attendance_date.asc`;
       const rows = await directGet('attendance_daily', q, { timeoutMs: 12000 });
-      // Enrich each row with:
-      //   • total_minutes — computed from punches (column doesn't exist)
-      //   • compliance flags — did the staff follow their assigned shift?
-      // For shift discipline we check three things against the stored
-      // expected window: arrived on time (within 15min grace),
-      // stayed for the full shift (out at/after end - 15min grace),
-      // and made both punches. A "clean shift day" is all three.
-      const enriched = (Array.isArray(rows) ? rows : []).map(r => ({
-        ...r,
-        total_minutes: computeWorkedMinutes(r.first_punch, r.last_punch),
-        ...computeCompliance(r),
-      }));
+      // Group by employee + sort by date so we can pair overnight
+      // shifts with the next calendar day's morning out-punch.
+      const grouped = new Map();
+      for (const r of (Array.isArray(rows) ? rows : [])) {
+        if (!grouped.has(r.employee_id)) grouped.set(r.employee_id, []);
+        grouped.get(r.employee_id).push(r);
+      }
+      for (const list of grouped.values()) {
+        list.sort((a, b) =>
+          a.attendance_date < b.attendance_date ? -1 :
+          a.attendance_date > b.attendance_date ?  1 : 0);
+      }
+
+      // Enrich each row with overnight-aware shift compliance:
+      //   • Day shift: IN = first_punch, OUT = last_punch (existing).
+      //   • Overnight shift: IN = today's evening punch, OUT = tomorrow's
+      //     morning first_punch. Worked minutes computed across the
+      //     two calendar days. Compliance flags evaluated against the
+      //     real shift, not against today's noise (the carry-out from
+      //     yesterday's shift sitting in today's first_punch).
+      const enriched = [];
+      for (const [, list] of grouped) {
+        for (let i = 0; i < list.length; i++) {
+          const r = list[i];
+          const next = (i + 1 < list.length) ? list[i + 1] : null;
+          // Only treat as "consecutive day" if attendance_date for next
+          // is exactly one day after current — otherwise we'd pair a
+          // Thursday with the following Sunday across the weekend.
+          const nextDay = next && isNextCalendarDay(r.attendance_date, next.attendance_date)
+            ? next : null;
+          enriched.push({
+            ...r,
+            ...enrichForShift(r, nextDay),
+          });
+        }
+      }
       setAttendance(enriched);
     } catch (e) {
       console.error('[shift-staff report] load failed:', e);
@@ -730,8 +828,20 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
                               <td className="py-1.5 pr-2 font-mono" style={{ color: shift ? '#1F1B16' : '#9CA3AF' }}>
                                 {shift || '—'}
                               </td>
-                              <td className="py-1.5 pr-2 font-mono">{fmtTime(r.first_punch)}</td>
-                              <td className="py-1.5 pr-2 font-mono">{fmtTime(r.last_punch)}</td>
+                              <td className="py-1.5 pr-2 font-mono">
+                                {fmtTime(r.effective_in)}
+                                {r.isOvernight && r.effective_carry && (
+                                  <div className="text-[9px]" style={{ color: '#9CA3AF' }}>
+                                    {fmtTime(r.effective_carry)} (prev)
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-1.5 pr-2 font-mono">
+                                {fmtTime(r.effective_out)}
+                                {r.isOvernight && r.effective_out && (
+                                  <span className="ml-1 text-[9px]" style={{ color: '#9CA3AF' }}>+1d</span>
+                                )}
+                              </td>
                               <td className="py-1.5 pr-2 font-mono">{fmtHoursMins(r.total_minutes)}</td>
                               <td className="py-1.5 pr-2">
                                 <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold"
@@ -816,8 +926,8 @@ function renderReportHtml({ summaries, from, to, me }) {
               <tr${r._synthetic ? ' class="silent"' : ''}>
                 <td class="mono">${escapeHtml(fmtDateLong(r.attendance_date))}${r._synthetic ? ' <span class="badge-silent">no record</span>' : ''}</td>
                 <td class="mono" style="color:${shift ? '#1F1B16' : '#9CA3AF'};">${escapeHtml(shift || '—')}</td>
-                <td class="mono">${escapeHtml(fmtTime(r.first_punch))}</td>
-                <td class="mono">${escapeHtml(fmtTime(r.last_punch))}</td>
+                <td class="mono">${escapeHtml(fmtTime(r.effective_in))}${r.isOvernight && r.effective_carry ? `<br><span style="font-size:8pt;color:#9CA3AF;">${escapeHtml(fmtTime(r.effective_carry))} (prev)</span>` : ''}</td>
+                <td class="mono">${escapeHtml(fmtTime(r.effective_out))}${r.isOvernight && r.effective_out ? ' <span style="font-size:8pt;color:#9CA3AF;">+1d</span>' : ''}</td>
                 <td class="mono">${escapeHtml(fmtHoursMins(r.total_minutes))}</td>
                 <td><span class="pill ${escapeHtml(r.status || '')}">${escapeHtml(detailedStatusLabel(r))}</span></td>
                 <td>${check}</td>
