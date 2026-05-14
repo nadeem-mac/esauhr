@@ -134,10 +134,19 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
 
-  // Shift-flagged staff only.
+  // Shift-flagged staff only. We also compute a stable string key
+  // of just the IDs so the load() callback can depend on the SET of
+  // people (not the array reference). Without this the load fires
+  // on every parent re-render of AttendanceView — and AttendanceView
+  // re-renders a lot during the daily upload flow — which caused a
+  // visible flicker as the loading state flipped on/off.
   const shiftStaff = useMemo(
     () => (employees || []).filter(e => e.is_shift_staff === true),
     [employees]
+  );
+  const staffKey = useMemo(
+    () => shiftStaff.map(e => e.id).sort().join(','),
+    [shiftStaff]
   );
 
   // Fetch attendance_daily rows for the date window + flagged staff.
@@ -179,7 +188,12 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     } finally {
       setLoading(false);
     }
-  }, [shiftStaff, from, to]);
+    // We depend on the stable string key (staffKey) instead of the
+    // shiftStaff array — the array reference can change on every
+    // parent render even when the IDs are identical, which would
+    // refire the fetch and cause a visible flicker.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staffKey, from, to]);
 
   useEffect(() => { load(); }, [load]);
 
