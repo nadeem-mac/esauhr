@@ -1126,6 +1126,25 @@ export default function AppShell({ session, me, onRefreshMe }) {
               onGoToRequests={() => setTabPersistent("requests")}
               onGoToShifts={() => setTabPersistent("shifts")}
               onUploadCert={() => setRequestFlow('sick_unified_cert_only')}
+              onToggleShiftStaff={async (employeeId, nextValue) => {
+                // Manager flips employees.is_shift_staff on a direct
+                // report. The flag drives the Shift Staff Attendance
+                // Report in Bashaier's Attendance tab — only flagged
+                // staff appear in the in/out/total-hours summary.
+                // We also stamp who set the flag and when, for audit.
+                await directPatch('employees', 'id', employeeId, {
+                  is_shift_staff:        nextValue,
+                  shift_staff_marked_by: me.id,
+                  shift_staff_marked_at: new Date().toISOString(),
+                });
+                // Update local cache so the toggle stays consistent
+                // without waiting for the next loadAll() pass.
+                setEmployees(prev => prev.map(e =>
+                  e.id === employeeId
+                    ? { ...e, is_shift_staff: nextValue, shift_staff_marked_by: me.id, shift_staff_marked_at: new Date().toISOString() }
+                    : e
+                ));
+              }}
             />
           ) : (
             <PersonalDashboard

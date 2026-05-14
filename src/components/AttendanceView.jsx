@@ -22,6 +22,7 @@ import RepeatOffendersCard from './RepeatOffendersCard.jsx';
 import ManagerRollupCard from './ManagerRollupCard.jsx';
 import EvaluationExplainModal from './EvaluationExplainModal.jsx';
 import SilentAbsencesCard from './SilentAbsencesCard.jsx';
+import ShiftStaffAttendanceReportCard from './ShiftStaffAttendanceReportCard.jsx';
 
 // ─── Error Boundary for AttendanceView sections ───────────────────────
 // Without this, a render-time exception anywhere in the tree under
@@ -6031,6 +6032,13 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             </button>
         </div>
         </AttendanceErrorBoundary>
+        <AttendanceErrorBoundary label="Shift staff attendance report">
+          <ShiftStaffAttendanceReportCard
+            employees={employees}
+            me={me}
+          />
+        </AttendanceErrorBoundary>
+
         <AttendanceErrorBoundary label="Monthly attendance calendar">
           <div data-month-export-target>
           <AttendanceMonthGrid

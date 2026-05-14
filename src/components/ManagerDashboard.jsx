@@ -49,6 +49,7 @@ export default function ManagerDashboard({
   leaveTypes = [],
   onGoToReviews, onGoToRequests, onGoToShifts,
   onUploadCert,         // (request) => void — opens cert upload modal for a pending_certificate sick declaration
+  onToggleShiftStaff,   // (employeeId, nextValue) => Promise<void> — patches employees.is_shift_staff
 }) {
   const [requests, setRequests] = useState([]);
   const [shifts, setShifts]     = useState([]);
@@ -436,15 +437,12 @@ export default function ManagerDashboard({
         {directReports.length > 0 && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {directReports.map(e => (
-              <div key={e.id} className="flex items-center gap-3 px-3 py-2 rounded-lg border bg-white" style={{ borderColor: 'var(--border-soft)' }}>
-                <Avatar name={e.name} />
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium" style={{ color: '#1F1B16' }}>{e.name}</div>
-                  <div className="text-[11px]" style={{ color: '#1F1B16' }}>
-                    {e.id} · {e.department || '—'}
-                  </div>
-                </div>
-              </div>
+              <DirectReportRow
+                key={e.id}
+                report={e}
+                me={me}
+                onToggleShiftStaff={onToggleShiftStaff}
+              />
             ))}
           </div>
         )}
@@ -537,6 +535,80 @@ function Avatar({ name }) {
     <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 text-white text-xs font-semibold"
          style={{ background: color }}>
       {initials}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DirectReportRow — one direct report card with an inline "Shift staff"
+// toggle. The toggle flips employees.is_shift_staff via the parent's
+// onToggleShiftStaff handler; while the PATCH is in flight we render
+// optimistically so the manager doesn't see a stale checkbox.
+//
+// Why a small inline toggle and not a separate modal:
+// Managers know who their shift staff are at a glance and want to flip
+// the bit in one tap when staffing changes. The flag is also rare —
+// most rows will never be toggled, so a low-visual-weight chip-style
+// affordance keeps the team list calm.
+// ─────────────────────────────────────────────────────────────────────────────
+function DirectReportRow({ report, me, onToggleShiftStaff }) {
+  const [busy, setBusy]       = React.useState(false);
+  const [optimistic, setOpt]  = React.useState(report.is_shift_staff === true);
+  // Sync local state if the parent prop changes (e.g. realtime update).
+  React.useEffect(() => { setOpt(report.is_shift_staff === true); }, [report.is_shift_staff]);
+
+  const handleToggle = async (e) => {
+    e.stopPropagation();
+    if (busy || !onToggleShiftStaff) return;
+    const next = !optimistic;
+    setOpt(next);              // optimistic flip
+    setBusy(true);
+    try {
+      await onToggleShiftStaff(report.id, next);
+    } catch (err) {
+      setOpt(!next);            // rollback on error
+      console.error('[shift-staff toggle]', err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-3 px-3 py-2 rounded-lg border bg-white"
+         style={{ borderColor: 'var(--border-soft)' }}>
+      <Avatar name={report.name} />
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium" style={{ color: '#1F1B16' }}>{report.name}</div>
+        <div className="text-[11px]" style={{ color: '#1F1B16' }}>
+          {report.id} · {report.department || '—'}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={handleToggle}
+        disabled={busy}
+        className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-semibold tracking-wide transition disabled:opacity-50"
+        style={{
+          background: optimistic ? '#0F4C2A' : '#FBF6E9',
+          color:      optimistic ? '#FFFFFF' : '#1F1B16',
+          border:     `1px solid ${optimistic ? '#0F4C2A' : 'var(--border-soft)'}`,
+        }}
+        title={optimistic
+          ? 'Marked as shift staff — included in HR attendance reports'
+          : 'Mark as shift staff to include in HR attendance reports'}>
+        <span style={{
+          width: 10, height: 10, borderRadius: 2,
+          background: optimistic ? '#FFFFFF' : 'transparent',
+          border: `1.5px solid ${optimistic ? '#FFFFFF' : '#1F1B16'}`,
+          display: 'inline-block',
+        }}>
+          {optimistic && <span style={{
+            display: 'block', width: 6, height: 6, margin: 'auto', marginTop: 0,
+            background: '#0F4C2A', borderRadius: 1,
+          }} />}
+        </span>
+        SHIFT STAFF
+      </button>
     </div>
   );
 }
