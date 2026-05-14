@@ -1572,6 +1572,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // close anytime; reopen via the "📋 Today's review" button that
   // appears once a file is parsed.
   const [dailyReviewOpen, setDailyReviewOpen] = useState(false);
+  // Shift Staff Attendance report — toggleable panel that appears
+  // right under the Upload Time Card button when open. Closed by
+  // default so the page chrome stays clean for the daily upload flow.
+  const [shiftReportOpen, setShiftReportOpen] = useState(false);
   // Pending-EOD-review tracker. Populated from attendance_review_log on
   // mount and after each file-load mode-log. Each entry: { review_date,
   // morning_at, eod_at }. eod_at is null by definition for everything
@@ -5915,6 +5919,24 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             >
               ⬆ Upload Time Card
             </button>
+            {/* Shift Staff Attendance — sits next to Upload Time Card.
+                Toggles a panel further down the page (rendered just
+                above the monthly grid) that shows the report for
+                manager-flagged shift staff. Closed by default. */}
+            <button
+              type="button"
+              onClick={() => setShiftReportOpen(v => !v)}
+              className="text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1.5"
+              style={{
+                background: shiftReportOpen ? '#1F1B16' : '#FBF6E9',
+                color:      shiftReportOpen ? '#FFFFFF' : '#1F1B16',
+                fontWeight: 600,
+                border: `1px solid ${shiftReportOpen ? '#1F1B16' : 'var(--border-soft)'}`,
+              }}
+              title="Show in/out punches and total worked hours for staff flagged as shift workers by their managers."
+            >
+              🕐 Shift staff attendance {shiftReportOpen ? '·  hide' : ''}
+            </button>
             {hasFile && !dailyReviewOpen && (
               <button
                 type="button"
@@ -6032,12 +6054,14 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             </button>
         </div>
         </AttendanceErrorBoundary>
-        <AttendanceErrorBoundary label="Shift staff attendance report">
-          <ShiftStaffAttendanceReportCard
-            employees={employees}
-            me={me}
-          />
-        </AttendanceErrorBoundary>
+        {shiftReportOpen && (
+          <AttendanceErrorBoundary label="Shift staff attendance report">
+            <ShiftStaffAttendanceReportCard
+              employees={employees}
+              me={me}
+            />
+          </AttendanceErrorBoundary>
+        )}
 
         <AttendanceErrorBoundary label="Monthly attendance calendar">
           <div data-month-export-target>
