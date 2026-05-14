@@ -73,6 +73,35 @@ function fmtHoursMins(minutes) {
   return `${h}h ${m}m`;
 }
 
+// Parse a 'HH:MM:SS' or 'HH:MM' time string to minutes-since-midnight.
+// Returns null for empty / malformed values.
+function timeToMinutes(t) {
+  if (!t || typeof t !== 'string') return null;
+  const parts = t.split(':');
+  if (parts.length < 2) return null;
+  const h = Number(parts[0]);
+  const m = Number(parts[1]);
+  if (isNaN(h) || isNaN(m)) return null;
+  return h * 60 + m;
+}
+
+// Worked minutes between first_punch and last_punch. Handles overnight
+// shifts (e.g. 20:00 -> 05:00) by adding 24h when the last punch is
+// numerically less than the first.
+// Returns null when either punch is missing — those days show '—'
+// in the Total column rather than '0h', which would falsely suggest
+// the person worked zero minutes when actually we have no signal.
+function computeWorkedMinutes(firstPunch, lastPunch) {
+  const a = timeToMinutes(firstPunch);
+  const b = timeToMinutes(lastPunch);
+  if (a == null || b == null) return null;
+  let diff = b - a;
+  if (diff < 0) diff += 24 * 60;       // overnight shift
+  // Sanity bound: ignore obvious data errors like 23-hour days.
+  if (diff > 18 * 60) return null;
+  return diff;
+}
+
 // Status badge colours (matches AttendanceMonthGrid vocabulary).
 const STATUS_PILL = {
   present:       { bg: '#DCFCE7', fg: '#166534', label: 'Present'     },
@@ -108,6 +137,10 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   );
 
   // Fetch attendance_daily rows for the date window + flagged staff.
+  // attendance_daily has first_punch + last_punch as TIME columns; the
+  // worked-time isn't stored directly. We fetch the punches plus
+  // late/early/expected columns and compute total worked minutes
+  // client-side. Schema reference: supabase/migration_attendance_daily.sql
   const load = useCallback(async () => {
     if (shiftStaff.length === 0) {
       setAttendance([]);
@@ -117,13 +150,20 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     setErr(null);
     try {
       const ids = shiftStaff.map(e => `"${e.id}"`).join(',');
-      const q = `select=employee_id,attendance_date,first_punch,last_punch,total_minutes,status`
+      const q = `select=employee_id,attendance_date,first_punch,last_punch,punch_count,expected_start,expected_end,late_minutes,early_leave_minutes,status`
              + `&employee_id=in.(${ids})`
              + `&attendance_date=gte.${from}`
              + `&attendance_date=lte.${to}`
              + `&order=attendance_date.asc`;
       const rows = await directGet('attendance_daily', q, { timeoutMs: 12000 });
-      setAttendance(Array.isArray(rows) ? rows : []);
+      // Enrich each row with a computed `total_minutes` field so the
+      // rest of the component (summaries, renderer, HTML report) can
+      // use it without re-doing the arithmetic.
+      const enriched = (Array.isArray(rows) ? rows : []).map(r => ({
+        ...r,
+        total_minutes: computeWorkedMinutes(r.first_punch, r.last_punch),
+      }));
+      setAttendance(enriched);
     } catch (e) {
       console.error('[shift-staff report] load failed:', e);
       setErr(e?.message || 'Failed to load attendance');
