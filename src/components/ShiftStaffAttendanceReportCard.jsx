@@ -198,6 +198,67 @@ function computeWorkedMinutes(firstPunch, lastPunch) {
   return diff;
 }
 
+// ── shift compliance ──────────────────────────────────────────────────────
+//
+// "Did the staff follow the proper procedure for their assigned shift?"
+// Three checks, computed against attendance_daily.expected_start /
+// expected_end (set at upload time from employee_shifts.start_time /
+// end_time — see attendanceRecorder.js). All three with a 15-min
+// grace window so a small data entry slip doesn't flag a clean day.
+//
+//   onTime:    first_punch <= expected_start + 15min grace
+//   fullShift: last_punch  >= expected_end   - 15min grace
+//   bothPunch: first_punch AND last_punch both recorded
+//
+// A "clean shift day" is when all three are true. Per-staff compliance
+// score is (clean days / shift days) × 100, rounded.
+//
+// Skipped (returns null flags) when:
+//   • The row is a synthetic absence (no expected window — no shift
+//     was assigned, can't evaluate compliance)
+//   • expected_start or expected_end is null (no shift assignment
+//     was active for that day — most commonly because the staff is
+//     on leave, off_day, or off_roster)
+//   • Status is any leave/off variant — compliance only makes sense
+//     for working days
+const GRACE_MIN = 15;
+function computeCompliance(row) {
+  const flags = { onTime: null, fullShift: null, bothPunch: null, isShiftDay: false };
+  // Skip non-working days entirely.
+  if (!row.expected_start || !row.expected_end) return flags;
+  if (row.status === 'off_day' || row.status === 'off_roster') return flags;
+  if (row.status && row.status.endsWith('_leave')) return flags;
+  flags.isShiftDay = true;
+  const expStart = timeToMinutes(row.expected_start);
+  const expEnd   = timeToMinutes(row.expected_end);
+  const inMin    = timeToMinutes(row.first_punch);
+  const outMin   = timeToMinutes(row.last_punch);
+  flags.bothPunch = !!(row.first_punch && row.last_punch);
+  // Late = in-punch later than the grace window. Handles overnight
+  // shifts where shift starts at 22:00 — in-punch at 21:50 is on time.
+  if (inMin != null && expStart != null) {
+    let diff = inMin - expStart;
+    if (diff < -12 * 60) diff += 24 * 60;   // probably overnight rollover
+    flags.onTime = diff <= GRACE_MIN;
+  }
+  // Early-leave = out-punch earlier than (expected_end - grace).
+  if (outMin != null && expEnd != null) {
+    let diff = outMin - expEnd;
+    if (diff < -12 * 60) diff += 24 * 60;   // overnight: out at 06:00 for end at 06:00
+    flags.fullShift = diff >= -GRACE_MIN;
+  }
+  return flags;
+}
+
+// Format an expected window as "06:00 → 18:00". Returns null when
+// neither edge is set (no shift assigned).
+function fmtShiftWindow(start, end) {
+  const s = start ? String(start).slice(0, 5) : null;
+  const e = end   ? String(end).slice(0, 5)   : null;
+  if (!s && !e) return null;
+  return `${s || '—'}  →  ${e || '—'}`;
+}
+
 // ─── main component ────────────────────────────────────────────────────────
 
 /**
@@ -300,18 +361,23 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     setErr(null);
     try {
       const ids = shiftStaff.map(e => `"${e.id}"`).join(',');
-      const q = `select=employee_id,attendance_date,first_punch,last_punch,punch_count,expected_start,expected_end,late_minutes,early_leave_minutes,status`
+      const q = `select=employee_id,attendance_date,first_punch,last_punch,punch_count,expected_start,expected_end,late_minutes,early_leave_minutes,status,leave_request_id`
              + `&employee_id=in.(${ids})`
              + `&attendance_date=gte.${from}`
              + `&attendance_date=lte.${to}`
              + `&order=attendance_date.asc`;
       const rows = await directGet('attendance_daily', q, { timeoutMs: 12000 });
-      // Enrich each row with a computed `total_minutes` field so the
-      // rest of the component (summaries, renderer, HTML report) can
-      // use it without re-doing the arithmetic.
+      // Enrich each row with:
+      //   • total_minutes — computed from punches (column doesn't exist)
+      //   • compliance flags — did the staff follow their assigned shift?
+      // For shift discipline we check three things against the stored
+      // expected window: arrived on time (within 15min grace),
+      // stayed for the full shift (out at/after end - 15min grace),
+      // and made both punches. A "clean shift day" is all three.
       const enriched = (Array.isArray(rows) ? rows : []).map(r => ({
         ...r,
         total_minutes: computeWorkedMinutes(r.first_punch, r.last_punch),
+        ...computeCompliance(r),
       }));
       setAttendance(enriched);
     } catch (e) {
@@ -403,6 +469,22 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
         r.status === 'late' || r.status === 'short' || r.status === 'absent'
       );
 
+      // Compliance — across all shift days in window. A "clean" shift
+      // day is on-time arrival + full shift + both punches. Score is
+      // (clean / shift days) × 100. Skips non-shift days (leave, off).
+      let shiftDays = 0, cleanDays = 0;
+      let countLateIn = 0, countShortOut = 0, countMissedAny = 0;
+      for (const r of rows) {
+        if (!r.isShiftDay) continue;
+        shiftDays++;
+        const isClean = r.onTime === true && r.fullShift === true && r.bothPunch === true;
+        if (isClean) cleanDays++;
+        if (r.onTime === false)   countLateIn++;
+        if (r.fullShift === false) countShortOut++;
+        if (r.bothPunch === false) countMissedAny++;
+      }
+      const compliancePct = shiftDays > 0 ? Math.round((cleanDays / shiftDays) * 100) : null;
+
       return {
         emp, rows,
         daysPresent: present.length + late.length + shortRows.length,
@@ -413,6 +495,8 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
         daysLeave:   leaveD.length,
         totalMin, avgMin,
         problemRows,
+        shiftDays, cleanDays, compliancePct,
+        countLateIn, countShortOut, countMissedAny,
       };
     });
   }, [shiftStaff, byEmployee]);
@@ -563,6 +647,23 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
                     <div className="font-semibold text-sm" style={{ color: '#1F1B16' }}>{fmtHoursMins(s.avgMin)}</div>
                     <div className="text-[9px]">AVG</div>
                   </div>
+                  {/* Compliance — only meaningful when we evaluated at
+                      least one shift day. Colour: green ≥90%, amber 70-89%,
+                      red <70%. Tooltip shows the underlying breakdown. */}
+                  {s.compliancePct != null && (
+                    <div className="text-center"
+                         title={`${s.cleanDays}/${s.shiftDays} clean shifts · ${s.countLateIn} late in · ${s.countShortOut} early out · ${s.countMissedAny} missing a punch`}>
+                      <div className="font-semibold text-sm"
+                           style={{
+                             color: s.compliancePct >= 90 ? '#0F4C2A'
+                                  : s.compliancePct >= 70 ? '#92400E'
+                                  : '#991B1B',
+                           }}>
+                        {s.compliancePct}%
+                      </div>
+                      <div className="text-[9px]">SHIFT</div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Email manager button — single tap fires a mailto:
@@ -596,10 +697,12 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
                       <thead>
                         <tr className="text-left" style={{ color: '#1F1B16' }}>
                           <th className="py-1.5 pr-2 font-semibold">Date</th>
+                          <th className="py-1.5 pr-2 font-semibold">Shift</th>
                           <th className="py-1.5 pr-2 font-semibold">In</th>
                           <th className="py-1.5 pr-2 font-semibold">Out</th>
                           <th className="py-1.5 pr-2 font-semibold">Total</th>
                           <th className="py-1.5 pr-2 font-semibold">Status</th>
+                          <th className="py-1.5 pr-2 font-semibold" title="Shift compliance: on-time in · full shift · both punches">✓</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -607,6 +710,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
                           const pill = statusPill(r.status);
                           const label = detailedStatusLabel(r);
                           const isSilent = !!r._synthetic;
+                          const shift = fmtShiftWindow(r.expected_start, r.expected_end);
                           return (
                             <tr key={r.attendance_date}
                                 className="border-t"
@@ -623,6 +727,9 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
                                   </span>
                                 )}
                               </td>
+                              <td className="py-1.5 pr-2 font-mono" style={{ color: shift ? '#1F1B16' : '#9CA3AF' }}>
+                                {shift || '—'}
+                              </td>
                               <td className="py-1.5 pr-2 font-mono">{fmtTime(r.first_punch)}</td>
                               <td className="py-1.5 pr-2 font-mono">{fmtTime(r.last_punch)}</td>
                               <td className="py-1.5 pr-2 font-mono">{fmtHoursMins(r.total_minutes)}</td>
@@ -631,6 +738,13 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
                                       style={{ background: pill.bg, color: pill.fg }}>
                                   {label}
                                 </span>
+                              </td>
+                              <td className="py-1.5 pr-2">
+                                {r.isShiftDay ? (
+                                  <ComplianceDots row={r} />
+                                ) : (
+                                  <span className="text-[10px]" style={{ color: '#9CA3AF' }}>—</span>
+                                )}
                               </td>
                             </tr>
                           );
@@ -674,6 +788,7 @@ function renderReportHtml({ summaries, from, to, me }) {
           <div><strong>${s.daysPresent}</strong><span>days present</span></div>
           <div><strong>${fmtHoursMins(s.totalMin)}</strong><span>total hours</span></div>
           <div><strong>${fmtHoursMins(s.avgMin)}</strong><span>avg / day</span></div>
+          ${s.compliancePct != null ? `<div class="${s.compliancePct >= 90 ? 'good' : s.compliancePct >= 70 ? 'late' : 'absent'}"><strong>${s.compliancePct}%</strong><span>shift compliance</span></div>` : ''}
           ${s.daysLate   > 0 ? `<div class="late"><strong>${s.daysLate}</strong><span>late</span></div>`     : ''}
           ${s.daysShort  > 0 ? `<div class="short"><strong>${s.daysShort}</strong><span>short</span></div>`  : ''}
           ${s.daysAbsent > 0 ? `<div class="absent"><strong>${s.daysAbsent}</strong><span>absent</span></div>` : ''}
@@ -686,19 +801,28 @@ function renderReportHtml({ summaries, from, to, me }) {
         <table>
           <thead>
             <tr>
-              <th>Date</th><th>In</th><th>Out</th><th>Total</th><th>Status</th>
+              <th>Date</th><th>Shift</th><th>In</th><th>Out</th><th>Total</th><th>Status</th><th>Check</th>
             </tr>
           </thead>
           <tbody>
-            ${s.rows.map(r => `
+            ${s.rows.map(r => {
+              const shift = fmtShiftWindow(r.expected_start, r.expected_end);
+              const check = r.isShiftDay
+                ? `<span class="dot ${r.onTime === false ? 'bad' : r.onTime === true ? 'good' : 'na'}" title="Arrival"></span>`
+                  + `<span class="dot ${r.fullShift === false ? 'bad' : r.fullShift === true ? 'good' : 'na'}" title="Shift end"></span>`
+                  + `<span class="dot ${r.bothPunch === false ? 'bad' : r.bothPunch === true ? 'good' : 'na'}" title="Both punches"></span>`
+                : '—';
+              return `
               <tr${r._synthetic ? ' class="silent"' : ''}>
                 <td class="mono">${escapeHtml(fmtDateLong(r.attendance_date))}${r._synthetic ? ' <span class="badge-silent">no record</span>' : ''}</td>
+                <td class="mono" style="color:${shift ? '#1F1B16' : '#9CA3AF'};">${escapeHtml(shift || '—')}</td>
                 <td class="mono">${escapeHtml(fmtTime(r.first_punch))}</td>
                 <td class="mono">${escapeHtml(fmtTime(r.last_punch))}</td>
                 <td class="mono">${escapeHtml(fmtHoursMins(r.total_minutes))}</td>
                 <td><span class="pill ${escapeHtml(r.status || '')}">${escapeHtml(detailedStatusLabel(r))}</span></td>
-              </tr>
-            `).join('')}
+                <td>${check}</td>
+              </tr>`;
+            }).join('')}
           </tbody>
         </table>
       `}
@@ -758,6 +882,14 @@ function renderReportHtml({ summaries, from, to, me }) {
   .stats .absent strong { color: #991B1B; }
   .stats .late strong   { color: #92400E; }
   .stats .short strong  { color: #92400E; }
+  .stats .good strong   { color: #0F4C2A; }
+  .dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    margin-right: 2px; background: #D1D5DB;
+  }
+  .dot.good { background: #15803D; }
+  .dot.bad  { background: #B91C1C; }
+  .dot.na   { background: #D1D5DB; }
   table { width: 100%; border-collapse: collapse; font-size: 10pt; }
   thead th {
     text-align: left; padding: 6px 8px;
@@ -845,6 +977,45 @@ function Chip({ count, label, bg, fg, title }) {
       title={title || undefined}>
       <span style={{ fontSize: '11px', lineHeight: 1 }}>{count}</span>
       <span>{label}</span>
+    </span>
+  );
+}
+
+// Compact compliance indicator — three dots representing the three
+// shift-discipline checks (on-time in, full shift, both punches).
+// Green = compliant; red = violated; grey = couldn't evaluate.
+// The dot vocabulary keeps the column narrow while giving an at-a-
+// glance read of whether the day was clean.
+function ComplianceDots({ row }) {
+  const dot = (flag, title) => {
+    const colour = flag === true  ? '#15803D'    // green
+                 : flag === false ? '#B91C1C'    // red
+                 :                  '#D1D5DB';   // grey (couldn't evaluate)
+    return (
+      <span title={title}
+            style={{
+              display: 'inline-block', width: 6, height: 6, borderRadius: '50%',
+              background: colour, marginRight: 2,
+            }} />
+    );
+  };
+  const onTimeTitle =
+    row.onTime === true  ? 'On-time arrival (within 15-min grace)'
+  : row.onTime === false ? 'Late arrival (more than 15 min after shift start)'
+  : 'Not enough data to check arrival';
+  const fullTitle =
+    row.fullShift === true  ? 'Full shift worked'
+  : row.fullShift === false ? 'Left early (more than 15 min before shift end)'
+  : 'Not enough data to check end';
+  const bothTitle =
+    row.bothPunch === true  ? 'Both punches recorded'
+  : row.bothPunch === false ? 'Missing a punch'
+  : '—';
+  return (
+    <span style={{ whiteSpace: 'nowrap' }}>
+      {dot(row.onTime, onTimeTitle)}
+      {dot(row.fullShift, fullTitle)}
+      {dot(row.bothPunch, bothTitle)}
     </span>
   );
 }
