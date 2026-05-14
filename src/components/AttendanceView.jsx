@@ -5922,16 +5922,24 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             {/* Shift Staff Attendance — sits next to Upload Time Card.
                 Toggles a panel further down the page (rendered just
                 above the monthly grid) that shows the report for
-                manager-flagged shift staff. Closed by default. */}
+                manager-flagged shift staff. Closed by default.
+                Colour: deep slate-blue (#1E40AF) so it reads as a
+                first-class action on a landing page that's otherwise
+                cream/amber/green — the previous cream-on-cream variant
+                looked washed out next to the bold green 'Upload Time
+                Card'. */}
             <button
               type="button"
               onClick={() => setShiftReportOpen(v => !v)}
               className="text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1.5"
               style={{
-                background: shiftReportOpen ? '#1F1B16' : '#FBF6E9',
-                color:      shiftReportOpen ? '#FFFFFF' : '#1F1B16',
+                background: shiftReportOpen ? '#1E3A8A' : '#1E40AF',
+                color:      '#FFFFFF',
                 fontWeight: 600,
-                border: `1px solid ${shiftReportOpen ? '#1F1B16' : 'var(--border-soft)'}`,
+                border:     `1px solid ${shiftReportOpen ? '#1E3A8A' : '#1E40AF'}`,
+                boxShadow:  shiftReportOpen
+                  ? 'inset 0 1px 3px rgba(0,0,0,0.25)'
+                  : '0 1px 2px rgba(30,64,175,0.25)',
               }}
               title="Show in/out punches and total worked hours for staff flagged as shift workers by their managers."
             >
