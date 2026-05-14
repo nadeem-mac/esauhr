@@ -33,7 +33,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Clock, Download, ChevronDown, ChevronRight, FileText, Users } from 'lucide-react';
 import { directGet } from '../supabaseClient.js';
-import { localDateString, addDaysIso } from '../lib/dateUtils.js';
+import { todayLocal, addDaysIso } from '../lib/dateUtils.js';
 
 // ─── helpers ───────────────────────────────────────────────────────────────
 
@@ -122,7 +122,11 @@ const STATUS_PILL = {
  */
 export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   // Date window — default last 30 days inclusive of today.
-  const today = localDateString();
+  // todayLocal() returns 'YYYY-MM-DD'; localDateString(date) needs an
+  // actual Date arg and returned null when called bare. The null then
+  // hit the date filter as the literal string 'null' and Supabase
+  // rejected the query (22007 invalid input syntax for type date).
+  const today = todayLocal();
   const [from, setFrom] = useState(addDaysIso(today, -29));
   const [to,   setTo]   = useState(today);
   const [expanded, setExpanded] = useState(new Set());  // employee IDs whose drill-down is open
@@ -146,6 +150,11 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       setAttendance([]);
       return;
     }
+    // Belt-and-braces: even after fixing the initial null bug, the
+    // date-picker inputs CAN produce empty strings if the user clears
+    // them. Don't fire the query in that state — show the existing
+    // data and wait for them to set a valid range.
+    if (!from || !to) return;
     setLoading(true);
     setErr(null);
     try {
