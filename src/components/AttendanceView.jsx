@@ -2018,6 +2018,20 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   }, [parsedData, csvDate, yesterdayDate]);
 
   // Fetch approved leaves overlapping the 2-day window.
+  //
+  // BUG FIX (Nadeem 2026-05-10): Aminah's approved maternity leave
+  // wasn't being picked up by the daily attendance recorder — she
+  // showed as 'absent' on the uploaded day even though her ML
+  // (01–31 May 2026) was fully approved through manager + HR. Root
+  // cause: this query filtered on `status=eq.approved`, but the
+  // current approval pipeline writes the authoritative state to the
+  // `stage` column (legacy `status` lags or doesn't sync on some
+  // code paths). Aminah's row had stage='approved' but status='pending'.
+  //
+  // Fix: filter with PostgREST OR — match EITHER stage='approved'
+  // (new pipeline, canonical) OR status='approved' (legacy rows
+  // approved before the stage column existed or via paths that
+  // still write the old column). Catches both, ignores nothing.
   useEffect(() => {
     if (!csvDate) { setApprovedLeaves([]); return; }
     let cancelled = false;
@@ -2025,7 +2039,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     (async () => {
       try {
         const data = await directGet(
-          'leave_requests?select=id,employee_id,start_date,end_date,status,leave_type_id,is_half_day,half_day_period&status=eq.approved&start_date=lte.' + csvDate + '&end_date=gte.' + windowStart
+          'leave_requests?select=id,employee_id,start_date,end_date,status,stage,leave_type_id,is_half_day,half_day_period'
+          + '&or=(stage.eq.approved,status.eq.approved)'
+          + '&start_date=lte.' + csvDate
+          + '&end_date=gte.' + windowStart
         );
         if (!cancelled) setApprovedLeaves(data || []);
       } catch (e) {
