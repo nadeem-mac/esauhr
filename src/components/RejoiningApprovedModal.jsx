@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckCircle2, Download, Mail, X, Loader2, ArrowLeftCircle } from 'lucide-react';
 import { buildRejoiningEmailDraft } from '../lib/rejoiningReport.js';
-import { generateJoiningReportPdfBlob } from '../lib/joiningReportPdf.js';
+import { generateRejoiningReportPdfBlob } from '../lib/rejoiningReportPdf.js';
 
 // Helper: trigger a browser download for a Blob. Inlined so this file no
 // longer depends on the legacy rejoiningReport download path.
@@ -77,12 +77,16 @@ export default function RejoiningApprovedModal({ request, empMap, onClose }) {
     setDownloading(true);
     setError('');
     try {
-      // joiningReportPdf is a unified module — pass type='rejoining' and
-      // it switches title, ref prefix (RJ-), and adds the extra row for
-      // previous-last-day + absence reason. Field mapping mirrors what
-      // the legacy rejoiningReport docx flow used to gather.
-      const blob = await generateJoiningReportPdfBlob({
-        type: 'rejoining',
+      // 2026-05-15 (Nadeem review): switched to a dedicated rejoiningReportPdf
+      // module that matches the docx sample (✓ REJOINED badge, TO/FROM line,
+      // EMPLOYEE INFORMATION minus new-hire fields, ORIGINAL LEAVE section
+      // with approval timestamps, RETURN DETAILS with an auto-generated
+      // Statement / Notes). joiningReportPdf had been overloaded for both
+      // joining + rejoining flows and the rejoining variant was inheriting
+      // new-hire sections (Compensation, Acknowledgement) that don't apply
+      // to existing staff. The dedicated module also kills the absence-reason
+      // → arrow encoding bug because the new form doesn't carry that field.
+      const blob = await generateRejoiningReportPdfBlob({
         request,
         employee,
         position: {
@@ -90,17 +94,15 @@ export default function RejoiningApprovedModal({ request, empMap, onClose }) {
           department:  employee?.department,
           location:    employee?.location,
         },
-        joining: {
-          joining_date:       request.return_date || request.actual_return_date,
-          effective_from:     request.return_date || request.actual_return_date,
-          employment_type:    'Full-time',
-          working_hours:      '08:00 — 17:00',
-          workweek:           'Sunday — Thursday',
-          previous_last_day:  request.end_date,
-          reason:             request.return_reason
-                              || `Returning from approved ${request.leave_type_id || 'leave'} (${request.start_date} → ${request.end_date}).`,
+        // Approval audit: prefer the return-specific approval timestamps
+        // (set when HR approves the rejoining itself), then fall back to
+        // the original leave approvals. Same precedence the email draft uses.
+        approvals: {
+          manager_approved_at: request.return_manager_decided_at || request.manager_decided_at,
+          hr_approved_at:      request.return_hr_decided_at      || request.hr_decided_at,
+          manager_name:        manager?.name,
+          hr_name:             hrApprover?.name,
         },
-        salary: {},   // not part of the rejoining flow; report section just shows blanks
         manager,
         hrName: hrApprover?.name,
       });
