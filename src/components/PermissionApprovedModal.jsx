@@ -2,10 +2,21 @@ import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckCircle2, Download, Mail, X, Loader2, AlertTriangle } from 'lucide-react';
 import {
-  downloadPermissionLetter,
   buildPermissionEmailDraft,
   resolveExecCcEmails,
 } from '../lib/permissionLetter.js';
+import { generatePermissionRequestPdfBlob } from '../lib/permissionRequestPdf.js';
+
+// Helper: trigger a browser download for a Blob with the given filename.
+// Inlined here (instead of pulling from the legacy docx module) so this
+// file no longer depends on the deprecated permissionLetter download path.
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 // =============================================================================
 // PermissionApprovedModal
@@ -13,12 +24,13 @@ import {
 // Triggered automatically after Bashaier issues the FINAL HR approval on a
 // permission request (manager already approved → HR approved → done).
 // Two actions:
-//   1. Download permission letter — single-page A4 .docx with employee
-//      details, approval chain, signatures
+//   1. Download permission letter — single-page A4 PDF with employee
+//      details, approval chain, signatures (native jsPDF, English-only,
+//      QR-verifiable — replaces the older docx flow per c997920)
 //   2. Open email — mailto: link prefilled with To = staff,
 //      CC = manager + executive list (John, James, Fahad Hussain, Badria,
 //      Jaffar, looked up by name from employees.email). User adds the
-//      downloaded .docx as an attachment and sends.
+//      downloaded PDF as an attachment and sends.
 //
 // Read-only — submission/decision actions happen elsewhere; this is the
 // post-decision artifact handoff.
@@ -45,7 +57,35 @@ export default function PermissionApprovedModal({ request, employee, manager, hr
     setDownloading(true);
     setError('');
     try {
-      await downloadPermissionLetter({ employee, manager, hrApprover, request });
+      // Map the leave_requests row + employee into the shape the new PDF
+      // module expects. Position info comes off the employee record; the
+      // 'permission' bag carries the request-specific fields (type, times,
+      // reason, urgency, this-month counter).
+      const blob = await generatePermissionRequestPdfBlob({
+        request,
+        employee,
+        position: {
+          designation: employee?.designation,
+          department:  employee?.department,
+          location:    employee?.location,
+        },
+        permission: {
+          type:               request.permission_type,           // 'late_arrival' | 'early_departure'
+          date:               request.start_date,
+          from_time:          request.from_time,
+          to_time:            request.to_time,
+          duration_min:       request.duration_minutes,
+          urgency:            request.urgency,                   // 'planned' | 'urgent'
+          month_count:        request.month_count,
+          replacement:        request.replacement_name,
+          reason_categories:  request.reason_categories || [],
+          reason_details:     request.reason,
+        },
+        manager,
+        hrName: hrApprover?.name,
+      });
+      const safe = (employee?.name || 'EMPLOYEE').replace(/[^a-zA-Z0-9]+/g, '_').toUpperCase();
+      downloadBlob(blob, `Permission_${safe}_${request.start_date || 'date'}.pdf`);
       setDownloaded(true);
     } catch (e) {
       setError(e?.message || 'Could not generate the letter. Please try again.');
@@ -150,7 +190,7 @@ export default function PermissionApprovedModal({ request, employee, manager, hr
               ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</>
               : downloaded
                 ? <><CheckCircle2 className="w-4 h-4" style={{ color: '#047857' }} /> Letter downloaded</>
-                : <><Download className="w-4 h-4" /> Download letter (.docx)</>
+                : <><Download className="w-4 h-4" /> Download letter (PDF)</>
             }
           </button>
           <button
@@ -175,7 +215,7 @@ export default function PermissionApprovedModal({ request, employee, manager, hr
 
         {/* Tip */}
         <div className="px-5 pb-5 text-[11px]" style={{ color: '#1F1B16', opacity: 0.7 }}>
-          Tip: download the letter first, then open the email draft and attach the .docx before sending. Email attachments cannot be pre-filled by the browser.
+          Tip: download the letter first, then open the email draft and attach the PDF before sending. Email attachments cannot be pre-filled by the browser.
         </div>
       </div>
     </div>,

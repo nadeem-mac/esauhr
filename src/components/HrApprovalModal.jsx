@@ -481,16 +481,47 @@ export default function HrApprovalModal({ request, employee, manager, substitute
   const downloadForm = useCallback(async () => {
     setFormGenerating(true);
     try {
-      // 2026-05-10 (Nadeem): switched the approved-form download from
-      // docx to PDF. The PDF is a flat rasterised page so the recipient
-      // can't edit individual fields; everything below the title strip
-      // is locked. Same form layout, same fields, same APPROVED stamp
-      // — just non-editable. The dynamic import keeps the html2canvas
-      // + jspdf bundle out of the modal's initial chunk.
-      const { generateVacationFormPdfBlob } = await import('../lib/vacationFormPdf.js');
-      const blob = await generateVacationFormPdfBlob({ request, employee, manager, hrApprover: me, substitutes });
+      // 2026-05-10 (Nadeem): switched to the new leaveApplicationPdf module
+      // shipped in c997920. Same A4 form layout but with type-specific
+      // enriched sections per leave_type_id (Medical Certificate block for
+      // sick, Maternity Details for maternity, Hajj Details for hajj, etc.)
+      // and KSA Labor Law citations matched to the leave type. Replaces
+      // the older vacationFormPdf which had only the annual-leave layout.
+      // Dynamic import keeps the jspdf + qrcode bundle out of the modal's
+      // initial chunk.
+      const { generateLeaveApplicationPdfBlob } = await import('../lib/leaveApplicationPdf.js');
+      // Promote legacy sick-leave fields from the top-level request into
+      // type_details so the new MEDICAL CERTIFICATE section is populated
+      // even for rows created before type_details was introduced.
+      const td = { ...(request.type_details || {}) };
+      if (request.leave_type_id === 'sick') {
+        td.cert_ref      = td.cert_ref      || request.sehhaty_cert_id;
+        td.cert_date     = td.cert_date     || request.sehhaty_issued_at;
+        td.facility      = td.facility      || request.sehhaty_facility;
+        td.doctor_name   = td.doctor_name   || request.sehhaty_doctor;
+        td.diagnosis     = td.diagnosis     || request.sehhaty_diagnosis;
+        td.fit_to_return = td.fit_to_return || request.sehhaty_fit_date;
+      }
+      const blob = await generateLeaveApplicationPdfBlob({
+        request: { ...request, type_details: td },
+        employee,
+        position: {
+          designation: employee?.designation,
+          department:  employee?.department,
+          location:    employee?.location,
+        },
+        substitutes: (substitutes || []).map(s => ({
+          name:      s?.name,
+          psn:       s?.id || s?.psn,
+          signature: s?.signature || 'accepted_online',
+          date:      s?.accepted_at || s?.date,
+        })),
+        manager,
+        hrName: me?.name,
+      });
       const safeName = (employee?.name || request.employee_id).replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '');
-      const filename = `Vacation_Form_${safeName}_${request.start_date}.pdf`;
+      const typeLabel = (request.leave_type_id || 'Leave').toUpperCase();
+      const filename = `${typeLabel}_LEAVE_${safeName}_${request.start_date}.pdf`;
       downloadBlob(blob, filename);
       setDownloaded(true);
     } catch (err) {

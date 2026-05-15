@@ -2,10 +2,20 @@ import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckCircle2, Download, Mail, X, Loader2, AlertTriangle } from 'lucide-react';
 import {
-  downloadVacationFormForRequest,
   buildEmailDraft,
   buildSickLeaveApprovalEmailDraft,
 } from '../lib/vacationForm.js';
+import { generateLeaveApplicationPdfBlob } from '../lib/leaveApplicationPdf.js';
+
+// Helper: trigger a browser download for a Blob. Inlined so this file no
+// longer depends on the legacy vacationForm download path.
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 // =============================================================================
 // LeaveApprovedModal
@@ -15,11 +25,14 @@ import {
 // re-send experience is the same regardless of leave type.
 //
 // Two actions:
-//   1. Download leave form — the docx that staff prints, gets signed by their
-//      manager, and drops at the HR office.
+//   1. Download leave form — the leave application PDF (native jsPDF, A4,
+//      English-only, QR-verifiable, type-specific section per leave_type_id
+//      — sick, maternity, hajj, study, etc.) that staff prints, gets signed
+//      by their manager, and drops at the HR office. Replaces the older
+//      docx flow per c997920.
 //   2. Open email draft — mailto: pre-filled with To = staff,
 //      CC = manager + (sick: Badria + Fahad SUP) + execs (CEO, Country Head).
-//      Bashaier attaches the downloaded .docx before sending.
+//      Bashaier attaches the downloaded PDF before sending.
 //
 // Branches by request.leave_type_id:
 //   • sick  → buildSickLeaveApprovalEmailDraft (Sehhaty cross-check block,
@@ -69,9 +82,48 @@ export default function LeaveApprovedModal({ request, employee, manager, hrAppro
     setDownloading(true);
     setError('');
     try {
-      // empMap is the broader employees-by-PSN lookup the helper
-      // expects to resolve substitutes / approver names.
-      await downloadVacationFormForRequest(request, empMap || {});
+      // Map the leave_request + ambient context into the shape the new
+      // PDF module expects. type_details holds the per-leave-type fields
+      // (medical cert for sick, expected delivery for maternity, etc.)
+      // — sourced from request.type_details for forward-looking flows,
+      // or falling back to ad-hoc fields the request row may carry
+      // (e.g. sehhaty_cert_id, sehhaty_diagnosis for legacy sick rows).
+      const td = request.type_details || {};
+      // Legacy sick-leave fields stored at the top level of the request
+      // get promoted into type_details so the PDF's MEDICAL CERTIFICATE
+      // section is populated even for rows created before type_details
+      // was added.
+      if (request.leave_type_id === 'sick') {
+        td.cert_ref     = td.cert_ref     || request.sehhaty_cert_id;
+        td.cert_date    = td.cert_date    || request.sehhaty_issued_at;
+        td.facility     = td.facility     || request.sehhaty_facility;
+        td.doctor_name  = td.doctor_name  || request.sehhaty_doctor;
+        td.diagnosis    = td.diagnosis    || request.sehhaty_diagnosis;
+        td.fit_to_return = td.fit_to_return || request.sehhaty_fit_date;
+      }
+      // Position + employee enriched view so the PDF can render
+      // department / location / manager properly.
+      const blob = await generateLeaveApplicationPdfBlob({
+        request: { ...request, type_details: td },
+        employee,
+        position: {
+          designation: employee?.designation,
+          department:  employee?.department,
+          location:    employee?.location,
+        },
+        substitutes: (substitutes || []).map(s => ({
+          name:      s?.name,
+          psn:       s?.id || s?.psn,
+          signature: s?.signature || 'accepted_online',
+          date:      s?.accepted_at || s?.date,
+        })),
+        manager,
+        hrName: hrApprover?.name,
+      });
+      const safe = (employee?.name || request.employee_id || 'EMPLOYEE')
+        .replace(/[^a-zA-Z0-9]+/g, '_').toUpperCase();
+      const typeLabel = (request.leave_type_id || 'Leave').toUpperCase();
+      downloadBlob(blob, `${typeLabel}_LEAVE_${safe}_${request.start_date || 'date'}.pdf`);
       setDownloaded(true);
     } catch (e) {
       setError(e?.message || 'Could not generate the form. Please try again.');
@@ -82,7 +134,7 @@ export default function LeaveApprovedModal({ request, employee, manager, hrAppro
 
   function handleOpenEmail() {
     // mailto: opens the user's default mail client with subject,
-    // body, To and CC pre-filled. The .docx attachment is added
+    // body, To and CC pre-filled. The PDF attachment is added
     // manually after — mailto: cannot carry attachments by spec.
     window.location.href = draft.mailto;
   }

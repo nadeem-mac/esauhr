@@ -1,10 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckCircle2, Download, Mail, X, Loader2, ArrowLeftCircle } from 'lucide-react';
-import {
-  downloadRejoiningReportForRequest,
-  buildRejoiningEmailDraft,
-} from '../lib/rejoiningReport.js';
+import { buildRejoiningEmailDraft } from '../lib/rejoiningReport.js';
+import { generateJoiningReportPdfBlob } from '../lib/joiningReportPdf.js';
+
+// Helper: trigger a browser download for a Blob. Inlined so this file no
+// longer depends on the legacy rejoiningReport download path.
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 // =============================================================================
 // RejoiningApprovedModal
@@ -14,11 +22,13 @@ import {
 // already approved → HR approved → done), and also reachable from
 // the MY RECENT DECISIONS history via the 'Letter / email' button.
 // Two actions:
-//   1. Download rejoining report — single-page A4 .docx with employee
+//   1. Download rejoining report — single-page A4 PDF with employee
 //      details, original-leave context, return details, signatures
+//      (native jsPDF, English-only, QR-verifiable; replaces the older
+//      docx flow per c997920)
 //   2. Open email — mailto: link prefilled with To = staff,
 //      CC = manager + CEO + Country Head. User attaches the downloaded
-//      .docx manually before sending.
+//      PDF manually before sending.
 //
 // Read-only — submission/decision actions happen elsewhere; this is
 // the post-decision artifact handoff.
@@ -67,7 +77,36 @@ export default function RejoiningApprovedModal({ request, empMap, onClose }) {
     setDownloading(true);
     setError('');
     try {
-      await downloadRejoiningReportForRequest(request, empMap);
+      // joiningReportPdf is a unified module — pass type='rejoining' and
+      // it switches title, ref prefix (RJ-), and adds the extra row for
+      // previous-last-day + absence reason. Field mapping mirrors what
+      // the legacy rejoiningReport docx flow used to gather.
+      const blob = await generateJoiningReportPdfBlob({
+        type: 'rejoining',
+        request,
+        employee,
+        position: {
+          designation: employee?.designation,
+          department:  employee?.department,
+          location:    employee?.location,
+        },
+        joining: {
+          joining_date:       request.return_date || request.actual_return_date,
+          effective_from:     request.return_date || request.actual_return_date,
+          employment_type:    'Full-time',
+          working_hours:      '08:00 — 17:00',
+          workweek:           'Sunday — Thursday',
+          previous_last_day:  request.end_date,
+          reason:             request.return_reason
+                              || `Returning from approved ${request.leave_type_id || 'leave'} (${request.start_date} → ${request.end_date}).`,
+        },
+        salary: {},   // not part of the rejoining flow; report section just shows blanks
+        manager,
+        hrName: hrApprover?.name,
+      });
+      const safe = (employee?.name || 'EMPLOYEE').replace(/[^a-zA-Z0-9]+/g, '_').toUpperCase();
+      const dateLabel = (request.return_date || request.actual_return_date || 'date');
+      downloadBlob(blob, `Rejoining_${safe}_${dateLabel}.pdf`);
       setDownloaded(true);
     } catch (e) {
       setError(e?.message || 'Could not generate the report.');
@@ -178,7 +217,7 @@ export default function RejoiningApprovedModal({ request, empMap, onClose }) {
               ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</>
               : downloaded
                 ? <><CheckCircle2 className="w-4 h-4" style={{ color: '#047857' }} /> Report downloaded</>
-                : <><Download className="w-4 h-4" /> Download report (.docx)</>
+                : <><Download className="w-4 h-4" /> Download report (PDF)</>
             }
           </button>
           <button
@@ -203,7 +242,7 @@ export default function RejoiningApprovedModal({ request, empMap, onClose }) {
 
         {/* Tip */}
         <div className="px-5 pb-5 text-[11px]" style={{ color: '#1F1B16', opacity: 0.7 }}>
-          Tip: download the report first, then open the email draft and attach the .docx before sending. Email attachments cannot be pre-filled by the browser.
+          Tip: download the report first, then open the email draft and attach the PDF before sending. Email attachments cannot be pre-filled by the browser.
         </div>
       </div>
     </div>,
