@@ -363,54 +363,12 @@ export default function PersonalDashboard({
         );
       })()}
 
-      {/* SICK LEAVE BALANCE — Article 117 entitlement ribbon.
-          Surfaces only when the staff has used at least one sick day
-          this year. Showing it for staff with zero sick days would be
-          noise. Three-segment progress bar reflects the 30/60/30
-          structure of the law: full pay → partial → unpaid. */}
-      {sickYtd > 0 && (
-        <section
-          className="rounded-2xl border p-4 sm:p-5"
-          style={{ background: sickTier.bg, borderColor: sickTier.color, borderWidth: '1px' }}
-        >
-          <div className="flex items-start justify-between gap-3 flex-wrap">
-            <div className="min-w-0">
-              <div className="text-[10px] tracking-[0.25em] font-bold" style={{ color: sickTier.color }}>
-                SICK LEAVE BALANCE · {new Date().getFullYear()}
-              </div>
-              <div className="mt-1 text-sm" style={{ color: sickTier.color, fontWeight: 600 }}>
-                {sickYtd} {sickYtd === 1 ? 'day' : 'days'} used
-                <span style={{ opacity: 0.65, fontWeight: 500 }}> · {sickTier.label}</span>
-              </div>
-              <div className="text-[11px] mt-0.5" style={{ color: '#0A0A0A', opacity: 0.7 }}>
-                {sickTier.paidPct === 100 && sickTier.daysLeft > 0 &&
-                  `${sickTier.daysLeft} days remain at full pay (Article 117).`}
-                {sickTier.paidPct === 75 && sickTier.daysLeft > 0 &&
-                  `${sickTier.daysLeft} days remain at 75% pay before the unpaid tier.`}
-                {sickTier.paidPct === 0 && sickTier.daysLeft > 0 &&
-                  `${sickTier.daysLeft} days of unpaid sick entitlement remain.`}
-                {sickTier.daysLeft === 0 &&
-                  'You\'ve used your full annual sick entitlement under Article 117.'}
-              </div>
-            </div>
-          </div>
-          {/* Three-segment progress bar — visually maps the 30/60/30
-              structure. Each segment fills to show consumption within
-              its tier; saturated bars indicate tier exhaustion. */}
-          <div className="mt-3 flex gap-1.5" style={{ height: 8 }}>
-            <Segment used={Math.min(sickYtd, 30)}        cap={30} color="#0F4C2A" />
-            <Segment used={Math.max(0, Math.min(sickYtd - 30, 60))} cap={60} color="#A16207" />
-            <Segment used={Math.max(0, Math.min(sickYtd - 90, 30))} cap={30} color="#B91C1C" />
-          </div>
-          <div className="mt-1.5 flex justify-between text-[9px] tracking-wider" style={{ color: '#0A0A0A', opacity: 0.55 }}>
-            <span>0</span><span>30 (full)</span><span>90 (partial)</span><span>120</span>
-          </div>
-        </section>
-      )}
-      {/* TILE GRID — 3 cols. Row 1: leave-context tiles (annual / next /
-          pending). Row 2: permission tiles (late / early adjacent) +
-          evaluation flag. Late + Early sit beside each other so the
-          combined-quota story reads naturally. */}
+      {/* TILE GRID — 3 cols. Row 1: leave-context tiles (annual / sick /
+          next / pending). Row 2: permission tiles (late / early
+          adjacent) + evaluation flag. Late + Early sit beside each
+          other so the combined-quota story reads naturally. Sick sits
+          beside Annual since they're both Article-117/labor-law
+          entitlement balances and staff read them together. */}
       <section className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
         <ColorTile
           accent="#008C9E"
@@ -418,6 +376,21 @@ export default function PersonalDashboard({
           stat={remaining} unit=" days"
           desc={`Of your ${totalEntitlement}-day yearly entitlement.`}
           progress={100 - usedPct}
+        />
+        <ColorTile
+          accent={sickTier.color}
+          label="SICK LEAVE" icon={HeartPulse}
+          stat={sickYtd} unit={sickYtd === 1 ? ' day used' : ' days used'}
+          desc={
+            sickTier.daysLeft === 0
+              ? 'Quota exhausted under Article 117.'
+              : sickTier.paidPct === 100
+                ? `${sickTier.daysLeft} day${sickTier.daysLeft === 1 ? '' : 's'} remain at full pay (Art. 117).`
+                : sickTier.paidPct === 75
+                  ? `${sickTier.daysLeft} day${sickTier.daysLeft === 1 ? '' : 's'} remain at 75% pay.`
+                  : `${sickTier.daysLeft} unpaid day${sickTier.daysLeft === 1 ? '' : 's'} remain.`
+          }
+          progress={Math.min(100, (sickYtd / 120) * 100)}
         />
         <ColorTile
           accent="#4F46E5"
@@ -797,6 +770,10 @@ function DigestStat({ label, primary, secondary, color }) {
 // Single segment of the sick-balance progress bar. Each segment maps
 // to one Article 117 tier (full pay / partial pay / unpaid). The
 // fill width reflects how much of that tier the staff has consumed.
+// 2026-05-16 (Nadeem): the banner this drove has been replaced with
+// a tile in the main grid (uses the standard ColorTile progress bar).
+// Helper kept for now in case the tile design grows back into a
+// three-segment bar; if it doesn't, drop it on next cleanup pass.
 function Segment({ used, cap, color }) {
   const pct = cap > 0 ? Math.min(100, (used / cap) * 100) : 0;
   return (
