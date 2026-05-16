@@ -534,11 +534,14 @@ export default function ReviewerPanel({ me, urgentCertEmpIds, onDataChange }) {
           setRecentLeaveDecisions([]);
         }
 
-        // Rejoining queue (pending_hr — manager has approved, awaiting Bashaier)
+        // Rejoining queue (pending_hr — manager has approved, awaiting Bashaier).
+        // SICK excluded — no rejoining workflow for medical absences
+        // (Nadeem 2026-05-16). History query is left untouched since
+        // legacy approvals on sick rows should still surface.
         try {
           const rq = await directGet(
             'leave_requests',
-            `select=*&stage=eq.approved&return_stage=eq.pending_hr&order=return_manager_decided_at.asc&limit=200`,
+            `select=*&stage=eq.approved&return_stage=eq.pending_hr&leave_type_id=neq.sick&order=return_manager_decided_at.asc&limit=200`,
             { timeoutMs: 10000 },
           );
           setRejoinQueue(Array.isArray(rq) ? rq : []);

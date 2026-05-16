@@ -65,9 +65,12 @@ export default function PendingReturnsCard({ me, employees, scope = 'manager' })
 
       if (scope === 'manager') {
         // Pending-manager rejoining requests from direct reports.
+        // SICK excluded — medical absences don't go through the
+        // rejoining workflow (Nadeem 2026-05-16).
         data = await directGet(
           'leave_requests',
           `select=*&stage=eq.approved&return_stage=eq.pending_manager` +
+          `&leave_type_id=neq.sick` +
           `&employee_id=in.(${directReportIds.map(id => `"${id}"`).join(',')})` +
           `&order=return_submitted_at.asc&limit=200`,
           { timeoutMs: 10000 },
@@ -79,6 +82,8 @@ export default function PendingReturnsCard({ me, employees, scope = 'manager' })
         //                       she sees these so she has the same early visibility
         //                       managers get the moment a request comes in)
         //   c) end_date+1 < today AND return_stage IS NULL (no-shows)
+        // SICK excluded across all three — no rejoining workflow for
+        // medical absences (Nadeem 2026-05-16).
         const cutoff = new Date();
         cutoff.setDate(cutoff.getDate() - NO_SHOW_THRESHOLD_DAYS);
         const cutoffISO = cutoff.toISOString().slice(0, 10);
@@ -86,18 +91,21 @@ export default function PendingReturnsCard({ me, employees, scope = 'manager' })
           directGet(
             'leave_requests',
             `select=*&stage=eq.approved&return_stage=eq.pending_hr` +
+            `&leave_type_id=neq.sick` +
             `&order=return_manager_decided_at.asc&limit=200`,
             { timeoutMs: 10000 },
           ).catch(() => []),
           directGet(
             'leave_requests',
             `select=*&stage=eq.approved&return_stage=eq.pending_manager` +
+            `&leave_type_id=neq.sick` +
             `&order=return_submitted_at.asc&limit=200`,
             { timeoutMs: 10000 },
           ).catch(() => []),
           directGet(
             'leave_requests',
             `select=*&stage=eq.approved&return_stage=is.null&end_date=lte.${cutoffISO}` +
+            `&leave_type_id=neq.sick` +
             `&order=end_date.asc&limit=200`,
             { timeoutMs: 10000 },
           ).catch(() => []),

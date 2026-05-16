@@ -577,7 +577,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
     if (isAdmin) {
       count += (requests    || []).filter(r => /^pending/.test(r.stage || '')).length;
       count += (permissions || []).filter(p => /^pending/.test(p.stage || '')).length;
-      count += (requests    || []).filter(r => r.return_stage === 'pending_hr' || r.return_stage === 'pending_manager').length;
+      count += (requests    || []).filter(r => r.leave_type_id !== 'sick' && (r.return_stage === 'pending_hr' || r.return_stage === 'pending_manager')).length;
       // Urgent: pending_certificate sick rows where staff is back at
       // work. These don't show in /^pending/ regex above (pending_hr
       // / pending_manager only) but they need Bashaier's nudge action.
@@ -588,15 +588,17 @@ export default function AppShell({ session, me, onRefreshMe }) {
       // Bashaier sees pending_hr rejoinings as actionable AND
       // pending_manager rejoinings as informational (per the
       // landing-page card design). The badge surfaces both so she
-      // never misses the new ones rolling in.
-      count += (requests    || []).filter(r => r.return_stage === 'pending_hr' || r.return_stage === 'pending_manager').length;
+      // never misses the new ones rolling in. Sick rows are excluded —
+      // medical absences don't go through the rejoining workflow
+      // (Nadeem 2026-05-16).
+      count += (requests    || []).filter(r => r.leave_type_id !== 'sick' && (r.return_stage === 'pending_hr' || r.return_stage === 'pending_manager')).length;
       // Urgent back-at-work cert chases — see comment above.
       count += urgentCertEmpIds.size;
     } else if (directReportIds.size > 0) {
       // Manager — only their direct reports' pending_manager rows
       count += (requests    || []).filter(r => r.stage === 'pending_manager' && directReportIds.has(r.employee_id)).length;
       count += (permissions || []).filter(p => p.stage === 'pending_manager' && directReportIds.has(p.employee_id)).length;
-      count += (requests    || []).filter(r => r.return_stage === 'pending_manager' && directReportIds.has(r.employee_id)).length;
+      count += (requests    || []).filter(r => r.leave_type_id !== 'sick' && r.return_stage === 'pending_manager' && directReportIds.has(r.employee_id)).length;
     }
     return count;
   }, [requests, permissions, employees, me, isAdmin, isHrReviewer, urgentCertEmpIds]);

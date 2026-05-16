@@ -46,11 +46,14 @@ export default function MyRejoiningCard({ me, employees = [] }) {
     try {
       // All my approved leaves with end_date past, that are either
       // unsubmitted, pending review, or rejected. Hide rows already at
-      // return_stage='approved' (workflow complete).
+      // return_stage='approved' (workflow complete). SICK is excluded —
+      // medical absences are documented by the Sehhaty cert + attendance
+      // grid; there's no separate rejoining step (Nadeem 2026-05-16).
       const data = await directGet(
         'leave_requests',
         `select=*&employee_id=eq.${encodeURIComponent(me.id)}` +
         `&stage=eq.approved&end_date=lt.${todayISO}` +
+        `&leave_type_id=neq.sick` +
         `&or=(return_stage.is.null,return_stage.in.(pending_manager,pending_hr,rejected_by_manager,rejected_by_hr))` +
         `&order=end_date.desc&limit=50`,
         { timeoutMs: 10000 }
