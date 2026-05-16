@@ -183,9 +183,14 @@ export default function HrApprovalModal({ request, employee, manager, substitute
 
   // Clipboard paste — Bashaier presses Cmd+V (or Ctrl+V) anywhere
   // in the modal. We listen on the document while the modal is
-  // open so she doesn't have to click a specific zone first.
+  // open so she doesn't have to click a specific zone first. 2026-05-16
+  // (Nadeem): broadened from confirmOpen-only to the entire review
+  // step for sick leaves — she should be able to paste the Sehhaty
+  // screenshot the moment she opens the modal, not after manually
+  // clicking 'I've verified this on Sehhaty' first.
   useEffect(() => {
-    if (!confirmOpen) return undefined;
+    const listening = confirmOpen || (step === 'review' && isSick && (request?.sehhaty_code || verifiedAt));
+    if (!listening) return undefined;
     const onPaste = (e) => {
       const items = e.clipboardData?.items;
       if (!items) return;
@@ -202,7 +207,7 @@ export default function HrApprovalModal({ request, employee, manager, substitute
     };
     document.addEventListener('paste', onPaste);
     return () => document.removeEventListener('paste', onPaste);
-  }, [confirmOpen, applyOcrToForm]);
+  }, [confirmOpen, step, isSick, request?.sehhaty_code, verifiedAt, applyOcrToForm]);
 
   const onDropImage = useCallback((e) => {
     e.preventDefault();
@@ -706,11 +711,31 @@ export default function HrApprovalModal({ request, employee, manager, substitute
                       </div>
                     </div>
                     <div>
+                      <div className="text-[9px] tracking-wider opacity-70 mb-0.5">IQAMA / NATIONAL ID</div>
+                      <div className="font-mono text-sm" style={{ fontWeight: 700 }}>
+                        {employee?.iqama_id || <span className="opacity-50 italic">not on file</span>}
+                      </div>
+                    </div>
+                    <div>
                       <div className="text-[9px] tracking-wider opacity-70 mb-0.5">ISSUED</div>
                       <div className="text-sm">
                         {request.sehhaty_issue_date
                           ? fmtDate(new Date(request.sehhaty_issue_date))
                           : <span className="opacity-50 italic">not provided</span>}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] tracking-wider opacity-70 mb-0.5">PERIOD ON FILE</div>
+                      <div className="text-sm">
+                        {request.days || '—'} day{request.days === 1 ? '' : 's'}
+                        {request.start_date && (
+                          <span className="opacity-70 ml-1">
+                            ({fmtDate(new Date(request.start_date))}
+                            {request.end_date && request.end_date !== request.start_date
+                              ? ' → ' + fmtDate(new Date(request.end_date))
+                              : ''})
+                          </span>
+                        )}
                       </div>
                     </div>
                     {request.sehhaty_clinic && (
@@ -747,26 +772,220 @@ export default function HrApprovalModal({ request, employee, manager, substitute
                   {!verifiedAt && (
                     <>
                       <div className="text-[11px] mb-2 opacity-80">
-                        Open Sehhaty, enter the service code above, confirm the certificate matches this request, then click below.
+                        Open Sehhaty, search by either the service code or the Iqama above, then paste a screenshot of the result here. The system will read the screenshot, cross-check against this request, and let you verify and approve in one click.
                       </div>
+
+                      {/* Inline paste / drop zone — accepts a Sehhaty
+                          screenshot directly from clipboard (Cmd+V),
+                          drag-and-drop, or file picker. OCR runs
+                          locally in the browser; the image never
+                          leaves the device. */}
+                      <div
+                        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                        onDrop={onDropImage}
+                        className="rounded-lg p-3 mb-2"
+                        style={{
+                          background: '#FFFFFF',
+                          border: '1.5px dashed ' + (ocrLastRun ? '#86EFAC' : '#FCD34D'),
+                          cursor: 'pointer',
+                        }}
+                        onClick={() => document.getElementById('hr-ocr-file-input')?.click()}
+                        title="Click to choose a file, drop one here, or just press Cmd+V to paste"
+                      >
+                        <input id="hr-ocr-file-input" type="file" accept="image/*"
+                          style={{ display: 'none' }} onChange={onPickImage} />
+                        {!ocrThumb && !ocrBusy && (
+                          <div className="flex items-center gap-3">
+                            <div style={{
+                              width: 40, height: 40, borderRadius: 8,
+                              background: '#FEF3C7', display: 'flex',
+                              alignItems: 'center', justifyContent: 'center',
+                              flexShrink: 0,
+                            }}>
+                              <Mail className="w-5 h-5" style={{ color: '#B45309' }}/>
+                            </div>
+                            <div className="text-[11px]">
+                              <div style={{ fontWeight: 700, color: '#0A0A0A' }}>
+                                Paste the Sehhaty screenshot here
+                              </div>
+                              <div style={{ color: '#1F1B16', opacity: 0.7 }}>
+                                Press Cmd+V (or Ctrl+V), drop an image, or click to choose a file.
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        {ocrBusy && (
+                          <div className="flex items-center gap-3 text-[11px]">
+                            <Loader2 className="w-4 h-4 animate-spin" style={{ color: '#B45309' }}/>
+                            <span style={{ color: '#0A0A0A' }}>Reading screenshot…</span>
+                          </div>
+                        )}
+                        {ocrThumb && !ocrBusy && (
+                          <div className="flex items-start gap-3">
+                            <img src={ocrThumb} alt="screenshot preview"
+                              style={{
+                                width: 80, height: 80, objectFit: 'cover',
+                                borderRadius: 6, border: '1px solid var(--border-soft, #E8E5D8)',
+                                flexShrink: 0,
+                              }}/>
+                            <div className="text-[11px] flex-1 min-w-0">
+                              {ocrLastRun ? (
+                                <>
+                                  <div style={{ fontWeight: 700, color: '#0A0A0A' }}>
+                                    Extracted: {ocrLastRun.fieldsFound.join(', ') || 'no fields'}
+                                  </div>
+                                  <div style={{ color: '#1F1B16', opacity: 0.7 }}>
+                                    OCR confidence: {Math.round((ocrLastRun.confidence || 0))}%.
+                                    {' '}Paste a different image to re-run.
+                                  </div>
+                                </>
+                              ) : (
+                                <div style={{ color: '#1F1B16', opacity: 0.7 }}>
+                                  Preview only — could not read structured fields.
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {ocrError && (
+                        <div className="text-[10px] mt-1 mb-2 px-2 py-1.5 rounded"
+                          style={{ background: '#FEE2E2', color: '#7F1D1D', border: '1px solid #FCA5A5' }}>
+                          ⚠ {ocrError}
+                        </div>
+                      )}
+
+                      {/* Extracted-field summary — only shown after a
+                          successful OCR pass. Bashaier can see at a
+                          glance what was read and cross-check it
+                          against the request before approving. */}
+                      {ocrLastRun && ocrLastRun.fieldsFound.length > 0 && (
+                        <div className="rounded-lg p-2.5 mb-2 text-[11px]"
+                          style={{ background: '#FFFFFF', border: '1px solid var(--border-soft, #E8E5D8)' }}>
+                          <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                            {seenName && (
+                              <div><span className="opacity-60">Name:</span> <strong>{seenName}</strong></div>
+                            )}
+                            {seenIdNumber && (
+                              <div>
+                                <span className="opacity-60">Iqama:</span>{' '}
+                                <strong className="font-mono">{seenIdNumber}</strong>
+                                {employee?.iqama_id && (
+                                  seenIdNumber === employee.iqama_id
+                                    ? <span style={{ color: '#047857' }}> ✓</span>
+                                    : <span style={{ color: '#B91C1C' }}> ✗ mismatch</span>
+                                )}
+                              </div>
+                            )}
+                            {seenStart && (
+                              <div>
+                                <span className="opacity-60">From:</span> <strong>{seenStart}</strong>
+                                {request.start_date && (
+                                  seenStart === request.start_date
+                                    ? <span style={{ color: '#047857' }}> ✓</span>
+                                    : <span style={{ color: '#B91C1C' }}> ✗</span>
+                                )}
+                              </div>
+                            )}
+                            {seenEnd && (
+                              <div>
+                                <span className="opacity-60">To:</span> <strong>{seenEnd}</strong>
+                                {request.end_date && (
+                                  seenEnd === request.end_date
+                                    ? <span style={{ color: '#047857' }}> ✓</span>
+                                    : <span style={{ color: '#B91C1C' }}> ✗</span>
+                                )}
+                              </div>
+                            )}
+                            {seenDays && (
+                              <div>
+                                <span className="opacity-60">Days:</span> <strong>{seenDays}</strong>
+                                {request.days != null && (
+                                  Number(seenDays) === Number(request.days)
+                                    ? <span style={{ color: '#047857' }}> ✓</span>
+                                    : <span style={{ color: '#B91C1C' }}> ✗</span>
+                                )}
+                              </div>
+                            )}
+                            {seenDoctor && (
+                              <div><span className="opacity-60">Doctor:</span> {seenDoctor}</div>
+                            )}
+                            {seenSpecialty && (
+                              <div><span className="opacity-60">Specialty:</span> {seenSpecialty}</div>
+                            )}
+                            {seenIssueDate && (
+                              <div><span className="opacity-60">Issued:</span> {seenIssueDate}</div>
+                            )}
+                          </div>
+                          {crossCheck.mismatches.length > 0 && (
+                            <div className="mt-2 pt-2 border-t text-[10px]" style={{ borderColor: 'var(--border-soft, #E8E5D8)' }}>
+                              {crossCheck.mismatches.map((m, i) => (
+                                <div key={i} style={{
+                                  color: m.severity === 'error' ? '#B91C1C' : '#92400E',
+                                }}>
+                                  {m.severity === 'error' ? '✗' : '⚠'} {m.message || m.field}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       <div className="flex flex-wrap gap-2">
                         <a href={SEHHATY_VERIFY_URL} target="_blank" rel="noopener noreferrer"
                           className="text-[11px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border"
                           style={{ borderColor: '#B45309', background: '#FFFFFF', color: '#B45309', fontWeight: 600 }}>
                           <ExternalLink className="w-3 h-3"/> Open Sehhaty
                         </a>
-                        <button onClick={openVerifyConfirm}
-                          disabled={codeDiag.severity === 'error'}
-                          title={codeDiag.severity === 'error' ? codeDiag.messages[0] : 'Confirm the certificate is valid on Sehhaty'}
+                        {/* Primary action: only enabled when OCR has
+                            populated the seen-* fields AND the
+                            cross-check produced no blocking errors.
+                            Single click writes the verification +
+                            chains into the final approval + email
+                            draft (same flow as 'Verify & approve'
+                            from the legacy confirm modal). */}
+                        <button
+                          onClick={() => applyVerification({ chainApprove: true })}
+                          disabled={!ocrLastRun || !crossCheck.allOk || verifying}
+                          title={
+                            !ocrLastRun
+                              ? 'Paste the Sehhaty screenshot first'
+                              : (!crossCheck.allOk
+                                  ? 'Resolve the mismatches above'
+                                  : 'Verify the cert and approve this leave')
+                          }
                           className="text-[11px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full"
                           style={{
                             background: '#0F4C2A', color: '#FFFFFF',
-                            opacity: (codeDiag.severity === 'error') ? 0.5 : 1,
-                            cursor: (codeDiag.severity === 'error') ? 'not-allowed' : 'pointer',
+                            opacity: (!ocrLastRun || !crossCheck.allOk || verifying) ? 0.45 : 1,
+                            cursor: (!ocrLastRun || !crossCheck.allOk || verifying) ? 'not-allowed' : 'pointer',
                             fontWeight: 600,
-                          }}>
-                          <Check className="w-3 h-3"/> I've verified this on Sehhaty
+                          }}
+                        >
+                          {verifying
+                            ? <><Loader2 className="w-3 h-3 animate-spin"/> Approving…</>
+                            : <><Check className="w-3 h-3"/> Verify & approve from screenshot</>}
                         </button>
+                        {/* Fallback: opens the legacy confirm modal
+                            so Bashaier can edit fields by hand if the
+                            OCR mis-read something. Hidden once OCR
+                            has produced clean cross-check, since at
+                            that point the primary button does the job. */}
+                        {(!ocrLastRun || !crossCheck.allOk) && (
+                          <button onClick={openVerifyConfirm}
+                            disabled={codeDiag.severity === 'error'}
+                            title={codeDiag.severity === 'error' ? codeDiag.messages[0] : 'Open the cross-check form to type values manually'}
+                            className="text-[11px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border"
+                            style={{
+                              borderColor: 'var(--border-soft, #E8E5D8)',
+                              background: '#FFFFFF', color: '#1F1B16',
+                              opacity: (codeDiag.severity === 'error') ? 0.5 : 1,
+                              cursor: (codeDiag.severity === 'error') ? 'not-allowed' : 'pointer',
+                            }}>
+                            Cross-check manually
+                          </button>
+                        )}
                       </div>
                       {request.sehhaty_code && codeDiag.severity === 'warn' && (
                         <div className="text-[10px] mt-2 px-2 py-1.5 rounded"

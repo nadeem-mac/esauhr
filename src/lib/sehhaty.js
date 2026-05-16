@@ -224,6 +224,23 @@ export function crossCheckSehhaty({ request, employee, seen }) {
     notes.push('Doctor name not recorded — useful for the audit trail.');
   }
 
+  // Iqama / National ID — must match employee.iqama_id when both are
+  // present. A mismatch here means the screenshot is for a different
+  // person (e.g. Bashaier pasted the wrong window), which is the
+  // single most dangerous form of cross-verification error. Treat
+  // as a hard block.
+  const empIqama = (employee?.iqama_id || '').toString().replace(/\s+/g, '');
+  const seenIq   = (seen.idNumber       || '').toString().replace(/\s+/g, '');
+  if (empIqama && seenIq && empIqama !== seenIq) {
+    mismatches.push({
+      field: 'Iqama / National ID',
+      requested: empIqama,
+      seen: seenIq,
+      severity: 'block',
+      message: `Iqama on the screenshot (${seenIq}) does not match the employee's record (${empIqama}). Wrong person?`,
+    });
+  }
+
   const blockers = mismatches.filter(m => m.severity === 'block');
   return {
     allOk: blockers.length === 0,
