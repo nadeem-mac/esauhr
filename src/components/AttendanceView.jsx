@@ -23,6 +23,7 @@ import ManagerRollupCard from './ManagerRollupCard.jsx';
 import EvaluationExplainModal from './EvaluationExplainModal.jsx';
 import SilentAbsencesCard from './SilentAbsencesCard.jsx';
 import ShiftStaffAttendanceReportCard from './ShiftStaffAttendanceReportCard.jsx';
+import ShiftComplianceCard from './ShiftComplianceCard.jsx';
 
 // ─── Error Boundary for AttendanceView sections ───────────────────────
 // Without this, a render-time exception anywhere in the tree under
@@ -5259,6 +5260,8 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         offRosterEntries={detection.shiftOffDay || []}
         monthlyShiftsByEmp={monthlyShiftsByEmp}
         onRosterRefresh={() => setRosterRefreshTick(t => t + 1)}
+        me={me}
+        csvDate={csvDate}
       />
     ),
     ...(detection.weekend.length ? { weekend: buildWeekendPanel() } : {}),
@@ -6333,6 +6336,7 @@ function UnifiedShiftStaffPanel({
   offRosterCount, offRosterEntries,
   monthlyShiftsByEmp,
   onRosterRefresh,
+  me, csvDate,
 }) {
   const lateCount   = (detection.late  || []).filter(e => !!e.isCustomShift).length;
   const earlyCount  = (detection.early || []).filter(e => !!e.isCustomShift).length;
@@ -6423,6 +6427,20 @@ function UnifiedShiftStaffPanel({
             onToggle={() => {}}
           />
         </div>
+      )}
+
+      {/* 1b. Shift compliance — monthly catch-and-report for staff who
+          WERE assigned but did not perform correctly (late, no
+          punch-out, absent, early, wrong window). Sits between the
+          roster card (manager did not assign) and the daily late /
+          early / absent cards (today's misses) — same scope, monthly
+          rollup, with per-manager and per-staff email composers. */}
+      {hasShiftStaff && (
+        <ShiftComplianceCard
+          employees={Object.values(empById).filter(e => e && e.id)}
+          me={me}
+          monthKey={csvDate ? csvDate.slice(0, 7) : null}
+        />
       )}
 
       {/* 2. Shift absence — most serious; full-day no-show on an
