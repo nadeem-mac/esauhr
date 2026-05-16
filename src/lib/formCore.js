@@ -332,7 +332,8 @@ export function drawPolicyBullets(pdf, y, bullets) {
 }
 
 // Four-cell signature grid. Names auto-fit (9pt→8pt→7pt) and wrap to
-// two lines if even 7pt overflows the cell width.
+// two lines if even 7pt overflows the cell width. Label, name, and
+// subtitle are all centered horizontally within each cell.
 export function drawSignatures(pdf, y, cells) {
   const cellW  = CONTENT_W / 4;
   const cellH  = 35.4;
@@ -341,11 +342,12 @@ export function drawSignatures(pdf, y, cells) {
     { color: C.border, width: 0.3 });
   for (let i = 0; i < cells.length; i++) {
     const cx = MARGIN_X + i * cellW;
+    const cellCenterX = cx + cellW / 2;
     if (i > 0) {
       drawLine(pdf, cx, y, cx, y + cellH, { color: C.border, width: 0.15 });
     }
-    drawText(pdf, cells[i].label, cx + 2, y + 4.5, {
-      size: 8, color: C.muted, style: 'bold',
+    drawText(pdf, cells[i].label, cellCenterX, y + 4.5, {
+      size: 8, color: C.muted, style: 'bold', align: 'center',
     });
     const lineY = y + cellH - 11;
     drawLine(pdf, cx + 2, lineY, cx + cellW - 2, lineY,
@@ -368,12 +370,12 @@ export function drawSignatures(pdf, y, cells) {
     }
     const lineH = nameSize * 0.45;
     nameLines.forEach((ln, idx) => {
-      drawText(pdf, ln, cx + 2,
+      drawText(pdf, ln, cellCenterX,
         lineY + 5 - (nameLines.length - 1 - idx) * lineH,
-        { size: nameSize, color: C.text, style: 'bold' });
+        { size: nameSize, color: C.text, style: 'bold', align: 'center' });
     });
-    drawText(pdf, cells[i].subtitle, cx + 2, lineY + 9, {
-      size: 7.5, color: C.muted, style: 'italic',
+    drawText(pdf, cells[i].subtitle, cellCenterX, lineY + 9, {
+      size: 7.5, color: C.muted, style: 'italic', align: 'center',
     });
   }
   drawLine(pdf, MARGIN_X, y + cellH, MARGIN_X + CONTENT_W, y + cellH,
