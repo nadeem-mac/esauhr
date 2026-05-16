@@ -12,8 +12,8 @@
 
 import {
   newPdf, loadLogoDataUrl, generateQRCode,
-  drawHeader, drawTitle, drawSectionHeader, drawTwoColTable,
-  drawLabelValueTable, drawPolicyBullets, drawSignatures, drawGeneratedStamp,
+  drawHeader, drawPolicyBullets, drawSignatures, drawGeneratedStamp,
+  drawText, drawLine, drawRect,
   C, MARGIN_X, MARGIN_T, PAGE_W, PAGE_H, CONTENT_W,
   DEPT_NAMES, LOC_NAMES, CEO_NAME, CEO_TITLE_EN, HR_DEFAULT,
   fmtDateLong, fmtDateShort, shortRef,
@@ -31,6 +31,74 @@ const PERMISSION_TYPES = [
   { key: 'late_arrival',    label: 'Late Arrival' },
   { key: 'early_departure', label: 'Early Departure' },
 ];
+
+// ─── relaxed layout helpers ───────────────────────────────────────────────
+// Same vertical rhythm as rejoiningReportPdf — single-column key-value
+// rows with generous heights, taller section header bands, full A4 fit.
+// Sizing tuned to fit 9 single rows + statement + 5 policy bullets +
+// signatures on a single A4 page without overflow.
+
+function drawTitle(pdf, y, titleText) {
+  drawText(pdf, titleText, PAGE_W / 2, y + 7, {
+    size: 20, color: C.brand, style: 'bold', align: 'center',
+  });
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(20);
+  const tw = pdf.getTextWidth(titleText);
+  drawLine(pdf, (PAGE_W - tw) / 2, y + 10, (PAGE_W + tw) / 2, y + 10,
+    { color: C.brand, width: 0.5 });
+  return y + 12;
+}
+
+function drawSectionHeader(pdf, y, text) {
+  const h = 9;
+  drawRect(pdf, MARGIN_X, y, CONTENT_W, h, { fill: C.accent });
+  drawRect(pdf, MARGIN_X, y, 2.2, h, { fill: C.brand });
+  drawText(pdf, text, MARGIN_X + 7, y + 6.2, {
+    size: 11, color: C.brand, style: 'bold',
+  });
+  return y + h + 1.5;
+}
+
+function drawSingleRow(pdf, y, label, value, { emphasis = false } = {}) {
+  const labelW  = 60;
+  const valueW  = CONTENT_W - labelW - 4;
+  const wrapped = pdf.splitTextToSize(String(value ?? '—'), valueW);
+  const lineCount = Array.isArray(wrapped) ? wrapped.length : 1;
+  const rowH = Math.max(8.5, lineCount * 4.5 + 2.5);
+  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
+    { color: C.border, width: 0.2 });
+  drawText(pdf, label, MARGIN_X + 3, y + 6, {
+    size: 10, color: C.muted, style: 'bold',
+  });
+  pdf.setFont('helvetica', emphasis ? 'bold' : 'normal');
+  pdf.setFontSize(11);
+  pdf.setTextColor(...C.text);
+  pdf.text(wrapped, MARGIN_X + labelW + 2, y + 6);
+  drawLine(pdf, MARGIN_X, y + rowH, MARGIN_X + CONTENT_W, y + rowH,
+    { color: C.border, width: 0.2 });
+  return y + rowH;
+}
+
+function drawReasonRow(pdf, y, label, paragraph) {
+  const labelW  = 60;
+  const valueW  = CONTENT_W - labelW - 4;
+  const wrapped = pdf.splitTextToSize(String(paragraph || '—'), valueW);
+  const lineCount = Array.isArray(wrapped) ? wrapped.length : 1;
+  const rowH = Math.max(16, lineCount * 4.8 + 3);
+  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
+    { color: C.border, width: 0.2 });
+  drawText(pdf, label, MARGIN_X + 3, y + 6, {
+    size: 10, color: C.muted, style: 'bold',
+  });
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(10.5);
+  pdf.setTextColor(...C.text);
+  pdf.text(wrapped, MARGIN_X + labelW + 2, y + 6);
+  drawLine(pdf, MARGIN_X, y + rowH, MARGIN_X + CONTENT_W, y + rowH,
+    { color: C.border, width: 0.2 });
+  return y + rowH;
+}
 
 export async function generatePermissionRequestPdfBlob({
   request = {},
@@ -50,63 +118,59 @@ export async function generatePermissionRequestPdfBlob({
 
   let y = MARGIN_T;
   y = drawHeader(pdf, y, { logoUrl, qrDataUrl, request, refPrefix: 'PR' });
-  y += 2;
-  // Title is type-specific so HR / the recipient can identify what
-  // they're looking at without reading the body. Falls back to plain
-  // 'Permission Request' if type is missing.
+  y += 4;
+
+  // Title — type-specific so HR can identify the kind at a glance.
   const typeLabel = PERMISSION_TYPES.find(t => t.key === permission.type)?.label;
   const titleText = typeLabel ? `Permission Request — ${typeLabel}` : 'Permission Request';
   y = drawTitle(pdf, y, titleText);
-  y += 2;
+  y += 4;
 
-  // Employee Information
+  // EMPLOYEE INFORMATION — single-column rows, one field per line
   y = drawSectionHeader(pdf, y, 'EMPLOYEE INFORMATION');
   const deptLabel = position.department
-    ? `${position.department}${DEPT_NAMES[position.department] ? ' — ' + DEPT_NAMES[position.department] : ''}`
+    ? `${position.department}${DEPT_NAMES[position.department] ? '  —  ' + DEPT_NAMES[position.department] : ''}`
     : '—';
   const locLabel = position.location
-    ? `${position.location}${LOC_NAMES[position.location] ? ' — ' + LOC_NAMES[position.location] : ''}`
+    ? `${position.location}${LOC_NAMES[position.location] ? '  —  ' + LOC_NAMES[position.location] : ''}`
     : '—';
-  // Designation falls back to 'Department Member' the same way the
-  // vacation and rejoining forms do — that's the default non-supervisory
-  // title at ESAU. Avoids showing '—' for staff whose record doesn't
-  // carry the field explicitly.
   const designation = position.designation
                    || employee.designation
                    || 'Department Member';
-  y = drawTwoColTable(pdf, y, [
-    [['Full name',   employee.name],    ['PSN ID',     employee.id]],
-    [['Designation', designation],      ['Department', deptLabel]],
-    [['Location',    locLabel],         ['Reports to', manager?.name]],
-  ]);
-  y += 3;
+  y = drawSingleRow(pdf, y, 'Full name',   employee.name, { emphasis: true });
+  y = drawSingleRow(pdf, y, 'PSN ID',      employee.id);
+  y = drawSingleRow(pdf, y, 'Designation', designation);
+  y = drawSingleRow(pdf, y, 'Department',  deptLabel);
+  y = drawSingleRow(pdf, y, 'Location',    locLabel);
+  y = drawSingleRow(pdf, y, 'Reports to',  manager?.name);
+  y += 4;
 
-  // Permission Details — render from the permission bag. Field renderers
-  // already swallow nulls (drawTwoColTable shows '—'); duration prefers
-  // minutes value when available.
+  // PERMISSION DETAILS — combined From/To row, separate Date / Duration /
+  // Notice rows. Type is in the title so we don't repeat it here.
   y = drawSectionHeader(pdf, y, 'PERMISSION DETAILS');
-  y = drawTwoColTable(pdf, y, [
-    [['Date',           permission.date ? fmtDateLong(permission.date) : '—'],
-     ['Duration',       permission.duration_min ? `${permission.duration_min} minutes` : '—']],
-    [['From',           permission.from_time || '—'],
-     ['To',             permission.to_time || '—']],
-    [['Notice',         permission.urgency === 'urgent' ? 'Urgent (<24h)' : 'Planned (at least 24h)'],
-     ['Permission type', typeLabel || '—']],
-  ]);
-  y += 3;
+  const timeWindow = (permission.from_time && permission.to_time)
+    ? `${permission.from_time}  to  ${permission.to_time}`
+    : (permission.from_time || permission.to_time || '—');
+  const durationStr = permission.duration_min
+    ? `${permission.duration_min} minutes`
+    : '—';
+  const noticeStr = permission.urgency === 'urgent'
+    ? 'Urgent  (less than 24h notice)'
+    : 'Planned  (at least 24h notice)';
+  y = drawSingleRow(pdf, y, 'Date',       permission.date ? fmtDateLong(permission.date) : '—', { emphasis: true });
+  y = drawSingleRow(pdf, y, 'Time window', timeWindow);
+  y = drawSingleRow(pdf, y, 'Duration',   durationStr, { emphasis: true });
+  y = drawSingleRow(pdf, y, 'Notice',     noticeStr);
+  y += 4;
 
-  // Reason (single full-width field; permission_requests doesn't carry
-  // structured categories, just the free-text reason the staff typed).
+  // REASON — full-width paragraph row (taller, accommodates longer text)
   y = drawSectionHeader(pdf, y, 'REASON');
-  y = drawLabelValueTable(pdf, y, [
-    ['Details', permission.reason_details],
-  ]);
-  y += 3;
+  y = drawReasonRow(pdf, y, 'Details', permission.reason_details);
+  y += 4;
 
-  // Policy reminder
+  // POLICY REMINDER — bullets pulled from constant
   y = drawSectionHeader(pdf, y, 'POLICY REMINDER');
   y = drawPolicyBullets(pdf, y, PERMISSION_POLICY);
-  y += 3;
 
   // Signatures anchored to bottom
   const sigH = 35.4;
