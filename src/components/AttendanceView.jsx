@@ -6434,12 +6434,15 @@ function UnifiedShiftStaffPanel({
           punch-out, absent, early, wrong window). Sits between the
           roster card (manager did not assign) and the daily late /
           early / absent cards (today's misses) — same scope, monthly
-          rollup, with per-manager and per-staff email composers. */}
+          rollup, with per-manager and per-staff email composers.
+          Evaluation window: 1st of month through csvDate (the latest
+          upload date) so future-dated shifts don't count. */}
       {hasShiftStaff && (
         <ShiftComplianceCard
           employees={Object.values(empById).filter(e => e && e.id)}
           me={me}
           monthKey={csvDate ? csvDate.slice(0, 7) : null}
+          endDate={csvDate}
         />
       )}
 
