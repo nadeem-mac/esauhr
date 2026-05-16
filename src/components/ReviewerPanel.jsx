@@ -2094,8 +2094,8 @@ function HistoryItem({ req, empMap, onReopenPermission, onReopenRejoining, onReo
           <button
             type="button"
             onClick={() => onReopenLeave && onReopenLeave()}
-            className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap inline-flex items-center gap-1"
-            style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
+            className="text-[11px] px-3 py-1.5 rounded-full border opacity-90 hover:opacity-100 whitespace-nowrap inline-flex items-center gap-1 font-medium"
+            style={{ borderColor: '#86EFAC', color: 'var(--evergreen-500)', background: '#FFFFFF' }}
             title="Re-open form download and email draft"
           >
             <Mail className="w-3 h-3" /> Letter / email
@@ -2105,7 +2105,7 @@ function HistoryItem({ req, empMap, onReopenPermission, onReopenRejoining, onReo
           <button
             type="button"
             onClick={openRejectionEmail}
-            className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap inline-flex items-center gap-1"
+            className="text-[11px] px-3 py-1.5 rounded-full border opacity-90 hover:opacity-100 whitespace-nowrap inline-flex items-center gap-1 font-medium"
             style={{ borderColor: '#FCA5A5', color: '#B91C1C', background: '#FFFFFF' }}
             title="Open rejection email composer pre-filled with the reason"
           >
@@ -2116,22 +2116,22 @@ function HistoryItem({ req, empMap, onReopenPermission, onReopenRejoining, onReo
           <button
             type="button"
             onClick={onReopenPermission}
-            className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap"
-            style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
+            className="text-[11px] px-3 py-1.5 rounded-full border opacity-90 hover:opacity-100 whitespace-nowrap inline-flex items-center gap-1 font-medium"
+            style={{ borderColor: '#86EFAC', color: 'var(--evergreen-500)', background: '#FFFFFF' }}
             title="Re-open letter and email draft"
           >
-            Letter / email
+            <Mail className="w-3 h-3" /> Letter / email
           </button>
         )}
         {wasApproved && isRejoin && (
           <button
             type="button"
             onClick={onReopenRejoining}
-            className="text-[11px] px-3 py-1.5 rounded-full border opacity-80 hover:opacity-100 whitespace-nowrap"
-            style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}
+            className="text-[11px] px-3 py-1.5 rounded-full border opacity-90 hover:opacity-100 whitespace-nowrap inline-flex items-center gap-1 font-medium"
+            style={{ borderColor: '#86EFAC', color: 'var(--evergreen-500)', background: '#FFFFFF' }}
             title="Re-open report download and email draft"
           >
-            Letter / email
+            <Mail className="w-3 h-3" /> Letter / email
           </button>
         )}
       </div>
