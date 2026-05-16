@@ -48,20 +48,41 @@ let _workerPromise = null;
  * Get (or create) the Tesseract worker. Called by extractFromImage
  * but also exported separately so the modal can warm it up while
  * Bashaier is still typing, hiding the cold-start delay.
+ *
+ * 2026-05-16 (Nadeem): English-only model. Earlier this loaded
+ * ['eng', 'ara'] but the Arabic language pack (~10MB) was hanging
+ * silently on slow networks and TLS-inspected egress paths, leaving
+ * the modal stuck on 'Reading screenshot…' forever. The cross-check
+ * only needs the Latin-script fields (leave ID, Iqama, dates, day
+ * count) so English is sufficient. Arabic name / doctor / specialty
+ * are nice-to-have audit fields, not gating values.
  */
 export async function loadOcrEngine() {
   if (_workerPromise) return _workerPromise;
   _workerPromise = (async () => {
-    // Dynamic import so Tesseract isn't pulled into the main bundle
-    // — only loaded the first time someone opens the cross-check
-    // modal and uses the OCR feature. Keeps the rest of the app fast.
+    // eslint-disable-next-line no-console
+    console.info('[sehhatyOcr] loading tesseract.js…');
     const Tesseract = (await import('tesseract.js')).default;
-    // English + Arabic. Both models load from the CDN and are cached
-    // by the browser after first download. createWorker takes a
-    // string or array of language codes.
-    const worker = await Tesseract.createWorker(['eng', 'ara']);
+    // eslint-disable-next-line no-console
+    console.info('[sehhatyOcr] tesseract.js loaded, creating worker (eng)…');
+    const worker = await Tesseract.createWorker('eng', 1, {
+      logger: (m) => {
+        // Surface progress so a hanging download is visible in DevTools
+        // instead of just 'pending forever'. Throttled by Tesseract.
+        // eslint-disable-next-line no-console
+        if (m?.status) console.info('[sehhatyOcr]', m.status, m.progress != null ? `${Math.round(m.progress * 100)}%` : '');
+      },
+    });
+    // eslint-disable-next-line no-console
+    console.info('[sehhatyOcr] worker ready');
     return worker;
-  })();
+  })().catch((err) => {
+    // Drop the cached failed promise so a retry can re-attempt.
+    // eslint-disable-next-line no-console
+    console.error('[sehhatyOcr] worker init failed:', err);
+    _workerPromise = null;
+    throw err;
+  });
   return _workerPromise;
 }
 
@@ -70,6 +91,10 @@ export async function loadOcrEngine() {
  * Sehhaty fields, and return the result. The full OCR text is also
  * returned (rawText) so the UI can show a fallback if parsing fails
  * to find a particular field.
+ *
+ * Wraps the recognize call in a hard timeout — if Tesseract hangs
+ * (network stalls during model fetch, CORS oddity, etc.) we surface
+ * an error instead of leaving the modal spinning forever.
  *
  * @param {Blob|File|string} imageInput — image to read. Accepts a
  *   Blob (from clipboard paste), a File (from drag-drop), or a
@@ -80,28 +105,37 @@ export async function loadOcrEngine() {
  * }>}
  */
 export async function extractFromImage(imageInput) {
-  const worker = await loadOcrEngine();
-  // Preprocess the image before OCR. Two transforms applied:
-  //   1. Scale up to ~2x if the source is small (<1500px wide).
-  //      Tesseract's accuracy on Arabic glyphs degrades sharply
-  //      below ~30px per character; scaling up a tight Sehhaty
-  //      screenshot to roughly print-quality resolution gives the
-  //      OCR engine more pixels per glyph to work with.
-  //   2. Convert to greyscale and slightly increase contrast.
-  //      Removes Sehhaty's faint blue/grey backdrop and makes the
-  //      black-on-white text crisper.
-  // If preprocessing fails for any reason (e.g. the image input
-  // is already a string URL we can't process), we fall back to
-  // recognising the original input directly.
+  const TIMEOUT_MS = 60_000;
+  // eslint-disable-next-line no-console
+  console.info('[sehhatyOcr] extractFromImage start');
+  const worker = await Promise.race([
+    loadOcrEngine(),
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error('OCR engine failed to load within 60 seconds. Check the browser console / network tab and reload to retry.')),
+      TIMEOUT_MS,
+    )),
+  ]);
+
   let inputForOcr = imageInput;
   try {
     inputForOcr = await preprocessImage(imageInput);
-  } catch {
-    // fall through to raw input
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[sehhatyOcr] preprocess failed, using raw input:', err?.message);
   }
-  const result = await worker.recognize(inputForOcr);
+  // eslint-disable-next-line no-console
+  console.info('[sehhatyOcr] running recognize…');
+  const result = await Promise.race([
+    worker.recognize(inputForOcr),
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error('OCR recognise timed out after 60 seconds. The screenshot may be too large or the worker has stalled — try a smaller image or reload the page.')),
+      TIMEOUT_MS,
+    )),
+  ]);
   const text = result?.data?.text || '';
   const confidence = result?.data?.confidence ?? 0;
+  // eslint-disable-next-line no-console
+  console.info('[sehhatyOcr] recognize complete', { confidence, textLength: text.length });
 
   return {
     ...extractFieldsFromText(text),
