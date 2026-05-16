@@ -62,7 +62,7 @@ const LEAVE_TYPE_COLOURS = {
 };
 const pickLeaveTypeColor = (id) => LEAVE_TYPE_COLOURS[id] || '#6B7280';
 
-export default function ReviewerPanel({ me, urgentCertEmpIds }) {
+export default function ReviewerPanel({ me, urgentCertEmpIds, onDataChange }) {
   const [leave, setLeave]             = useState([]);
   const [perms, setPerms]             = useState([]);
   const [empMap, setEmpMap]           = useState({});
@@ -813,6 +813,7 @@ export default function ReviewerPanel({ me, urgentCertEmpIds }) {
         },
       });
       await load();
+      onDataChange?.();
     } catch (err) {
       // Re-throw so callers (e.g. RejectLeaveModal) can surface
       // the error in their own UI. The legacy inline-button path
@@ -970,6 +971,7 @@ export default function ReviewerPanel({ me, urgentCertEmpIds }) {
         }
       }
       await load();
+      onDataChange?.();
     } catch (err) { alert(err.message); }
     finally       { setBusyId(null); }
   }
@@ -1067,7 +1069,7 @@ export default function ReviewerPanel({ me, urgentCertEmpIds }) {
           loading={loading}
           urgentCertEmpIds={urgentCertEmpIds}
           onRowOpen={(req) => setHrModalReq(req)}
-          onChanged={load}
+          onChanged={() => { load(); onDataChange?.(); }}
         />
       )}
 
@@ -1474,7 +1476,7 @@ export default function ReviewerPanel({ me, urgentCertEmpIds }) {
               queue={rejoinQueue}
               empMap={empMap}
               me={me}
-              onChanged={load}
+              onChanged={() => { load(); onDataChange?.(); }}
               onApproved={(req) => setApprovedRejoining(req)}
             />
           )}
@@ -1542,7 +1544,7 @@ export default function ReviewerPanel({ me, urgentCertEmpIds }) {
           allRequests={leave}
           empMap={empMap}
           onClose={() => setHrModalReq(null)}
-          onApproved={() => { setHrModalReq(null); load(); }}
+          onApproved={() => { setHrModalReq(null); load(); onDataChange?.(); }}
           onReject={() => {
             // Per Nadeem: simplify the modal UX so reject is one click
             // away. We close the HR modal and open the reject modal on

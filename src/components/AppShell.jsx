@@ -1173,7 +1173,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
           <BashaierTasksCard employees={employees} requests={requests} permissions={permissions} />
         )}
         {tab === 'reviews' && (
-          <ReviewerPanel me={me} urgentCertEmpIds={urgentCertEmpIds} />
+          <ReviewerPanel me={me} urgentCertEmpIds={urgentCertEmpIds} onDataChange={() => loadAll({ silent: true })} />
         )}
         {tab === 'attendance' && (() => {
           // Defense in depth: even if someone forces tab='attendance' via URL or
