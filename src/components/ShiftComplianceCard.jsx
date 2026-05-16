@@ -70,10 +70,10 @@ function staffTableHtml(staff) {
     const v = HTML_VERDICT_STYLE[d.verdict] || { fg: '#1F2937', bg: '#E5E7EB' };
     const pill = `<span style="display:inline-block;background:${v.bg};color:${v.fg};font-weight:700;font-size:11px;padding:2px 8px;border-radius:999px;letter-spacing:0.04em;white-space:nowrap">${escapeHtml((VERDICT_LABEL[d.verdict] || d.verdict).toUpperCase())}</span>`;
     return `<tr>
-  <td style="padding:7px 10px;border:1px solid #D1D5DB;color:#1F2937;font-size:13px;background:${bg};white-space:nowrap;font-weight:600">${escapeHtml(fmtDayLabel(d.date))}</td>
-  <td style="padding:7px 10px;border:1px solid #D1D5DB;color:#1F2937;font-size:13px;background:${bg};white-space:nowrap">${escapeHtml(fmtTime(d.shift.start_time))} → ${escapeHtml(fmtTime(d.shift.end_time))}</td>
-  <td style="padding:7px 10px;border:1px solid #D1D5DB;color:#1F2937;font-size:13px;background:${bg}">${escapeHtml(d.detail)}</td>
-  <td style="padding:7px 10px;border:1px solid #D1D5DB;font-size:13px;background:${bg};text-align:right">${pill}</td>
+  <td style="padding:3px 8px;border:1px solid #D1D5DB;color:#1F2937;font-size:13px;background:${bg};white-space:nowrap;font-weight:600">${escapeHtml(fmtDayLabel(d.date))}</td>
+  <td style="padding:3px 8px;border:1px solid #D1D5DB;color:#1F2937;font-size:13px;background:${bg};white-space:nowrap">${escapeHtml(fmtTime(d.shift.start_time))} → ${escapeHtml(fmtTime(d.shift.end_time))}</td>
+  <td style="padding:3px 8px;border:1px solid #D1D5DB;color:#1F2937;font-size:13px;background:${bg}">${escapeHtml(d.detail)}</td>
+  <td style="padding:3px 8px;border:1px solid #D1D5DB;font-size:13px;background:${bg};text-align:right">${pill}</td>
 </tr>`;
   }).join('');
 
@@ -83,13 +83,13 @@ function staffTableHtml(staff) {
     <span style="color:#6B7280">&nbsp;(${escapeHtml(staff.empId)})</span>
     <span style="color:#6B7280">&nbsp;·&nbsp;${staff.assigned} assigned · ${staff.clean} clean · <strong style="color:#7F1D1D">${staff.issueDays.length} issue${staff.issueDays.length === 1 ? '' : 's'}</strong></span>
   </div>
-  <table style="border-collapse:collapse;width:100%;font-family:Calibri,Arial,sans-serif">
+  <table style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif">
     <thead>
       <tr>
-        <th style="background:#2D5F3F;color:#fff;padding:8px 10px;text-align:left;font-weight:600;font-size:13px;border:1px solid #1F4530">Date</th>
-        <th style="background:#2D5F3F;color:#fff;padding:8px 10px;text-align:left;font-weight:600;font-size:13px;border:1px solid #1F4530">Assigned shift</th>
-        <th style="background:#2D5F3F;color:#fff;padding:8px 10px;text-align:left;font-weight:600;font-size:13px;border:1px solid #1F4530">What was recorded</th>
-        <th style="background:#2D5F3F;color:#fff;padding:8px 10px;text-align:right;font-weight:600;font-size:13px;border:1px solid #1F4530">Verdict</th>
+        <th style="background:#2D5F3F;color:#fff;padding:5px 8px;text-align:left;font-weight:600;font-size:13px;border:1px solid #1F4530">Date</th>
+        <th style="background:#2D5F3F;color:#fff;padding:5px 8px;text-align:left;font-weight:600;font-size:13px;border:1px solid #1F4530">Assigned shift</th>
+        <th style="background:#2D5F3F;color:#fff;padding:5px 8px;text-align:left;font-weight:600;font-size:13px;border:1px solid #1F4530">What was recorded</th>
+        <th style="background:#2D5F3F;color:#fff;padding:5px 8px;text-align:right;font-weight:600;font-size:13px;border:1px solid #1F4530">Verdict</th>
       </tr>
     </thead>
     <tbody>${rows}</tbody>
@@ -205,23 +205,23 @@ function buildStaffEmail({ staff, manager, monthLabel, rangeLabel, hrName }) {
     const v = HTML_VERDICT_STYLE[d.verdict] || { fg: '#1F2937', bg: '#E5E7EB' };
     const pill = `<span style="display:inline-block;background:${v.bg};color:${v.fg};font-weight:700;font-size:11px;padding:2px 8px;border-radius:999px;letter-spacing:0.04em;white-space:nowrap">${escapeHtml((VERDICT_LABEL[d.verdict] || d.verdict).toUpperCase())}</span>`;
     return `<tr>
-  <td style="padding:7px 10px;border:1px solid #D1D5DB;color:#1F2937;font-size:13px;background:${bg};white-space:nowrap;font-weight:600">${escapeHtml(fmtDayLabel(d.date))}</td>
-  <td style="padding:7px 10px;border:1px solid #D1D5DB;color:#1F2937;font-size:13px;background:${bg};white-space:nowrap">${escapeHtml(fmtTime(d.shift.start_time))} → ${escapeHtml(fmtTime(d.shift.end_time))}</td>
-  <td style="padding:7px 10px;border:1px solid #D1D5DB;color:#1F2937;font-size:13px;background:${bg}">${escapeHtml(d.detail)}</td>
-  <td style="padding:7px 10px;border:1px solid #D1D5DB;font-size:13px;background:${bg};text-align:right">${pill}</td>
+  <td style="padding:3px 8px;border:1px solid #D1D5DB;color:#1F2937;font-size:13px;background:${bg};white-space:nowrap;font-weight:600">${escapeHtml(fmtDayLabel(d.date))}</td>
+  <td style="padding:3px 8px;border:1px solid #D1D5DB;color:#1F2937;font-size:13px;background:${bg};white-space:nowrap">${escapeHtml(fmtTime(d.shift.start_time))} → ${escapeHtml(fmtTime(d.shift.end_time))}</td>
+  <td style="padding:3px 8px;border:1px solid #D1D5DB;color:#1F2937;font-size:13px;background:${bg}">${escapeHtml(d.detail)}</td>
+  <td style="padding:3px 8px;border:1px solid #D1D5DB;font-size:13px;background:${bg};text-align:right">${pill}</td>
 </tr>`;
   }).join('');
 
   const bodyHtml = `<div style="font-family:Calibri,Arial,sans-serif;font-size:14px;color:#0A0A0A;line-height:1.5;max-width:780px">
   <p style="margin:0 0 12px 0">Dear ${escapeHtml((staff.empName || '').split(' ')[0] || 'Colleague')},</p>
   <p style="margin:0 0 12px 0">As part of HR's monthly shift-attendance review for <strong>${escapeHtml(rangeLabel)}</strong>, the following days from your assigned roster did not meet the standard policy (15-min grace on either side of your assigned start/end, both punches required):</p>
-  <table style="border-collapse:collapse;width:100%;font-family:Calibri,Arial,sans-serif;margin:12px 0">
+  <table style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;margin:12px 0">
     <thead>
       <tr>
-        <th style="background:#2D5F3F;color:#fff;padding:8px 10px;text-align:left;font-weight:600;font-size:13px;border:1px solid #1F4530">Date</th>
-        <th style="background:#2D5F3F;color:#fff;padding:8px 10px;text-align:left;font-weight:600;font-size:13px;border:1px solid #1F4530">Assigned shift</th>
-        <th style="background:#2D5F3F;color:#fff;padding:8px 10px;text-align:left;font-weight:600;font-size:13px;border:1px solid #1F4530">What was recorded</th>
-        <th style="background:#2D5F3F;color:#fff;padding:8px 10px;text-align:right;font-weight:600;font-size:13px;border:1px solid #1F4530">Verdict</th>
+        <th style="background:#2D5F3F;color:#fff;padding:5px 8px;text-align:left;font-weight:600;font-size:13px;border:1px solid #1F4530">Date</th>
+        <th style="background:#2D5F3F;color:#fff;padding:5px 8px;text-align:left;font-weight:600;font-size:13px;border:1px solid #1F4530">Assigned shift</th>
+        <th style="background:#2D5F3F;color:#fff;padding:5px 8px;text-align:left;font-weight:600;font-size:13px;border:1px solid #1F4530">What was recorded</th>
+        <th style="background:#2D5F3F;color:#fff;padding:5px 8px;text-align:right;font-weight:600;font-size:13px;border:1px solid #1F4530">Verdict</th>
       </tr>
     </thead>
     <tbody>${rows}</tbody>
