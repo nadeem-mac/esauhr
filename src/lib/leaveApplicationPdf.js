@@ -319,7 +319,10 @@ export async function generateLeaveApplicationPdfBlob({
 } = {}) {
   const pdf = newPdf();
   const logoUrl = await loadLogoDataUrl();
-  const qrDataUrl = await generateQRCode(`/verify/${shortRef(request.id, 'LV')}`);
+  // QR encodes the public verify URL — must match the /verify-leave/:uuid
+  // route in App.jsx. Earlier versions encoded the display ref ('LV-XXX...')
+  // which didn't match any route, so the QR scan went nowhere.
+  const qrDataUrl = await generateQRCode(`/verify-leave/${request.id}`);
 
   const ltKey = request.leave_type_id || 'annual';
   const typeLabel = LEAVE_TYPE_LABEL[ltKey] || 'Leave';

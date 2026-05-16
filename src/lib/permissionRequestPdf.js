@@ -103,7 +103,11 @@ export async function generatePermissionRequestPdfBlob({
 } = {}) {
   const pdf = newPdf();
   const logoUrl = await loadLogoDataUrl();
-  const qrDataUrl = await generateQRCode(`/verify/${shortRef(request.id, 'PR')}`);
+  // QR encodes the public verify URL — must match the /verify/:integer
+  // route in App.jsx (permission_requests uses integer ids). Earlier
+  // versions encoded the display ref ('PR-XXXXX') which didn't match
+  // the route regex, so the QR scan went nowhere.
+  const qrDataUrl = await generateQRCode(`/verify/${request.id}`);
 
   let y = MARGIN_T;
   y = drawHeader(pdf, y, { logoUrl, qrDataUrl, request, refPrefix: 'PR' });

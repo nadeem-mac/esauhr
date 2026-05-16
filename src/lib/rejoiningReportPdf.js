@@ -231,7 +231,10 @@ export async function generateRejoiningReportPdfBlob({
 } = {}) {
   const pdf = newPdf();
   const logoUrl   = await loadLogoDataUrl();
-  const qrDataUrl = await generateQRCode(`/verify/${shortRef(request.id, 'RJ')}`);
+  // QR encodes the public verify URL — must match the /verify-rejoin/:uuid
+  // route in App.jsx. Earlier versions encoded the display ref ('RJ-XXX...')
+  // which didn't match any route, so the QR scan went nowhere.
+  const qrDataUrl = await generateQRCode(`/verify-rejoin/${request.id}`);
 
   const ltKey      = request.leave_type_id || 'annual';
   const leaveLabel = LEAVE_TYPE_LABEL[ltKey] || 'Leave';
