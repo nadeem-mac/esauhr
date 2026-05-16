@@ -257,7 +257,14 @@ export default function HrApprovalModal({ request, employee, manager, substitute
       const note = confirmNote.trim();
       // Normalise empty strings to null so we don't store them.
       const nullIfEmpty = (s) => (s && String(s).trim()) ? String(s).trim() : null;
-      await directPatch('leave_requests', 'id', request.id, {
+      // Build the canonical patch payload once and re-use both for the
+      // directPatch AND for the chained approve() so the email body
+      // doesn't depend on React state having flushed. Earlier the
+      // chained approve() was reading verifiedAt + seen* from closure,
+      // which was stale because setTimeout(...,0) fires before React
+      // commits the state updates, leaving 'Verified on: —' and an
+      // empty CERTIFICATE DETAILS block in the email.
+      const verificationPatch = {
         sehhaty_verified_at: now,
         sehhaty_verified_by: me?.id || me?.auth_user_id || null,
         sehhaty_verification_note: note || null,
@@ -269,7 +276,8 @@ export default function HrApprovalModal({ request, employee, manager, substitute
         sehhaty_seen_issue_date: nullIfEmpty(seenIssueDate),
         sehhaty_seen_doctor:     nullIfEmpty(seenDoctor),
         sehhaty_seen_specialty:  nullIfEmpty(seenSpecialty),
-      }, { timeoutMs: 10000 });
+      };
+      await directPatch('leave_requests', 'id', request.id, verificationPatch, { timeoutMs: 10000 });
       setVerifiedAt(now);
       setConfirmOpen(false);
       try {
@@ -285,15 +293,13 @@ export default function HrApprovalModal({ request, employee, manager, substitute
           },
         });
       } catch { /* audit best-effort */ }
-      // Chain into approve if requested. We pass the just-verified
-      // flag because React state hasn't flushed yet (verifiedAt is
-      // set above but the closure inside approve() reads the OLD
-      // value). Approve will use { fromVerify: true } to know it can
-      // skip the verifyAt check it would otherwise do.
+      // Chain into approve if requested. Pass the merged request data
+      // directly so approve() doesn't depend on React state having
+      // flushed — verifiedAt + seen_* would still be the pre-OCR values
+      // in approve's closure when setTimeout fires.
       if (chainApprove) {
-        // Defer to next tick so React commits the verifiedAt state
-        // before approve runs (approve reads it via the closure).
-        setTimeout(() => approve({ fromVerify: true }), 0);
+        const mergedRequest = { ...request, ...verificationPatch };
+        setTimeout(() => approve({ fromVerify: true, mergedRequest }), 0);
       }
     } catch (err) {
       setVerifyError(err?.message || String(err));
@@ -403,7 +409,7 @@ export default function HrApprovalModal({ request, employee, manager, substitute
     }
   }, [request, employee, manager, me, sickBracket, empMap, confirmNote]);
 
-  const approve = useCallback(async ({ fromVerify = false } = {}) => {
+  const approve = useCallback(async ({ fromVerify = false, mergedRequest = null } = {}) => {
     setStep('approving');
     setError('');
     try {
@@ -443,13 +449,14 @@ export default function HrApprovalModal({ request, employee, manager, substitute
 
       setDraft(isSick
         ? buildSickLeaveApprovalEmailDraft({
-            // Merge the verification-time data Bashaier typed in
-            // into the request so the email body can render the
-            // 'CERTIFICATE DETAILS (cross-checked on Sehhaty)' block.
-            // After the directPatch in applyVerification these are
-            // already persisted, but the prop hasn't reloaded yet,
-            // so we layer the local state on top.
-            request: {
+            // When chained from applyVerification, mergedRequest carries
+            // the just-written verification data (sehhaty_verified_at +
+            // sehhaty_seen_*). Use it directly so the email body shows
+            // 'Verified on: <timestamp>' and the full CERTIFICATE DETAILS
+            // block. Without this, the React closure for verifiedAt and
+            // seen* would still be the pre-OCR values (setTimeout fires
+            // before React commits state updates).
+            request: mergedRequest || {
               ...request,
               sehhaty_verified_at: verifiedAt || request.sehhaty_verified_at,
               sehhaty_verification_note: confirmNote.trim() || request.sehhaty_verification_note,
