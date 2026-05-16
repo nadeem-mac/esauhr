@@ -14,7 +14,6 @@ import {
   newPdf, loadLogoDataUrl, generateQRCode,
   drawHeader, drawTitle, drawSectionHeader, drawTwoColTable,
   drawLabelValueTable, drawPolicyBullets, drawSignatures, drawGeneratedStamp,
-  drawTickbox, drawText, drawLine, drawRect,
   C, MARGIN_X, MARGIN_T, PAGE_W, PAGE_H, CONTENT_W,
   DEPT_NAMES, LOC_NAMES, CEO_NAME, CEO_TITLE_EN, HR_DEFAULT,
   fmtDateLong, fmtDateShort, shortRef,
@@ -32,66 +31,6 @@ const PERMISSION_TYPES = [
   { key: 'late_arrival',    label: 'Late Arrival' },
   { key: 'early_departure', label: 'Early Departure' },
 ];
-
-const REASON_CATEGORIES = [
-  { key: 'medical',       label: 'Medical' },
-  { key: 'government',    label: 'Government / Bank' },
-  { key: 'family',        label: 'Family / Emergency' },
-  { key: 'school',        label: 'School / Childcare' },
-  { key: 'traffic',       label: 'Traffic / Transport' },
-  { key: 'other',         label: 'Other' },
-];
-
-// Tickbox row — generic horizontal "label + boxes" renderer.
-function drawTickboxRow(pdf, y, label, options, selected) {
-  const h = 9;
-  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
-    { color: C.border, width: 0.15 });
-  drawText(pdf, label, MARGIN_X + 1, y + 5.8, {
-    size: 8.5, color: C.muted, style: 'bold',
-  });
-  let cx = MARGIN_X + 44;
-  pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(9);
-  pdf.setTextColor(...C.text);
-  for (const o of options) {
-    drawTickbox(pdf, cx, y + 6.2, o.key === selected);
-    pdf.text(o.label, cx + 4, y + 5.8);
-    cx += pdf.getTextWidth(o.label) + 12;
-  }
-  drawLine(pdf, MARGIN_X, y + h, MARGIN_X + CONTENT_W, y + h,
-    { color: C.border, width: 0.15 });
-  return y + h;
-}
-
-// Multi-select tickbox row — same as drawTickboxRow but with multiple
-// boxes filled. Wraps onto multiple lines for long option lists.
-function drawMultiTickboxRow(pdf, y, label, options, selectedSet) {
-  const labelW = 40;
-  const lineH = 5.2;
-  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
-    { color: C.border, width: 0.15 });
-  drawText(pdf, label, MARGIN_X + 1, y + 5.5, {
-    size: 8.5, color: C.muted, style: 'bold',
-  });
-  pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(9);
-  pdf.setTextColor(...C.text);
-  const leftBound  = MARGIN_X + labelW + 2;
-  const rightBound = MARGIN_X + CONTENT_W - 3;
-  let cx = leftBound, cy = y + 5.5;
-  for (const o of options) {
-    const itemW = pdf.getTextWidth(o.label) + 10;
-    if (cx + itemW > rightBound) { cx = leftBound; cy += lineH; }
-    drawTickbox(pdf, cx, cy + 0.4, selectedSet?.has?.(o.key));
-    pdf.text(o.label, cx + 4, cy);
-    cx += itemW;
-  }
-  const rowH = (cy - y) + 9;
-  drawLine(pdf, MARGIN_X, y + rowH, MARGIN_X + CONTENT_W, y + rowH,
-    { color: C.border, width: 0.15 });
-  return y + rowH;
-}
 
 export async function generatePermissionRequestPdfBlob({
   request = {},
@@ -112,13 +51,13 @@ export async function generatePermissionRequestPdfBlob({
   let y = MARGIN_T;
   y = drawHeader(pdf, y, { logoUrl, qrDataUrl, request, refPrefix: 'PR' });
   y += 2;
-  y = drawTitle(pdf, y, 'Permission Request');
+  // Title is type-specific so HR / the recipient can identify what
+  // they're looking at without reading the body. Falls back to plain
+  // 'Permission Request' if type is missing.
+  const typeLabel = PERMISSION_TYPES.find(t => t.key === permission.type)?.label;
+  const titleText = typeLabel ? `Permission Request — ${typeLabel}` : 'Permission Request';
+  y = drawTitle(pdf, y, titleText);
   y += 2;
-
-  // Type — Late Arrival vs Early Departure
-  y = drawTickboxRow(pdf, y, 'Permission type',
-    PERMISSION_TYPES, permission.type);
-  y += 3;
 
   // Employee Information
   y = drawSectionHeader(pdf, y, 'EMPLOYEE INFORMATION');
@@ -128,31 +67,37 @@ export async function generatePermissionRequestPdfBlob({
   const locLabel = position.location
     ? `${position.location}${LOC_NAMES[position.location] ? ' — ' + LOC_NAMES[position.location] : ''}`
     : '—';
+  // Designation falls back to 'Department Member' the same way the
+  // vacation and rejoining forms do — that's the default non-supervisory
+  // title at ESAU. Avoids showing '—' for staff whose record doesn't
+  // carry the field explicitly.
+  const designation = position.designation
+                   || employee.designation
+                   || 'Department Member';
   y = drawTwoColTable(pdf, y, [
     [['Full name',   employee.name],    ['PSN ID',     employee.id]],
-    [['Designation', position.designation], ['Department', deptLabel]],
+    [['Designation', designation],      ['Department', deptLabel]],
     [['Location',    locLabel],         ['Reports to', manager?.name]],
   ]);
   y += 3;
 
-  // Permission Details
+  // Permission Details — render from the permission bag. Field renderers
+  // already swallow nulls (drawTwoColTable shows '—'); duration prefers
+  // minutes value when available.
   y = drawSectionHeader(pdf, y, 'PERMISSION DETAILS');
   y = drawTwoColTable(pdf, y, [
-    [['Date',           fmtDateLong(permission.date)],
+    [['Date',           permission.date ? fmtDateLong(permission.date) : '—'],
      ['Duration',       permission.duration_min ? `${permission.duration_min} minutes` : '—']],
-    [['From',           permission.from_time],
-     ['To',             permission.to_time]],
+    [['From',           permission.from_time || '—'],
+     ['To',             permission.to_time || '—']],
     [['Notice',         permission.urgency === 'urgent' ? 'Urgent (<24h)' : 'Planned (at least 24h)'],
-     ['This month',     permission.month_count != null ? `${permission.month_count} of 3 used` : '—']],
-    [['Replacement',    permission.replacement || 'Not required'],
-     [null, null]],
+     ['Permission type', typeLabel || '—']],
   ]);
   y += 3;
 
-  // Reason (full width — may be longer text)
+  // Reason (single full-width field; permission_requests doesn't carry
+  // structured categories, just the free-text reason the staff typed).
   y = drawSectionHeader(pdf, y, 'REASON');
-  const selectedReasons = new Set(permission.reason_categories || []);
-  y = drawMultiTickboxRow(pdf, y, 'Category', REASON_CATEGORIES, selectedReasons);
   y = drawLabelValueTable(pdf, y, [
     ['Details', permission.reason_details],
   ]);

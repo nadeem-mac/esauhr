@@ -57,10 +57,23 @@ export default function PermissionApprovedModal({ request, employee, manager, hr
     setDownloading(true);
     setError('');
     try {
-      // Map the leave_requests row + employee into the shape the new PDF
-      // module expects. Position info comes off the employee record; the
-      // 'permission' bag carries the request-specific fields (type, times,
-      // reason, urgency, this-month counter).
+      // 2026-05-16 (Nadeem): the modal was passing field names that don't
+      // exist on permission_requests rows, so every Permission Details
+      // field rendered as '—'. The actual DB columns are:
+      //   type, permission_date, time_from, time_to, hours, reason
+      // and there's no urgency / replacement / categories column. We
+      // derive urgency from the gap between requested_at and the
+      // permission_date itself.
+      const minutes = request.hours != null ? Math.round(Number(request.hours) * 60) : null;
+      let urgency = 'planned';
+      if (request.permission_date && request.requested_at) {
+        const reqAt = new Date(request.requested_at);
+        const permDate = new Date(request.permission_date + 'T00:00:00');
+        if (!isNaN(reqAt.getTime()) && !isNaN(permDate.getTime())) {
+          const hoursNotice = (permDate - reqAt) / (1000 * 60 * 60);
+          if (hoursNotice < 24) urgency = 'urgent';
+        }
+      }
       const blob = await generatePermissionRequestPdfBlob({
         request,
         employee,
@@ -70,22 +83,19 @@ export default function PermissionApprovedModal({ request, employee, manager, hr
           location:    employee?.location,
         },
         permission: {
-          type:               request.permission_type,           // 'late_arrival' | 'early_departure'
-          date:               request.start_date,
-          from_time:          request.from_time,
-          to_time:            request.to_time,
-          duration_min:       request.duration_minutes,
-          urgency:            request.urgency,                   // 'planned' | 'urgent'
-          month_count:        request.month_count,
-          replacement:        request.replacement_name,
-          reason_categories:  request.reason_categories || [],
-          reason_details:     request.reason,
+          type:           request.type,             // 'late_arrival' | 'early_departure'
+          date:           request.permission_date,
+          from_time:      request.time_from,
+          to_time:        request.time_to,
+          duration_min:   minutes,
+          urgency,
+          reason_details: request.reason,
         },
         manager,
         hrName: hrApprover?.name,
       });
       const safe = (employee?.name || 'EMPLOYEE').replace(/[^a-zA-Z0-9]+/g, '_').toUpperCase();
-      downloadBlob(blob, `Permission_${safe}_${request.start_date || 'date'}.pdf`);
+      downloadBlob(blob, `Permission_${safe}_${request.permission_date || 'date'}.pdf`);
       setDownloaded(true);
     } catch (e) {
       setError(e?.message || 'Could not generate the letter. Please try again.');
