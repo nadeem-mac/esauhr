@@ -236,23 +236,48 @@ export async function generateRejoiningReportPdfBlob({
   const ltKey      = request.leave_type_id || 'annual';
   const leaveLabel = LEAVE_TYPE_LABEL[ltKey] || 'Leave';
 
-  const tenure         = tenureFromJoined(employee.joined);
-  const joinedShort    = employee.joined ? fmtDateShort(employee.joined) : '—';
+  // Field-name guards — the employees table stores the hire date as
+  // `join_date` (not `joined`). Defending against both for forward
+  // compatibility in case any caller still passes the old shape.
+  const joinedIso      = employee.join_date || employee.joined || null;
+  const tenure         = tenureFromJoined(joinedIso);
+  const joinedShort    = joinedIso ? fmtDateShort(joinedIso) : null;
   const joinedTenure   = (joinedShort && tenure)
     ? `${joinedShort}   ·   ${tenure}`
-    : joinedShort;
+    : (joinedShort || '—');
+
+  // Designation falls back to 'Department Member' the same way the
+  // vacation form does — that's the default non-supervisory title at
+  // ESAU so we never have to show a dash where a real role belongs.
+  const designation    = position.designation
+                       || employee.designation
+                       || 'Department Member';
+
   const deptCombined   = position.department
     ? `${DEPT_NAMES[position.department] || position.department}${position.location ? '   ·   ' + (LOC_NAMES[position.location] || position.location) : ''}`
     : '—';
   const returnIso      = request.return_date || request.actual_return_date;
   const punctuality    = punctualityLabel(returnIso, request.end_date);
   const originalPeriod = formatOriginalPeriod(request.start_date, request.end_date);
+
+  // Duration — prefer the stored count, otherwise compute inclusive
+  // calendar days from start/end. Half-day leaves carry 0.5 in the
+  // stored value, so we can't unconditionally recompute.
+  let durationDays = request.duration_days;
+  if (durationDays == null && request.start_date && request.end_date) {
+    const s = new Date(request.start_date);
+    const e = new Date(request.end_date);
+    if (!isNaN(s.getTime()) && !isNaN(e.getTime())) {
+      durationDays = Math.max(1, Math.round((e - s) / 86400000) + 1);
+    }
+  }
+
   const statement      = buildStatement({
     leaveTypeId:  ltKey,
     startIso:     request.start_date,
     endIso:       request.end_date,
     returnIso,
-    durationDays: request.duration_days,
+    durationDays,
   });
   const managerApprovedAt = approvals.manager_approved_at
     ? fmtStampCompact(approvals.manager_approved_at)
@@ -280,14 +305,14 @@ export async function generateRejoiningReportPdfBlob({
   y = drawSingleRow(pdf, y, 'Employee name',     employee.name,     { emphasis: true });
   y = drawSingleRow(pdf, y, 'PSN ID',            employee.id);
   y = drawSingleRow(pdf, y, 'Department',        deptCombined);
-  y = drawSingleRow(pdf, y, 'Designation',       position.designation);
+  y = drawSingleRow(pdf, y, 'Designation',       designation);
   y = drawSingleRow(pdf, y, 'Joined / Tenure',   joinedTenure);
   y += 3;
 
   y = drawSectionHeader(pdf, y, 'ORIGINAL LEAVE');
   y = drawSingleRow(pdf, y, 'Leave type',          leaveLabel, { emphasis: true });
   y = drawSingleRow(pdf, y, 'Original period',     originalPeriod);
-  y = drawSingleRow(pdf, y, 'Duration (approved)', durationLabel(request.duration_days), { emphasis: true });
+  y = drawSingleRow(pdf, y, 'Duration (approved)', durationLabel(durationDays), { emphasis: true });
   y = drawSingleRow(pdf, y, 'Manager approved',    managerApprovedAt);
   y = drawSingleRow(pdf, y, 'HR approved',         hrApprovedAt);
   y += 3;
