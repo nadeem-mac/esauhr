@@ -8,6 +8,7 @@ import { salutationFor } from '../lib/salutations.js';
 import BashaierTasksCard from './BashaierTasksCard.jsx';
 import PendingShiftApprovalsCard from './PendingShiftApprovalsCard.jsx';
 import HrShiftMonthCard from './HrShiftMonthCard.jsx';
+import HrLandingCard from './HrLandingCard.jsx';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
 import MyApplicationsCard from './MyApplicationsCard.jsx';
 
@@ -362,6 +363,25 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           }
         </p>
       </div>
+      )}
+
+      {/* HR daily-digest card — Bashaier's editorial 'This Week' +
+          'Needs Your Attention' surface. Consolidates the human
+          moments (anniversaries, returns, public holidays) with the
+          action queue (decisions, sick certs, evaluation flags) so
+          her morning briefing is one card instead of four scattered
+          surfaces. Only shown to Bashaier (warmer copy, italic
+          captions) — admin Nadeem sees the existing minimal strip
+          below. Nadeem 2026-05-17. */}
+      {bashaierMode && (
+        <HrLandingCard
+          me={me}
+          employees={employees}
+          requests={requests}
+          permissions={permissions}
+          onGoToReviews={onGoToReviews || onGoToRequests}
+          onGoToAttendance={() => { /* parent doesn't wire this yet; safe no-op until they do */ }}
+        />
       )}
 
       {/* MINIMAL stat surface — replaces the four-tile strip Bashaier
