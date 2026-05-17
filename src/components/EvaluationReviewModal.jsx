@@ -89,16 +89,24 @@ function fmtDateShort(d) {
 
 // Build the structured notes string. We stuff the month tag at the start
 // so app-side idempotency can match on a prefix without a unique constraint.
-function buildNotes({ monthLong, lateCount, earlyCount, missedCount, totalCount, pointsDeducted }) {
+// Severity weights are sourced from src/lib/evaluationWeights.js — every
+// row contributes between 1 and 5 points based on type + magnitude rather
+// than a flat 2 per occurrence.
+function buildNotes({ monthLong, lateCount, earlyCount, missedCount, absenceCount, totalCount, pointsDeducted }) {
+  const parts = [];
+  if (lateCount)     parts.push(`${lateCount} late`);
+  if (earlyCount)    parts.push(`${earlyCount} early`);
+  if (missedCount)   parts.push(`${missedCount} missed`);
+  if (absenceCount)  parts.push(`${absenceCount} unauthorized absence${absenceCount === 1 ? '' : 's'}`);
   return (
-    `[${monthLong}] Attendance escalation: ${totalCount} violations ` +
-    `(${lateCount} late, ${earlyCount} early, ${missedCount} missed). ` +
+    `[${monthLong}] Attendance escalation: ${totalCount} incident${totalCount === 1 ? '' : 's'} ` +
+    `(${parts.join(', ') || 'mixed'}). ` +
     `${pointsDeducted} point${pointsDeducted === 1 ? '' : 's'} deducted ` +
-    `(2 per violation beyond 5).`
+    `(severity-weighted; see ESAU evaluation policy).`
   );
 }
 
-function buildWarningEmail({ employee, manager, monthLong, totalCount, lateCount, earlyCount, missedCount, pointsDeducted, sampleDates }) {
+function buildWarningEmail({ employee, manager, monthLong, totalCount, lateCount, earlyCount, missedCount, absenceCount, pointsDeducted, severityBreakdown, sampleDates }) {
   const empPsn = String(employee?.id || '').toUpperCase();
   const empName = String(employee?.name || '').toUpperCase();
   // Salutation goes through the shared helper so per-PSN overrides
@@ -108,11 +116,18 @@ function buildWarningEmail({ employee, manager, monthLong, totalCount, lateCount
 
   const subject = `Attendance Escalation — ${empPsn} ${empName} — ${monthLong}`;
 
-  const breakdown = [
-    `• Late arrivals: ${lateCount}`,
-    `• Early departures: ${earlyCount}`,
-    `• Missed punches: ${missedCount}`,
-  ].join('\n');
+  // Build the breakdown bullets — only include the categories that
+  // actually fired in this month so the email doesn't list '0 missed'
+  // padding for no reason.
+  const bullets = [];
+  if (absenceCount) bullets.push(`• Unauthorized absences: ${absenceCount}  (5 pts each)`);
+  if (severityBreakdown?.missedOut)  bullets.push(`• No punch-out:           ${severityBreakdown.missedOut}  (3 pts each)`);
+  if (severityBreakdown?.missedIn)   bullets.push(`• No punch-in:            ${severityBreakdown.missedIn}  (2 pts each)`);
+  if (severityBreakdown?.lateHeavy)  bullets.push(`• Late > 30 min:          ${severityBreakdown.lateHeavy}  (3 pts each)`);
+  if (severityBreakdown?.lateMedium) bullets.push(`• Late 15-30 min:         ${severityBreakdown.lateMedium}  (2 pts each)`);
+  if (severityBreakdown?.earlyHeavy) bullets.push(`• Early out > 30 min:     ${severityBreakdown.earlyHeavy}  (3 pts each)`);
+  if (severityBreakdown?.earlyLight) bullets.push(`• Early out 15-30 min:    ${severityBreakdown.earlyLight}  (1 pt each)`);
+  const breakdown = bullets.join('\n');
 
   const sampleLine = sampleDates && sampleDates.length
     ? `Recent dates flagged: ${sampleDates.slice(0, 5).map(fmtDateShort).join(', ')}` +
@@ -123,12 +138,14 @@ function buildWarningEmail({ employee, manager, monthLong, totalCount, lateCount
     `Dear ${mgrFirst},\n\n` +
     `I am writing to flag an attendance concern with ${employee?.name || empPsn} for ${monthLong}. ` +
     `Across the month, ${employee?.first_name || (employee?.name || '').split(' ')[0] || 'they'} ` +
-    `accumulated ${totalCount} attendance incidents — above our 5-per-month threshold:\n\n` +
+    `accumulated ${totalCount} incident${totalCount === 1 ? '' : 's'} carrying a total of ` +
+    `${pointsDeducted} severity-weighted point${pointsDeducted === 1 ? '' : 's'} — above our 10-point review threshold:\n\n` +
     breakdown + '\n\n' +
     (sampleLine ? sampleLine + '\n\n' : '') +
-    `Per ESAU policy, every incident beyond the fifth in a calendar month deducts 2 points from the ` +
-    `attendance evaluation score. ${pointsDeducted} point${pointsDeducted === 1 ? '' : 's'} ` +
-    `${pointsDeducted === 1 ? 'has' : 'have'} been deducted for ${monthLong} and recorded in the system.\n\n` +
+    `Per ESAU policy, each incident is weighted by type and magnitude (unauthorized absences 5 pts, late >30 min 3 pts, ` +
+    `late 15-30 min 2 pts, etc.). ${pointsDeducted} point${pointsDeducted === 1 ? '' : 's'} ` +
+    `${pointsDeducted === 1 ? 'has' : 'have'} been deducted from the 100-point baseline for ${monthLong}, ` +
+    `bringing the attendance evaluation score to ${Math.max(0, 100 - pointsDeducted)}.\n\n` +
     `I would appreciate it if you could speak with ${employee?.first_name || 'them'} directly. If there are ` +
     `extenuating reasons HR should be aware of — medical, family, scheduling — please loop me in so we can ` +
     `reflect them in the record. Otherwise, I would ask that we reset expectations for next month together.\n\n` +
@@ -143,20 +160,30 @@ export default function EvaluationReviewModal({ row, employee, manager, onClose,
   const [error, setError] = useState('');
 
   const monthLong = useMemo(() => fmtMonthLong(row.monthStart), [row.monthStart]);
+  // Use the deduction the aggregator already computed — it has the
+  // per-row severity weights from src/lib/evaluationWeights.js. Falling
+  // back to the old flat formula only if a stale caller still passes
+  // a row without `deduction` (shouldn't happen after the Build 1
+  // wiring, but keeps the modal resilient).
   const pointsDeducted = useMemo(
-    () => Math.max(0, (row.totalCount - 5)) * 2,
-    [row.totalCount]
+    () => {
+      if (typeof row.deduction === 'number') return row.deduction;
+      return Math.max(0, (row.totalCount - 5)) * 2;
+    },
+    [row.deduction, row.totalCount]
   );
 
   const { subject, body } = useMemo(
     () => buildWarningEmail({
       employee, manager, monthLong,
-      totalCount:  row.totalCount,
-      lateCount:   row.lateCount,
-      earlyCount:  row.earlyCount,
-      missedCount: row.missedCount,
+      totalCount:        row.totalCount,
+      lateCount:         row.lateCount,
+      earlyCount:        row.earlyCount,
+      missedCount:       row.missedCount,
+      absenceCount:      row.absenceCount || 0,
+      severityBreakdown: row.severityBreakdown || {},
       pointsDeducted,
-      sampleDates: row.dates,
+      sampleDates:       row.dates,
     }),
     [employee, manager, monthLong, row, pointsDeducted]
   );
@@ -193,10 +220,11 @@ export default function EvaluationReviewModal({ row, employee, manager, onClose,
         reviewed_at:           new Date().toISOString(),
         notes:                 buildNotes({
           monthLong,
-          lateCount:   row.lateCount,
-          earlyCount:  row.earlyCount,
-          missedCount: row.missedCount,
-          totalCount:  row.totalCount,
+          lateCount:    row.lateCount,
+          earlyCount:   row.earlyCount,
+          missedCount:  row.missedCount,
+          absenceCount: row.absenceCount || 0,
+          totalCount:   row.totalCount,
           pointsDeducted,
         }),
       }, { timeoutMs: 10000 });

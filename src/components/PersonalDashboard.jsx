@@ -2,10 +2,15 @@ import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { supabase, directGet, directPost, directPatch } from '../supabaseClient.js';
 import {
   Calendar, Clock, Plus, AlertTriangle, Sun, Sunrise, Sunset,
-  CheckCircle2, XCircle, Loader2, Users, Plane, Mail, HeartPulse
+  CheckCircle2, XCircle, Loader2, Users, Plane, Mail, HeartPulse,
+  Shield,
 } from 'lucide-react';
 import { fmtDate, calculateBalance, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 import { summariseMonth, PERMISSION_QUOTA } from '../lib/permissionLogic.js';
+import {
+  summariseViolations, zoneForDeduction,
+  ZONE_LABEL, ZONE_COLOR, REVIEW_THRESHOLD, BASE_SCORE,
+} from '../lib/evaluationWeights.js';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
 import MyApplicationsCard from './MyApplicationsCard.jsx';
 import MyAttendanceCard from './MyAttendanceCard.jsx';
@@ -36,6 +41,12 @@ export default function PersonalDashboard({
   // When AppShell DOES pass requests/permissions, these slots stay [].
   const [localRequests,    setLocalRequests]    = useState([]);
   const [localPermissions, setLocalPermissions] = useState([]);
+  // Own attendance_violations for the current calendar month. Powers
+  // the EVALUATION STATUS tile (Build 2 — Nadeem 2026-05-17). Fetched
+  // here rather than passed in from AppShell because no other surface
+  // needs the staff's per-month violation list and the round-trip is
+  // tiny (filtered to one employee, one month).
+  const [monthViolations, setMonthViolations] = useState([]);
   const [loading,     setLoading]     = useState(true);
 
   // 2026-05-10 fix (Nadeem): the page-flicker-every-20s bug on staff
@@ -100,16 +111,24 @@ export default function PersonalDashboard({
       const { requestsProp: rp, permissionsProp: pp } = propsRef.current;
       const skipLeaves = Array.isArray(rp);
       const skipPerms  = Array.isArray(pp);
-      const [bal, reqs, perms] = await Promise.all([
+      const [bal, reqs, perms, viols] = await Promise.all([
         safe(directGet('leave_balances',     `select=*&employee_id=eq.${me.id}&year=eq.${year}&leave_type_id=eq.annual&limit=1`, { timeoutMs: 10000 })),
         skipLeaves ? Promise.resolve(null) :
           safe(directGet('leave_requests',     `select=*&employee_id=eq.${me.id}&order=start_date.desc&limit=20`, { timeoutMs: 10000 })),
         skipPerms ? Promise.resolve(null) :
           safe(directGet('permission_requests',`select=*&employee_id=eq.${me.id}&permission_date=gte.${month}-01&order=permission_date.desc`, { timeoutMs: 10000 })),
+        // Own attendance_violations for this calendar month, excluding
+        // any cleared by a retroactive permission. The EVALUATION
+        // STATUS tile reads from this slot.
+        safe(directGet('attendance_violations',
+          `select=id,violation_type,violation_date,minutes_off,cleared_at`
+          + `&employee_id=eq.${me.id}&violation_date=gte.${month}-01&cleared_at=is.null&order=violation_date.desc`,
+          { timeoutMs: 10000 })),
       ]);
       setAdjustments(Array.isArray(bal) && bal.length > 0 ? bal[0] : {});
       if (!skipLeaves) setLocalRequests(Array.isArray(reqs) ? reqs : []);
       if (!skipPerms)  setLocalPermissions(Array.isArray(perms) ? perms : []);
+      setMonthViolations(Array.isArray(viols) ? viols : []);
     } catch (err) {
       console.warn('PersonalDashboard load failed:', err);
     } finally {
@@ -274,6 +293,13 @@ export default function PersonalDashboard({
   const lateRows  = permissions.filter(p => p.type === 'late_arrival');
   const earlyRows = permissions.filter(p => p.type === 'early_leave');
   const monthSummary = summariseMonth(permissions);
+  // Severity-weighted summary of this month's attendance violations.
+  // Powers the EVALUATION STATUS tile. Build 1 + 2 (Nadeem 2026-05-17).
+  // `clean` < 5 pts · `watch` 5-9 pts · `review` ≥ 10 pts (the same
+  // 10-pt threshold that triggers Bashaier's HR escalation panel, so
+  // staff see the line BEFORE they cross it).
+  const evalSummary = summariseViolations(monthViolations);
+  const evalZone    = zoneForDeduction(evalSummary.deduction);
   const lateUsed  = lateRows .filter(r => r.status === 'pending' || r.status === 'approved').reduce((s,r) => s + Number(r.hours||0), 0);
   const earlyUsed = earlyRows.filter(r => r.status === 'pending' || r.status === 'approved').reduce((s,r) => s + Number(r.hours||0), 0);
   const nextLeave = requests.find(r => r.status === 'approved' && new Date(r.start_date) >= startOfDay(new Date()));
@@ -422,6 +448,7 @@ export default function PersonalDashboard({
           progress={Math.min(100, (earlyUsed/PERMISSION_QUOTA.monthlyHours)*100)}
         />
         <FlagTile monthSummary={monthSummary} />
+        <EvaluationStatusTile summary={evalSummary} zone={evalZone} />
       </section>
 
       {/* SHIFT SCHEDULE — manager has assigned shifts awaiting my acknowledgment.
@@ -712,6 +739,92 @@ function FlagTile({ monthSummary }) {
           {flagged
             ? `${monthSummary.hoursUsed}h used in ${monthSummary.occurrences} occurrence${monthSummary.occurrences !== 1 ? 's' : ''} — exceeds 3hr cap.`
             : `Combined cap: 3hr / 3 times per month. ${monthSummary.hoursRemaining}h left.`}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// EvaluationStatusTile — staff-side early-warning surface
+//
+// Reads the staff's own attendance_violations for the current month and
+// projects them onto the same severity-weighted score that Bashaier's
+// HR escalation panel uses. Three states keyed off zoneForDeduction():
+//
+//   clean (deduction < 5)   — green, 'no issues recorded this month'
+//   watch (5-9)             — amber, 'X points logged · Y more triggers
+//                                     manager notification'
+//   review (≥ 10)           — red, 'manager will be notified at month-end'
+//
+// The whole point of this tile is to give staff a clear signal BEFORE
+// they cross the line, so they can self-correct without an HR-formal
+// escalation. The same 10-point threshold drives both surfaces, so
+// what they see here is exactly what Bashaier sees on her side.
+// =============================================================================
+function EvaluationStatusTile({ summary, zone }) {
+  const color = ZONE_COLOR[zone] || ZONE_COLOR.clean;
+  const label = ZONE_LABEL[zone] || ZONE_LABEL.clean;
+  const score = Math.max(0, BASE_SCORE - summary.deduction);
+
+  // Sub-line copy varies by zone so the staff message escalates with
+  // severity. Always factual, never punitive in tone.
+  let subline;
+  if (zone === 'clean') {
+    subline = summary.totalCount === 0
+      ? 'No attendance issues recorded this month. Keep it up.'
+      : `${summary.totalCount} minor issue${summary.totalCount === 1 ? '' : 's'} this month · still within expectations.`;
+  } else if (zone === 'watch') {
+    const remaining = REVIEW_THRESHOLD - summary.deduction;
+    subline = `${summary.deduction} point${summary.deduction === 1 ? '' : 's'} logged · ${remaining} more triggers manager notification.`;
+  } else {
+    subline = `${summary.deduction} points logged · your manager will be notified at month-end.`;
+  }
+
+  return (
+    <div
+      className="rounded-xl border p-5 esau-card flex flex-col justify-between"
+      style={{
+        borderColor: zone === 'clean' ? 'var(--border-soft)' : color.border,
+        background: '#FFFFFF',
+        minHeight: '140px',
+      }}
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-1.5 h-1.5 rounded-full" style={{ background: color.fg }} />
+          <span className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.22em', fontWeight: 700 }}>
+            EVALUATION STATUS
+          </span>
+        </div>
+        <Shield className="w-4 h-4" style={{ color: color.fg }} />
+      </div>
+      <div>
+        <div
+          style={{
+            fontFamily: 'inherit',
+            fontSize: '24px',
+            color: '#1F1B16',
+            lineHeight: 1.05,
+            marginTop: '8px',
+            fontWeight: 500,
+            letterSpacing: '-0.02em',
+          }}
+        >
+          {label}
+        </div>
+        <div className="text-[11px] mt-1 leading-snug" style={{ color: '#1F1B16' }}>
+          {subline}
+        </div>
+        {/* Score chip — always present so staff sees the number they're
+            being measured against, not just the label. */}
+        <div className="mt-2 inline-flex items-center gap-1 text-[10px]"
+             style={{
+               padding: '2px 8px', borderRadius: 999,
+               background: color.bg, color: color.fg,
+               fontWeight: 700, letterSpacing: '0.04em',
+             }}>
+          SCORE {score} / {BASE_SCORE}
         </div>
       </div>
     </div>

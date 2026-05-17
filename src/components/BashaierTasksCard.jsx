@@ -5,6 +5,10 @@ import {
 } from 'lucide-react';
 import { directGet, supabase } from '../supabaseClient.js';
 import EvaluationReviewModal from './EvaluationReviewModal.jsx';
+import {
+  weightForViolation, summariseViolations,
+  REVIEW_THRESHOLD, BASE_SCORE,
+} from '../lib/evaluationWeights.js';
 
 // =============================================================================
 // CONSTANTS
@@ -456,7 +460,7 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
       try {
         const rows = await directGet(
           'attendance_violations',
-          `select=employee_id,violation_type,violation_date` +
+          `select=employee_id,violation_type,violation_date,minutes_off` +
           `&violation_date=gte.${monthRange.start}&violation_date=lte.${monthRange.end}` +
           // Exclude entries cleared by retroactive permissions —
           // otherwise a 7-incident month with 2 cleared by approved
@@ -503,36 +507,48 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
     return () => { mounted = false; supabase.removeChannel(ch); };
   }, [monthRange.start, monthRange.end, monthRange.monthStart]);
 
-  // Aggregate to one row per employee with >5 violations this month.
+  // Aggregate to one row per employee. Threshold flipped from
+  // 'totalCount > 5' (flat) to 'deduction ≥ REVIEW_THRESHOLD' (weighted)
+  // so a single severe incident (e.g. unauthorized absence + late > 30)
+  // surfaces as quickly as several minor lates. Severity weights live
+  // in src/lib/evaluationWeights.js (Nadeem 2026-05-17 Build 1).
   const escalations = useMemo(() => {
     const byEmp = new Map();
     monthViolations.forEach(v => {
       if (!v?.employee_id) return;
       let agg = byEmp.get(v.employee_id);
       if (!agg) {
-        agg = { employeeId: v.employee_id, totalCount: 0, lateCount: 0, earlyCount: 0, missedCount: 0, dates: new Set() };
+        agg = {
+          employeeId:  v.employee_id,
+          rows:        [],
+          dates:       new Set(),
+        };
         byEmp.set(v.employee_id, agg);
       }
-      agg.totalCount += 1;
-      if (v.violation_type === 'late') agg.lateCount += 1;
-      else if (v.violation_type === 'early' || v.violation_type === 'early_leave') agg.earlyCount += 1;
-      else if (v.violation_type === 'missed_in' || v.violation_type === 'missed_out') agg.missedCount += 1;
+      agg.rows.push(v);
       if (v.violation_date) agg.dates.add(v.violation_date);
     });
     return Array.from(byEmp.values())
-      .filter(a => a.totalCount > 5)
       .map(a => {
+        const summary = summariseViolations(a.rows);
         const emp = (employees || []).find(e => e.id === a.employeeId);
         const monthYM = monthRange.monthStart.slice(0, 7);
         return {
-          ...a,
-          dates: Array.from(a.dates).sort(),
-          monthStart: monthRange.monthStart,
+          ...summary,
+          employeeId:   a.employeeId,
+          dates:        Array.from(a.dates).sort(),
+          monthStart:   monthRange.monthStart,
           employeeName: emp?.name || a.employeeId,
           alreadyLogged: !!loggedEvalKeys[`${a.employeeId}:${monthYM}`],
         };
       })
-      .sort((a, b) => b.totalCount - a.totalCount);
+      // Only escalate rows whose weighted deduction crosses the policy
+      // line. Staff with 4 minor lates (deduction = 8) DON'T escalate
+      // yet but DO surface on their own dashboard as 'watch' (Build 2).
+      .filter(r => r.deduction >= REVIEW_THRESHOLD)
+      // Sort by severity, not by raw count — the more deduction, the
+      // more urgent the chase.
+      .sort((a, b) => b.deduction - a.deduction);
   }, [monthViolations, employees, loggedEvalKeys, monthRange.monthStart]);
 
   const escalationsPending = useMemo(
