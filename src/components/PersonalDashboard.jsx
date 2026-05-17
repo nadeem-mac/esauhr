@@ -459,6 +459,7 @@ export default function PersonalDashboard({
         />
         <TenureTile me={me} />
         <EvaluationStatusTile summary={evalSummary} zone={evalZone} />
+        <RecentActivityTile leaves={requests} permissions={permissions} />
       </section>
 
       {/* SHIFT SCHEDULE — manager has assigned shifts awaiting my acknowledgment.
@@ -913,6 +914,180 @@ function EvaluationStatusTile({ summary, zone }) {
              }}>
           SCORE {score} / {BASE_SCORE}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// RecentActivityTile — last 3 decisions across the staff's recent requests
+//
+// Fills the previously-empty grid slot in row 3. Most-asked question staff
+// have is "did my leave/permission go through?" — surface the answer
+// inline so they don't have to navigate to the Requests tab.
+//
+// Sources two streams:
+//   • leave_requests (parent `requests` prop, already filtered to current
+//     employee, ordered by start_date desc, capped at 20)
+//   • permission_requests (parent `permissions` prop, current month)
+//
+// Both have stage + hr_decided_at + requested_at. We merge, derive a
+// canonical 'decided_at' (hr_decided_at if present, else manager_decided_at,
+// else requested_at as the "activity" timestamp for pending items),
+// sort descending, take 3.
+//
+// Each row shows: status pill, type + dates, relative time. Compact.
+// Tile height matches the others (~140px) to keep grid alignment.
+//
+// Nadeem 2026-05-17.
+// =============================================================================
+function RecentActivityTile({ leaves = [], permissions = [] }) {
+  // Normalise both streams into a uniform shape so the merge sort
+  // doesn't have to special-case each row's source. Pending rows
+  // use requested_at as their 'activity timestamp' so they still
+  // surface in the feed (useful for "is my new request showing up?"
+  // signal). Decided rows use the decision timestamp.
+  const items = useMemo(() => {
+    const fmtLeaveLabel = (r) => {
+      const types = { annual: 'Annual leave', sick: 'Sick leave', emergency: 'Emergency leave',
+                      hajj: 'Hajj leave', maternity: 'Maternity leave', paternity: 'Paternity leave',
+                      marriage: 'Marriage leave', bereavement: 'Bereavement leave', unpaid: 'Unpaid leave' };
+      const label = types[r.leave_type_id] || 'Leave';
+      const s = r.start_date ? new Date(r.start_date) : null;
+      const e = r.end_date && r.end_date !== r.start_date ? new Date(r.end_date) : null;
+      if (!s) return label;
+      const sStr = s.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+      return e
+        ? `${label} · ${sStr}–${e.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`
+        : `${label} · ${sStr}`;
+    };
+    const fmtPermLabel = (p) => {
+      const kind = p.type === 'late_arrival' ? 'Late-arrival' :
+                   p.type === 'early_departure' ? 'Early-departure' :
+                   'Permission';
+      const d = p.permission_date ? new Date(p.permission_date) : null;
+      return d
+        ? `${kind} · ${d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`
+        : kind;
+    };
+    const merged = [
+      ...(leaves || []).map(r => ({
+        id: `L${r.id}`,
+        stage: r.stage,
+        label: fmtLeaveLabel(r),
+        ts: r.hr_decided_at || r.manager_decided_at || r.requested_at || r.start_date,
+        kind: 'leave',
+      })),
+      ...(permissions || []).map(p => ({
+        id: `P${p.id}`,
+        stage: p.stage,
+        label: fmtPermLabel(p),
+        ts: p.hr_decided_at || p.manager_decided_at || p.requested_at || p.permission_date,
+        kind: 'permission',
+      })),
+    ]
+      .filter(x => x.ts)
+      .sort((a, b) => new Date(b.ts) - new Date(a.ts))
+      .slice(0, 3);
+    return merged;
+  }, [leaves, permissions]);
+
+  // Empty-state copy — keep it warm, not lecturing. If staff has no
+  // history this month it's because they haven't needed to file anything,
+  // which is a good state to be in.
+  if (items.length === 0) {
+    return (
+      <div
+        className="rounded-xl border p-5 esau-card flex flex-col justify-between"
+        style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', minHeight: '140px' }}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full" style={{ background: '#9CA3AF' }} />
+            <span className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.22em', fontWeight: 700 }}>
+              RECENT ACTIVITY
+            </span>
+          </div>
+          <Clock className="w-4 h-4" style={{ color: '#9CA3AF' }} />
+        </div>
+        <div>
+          <div style={{ fontSize: '14px', color: '#1F1B16', marginTop: '8px', fontWeight: 500 }}>
+            Nothing yet
+          </div>
+          <div className="text-[11px] mt-1 leading-snug" style={{ color: '#1F1B16', opacity: 0.65 }}>
+            Your leave + permission decisions will appear here.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Compact status chip per item — same colour vocabulary as StatusPill
+  // but shrunk to fit three rows inside the tile. Approved/declined are
+  // terminal states; pending_* all collapse into a single 'Pending'
+  // chip since the sub-stage distinction (manager vs HR) is more detail
+  // than the at-a-glance tile needs.
+  const stageMeta = (stage) => {
+    if (stage === 'approved')           return { fg: '#0F4C2A', bg: '#ECFDF5', label: 'Approved',    icon: CheckCircle2 };
+    if (stage === 'rejected')           return { fg: '#7F1D1D', bg: '#FEE2E2', label: 'Rejected',    icon: XCircle };
+    if (stage === 'rejected_by_hr')     return { fg: '#7F1D1D', bg: '#FEE2E2', label: 'Rejected',    icon: XCircle };
+    if (stage === 'rejected_by_manager') return { fg: '#7F1D1D', bg: '#FEE2E2', label: 'Rejected',   icon: XCircle };
+    if (stage === 'pending_certificate') return { fg: '#92400E', bg: '#FEF3C7', label: 'Cert needed', icon: AlertTriangle };
+    return { fg: '#A16207', bg: '#FEF6E2', label: 'Pending', icon: Clock };
+  };
+
+  const relTime = (iso) => {
+    const ms = Date.now() - new Date(iso).getTime();
+    const min = Math.round(ms / 60000);
+    if (min < 1)   return 'just now';
+    if (min < 60)  return `${min}m ago`;
+    const hr = Math.round(min / 60);
+    if (hr < 24)   return `${hr}h ago`;
+    const d = Math.round(hr / 24);
+    if (d < 14)    return `${d}d ago`;
+    const w = Math.round(d / 7);
+    return `${w}w ago`;
+  };
+
+  return (
+    <div
+      className="rounded-xl border p-5 esau-card flex flex-col"
+      style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', minHeight: '140px' }}
+    >
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <div className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--evergreen-500)' }} />
+          <span className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.22em', fontWeight: 700 }}>
+            RECENT ACTIVITY
+          </span>
+        </div>
+        <Clock className="w-4 h-4" style={{ color: 'var(--evergreen-500)' }} />
+      </div>
+      <div className="flex-1 space-y-2">
+        {items.map((it) => {
+          const m = stageMeta(it.stage);
+          const Icon = m.icon;
+          return (
+            <div key={it.id} className="flex items-start gap-2 text-[11px]">
+              <span style={{
+                background: m.bg, color: m.fg, fontWeight: 700,
+                padding: '1px 6px', borderRadius: 999, fontSize: 9,
+                letterSpacing: '0.04em', whiteSpace: 'nowrap',
+                display: 'inline-flex', alignItems: 'center', gap: 3, marginTop: 1,
+              }}>
+                <Icon className="w-2.5 h-2.5" /> {m.label.toUpperCase()}
+              </span>
+              <div className="flex-1 min-w-0">
+                <div style={{ color: '#0A0A0A', fontWeight: 500, lineHeight: 1.3 }}>
+                  {it.label}
+                </div>
+                <div style={{ color: '#1F1B16', opacity: 0.55, fontSize: 10 }}>
+                  {relTime(it.ts)}
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
