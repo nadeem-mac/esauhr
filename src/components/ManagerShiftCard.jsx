@@ -141,7 +141,7 @@ export default function ManagerShiftCard({ me, employees }) {
     try {
       data = await directGet(
         'employee_shifts',
-        `select=shift_date,start_time,end_time,status` +
+        `select=shift_date,start_time,end_time,status,accepted_at` +
         `&employee_id=eq.${encodeURIComponent(staffId)}` +
         `&shift_date=gte.${fromKey}&shift_date=lte.${toKey}`,
         { timeoutMs: 8000 }
@@ -162,6 +162,7 @@ export default function ManagerShiftCard({ me, employees }) {
         start: trimTime(row.start_time),
         end:   trimTime(row.end_time),
         status: row.status,
+        accepted_at: row.accepted_at || null,
       };
     });
     setShifts(next);
@@ -695,7 +696,21 @@ export default function ManagerShiftCard({ me, employees }) {
                 if (kind === 'past') {
                   bg = 'transparent'; fg = '#0A0A0A'; br = '0.5px solid var(--border)'; label = 'Past';
                 } else if (kind === 'accepted') {
-                  bg = 'var(--evergreen-600)'; fg = '#FFFFFF'; br = '2px solid var(--evergreen-600)'; label = 'ACCEPTED';
+                  // Accepted cells stay locked but should still show the
+                  // times the staff agreed to — otherwise the manager
+                  // loses visibility of what was committed. Brand-green
+                  // bg + bold border + CheckCircle icon (added in the
+                  // label row below) carry the 'locked + accepted'
+                  // semantics; the times themselves replace the bare
+                  // 'ACCEPTED' word that was here before. Nadeem
+                  // 2026-05-17.
+                  bg = 'var(--evergreen-600)';
+                  fg = '#FFFFFF';
+                  br = '2px solid var(--evergreen-600)';
+                  const overnight = s.start && s.end && s.start > s.end;
+                  label = overnight
+                    ? `${s.start}\u2192${s.end}`
+                    : `${s.start}\u2013${s.end}`;
                 } else if (kind === 'pending') {
                   // Saved & dispatched, awaiting staff acknowledgment.
                   // Light amber background to visually echo the pending
@@ -734,12 +749,26 @@ export default function ManagerShiftCard({ me, employees }) {
                 }
                 const opacity = kind === 'past' ? 0.5 : 1;
 
+                // Helpful tooltip explaining WHY a cell is locked. Shows
+                // on hover (desktop) and long-press (mobile). Skipped
+                // for editable kinds so they don't get a useless 'Tap
+                // to edit' that just states the obvious.
+                let lockTitle = '';
+                if (kind === 'accepted') {
+                  lockTitle = `Accepted by staff on ${s?.accepted_at ? new Date(s.accepted_at).toLocaleDateString(SAR_LOCALE, { day: 'numeric', month: 'short' }) : 'an earlier date'}. Shift is final — to change, staff must decline first.`;
+                } else if (kind === 'pending') {
+                  lockTitle = 'Dispatched — waiting for staff to acknowledge. To change times, wait for the staff to decline or accept.';
+                } else if (kind === 'past') {
+                  lockTitle = 'Past date — read-only.';
+                }
+
                 return (
                   <button
                     key={key}
                     type="button"
                     onClick={() => handleDayClick(d)}
                     disabled={isLocked}
+                    title={lockTitle || undefined}
                     className="flex flex-col items-center justify-start py-2 px-1 rounded-lg transition-all"
                     style={{
                       background: bg,
@@ -750,7 +779,7 @@ export default function ManagerShiftCard({ me, employees }) {
                       minHeight: 78,
                     }}
                     aria-pressed={isSel}
-                    aria-label={`${DOW_SHORT[d.getDay()]} ${d.getDate()} ${d.toLocaleDateString(SAR_LOCALE, { month: 'short' })} — ${label}`}
+                    aria-label={`${DOW_SHORT[d.getDay()]} ${d.getDate()} ${d.toLocaleDateString(SAR_LOCALE, { month: 'short' })} — ${label}${kind === 'accepted' ? ' — accepted, locked' : kind === 'pending' ? ' — pending acknowledgment, locked' : ''}`}
                   >
                     <div className="text-[11px]" style={{ opacity: 0.8, fontWeight: 600 }}>
                       {DOW_SHORT[d.getDay()]}
