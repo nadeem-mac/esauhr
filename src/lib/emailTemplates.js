@@ -181,6 +181,37 @@ export function renderHrSignature(sig) {
   ].join('\n');
 }
 
+/**
+ * Render the HR signature as an HTML block for emails that paste into
+ * Outlook/Gmail with formatting. Same content + structure as
+ * renderHrSignature() but uses inline-styled <p>/<a> tags so the
+ * 'Thanks and regards' lead-in and the signature block render
+ * correctly in HTML-aware clients.
+ *
+ * Inline styles only (no <style>, no external CSS) so it survives
+ * email-client sanitisation.
+ *
+ * @param {Object} [sig] - Optional signature object; falls back to
+ *                         the cached templates / defaults.
+ * @returns {string} HTML fragment ending with the signature block.
+ *                   No outer wrapper — caller can drop it directly
+ *                   into the email body.
+ */
+export function renderHrSignatureHtml(sig) {
+  const s = sig || (cache && cache.hr_signature) || DEFAULT_TEMPLATES.hr_signature;
+  const esc = (str) => String(str ?? '').replace(/[&<>"']/g, c =>
+    ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  return [
+    `<p style="margin:14px 0 4px 0;font-family:Calibri,Arial,sans-serif;font-size:14px;color:#0A0A0A">Thanks and regards,</p>`,
+    `<p style="margin:14px 0 0 0;font-family:Calibri,Arial,sans-serif;font-size:14px;color:#0A0A0A"><strong>${esc(s.name)}</strong></p>`,
+    `<p style="margin:0;font-family:Calibri,Arial,sans-serif;font-size:13px;color:#1F1B16">${esc(s.company)}</p>`,
+    `<p style="margin:0;font-family:Calibri,Arial,sans-serif;font-size:13px;color:#1F1B16">${esc(s.unit)}</p>`,
+    `<p style="margin:0;font-family:Calibri,Arial,sans-serif;font-size:13px;color:#1F1B16">Whatsapp: ${esc(s.whatsapp)}</p>`,
+    `<p style="margin:0;font-family:Calibri,Arial,sans-serif;font-size:13px;color:#1F1B16">Tel: ${esc(s.tel)}</p>`,
+    `<p style="margin:0;font-family:Calibri,Arial,sans-serif;font-size:13px;color:#1F1B16">Email:<a href="mailto:${esc(s.email)}" style="color:#2D5F3F;text-decoration:none">${esc(s.email)}</a></p>`,
+  ].join('');
+}
+
 // =============================================================================
 // parseEmailAddress
 //

@@ -7,6 +7,9 @@ import { directGet } from '../supabaseClient.js';
 import {
   summarizeShiftCompliance, VERDICT_LABEL, VERDICT_COLOR,
 } from '../lib/shiftCompliance.js';
+import {
+  renderHrSignature, renderHrSignatureHtml, DEFAULT_TEMPLATES,
+} from '../lib/emailTemplates.js';
 
 // =============================================================================
 // ShiftComplianceCard
@@ -31,9 +34,15 @@ import {
 // Sits below the Roster Gaps card. Scope: month-start through the
 // latest uploaded attendance date (endDate prop) — future-dated
 // shifts aren't evaluated yet (Nadeem 2026-05-17).
+//
+// Signature is sourced from src/lib/emailTemplates.js so any change
+// Bashaier makes there propagates here automatically (Nadeem
+// 2026-05-17).
 // =============================================================================
 
-const HR_EMAIL  = 'bashaier.alsubaie@evergreen-shipping.com.sa';
+// HR signature email = canonical 'from' for HR comms; always cc'd
+// on outgoing manager/staff notifications.
+const HR_EMAIL  = DEFAULT_TEMPLATES.hr_signature.email;
 const SONNIE_PSN = 'H94226';
 
 // ─── helpers ──────────────────────────────────────────────────────────────
@@ -97,7 +106,7 @@ function staffTableHtml(staff) {
 </div>`;
 }
 
-function buildManagerDigest({ manager, monthLabel, rangeLabel, sonnieEmail, hrName }) {
+function buildManagerDigest({ manager, monthLabel, rangeLabel, sonnieEmail }) {
   const totalIssues = manager.totalIssues;
   const staffCount  = manager.staff.length;
   const subject = `Shift compliance — your team — ${monthLabel} (${staffCount} staff, ${totalIssues} issue${totalIssues === 1 ? '' : 's'})`;
@@ -129,11 +138,7 @@ function buildManagerDigest({ manager, monthLabel, rangeLabel, sonnieEmail, hrNa
     '',
     `Unresolved rows by month-end will default to HELD.`,
     '',
-    `Thanks and regards,`,
-    '',
-    hrName || 'BASHAIER ALI ALSUBAIE',
-    `Evergreen Shipping Agency Saudi Co. (L.L.C)`,
-    `ESAU · SADMN SUP / HR Department`,
+    renderHrSignature(),
   ].join('\n');
 
   const tables = manager.staff.map(staffTableHtml).join('');
@@ -155,9 +160,7 @@ function buildManagerDigest({ manager, monthLabel, rangeLabel, sonnieEmail, hrNa
     <li>Held from payroll for this cycle.</li>
   </ul>
   <p style="margin:0 0 14px 0;color:#7F1D1D"><strong>Unresolved rows by month-end will default to HELD.</strong></p>
-  <p style="margin:14px 0 4px 0">Thanks and regards,</p>
-  <p style="margin:0;color:#0A0A0A"><strong>${escapeHtml(hrName || 'BASHAIER ALI ALSUBAIE')}</strong></p>
-  <p style="margin:0;color:#6B7280;font-size:12px">Evergreen Shipping Agency Saudi Co. (L.L.C)<br/>ESAU · SADMN SUP / HR Department</p>
+  ${renderHrSignatureHtml()}
 </div>`;
 
   const cc = [HR_EMAIL, sonnieEmail].filter(Boolean).filter(e => e !== manager.managerEmail).join(',');
@@ -172,7 +175,7 @@ function buildManagerDigest({ manager, monthLabel, rangeLabel, sonnieEmail, hrNa
 
 // ─── staff clarification ──────────────────────────────────────────────────
 
-function buildStaffEmail({ staff, manager, monthLabel, rangeLabel, hrName }) {
+function buildStaffEmail({ staff, manager, monthLabel, rangeLabel }) {
   const subject = `Shift attendance — clarification needed — ${monthLabel}`;
 
   const dateLines = staff.issueDays.map(d => {
@@ -193,11 +196,7 @@ function buildStaffEmail({ staff, manager, monthLabel, rangeLabel, hrName }) {
     '',
     `If you believe any of the above is a system error (the assigned times were wrong, the punches were wrong, you were on leave that day), please flag it in your reply so we can correct the record.`,
     '',
-    `Thanks and regards,`,
-    '',
-    hrName || 'BASHAIER ALI ALSUBAIE',
-    `Evergreen Shipping Agency Saudi Co. (L.L.C)`,
-    `ESAU · SADMN SUP / HR Department`,
+    renderHrSignature(),
   ].join('\n');
 
   const rows = staff.issueDays.map((d, i) => {
@@ -229,9 +228,7 @@ function buildStaffEmail({ staff, manager, monthLabel, rangeLabel, hrName }) {
   <p style="margin:14px 0 8px 0">Please reply to this email confirming, for each day above, what actually happened — late arrival reason, missed punch-out reason, or any approved permission you may have on file that we should match against.</p>
   <p style="margin:0 0 12px 0;color:#7F1D1D"><strong>Days that remain unclarified by month-end will not be processed in payroll for this cycle.</strong></p>
   <p style="margin:0 0 14px 0">If you believe any of the above is a system error (the assigned times were wrong, the punches were wrong, you were on leave that day), please flag it in your reply so we can correct the record.</p>
-  <p style="margin:14px 0 4px 0">Thanks and regards,</p>
-  <p style="margin:0;color:#0A0A0A"><strong>${escapeHtml(hrName || 'BASHAIER ALI ALSUBAIE')}</strong></p>
-  <p style="margin:0;color:#6B7280;font-size:12px">Evergreen Shipping Agency Saudi Co. (L.L.C)<br/>ESAU · SADMN SUP / HR Department</p>
+  ${renderHrSignatureHtml()}
 </div>`;
 
   const cc = [HR_EMAIL, manager?.managerEmail].filter(Boolean).filter(e => e !== staff.empEmail).join(',');
@@ -486,14 +483,14 @@ export default function ShiftComplianceCard({ employees = [], me, monthKey = nul
 
   const openManagerPreview = (mgr) => {
     const payload = buildManagerDigest({
-      manager: mgr, monthLabel, rangeLabel, sonnieEmail, hrName: me?.name,
+      manager: mgr, monthLabel, rangeLabel, sonnieEmail,
     });
     setPreview({ payload, kind: 'manager' });
   };
 
   const openStaffPreview = (staff, mgr) => {
     const payload = buildStaffEmail({
-      staff, manager: mgr, monthLabel, rangeLabel, hrName: me?.name,
+      staff, manager: mgr, monthLabel, rangeLabel,
     });
     setPreview({ payload, kind: 'staff' });
   };
