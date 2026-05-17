@@ -2,10 +2,11 @@ import React, { useMemo, useState, useEffect } from 'react';
 import {
   CalendarDays, Coffee, Plane, Mail, Copy, ClipboardCheck,
   AlertCircle, CheckCircle2, ChevronRight, Clock, Check, ChevronDown, AlertTriangle,
-  TrendingUp,
+  TrendingUp, ShieldCheck, X, MessageSquare,
 } from 'lucide-react';
-import { directGet, supabase } from '../supabaseClient.js';
+import { directGet, directPatch, supabase } from '../supabaseClient.js';
 import EvaluationReviewModal from './EvaluationReviewModal.jsx';
+import ManageIncidentsModal from './ManageIncidentsModal.jsx';
 import {
   weightForViolation, summariseViolations,
   REVIEW_THRESHOLD, WATCH_LOWER, BASE_SCORE,
@@ -448,6 +449,11 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
   // Chronic-borderline panel (Build 5) — collapsed by default so it
   // doesn't compete visually with the formal escalation panel above.
   const [chronicPanelOpen, setChronicPanelOpen] = useState(false);
+  // Manage-incidents modal (Build 4). When non-null, the modal is open
+  // and shows the per-incident excuse / dispute interface for one
+  // employee's row. Carries the same shape as the row passed to
+  // openReviewFor() — totalCount, deduction, violations[], etc.
+  const [manageRow, setManageRow] = useState(null);
   const [reviewModalRow, setReviewModalRow] = useState(null);
 
   const monthRange = useMemo(() => {
@@ -473,7 +479,7 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
       try {
         const rows = await directGet(
           'attendance_violations',
-          `select=employee_id,violation_type,violation_date,minutes_off` +
+          `select=id,employee_id,violation_type,violation_date,minutes_off,dispute_text,dispute_at,cleared_at` +
           `&violation_date=gte.${monthRange.start}&violation_date=lte.${monthRange.end}` +
           // Exclude entries cleared by retroactive permissions —
           // otherwise a 7-incident month with 2 cleared by approved
@@ -567,12 +573,19 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
         const summary = summariseViolations(a.rows);
         const emp = (employees || []).find(e => e.id === a.employeeId);
         const monthYM = monthRange.monthStart.slice(0, 7);
+        // Count rows the staff has explained — Bashaier should see
+        // this signal next to the escalation summary so she doesn't
+        // escalate without reading what the staff said.
+        const disputedCount = a.rows.filter(r => r?.dispute_text && r.dispute_text.trim()).length;
         return {
           ...summary,
-          employeeId:   a.employeeId,
-          dates:        Array.from(a.dates).sort(),
-          monthStart:   monthRange.monthStart,
-          employeeName: emp?.name || a.employeeId,
+          employeeId:    a.employeeId,
+          violations:    a.rows,                   // raw rows for the manage-incidents modal
+          violationIds:  a.rows.map(r => r.id).filter(Boolean),  // Build 6 audit linkage
+          dates:         Array.from(a.dates).sort(),
+          disputedCount,
+          monthStart:    monthRange.monthStart,
+          employeeName:  emp?.name || a.employeeId,
           alreadyLogged: !!loggedEvalKeys[`${a.employeeId}:${monthYM}`],
         };
       })
@@ -817,8 +830,24 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
                         style={{ borderColor: 'var(--border-soft)' }}
                       >
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-medium" style={{ color: '#1F1B16' }}>
+                          <div className="text-sm font-medium flex items-center gap-2" style={{ color: '#1F1B16' }}>
                             {row.employeeName}
+                            {/* Dispute signal — when staff has explained
+                                one or more incidents, surface that
+                                before Bashaier decides to escalate.
+                                Build 4 (Nadeem 2026-05-17). */}
+                            {row.disputedCount > 0 && (
+                              <span title="Staff has explained one or more incidents"
+                                    style={{
+                                      background: '#DBEAFE', color: '#1E40AF',
+                                      fontWeight: 700, fontSize: 9, padding: '1px 6px',
+                                      borderRadius: 999, letterSpacing: '0.04em',
+                                      display: 'inline-flex', alignItems: 'center', gap: 3,
+                                    }}>
+                                <MessageSquare className="w-2.5 h-2.5"/>
+                                {row.disputedCount} EXPLAINED
+                              </span>
+                            )}
                           </div>
                           <div className="text-[11px]" style={{ color: '#1F1B16' }}>
                             {row.totalCount} incident{row.totalCount === 1 ? '' : 's'}
@@ -830,6 +859,15 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
                             {' · score '}<strong>{Math.max(0, BASE_SCORE - ded)}/{BASE_SCORE}</strong>
                           </div>
                         </div>
+                        <button
+                          type="button"
+                          onClick={() => setManageRow(row)}
+                          title="Review individual incidents · excuse or read disputes"
+                          className="px-2.5 py-1.5 rounded text-xs flex items-center gap-1.5 border"
+                          style={{ background: '#FFFFFF', color: '#0A0A0A', borderColor: 'var(--border-soft)' }}
+                        >
+                          <ShieldCheck className="w-3.5 h-3.5"/> Manage
+                        </button>
                         <button
                           type="button"
                           onClick={() => openReviewFor(row)}
@@ -1004,6 +1042,21 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
           me={{ id: 'H94830' }}
           onClose={() => setReviewModalRow(null)}
           onLogged={() => { /* realtime channel will refresh state */ }}
+        />
+      )}
+
+      {/* Build 4 — manage incidents per employee. Opens from the
+          'Manage' button next to 'Review' in the escalation panel.
+          Lets Bashaier excuse individual incidents with a reason,
+          read staff explanations, and watch the live score update
+          as she excuses rows. */}
+      {manageRow && (
+        <ManageIncidentsModal
+          row={manageRow}
+          me={{ id: 'H94830' }}
+          onClose={() => setManageRow(null)}
+          onChange={() => { /* realtime channel re-fetches and the
+              row stays open with the freshest data */ }}
         />
       )}
     </>

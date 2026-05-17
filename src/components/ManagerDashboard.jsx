@@ -11,6 +11,7 @@ import PendingReturnsCard from './PendingReturnsCard.jsx';
 import MyApplicationsCard from './MyApplicationsCard.jsx';
 import ShiftPlanReminder from './ShiftPlanReminder.jsx';
 import TeamAttendanceCard from './TeamAttendanceCard.jsx';
+import TeamEvaluationCard from './TeamEvaluationCard.jsx';
 
 // ────────────────────────────────────────────────────────────────────────────
 // ManagerDashboard
@@ -439,6 +440,17 @@ export default function ManagerDashboard({
         leaveTypes={leaveTypes}
         onUploadCert={onUploadCert}
       />
+
+      {/* Team attendance evaluation — manager-facing rollup showing
+          each direct report's severity-weighted attendance score for
+          the current month + 6-month sparkline. One-click coaching
+          email cc'd to Bashaier so HR knows the manager coached
+          before any formal escalation. Same scoring/threshold as
+          Bashaier's HR panel (src/lib/evaluationWeights.js).
+          Nadeem 2026-05-17 — Build 3 of the EVALUATION FLAG rework. */}
+      {directReports.length > 0 && (
+        <TeamEvaluationCard me={me} directReports={directReports} />
+      )}
 
       {/* Direct reports list */}
       <Card title="Your team" subtitle={`${directReports.length} ${directReports.length === 1 ? 'person reports' : 'people report'} to you`} empty={directReports.length === 0 ? 'No one is set as your direct report yet.' : null}>
