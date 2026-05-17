@@ -3,10 +3,13 @@ import { supabase, directGet, directPost, directPatch } from '../supabaseClient.
 import {
   Calendar, Clock, Plus, AlertTriangle, Sun, Sunrise, Sunset,
   CheckCircle2, XCircle, Loader2, Users, Plane, Mail, HeartPulse,
-  Shield,
+  Shield, Award, Sparkles,
 } from 'lucide-react';
-import { fmtDate, calculateBalance, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
-import { summariseMonth, PERMISSION_QUOTA } from '../lib/permissionLogic.js';
+import {
+  fmtDate, calculateBalance, fmtDateShort, getInitials, avatarColor,
+  yearsOfService, monthsOfService,
+} from '../lib/leaveLogic.js';
+import { PERMISSION_QUOTA } from '../lib/permissionLogic.js';
 import {
   summariseViolations, zoneForDeduction,
   ZONE_LABEL, ZONE_COLOR, REVIEW_THRESHOLD, BASE_SCORE,
@@ -292,7 +295,6 @@ export default function PersonalDashboard({
 
   const lateRows  = permissions.filter(p => p.type === 'late_arrival');
   const earlyRows = permissions.filter(p => p.type === 'early_leave');
-  const monthSummary = summariseMonth(permissions);
   // Severity-weighted summary of this month's attendance violations.
   // Powers the EVALUATION STATUS tile. Build 1 + 2 (Nadeem 2026-05-17).
   // `clean` < 5 pts · `watch` 5-9 pts · `review` ≥ 10 pts (the same
@@ -317,18 +319,26 @@ export default function PersonalDashboard({
 
   return (
     <div className="space-y-6">
-      {/* HERO */}
+      {/* HERO — time-of-day greeting + today's date + next-event line.
+          The 'next event' is the soonest of: approved leave start, today's
+          approved permission, or pending shift acknowledgment — gives the
+          staff member one clear thing to anticipate when they land. */}
       <section>
         <div className="text-[10px] tracking-[0.3em] opacity-50 mb-2 flex items-center gap-2">
           <span className="inline-block w-7 h-px bg-current" />OVERVIEW
         </div>
         <h1 className="serif text-5xl leading-none" style={{ fontWeight: 600, letterSpacing:'-0.025em' }}>
-          Hello, <span className="italic" style={{ color:'var(--evergreen-500)', fontWeight: 400 }}>{firstName(me?.name)}.</span>
+          {greetingFor(new Date())}, <span className="italic" style={{ color:'var(--evergreen-500)', fontWeight: 400 }}>{firstName(me?.name)}.</span>
         </h1>
-        <p className="text-sm opacity-70 mt-2">
+        <p className="text-[12px] mt-2" style={{ color: '#0A0A0A', opacity: 0.55 }}>
+          {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+        </p>
+        <p className="text-sm mt-3" style={{ color: '#0A0A0A' }}>
           {nextLeave
-            ? `You're off on ${fmtDate(new Date(nextLeave.start_date))} — that's in ${daysFromNow(nextLeave.start_date)}.`
-            : 'No upcoming approved leave on the books.'}
+            ? <>You're off on <strong>{fmtDate(new Date(nextLeave.start_date))}</strong> — that's in <strong>{daysFromNow(nextLeave.start_date)}</strong>.</>
+            : pendingCount > 0
+              ? <>You have <strong>{pendingCount}</strong> request{pendingCount === 1 ? '' : 's'} awaiting decision.</>
+              : 'No upcoming approved leave on the books.'}
         </p>
       </section>
 
@@ -391,9 +401,9 @@ export default function PersonalDashboard({
 
       {/* TILE GRID — 3 cols. Row 1: leave-context tiles (annual / sick /
           next / pending). Row 2: permission tiles (late / early
-          adjacent) + evaluation flag. Late + Early sit beside each
-          other so the combined-quota story reads naturally. Sick sits
-          beside Annual since they're both Article-117/labor-law
+          adjacent) + tenure + evaluation status. Late + Early sit beside
+          each other so the combined-quota story reads naturally. Sick
+          sits beside Annual since they're both Article-117/labor-law
           entitlement balances and staff read them together. */}
       <section className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
         <ColorTile
@@ -447,7 +457,7 @@ export default function PersonalDashboard({
           desc="Shared bucket with late arrivals this month."
           progress={Math.min(100, (earlyUsed/PERMISSION_QUOTA.monthlyHours)*100)}
         />
-        <FlagTile monthSummary={monthSummary} />
+        <TenureTile me={me} />
         <EvaluationStatusTile summary={evalSummary} zone={evalZone} />
       </section>
 
@@ -704,46 +714,123 @@ function ColorTile({ accent = '#1F1B16', label, icon: Icon, stat, unit = '', des
   );
 }
 
-function FlagTile({ monthSummary }) {
-  const flagged = monthSummary.overQuota;
-  const accent = flagged ? '#B91C1C' : 'var(--evergreen-600)';
+// =============================================================================
+// TenureTile — service-recognition surface
+//
+// Sits next to EvaluationStatusTile on the staff dashboard. Shows years +
+// months at ESAU and counts down to the next work anniversary (which is
+// also when annual-leave entitlement rolls — currently 21 days, bumps
+// to 30 after 5 years per KSA Labour Law). Replaced the old FlagTile
+// (which duplicated info that LATE ARRIVAL + EARLY LEAVING already
+// surface). Nadeem 2026-05-17.
+// =============================================================================
+function TenureTile({ me }) {
+  if (!me?.join_date) {
+    // Fallback when join_date is missing — show a neutral 'profile
+    // incomplete' state rather than an empty tile.
+    return (
+      <div
+        className="rounded-xl border p-5 esau-card flex flex-col justify-between"
+        style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', minHeight: '140px' }}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full" style={{ background: '#9CA3AF' }} />
+            <span className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.22em', fontWeight: 700 }}>
+              TENURE
+            </span>
+          </div>
+          <Award className="w-4 h-4" style={{ color: '#9CA3AF' }} />
+        </div>
+        <div>
+          <div style={{
+            fontFamily: 'inherit', fontSize: '24px', color: '#1F1B16',
+            lineHeight: 1.05, marginTop: '8px', fontWeight: 500,
+            letterSpacing: '-0.02em',
+          }}>
+            —
+          </div>
+          <div className="text-[11px] mt-1 leading-snug" style={{ color: '#1F1B16', opacity: 0.65 }}>
+            Joining date not on file. Ask HR to update your profile.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const now = new Date();
+  const yrs = yearsOfService(me.join_date, now);
+  const totalMos = monthsOfService(me.join_date, now);
+  const mos = totalMos % 12;
+
+  // Days to the next work anniversary. Build it as 'same month/day
+  // as join_date in the year that brings the next anniversary'.
+  const joined = new Date(me.join_date);
+  const nextAnniv = new Date(now.getFullYear(), joined.getMonth(), joined.getDate());
+  if (nextAnniv <= now) nextAnniv.setFullYear(now.getFullYear() + 1);
+  const daysToAnniv = Math.round((nextAnniv - now) / 86400000);
+
+  // Tenure milestone — surface when crossing 5 yrs (annual leave goes
+  // from 21 to 30 days under KSA labour law) and 10 yrs (long-service).
+  const willCross5  = yrs < 5  && (yrs + (daysToAnniv <= 31 ? 1 : 0)) >= 5;
+  const willCross10 = yrs < 10 && (yrs + (daysToAnniv <= 31 ? 1 : 0)) >= 10;
+  const isAnnivSoon = daysToAnniv <= 31;
+  const accent = (willCross5 || willCross10) ? '#92400E'
+               : isAnnivSoon                  ? 'var(--evergreen-500)'
+               : '#1F1B16';
+
+  // Sub-line: emphasise the milestone if it's within a month,
+  // otherwise just show the standard 'joined X · Y days to anniversary'.
+  let subline;
+  if (willCross5) {
+    subline = `In ${daysToAnniv} day${daysToAnniv === 1 ? '' : 's'} you cross 5 years — annual leave bumps to 30 days.`;
+  } else if (willCross10) {
+    subline = `In ${daysToAnniv} day${daysToAnniv === 1 ? '' : 's'} you cross 10 years of service.`;
+  } else if (isAnnivSoon) {
+    subline = `Joined ${fmtDateShort(me.join_date)} · ${daysToAnniv} day${daysToAnniv === 1 ? '' : 's'} to your next anniversary.`;
+  } else {
+    subline = `Joined ${fmtDateShort(me.join_date)} · ${daysToAnniv} days to your next anniversary.`;
+  }
+
   return (
     <div
       className="rounded-xl border p-5 esau-card flex flex-col justify-between"
-      style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', minHeight: '140px' }}
+      style={{
+        borderColor: (willCross5 || willCross10) ? '#FCD34D' : 'var(--border-soft)',
+        background: '#FFFFFF',
+        minHeight: '140px',
+      }}
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-1.5 h-1.5 rounded-full" style={{ background: accent }} />
           <span className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.22em', fontWeight: 700 }}>
-            EVALUATION FLAG
+            TENURE
           </span>
         </div>
-        <AlertTriangle className="w-4 h-4" style={{ color: accent }} />
+        {(willCross5 || willCross10) ? (
+          <Sparkles className="w-4 h-4" style={{ color: accent }} />
+        ) : (
+          <Award className="w-4 h-4" style={{ color: accent }} />
+        )}
       </div>
       <div>
-        <div
-          style={{
-            fontFamily: 'inherit',
-            fontSize: '24px',
-            color: '#1F1B16',
-            lineHeight: 1.05,
-            marginTop: '8px',
-            fontWeight: 500,
-            letterSpacing: '-0.02em',
-          }}
-        >
-          {flagged ? 'Flagged' : 'Within quota'}
+        <div style={{
+          fontFamily: 'inherit', fontSize: '24px', color: '#1F1B16',
+          lineHeight: 1.05, marginTop: '8px', fontWeight: 500,
+          letterSpacing: '-0.02em',
+        }}>
+          {yrs}y {mos}m
         </div>
         <div className="text-[11px] mt-1 leading-snug" style={{ color: '#1F1B16' }}>
-          {flagged
-            ? `${monthSummary.hoursUsed}h used in ${monthSummary.occurrences} occurrence${monthSummary.occurrences !== 1 ? 's' : ''} — exceeds 3hr cap.`
-            : `Combined cap: 3hr / 3 times per month. ${monthSummary.hoursRemaining}h left.`}
+          {subline}
         </div>
       </div>
     </div>
   );
 }
+
+// =============================================================================
 
 // =============================================================================
 // EvaluationStatusTile — staff-side early-warning surface
@@ -856,6 +943,19 @@ function firstName(name) {
     return titleCase(parts[1].replace(/[^a-zA-Z]/g, ''));
   }
   return titleCase((parts[0] || name).replace(/[^a-zA-Z]/g, ''));
+}
+
+// Time-of-day greeting used in the hero. Saudi office hours typically
+// run 08:00–17:00 so 'Good morning' covers the start of the working
+// day, 'Good afternoon' the back half, and 'Good evening' the wind-down
+// (people sometimes open the portal late to file a permission for the
+// next day). Falls back to a friendly 'Hello' just before midnight.
+function greetingFor(now = new Date()) {
+  const h = now.getHours();
+  if (h >= 5  && h < 12) return 'Good morning';
+  if (h >= 12 && h < 17) return 'Good afternoon';
+  if (h >= 17 && h < 22) return 'Good evening';
+  return 'Hello';
 }
 function startOfDay(d) { const x = new Date(d); x.setHours(0,0,0,0); return x; }
 function daysFromNow(date) {
