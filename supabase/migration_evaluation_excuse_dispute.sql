@@ -30,12 +30,17 @@
 --   needed — existing rows keep NULL on the new columns, which the UI
 --   already treats as 'no excuse', 'no dispute', 'legacy row'.
 --
+--   Earlier version of this file wrapped everything in BEGIN; ... COMMIT;
+--   which failed in Supabase SQL Editor with 0A000 ('EXECUTE of
+--   transaction commands is not implemented'). The editor auto-wraps
+--   every script in its own transaction so explicit BEGIN/COMMIT
+--   collide. All statements below are independently idempotent — the
+--   editor's auto-tx is sufficient.
+--
 -- ROLLBACK
 --   ALTER TABLE ... DROP COLUMN IF EXISTS — leaves the data intact only
 --   if you don't run it. Keep this commented out unless you're sure.
 -- =============================================================================
-
-BEGIN;
 
 -- Build 4 — manual-excuse reason text
 ALTER TABLE attendance_violations
@@ -61,10 +66,7 @@ CREATE INDEX IF NOT EXISTS idx_attn_violations_pending_dispute
   ON attendance_violations (dispute_at DESC)
   WHERE dispute_at IS NOT NULL AND cleared_at IS NULL;
 
-COMMIT;
-
--- Rollback (uncomment to use):
--- BEGIN;
+-- Rollback (run separately in the SQL Editor, do NOT include BEGIN/COMMIT):
 --   ALTER TABLE attendance_violations
 --     DROP COLUMN IF EXISTS cleared_reason,
 --     DROP COLUMN IF EXISTS dispute_text,
@@ -72,4 +74,3 @@ COMMIT;
 --   ALTER TABLE evaluation_scores
 --     DROP COLUMN IF EXISTS violation_ids;
 --   DROP INDEX IF EXISTS idx_attn_violations_pending_dispute;
--- COMMIT;
