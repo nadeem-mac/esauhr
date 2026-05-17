@@ -38,6 +38,7 @@ const InsightsView            = lazy(() => import('./InsightsView.jsx'));
 const AdminPanel              = lazy(() => import('./AdminPanel.jsx'));
 const HiringView              = lazy(() => import('./HiringView.jsx'));
 const ReviewerPanel           = lazy(() => import('./ReviewerPanel.jsx'));
+const MonthlyReportsCard      = lazy(() => import('./MonthlyReportsCard.jsx'));
 const BashaierTasksCard       = lazy(() => import('./BashaierTasksCard.jsx'));
 const AttendanceView          = lazy(() => import('./AttendanceView.jsx'));
 const RefreshOverlay          = lazy(() => import('./RefreshOverlay.jsx'));
@@ -1175,7 +1176,14 @@ export default function AppShell({ session, me, onRefreshMe }) {
           <BashaierTasksCard employees={employees} requests={requests} permissions={permissions} />
         )}
         {tab === 'reviews' && (
-          <ReviewerPanel me={me} urgentCertEmpIds={urgentCertEmpIds} onDataChange={() => loadAll({ silent: true })} />
+          <>
+            {/* Monthly reports for Mr John — replaces the old login-popup
+                reminder (🧚). Self-hides into a collapsible card when nothing
+                is actionable so it stays calm during the quiet weeks of the
+                month and surfaces (default-open) on the 1st / 15th / last-day. */}
+            {isHrReviewer && <MonthlyReportsCard />}
+            <ReviewerPanel me={me} urgentCertEmpIds={urgentCertEmpIds} onDataChange={() => loadAll({ silent: true })} />
+          </>
         )}
         {tab === 'attendance' && (() => {
           // Defense in depth: even if someone forces tab='attendance' via URL or

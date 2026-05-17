@@ -183,65 +183,12 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
   }, [nowTick, lastUpdated]);
   const canSeePinReqs = !!(me?.is_admin || me?.is_hr_reviewer);
 
-  // Report reminder popup — fires once per page load if today is the day a
-  // Mr John report is due (or it's overdue) and Bashaier has not yet marked it
-  // as sent for this month. "Mark sent" persists in localStorage; "Remind me
-  // later" snoozes for the rest of today only.
-  const [reminderTask, setReminderTask] = useState(null);
-
-  useEffect(() => {
-    if (!bashaierMode) return;
-    const today = new Date();
-    const day = today.getDate();
-    const year = today.getFullYear();
-    const month = today.getMonth() + 1;
-    const lastDay = new Date(year, month, 0).getDate();
-    const monthKey = year + '-' + String(month).padStart(2, '0');
-    const dayKey = monthKey + '-' + String(day).padStart(2, '0');
-
-    // Each task has a { isDueOrLate } predicate based on today's date.
-    const tasks = [
-      {
-        key: 'mid_month_perms',
-        title: 'Mid-month permissions report',
-        subtitle: 'a 1–15 update for Mr John',
-        isDueOrLate: day >= 15,            // due 15th, overdue after
-      },
-      {
-        key: 'end_of_month_perms',
-        title: 'End-of-month permissions report',
-        subtitle: 'this month\'s full permissions report',
-        isDueOrLate: day >= lastDay,        // due last day of month
-      },
-      {
-        key: 'last_month_vacation',
-        title: 'Vacation summary',
-        subtitle: 'last month\'s staff vacations report',
-        isDueOrLate: day >= 1 && day <= 7,  // due 1st, available through 7th
-      },
-    ];
-
-    for (const task of tasks) {
-      if (!task.isDueOrLate) continue;
-      const sent    = localStorage.getItem('esau_taskdone_'    + task.key + '_' + monthKey);
-      const snoozed = localStorage.getItem('esau_tasksnooze_'  + task.key + '_' + dayKey);
-      if (sent || snoozed) continue;
-      setReminderTask({ ...task, monthKey, dayKey });
-      break; // one reminder at a time; close it and the next one (if any) shows on next reload
-    }
-  }, [bashaierMode]);
-
-  const handleReminderSent = useCallback(() => {
-    if (!reminderTask) return;
-    localStorage.setItem('esau_taskdone_' + reminderTask.key + '_' + reminderTask.monthKey, new Date().toISOString());
-    setReminderTask(null);
-  }, [reminderTask]);
-
-  const handleReminderSnooze = useCallback(() => {
-    if (!reminderTask) return;
-    localStorage.setItem('esau_tasksnooze_' + reminderTask.key + '_' + reminderTask.dayKey, '1');
-    setReminderTask(null);
-  }, [reminderTask]);
+  // Report-reminder modal (the 🧚 popup) has been retired. Bashaier
+  // asked to remove it from login flow and surface the monthly reports
+  // as a calm persistent card on the Reviews tab instead. See
+  // src/components/MonthlyReportsCard.jsx for the new home. The
+  // localStorage keys are preserved so any task marked sent under the
+  // old flow stays marked sent under the new one. Nadeem 2026-05-17.
 
   // Rotating bilingual hero message — picks a random one on every login. Each
   // entry is { lang, text }; the JSX below handles RTL direction + signature.
@@ -417,98 +364,92 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
       </div>
       )}
 
-      {/* Stat cards — Professional Badge style (matches headcount badges below).
-           Each card has a colored gradient side rail, a count pill in the top-right,
-           an emoji icon, and a small description. The Total Staff card additionally
-           shows a 3-segment location breakdown (DMM / JED / RYD) with a mini split bar.
-           The Your Tasks card is HR-only and scrolls to the Bashaier tasks anchor on click. */}
-      <div className={`grid grid-cols-1 sm:grid-cols-2 ${
-            canSeePinReqs ? 'lg:grid-cols-5' : 'lg:grid-cols-4'
-          } gap-4`}
+      {/* MINIMAL stat surface — replaces the four-tile strip Bashaier
+          had before. Only PENDING APPROVAL keeps a tile (it's the one
+          actionable count and it pulses when items wait on her). The
+          other three counts collapse into a single muted strip below.
+          PIN REQUESTS stays as a small chip on the right when relevant.
+          Nadeem 2026-05-17: 'make it minimal'. */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 items-stretch"
            style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
-
-        {/* TOTAL STAFF — with location split */}
-        <Tile label="TOTAL STAFF" sublabel="Active employees" count={employees.length}
-              accentDark="#047857" accentTint="#ECFDF5">
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-1.5">
-              <span style={{ fontSize: '14px', lineHeight: 1 }}>📍</span>
-              <span style={{ fontSize: '14px', fontWeight: 600, color: '#1F1B16' }}>{byLocation.DMM || 0}</span>
-              <span className="text-[11px]" style={{ color: '#1F1B16' }}>DMM</span>
-            </div>
-            <div style={{ width: '1px', height: '14px', background: '#E5E5E5' }}/>
-            <div className="flex items-center gap-1.5">
-              <span style={{ fontSize: '14px', lineHeight: 1 }}>📍</span>
-              <span style={{ fontSize: '14px', fontWeight: 600, color: '#1F1B16' }}>{byLocation.JED || 0}</span>
-              <span className="text-[11px]" style={{ color: '#1F1B16' }}>JED</span>
-            </div>
-            <div style={{ width: '1px', height: '14px', background: '#E5E5E5' }}/>
-            <div className="flex items-center gap-1.5">
-              <span style={{ fontSize: '14px', lineHeight: 1 }}>📍</span>
-              <span style={{ fontSize: '14px', fontWeight: 600, color: '#1F1B16' }}>{byLocation.RYD || 0}</span>
-              <span className="text-[11px]" style={{ color: '#1F1B16' }}>RYD</span>
-            </div>
-          </div>
-          <div className="mt-3 rounded-full overflow-hidden flex" style={{ height: '6px', background: '#F1ECE0' }}>
-            {(byLocation.DMM || 0) > 0 && <div title={`${byLocation.DMM} DMM`} style={{ width: `${Math.round(((byLocation.DMM || 0) / Math.max(employees.length, 1)) * 100)}%`, background: 'linear-gradient(90deg, #6EE7B7 0%, #10B981 100%)' }}/>}
-            {(byLocation.JED || 0) > 0 && <div title={`${byLocation.JED} JED`} style={{ width: `${Math.round(((byLocation.JED || 0) / Math.max(employees.length, 1)) * 100)}%`, background: 'linear-gradient(90deg, #67E8F9 0%, #06B6D4 100%)' }}/>}
-            {(byLocation.RYD || 0) > 0 && <div title={`${byLocation.RYD} RYD`} style={{ width: `${Math.round(((byLocation.RYD || 0) / Math.max(employees.length, 1)) * 100)}%`, background: 'linear-gradient(90deg, #FCD34D 0%, #F59E0B 100%)' }}/>}
-          </div>
-        </Tile>
-
-        {/* ON LEAVE TODAY */}
-        <Tile label="ON LEAVE TODAY" sublabel="Currently out of office" count={onLeaveToday.length}
-              accentDark="#0E7490" accentTint="#ECFEFF">
-          <div className="text-[20px]">🏖️</div>
-        </Tile>
-
-        {/* PENDING APPROVAL — pulse on the count badge when items are
-            waiting on admin/HR action. Soft red ring fading in/out
-            draws the eye to the tile without being aggressive. */}
+        {/* PENDING — primary action tile (pulses when count > 0) */}
         <Tile label="PENDING APPROVAL" sublabel="Awaiting your decision" count={pending.length}
               pulse={pending.length > 0}
               accentDark="#C2410C" accentTint="#FFFBEB" onClick={onGoToReviews || onGoToRequests}>
           <div className="text-[20px]">⏳</div>
         </Tile>
 
-        {/* APPROVED THIS MONTH */}
-        <Tile label="APPROVED THIS MONTH" sublabel={new Date().toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })} count={approvedThisMonth}
-              accentDark="#6D28D9" accentTint="#F5F3FF">
-          <div className="text-[20px]">✅</div>
-        </Tile>
-
-        {/* PIN REQUESTS — admin/HR only; opens modal with the queue */}
-        {canSeePinReqs && (
-          <Tile label="PIN REQUESTS" sublabel="Click to review" count={pinReqCount}
-                accentDark="#334155" accentTint="#F1F5F9" onClick={() => setPinModalOpen(true)}>
-            <div className="text-[20px]">🔑</div>
-          </Tile>
-        )}
-
-        {/* YOUR TASKS tile removed — moved to a REPORTS button in the
-            top header (see AppShell). Per Nadeem: "Remove Reports for
-            Mr John from landing page and put it in button on top as
-            REPORTS." */}
-
+        {/* AT-A-GLANCE — the three secondary counts in one compact card */}
+        <div className="sm:col-span-2 rounded-xl border p-5 esau-card"
+             style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-1.5 h-1.5 rounded-full" style={{ background: '#1F1B16' }}/>
+            <span className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.18em', fontWeight: 700 }}>
+              AT A GLANCE
+            </span>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <div className="serif text-2xl leading-none" style={{ color: '#1F1B16', fontWeight: 500 }}>{employees.length}</div>
+              <div className="text-[11px] mt-1" style={{ color: '#1F1B16' }}>active staff</div>
+              <div className="text-[10px] mt-0.5" style={{ color: '#1F1B16', opacity: 0.6 }}>
+                {byLocation.DMM || 0} DMM · {byLocation.JED || 0} JED · {byLocation.RYD || 0} RYD
+              </div>
+            </div>
+            <div>
+              <div className="serif text-2xl leading-none" style={{ color: onLeaveToday.length > 0 ? '#0E7490' : '#1F1B16', fontWeight: 500 }}>
+                {onLeaveToday.length}
+              </div>
+              <div className="text-[11px] mt-1" style={{ color: '#1F1B16' }}>on leave today</div>
+              <div className="text-[10px] mt-0.5" style={{ color: '#1F1B16', opacity: 0.6 }}>
+                {onLeaveToday.length === 0 ? 'full house' : `out of ${employees.length}`}
+              </div>
+            </div>
+            <div>
+              <div className="serif text-2xl leading-none" style={{ color: '#1F1B16', fontWeight: 500 }}>{approvedThisMonth}</div>
+              <div className="text-[11px] mt-1" style={{ color: '#1F1B16' }}>approved this month</div>
+              <div className="text-[10px] mt-0.5" style={{ color: '#1F1B16', opacity: 0.6 }}>
+                {new Date().toLocaleDateString('en-GB', { month: 'long' })}
+              </div>
+            </div>
+          </div>
+          {canSeePinReqs && pinReqCount > 0 && (
+            <button onClick={() => setPinModalOpen(true)}
+              className="mt-3 inline-flex items-center gap-2 text-[10px] px-3 py-1.5 rounded-full"
+              style={{ background: '#F1F5F9', color: '#334155', fontWeight: 700, letterSpacing: '0.06em' }}>
+              🔑 {pinReqCount} PIN REQUEST{pinReqCount === 1 ? '' : 'S'} · CLICK TO REVIEW
+            </button>
+          )}
+          {/* Always mount PinRequestsCard so the realtime subscription
+              keeps the count current — kept in a hidden tree (display:none)
+              while the modal is closed. Same pattern as before. */}
+        </div>
       </div>
 
-      {/* Headcount — Professional Badge style. Each department renders as a
-           badge with a subtle gradient strip on the side, the total count, and
-           a per-department male/female breakdown using emoji icons. Badge text
-           uses Calibri so it stays clean and modern alongside the editorial
-           serif on the rest of the page. */}
-      <div className="pt-7" style={{ borderTop: '1px solid #E5E5E5' }}>
-        <div className="flex items-baseline justify-between flex-wrap gap-3 mb-5">
-          <div>
-            <div className="text-[10px]" style={{ color: '#9D6B53', letterSpacing: '0.3em' }}>PEOPLE AT ESAU</div>
-            <h2 style={{ fontFamily: 'inherit', fontSize: '26px', color: '#1F1B16', marginTop: '4px', fontWeight: 400 }}>
-              Headcount by department
-            </h2>
+      {/* Headcount — collapsed by default to keep the landing minimal.
+          The summary line in the header carries the most useful info at
+          a glance (active count, Saudi/expat split, gender). Bashaier
+          opens the dept-by-dept breakdown only when she actually needs
+          it. Nadeem 2026-05-17: 'make it minimal, more organized'. */}
+      <details className="pt-7 group" style={{ borderTop: '1px solid #E5E5E5' }}>
+        <summary className="flex items-baseline justify-between flex-wrap gap-3 mb-5 cursor-pointer list-none"
+                 style={{ userSelect: 'none' }}>
+          <div className="flex items-baseline gap-3">
+            <div>
+              <div className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.3em', fontWeight: 700 }}>PEOPLE AT ESAU</div>
+              <h2 style={{ fontFamily: 'inherit', fontSize: '26px', color: '#1F1B16', marginTop: '4px', fontWeight: 400 }}>
+                Headcount by department
+                <span className="ml-3 text-[14px]" style={{ color: '#1F1B16', opacity: 0.5, fontWeight: 400 }}>
+                  <span className="group-open:hidden">▸ click to open</span>
+                  <span className="hidden group-open:inline">▾ click to close</span>
+                </span>
+              </h2>
+            </div>
           </div>
           <div className="text-xs" style={{ color: '#1F1B16', fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
             {employees.length} active · 🇸🇦 {byNationality.saudi} Saudi · 🌍 {byNationality.expat} Expat · 👨 {byGender.male} Men · 👩 {byGender.female} Women
           </div>
-        </div>
+        </summary>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-4"
              style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
@@ -597,7 +538,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
             );
           })}
         </div>
-      </div>
+      </details>
 
       {/* Three column summary */}
       <div className="grid lg:grid-cols-3 gap-5">
@@ -794,71 +735,10 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           </div>
         </div>
       )}
-      {/* Report reminder popup — fires when a Mr John report is due and Bashaier
-          hasn't marked it sent for the current month. Shown once per page load. */}
-      {bashaierMode && reminderTask && (
-        <div
-          onClick={(e) => { if (e.target === e.currentTarget) handleReminderSnooze(); }}
-          style={{
-            position: 'fixed', inset: 0, zIndex: 100,
-            background: 'rgba(15, 23, 42, 0.6)',
-            backdropFilter: 'blur(3px)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: '20px',
-            fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
-          }}>
-          <div style={{
-            width: '100%', maxWidth: '440px',
-            background: 'linear-gradient(180deg, #FFFFFF 0%, #FFF5E8 100%)',
-            borderRadius: '20px', padding: '32px',
-            boxShadow: '0 20px 50px rgba(0,0,0,0.3)',
-            border: '1px solid #F5E6D3',
-            position: 'relative',
-          }}>
-            <div style={{ fontSize: '64px', textAlign: 'center', marginBottom: '12px' }}>🧚</div>
-            <div style={{
-              fontSize: '11px', letterSpacing: '0.3em', color: '#9D6B53',
-              textAlign: 'center', marginBottom: '6px',
-            }}>
-              — A GENTLE REMINDER
-            </div>
-            <h2 style={{
-              fontFamily: 'inherit',
-              fontSize: '24px', fontWeight: 500, color: '#1F1B16',
-              textAlign: 'center', margin: '0 0 12px', letterSpacing: '-0.01em',
-            }}>
-              Don't forget your {reminderTask.title}
-            </h2>
-            <p style={{
-              fontSize: '14px', color: '#1F1B16',
-              textAlign: 'center', margin: '0 0 24px', lineHeight: 1.5,
-            }}>
-              Today's the day to send {reminderTask.subtitle}.
-              You've got this — take a breath, then ship it. 🌸
-            </p>
-            <div style={{ display: 'flex', gap: '10px', flexDirection: 'column' }}>
-              <button onClick={handleReminderSent}
-                      style={{
-                        padding: '12px 18px', borderRadius: '12px',
-                        background: 'linear-gradient(135deg, #047857 0%, #065F46 100%)',
-                        color: '#fff', border: 'none', fontSize: '14px', fontWeight: 600,
-                        cursor: 'pointer', letterSpacing: '0.02em',
-                      }}>
-                ✓ I've sent it
-              </button>
-              <button onClick={handleReminderSnooze}
-                      style={{
-                        padding: '12px 18px', borderRadius: '12px',
-                        background: 'transparent', color: '#1F1B16',
-                        border: '1px solid #E5E5E5', fontSize: '13px',
-                        cursor: 'pointer', letterSpacing: '0.02em',
-                      }}>
-                Remind me later today
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Report-reminder popup REMOVED. The three Mr-John monthly tasks
+          now live as a persistent card on the Reviews tab — see
+          MonthlyReportsCard.jsx. Nadeem 2026-05-17: 'remove the
+          reminder on login, just put it in review tab'. */}
 
       {/* (Headcount block has moved up — see new colored block right after Stat cards.) */}
     </div>
