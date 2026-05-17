@@ -2,12 +2,13 @@ import React, { useMemo, useState, useEffect } from 'react';
 import {
   CalendarDays, Coffee, Plane, Mail, Copy, ClipboardCheck,
   AlertCircle, CheckCircle2, ChevronRight, Clock, Check, ChevronDown, AlertTriangle,
+  TrendingUp,
 } from 'lucide-react';
 import { directGet, supabase } from '../supabaseClient.js';
 import EvaluationReviewModal from './EvaluationReviewModal.jsx';
 import {
   weightForViolation, summariseViolations,
-  REVIEW_THRESHOLD, BASE_SCORE,
+  REVIEW_THRESHOLD, WATCH_LOWER, BASE_SCORE,
 } from '../lib/evaluationWeights.js';
 
 // =============================================================================
@@ -434,8 +435,19 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
   // "Performance escalation" panel. Clicking review opens
   // EvaluationReviewModal which writes to evaluation_scores.
   const [monthViolations, setMonthViolations] = useState([]);
+  // Build 5 — chronic-borderline detection. Tracks the trailing 6
+  // months of violations PER employee so the panel can surface staff
+  // who never cross the single-month review threshold but consistently
+  // sit in the watch zone. 'chronicCandidates' is the rolled-up list
+  // of (employeeId → { monthsInWatch, monthsInReview, deductions[] })
+  // built in a second useMemo from `historicalViolations`. Nadeem
+  // 2026-05-17.
+  const [historicalViolations, setHistoricalViolations] = useState([]);
   const [loggedEvalKeys, setLoggedEvalKeys] = useState({});  // 'empId:YYYY-MM' → true
   const [evalPanelOpen, setEvalPanelOpen] = useState(false);
+  // Chronic-borderline panel (Build 5) — collapsed by default so it
+  // doesn't compete visually with the formal escalation panel above.
+  const [chronicPanelOpen, setChronicPanelOpen] = useState(false);
   const [reviewModalRow, setReviewModalRow] = useState(null);
 
   const monthRange = useMemo(() => {
@@ -454,6 +466,7 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
 
   // Pull this month's attendance_violations + already-logged evaluation_scores
   // tagged for this month. Realtime channel re-fetches when either changes.
+  // ALSO pulls 6 months back for chronic-pattern detection (Build 5).
   useEffect(() => {
     let mounted = true;
     const refresh = async () => {
@@ -475,6 +488,27 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
         if (mounted) setMonthViolations(Array.isArray(rows) ? rows : []);
       } catch {
         if (mounted) setMonthViolations([]);
+      }
+      // Trailing 6 months for chronic-borderline detection (Build 5).
+      // Same filter as above, just a wider date window. Best-effort —
+      // if it fails we just don't surface chronic patterns.
+      try {
+        // 6 months back from current month-start.
+        const [yStr, mStr] = monthRange.monthStart.split('-');
+        const startD = new Date(parseInt(yStr,10), parseInt(mStr,10) - 1 - 5, 1);
+        const windowStart = `${startD.getFullYear()}-${String(startD.getMonth()+1).padStart(2,'0')}-01`;
+        const rows = await directGet(
+          'attendance_violations',
+          `select=employee_id,violation_type,violation_date,minutes_off` +
+          `&violation_date=gte.${windowStart}` +
+          `&violation_date=lte.${monthRange.end}` +
+          `&cleared_at=is.null` +
+          `&order=violation_date`,
+          { timeoutMs: 10000 }
+        );
+        if (mounted) setHistoricalViolations(Array.isArray(rows) ? rows : []);
+      } catch {
+        if (mounted) setHistoricalViolations([]);
       }
       try {
         // Find evaluation_scores rows already created for the current
@@ -555,6 +589,66 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
     () => escalations.filter(r => !r.alreadyLogged),
     [escalations]
   );
+
+  // Build 5 — chronic-borderline detection. Surfaces staff who never
+  // cross the single-month review threshold (deduction >= 10) BUT have
+  // logged 3+ months in the watch zone (deduction >= WATCH_LOWER (5))
+  // across the trailing 6 months. The single-month rule misses these
+  // 'always-4-points-every-month' patterns — chronic borderline staff
+  // are arguably a worse problem than a single bad month because the
+  // behaviour is structural, not situational.
+  //
+  // Excludes anyone already flagged in escalations (this month >= 10)
+  // — they'll be handled by the regular panel and we don't want to
+  // double-count.
+  const chronicCandidates = useMemo(() => {
+    if (!Array.isArray(historicalViolations) || historicalViolations.length === 0) return [];
+    // Bucket each row into its YYYY-MM month so we can roll up per
+    // employee per month.
+    const byEmpMonth = new Map();
+    for (const v of historicalViolations) {
+      if (!v?.employee_id || !v?.violation_date) continue;
+      const ym = String(v.violation_date).slice(0, 7);
+      const key = `${v.employee_id}|${ym}`;
+      if (!byEmpMonth.has(key)) byEmpMonth.set(key, []);
+      byEmpMonth.get(key).push(v);
+    }
+    // Compute per-employee summary across all months.
+    const byEmp = new Map();
+    for (const [key, rows] of byEmpMonth.entries()) {
+      const [empId, ym] = key.split('|');
+      const s = summariseViolations(rows);
+      let agg = byEmp.get(empId);
+      if (!agg) {
+        agg = { employeeId: empId, monthsInWatch: 0, monthsInReview: 0, monthlySummaries: [], totalDeduction: 0 };
+        byEmp.set(empId, agg);
+      }
+      agg.monthlySummaries.push({ ym, ...s });
+      agg.totalDeduction += s.deduction;
+      if (s.deduction >= REVIEW_THRESHOLD)      agg.monthsInReview += 1;
+      else if (s.deduction >= WATCH_LOWER)      agg.monthsInWatch  += 1;
+    }
+    // Excluded set — anyone currently in escalationsPending (this month
+    // already at review level) is handled by the regular panel.
+    const excluded = new Set(escalationsPending.map(r => r.employeeId));
+    // Threshold: 3+ months in the (watch + review) zones in trailing 6.
+    return Array.from(byEmp.values())
+      .filter(a => !excluded.has(a.employeeId))
+      .filter(a => (a.monthsInWatch + a.monthsInReview) >= 3)
+      .map(a => {
+        const emp = (employees || []).find(e => e.id === a.employeeId);
+        // Sort the monthly summaries chronologically (oldest → newest)
+        // so the manager email can describe the timeline cleanly.
+        a.monthlySummaries.sort((x, y) => x.ym.localeCompare(y.ym));
+        return {
+          ...a,
+          employeeName: emp?.name || a.employeeId,
+        };
+      })
+      // Sort by combined zone-months desc so the worst patterns surface
+      // at the top of Bashaier's panel.
+      .sort((a, b) => (b.monthsInReview * 10 + b.monthsInWatch) - (a.monthsInReview * 10 + a.monthsInWatch));
+  }, [historicalViolations, escalationsPending, employees]);
 
   const openReviewFor = (row) => {
     const employee = (employees || []).find(e => e.id === row.employeeId) || { id: row.employeeId };
@@ -689,11 +783,11 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold" style={{ color: '#1F1B16' }}>
                   {escalationsPending.length === 1
-                    ? `${escalationsPending[0].employeeName.split(' ')[0]} crossed the monthly attendance threshold`
-                    : `${escalationsPending.length} staff crossed the monthly attendance threshold`}
+                    ? `${escalationsPending[0].employeeName.split(' ')[0]} crossed the monthly review threshold`
+                    : `${escalationsPending.length} staff crossed the monthly review threshold`}
                 </div>
                 <div className="text-[11px]" style={{ color: '#1F1B16' }}>
-                  Above 5 incidents this month — review and notify direct manager
+                  {REVIEW_THRESHOLD}+ severity-weighted points this month — review and notify direct manager
                 </div>
               </div>
               <span
@@ -712,7 +806,10 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
               <div className="px-3 pb-3 pt-1 fade-in">
                 <div className="space-y-1.5 mb-1">
                   {escalationsPending.map(row => {
-                    const charged = Math.max(0, row.totalCount - 5);
+                    // Display the weighted deduction the aggregator
+                    // already computed (Build 1). Older code used
+                    // (totalCount - 5) * 2 — replaced.
+                    const ded = row.deduction || 0;
                     return (
                       <div
                         key={row.employeeId}
@@ -724,8 +821,13 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
                             {row.employeeName}
                           </div>
                           <div className="text-[11px]" style={{ color: '#1F1B16' }}>
-                            {row.totalCount} incidents · {row.lateCount} late · {row.earlyCount} early · {row.missedCount} missed
-                            {' · '}<strong>{charged * 2} pt deduction</strong>
+                            {row.totalCount} incident{row.totalCount === 1 ? '' : 's'}
+                            {row.absenceCount ? ` · ${row.absenceCount} absence${row.absenceCount === 1 ? '' : 's'}` : ''}
+                            {row.lateCount    ? ` · ${row.lateCount} late` : ''}
+                            {row.earlyCount   ? ` · ${row.earlyCount} early` : ''}
+                            {row.missedCount  ? ` · ${row.missedCount} missed-punch` : ''}
+                            {' · '}<strong style={{ color: '#7F1D1D' }}>{ded} pt{ded === 1 ? '' : 's'} deducted</strong>
+                            {' · score '}<strong>{Math.max(0, BASE_SCORE - ded)}/{BASE_SCORE}</strong>
                           </div>
                         </div>
                         <button
@@ -739,6 +841,109 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
                       </div>
                     );
                   })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Build 5 — chronic-borderline pattern panel. Surfaces staff
+            who never crossed the monthly review line but have lived
+            in the watch zone (5-9 pts) for 3+ months in the trailing
+            6. These are structural patterns the monthly rule misses.
+            Tone is lighter than the formal escalation panel above
+            (amber, not red) — this is a 'coaching check-in' surface,
+            not a 'send the warning email' surface. */}
+        {chronicCandidates.length > 0 && (
+          <div
+            className="rounded-xl border mb-3 overflow-hidden transition-colors"
+            style={{
+              borderColor: '#FCD34D',
+              background: 'linear-gradient(135deg, #FEF3C7 0%, #FBFAF6 100%)',
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setChronicPanelOpen(o => !o)}
+              className="w-full flex items-center gap-3 px-3 py-3 text-left hover:bg-white/40 transition-colors"
+            >
+              <div
+                className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}
+              >
+                <TrendingUp className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold" style={{ color: '#1F1B16' }}>
+                  {chronicCandidates.length === 1
+                    ? `${chronicCandidates[0].employeeName.split(' ')[0]} has a chronic borderline pattern`
+                    : `${chronicCandidates.length} staff have chronic borderline patterns`}
+                </div>
+                <div className="text-[11px]" style={{ color: '#1F1B16' }}>
+                  3+ months in the watch zone over the last 6 — coach before next month-end
+                </div>
+              </div>
+              <span
+                className="text-[10px] tracking-[0.2em] px-2 py-0.5 rounded-full flex-shrink-0"
+                style={{ background: '#92400E', color: 'white' }}
+              >
+                PATTERN
+              </span>
+              <ChevronDown
+                className="w-4 h-4 flex-shrink-0 transition-transform"
+                style={{ color: '#1F1B16', transform: chronicPanelOpen ? 'rotate(180deg)' : 'none' }}
+              />
+            </button>
+
+            {chronicPanelOpen && (
+              <div className="px-3 pb-3 pt-1 fade-in">
+                <div className="space-y-1.5 mb-1">
+                  {chronicCandidates.map(row => (
+                    <div
+                      key={row.employeeId}
+                      className="flex items-center gap-3 rounded border px-3 py-2 bg-white"
+                      style={{ borderColor: 'var(--border-soft)' }}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium" style={{ color: '#1F1B16' }}>
+                          {row.employeeName}
+                        </div>
+                        <div className="text-[11px]" style={{ color: '#1F1B16' }}>
+                          {row.monthsInWatch + row.monthsInReview} of 6 months in watch/review zone
+                          {row.monthsInReview > 0 && (
+                            <> · <strong style={{ color: '#7F1D1D' }}>{row.monthsInReview} review-level</strong></>
+                          )}
+                          {' '}· {row.totalDeduction} pts cumulative across 6 months
+                        </div>
+                      </div>
+                      {/* Sparkline of the monthly deductions for context. */}
+                      <div className="flex items-center gap-0.5">
+                        {row.monthlySummaries.map((m, i) => {
+                          const isWatch  = m.deduction >= WATCH_LOWER && m.deduction < REVIEW_THRESHOLD;
+                          const isReview = m.deduction >= REVIEW_THRESHOLD;
+                          const bg = isReview ? '#FEE2E2' : isWatch ? '#FEF3C7' : '#F4F4EE';
+                          const fg = isReview ? '#7F1D1D' : isWatch ? '#92400E' : '#0A0A0A';
+                          return (
+                            <div key={i}
+                                 title={`${m.ym}: ${m.deduction} pts (${m.totalCount} incidents)`}
+                                 style={{
+                                   width: 22, height: 22, borderRadius: 4,
+                                   background: bg, color: fg,
+                                   fontSize: 9, fontWeight: 700,
+                                   display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                 }}>
+                              {m.deduction === 0 ? '·' : m.deduction}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="text-[10px] mt-2" style={{ color: '#0A0A0A', opacity: 0.6 }}>
+                  These staff haven't crossed the monthly review threshold but the
+                  pattern is structural. Consider a coaching conversation with the
+                  line manager rather than a formal HR warning.
                 </div>
               </div>
             )}

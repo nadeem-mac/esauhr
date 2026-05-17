@@ -10,6 +10,7 @@ import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
 import PendingReturnsCard from './PendingReturnsCard.jsx';
 import MyApplicationsCard from './MyApplicationsCard.jsx';
 import ShiftPlanReminder from './ShiftPlanReminder.jsx';
+import TeamAttendanceCard from './TeamAttendanceCard.jsx';
 
 // ────────────────────────────────────────────────────────────────────────────
 // ManagerDashboard
@@ -266,6 +267,13 @@ export default function ManagerDashboard({
           approved leave end_date has passed without a returned_at on
           file. Card hides itself when there's nothing to act on. */}
       <PendingReturnsCard me={me} employees={employees} scope="manager" />
+
+      {/* Team attendance — Build 3 of the EVALUATION FLAG rework
+          (Nadeem 2026-05-17). Real-time view of every direct report's
+          attendance trajectory so the manager has a coaching window
+          BEFORE Bashaier's monthly HR escalation lands. Hides itself
+          when the manager has no direct reports. */}
+      <TeamAttendanceCard me={me} directReports={directReports} />
 
       {/* Greeting */}
       <div>
