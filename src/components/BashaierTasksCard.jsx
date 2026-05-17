@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect } from 'react';
 import {
   CalendarDays, Coffee, Plane, Mail, Copy, ClipboardCheck,
   AlertCircle, CheckCircle2, ChevronRight, Clock, Check, ChevronDown, AlertTriangle,
-  TrendingUp, ShieldCheck, X, MessageSquare,
+  TrendingUp, ShieldCheck, X, MessageSquare, Loader2,
 } from 'lucide-react';
 import { directGet, directPatch, supabase } from '../supabaseClient.js';
 import EvaluationReviewModal from './EvaluationReviewModal.jsx';
@@ -445,6 +445,16 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
   // 2026-05-17.
   const [historicalViolations, setHistoricalViolations] = useState([]);
   const [loggedEvalKeys, setLoggedEvalKeys] = useState({});  // 'empId:YYYY-MM' → true
+  // Disputes awaiting Bashaier's review — attendance_violations rows
+  // where staff filed a dispute_text but no decision has been made
+  // yet (cleared_at IS NULL). Build 4 of EVALUATION FLAG rework
+  // (Nadeem 2026-05-17). Bashaier sees the staff's explanation and
+  // can clear the violation OR dismiss the dispute.
+  const [pendingDisputes, setPendingDisputes] = useState([]);
+  const [disputeAction,   setDisputeAction]   = useState(null);  // { row, mode: 'accept'|'dismiss' }
+  const [disputeNote,     setDisputeNote]     = useState('');
+  const [disputeBusy,     setDisputeBusy]     = useState(false);
+  const [disputeError,    setDisputeError]    = useState('');
   const [evalPanelOpen, setEvalPanelOpen] = useState(false);
   // Chronic-borderline panel (Build 5) — collapsed by default so it
   // doesn't compete visually with the formal escalation panel above.
@@ -505,7 +515,7 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
         const windowStart = `${startD.getFullYear()}-${String(startD.getMonth()+1).padStart(2,'0')}-01`;
         const rows = await directGet(
           'attendance_violations',
-          `select=employee_id,violation_type,violation_date,minutes_off` +
+          `select=id,employee_id,violation_type,violation_date,minutes_off` +
           `&violation_date=gte.${windowStart}` +
           `&violation_date=lte.${monthRange.end}` +
           `&cleared_at=is.null` +
@@ -537,6 +547,24 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
         }
       } catch {
         if (mounted) setLoggedEvalKeys({});
+      }
+      try {
+        // Pending disputes — any attendance_violations rows where
+        // staff filed a dispute_text but Bashaier hasn't decided yet
+        // (cleared_at IS NULL, dispute_at IS NOT NULL). Sorted oldest
+        // first so disputes don't sit unanswered.
+        const drows = await directGet(
+          'attendance_violations',
+          'select=id,employee_id,violation_type,violation_date,minutes_off,punch_in_time,punch_out_time,dispute_text,dispute_at'
+          + '&dispute_at=not.is.null'
+          + '&cleared_at=is.null'
+          + '&order=dispute_at.asc'
+          + '&limit=50',
+          { timeoutMs: 8000 },
+        );
+        if (mounted) setPendingDisputes(Array.isArray(drows) ? drows : []);
+      } catch {
+        if (mounted) setPendingDisputes([]);
       }
     };
     refresh();
@@ -885,6 +913,131 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
           </div>
         )}
 
+        {/* Pending disputes — staff filed an explanation on a flagged
+            incident but Bashaier hasn't decided yet. Surfaces disputes
+            from staff NOT in the formal escalation queue (deduction <
+            10 pts) — those staff wouldn't otherwise appear in any of
+            Bashaier's surfaces, so without this panel their disputes
+            sit unanswered. Build 4 (Nadeem 2026-05-17). Auto-hides
+            when queue is empty. */}
+        {pendingDisputes.length > 0 && (
+          <div
+            className="rounded-xl border mb-3 overflow-hidden transition-colors"
+            style={{
+              borderColor: '#FCD34D',
+              background: 'linear-gradient(135deg, #FFFBEB 0%, #FBFAF6 100%)',
+            }}
+          >
+            <div className="flex items-center gap-3 px-3 py-3 border-b" style={{ borderColor: 'rgba(146,64,14,0.15)' }}>
+              <div
+                className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}
+              >
+                <MessageSquare className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold" style={{ color: '#1F1B16' }}>
+                  {pendingDisputes.length === 1
+                    ? '1 dispute awaiting your review'
+                    : `${pendingDisputes.length} disputes awaiting your review`}
+                </div>
+                <div className="text-xs" style={{ color: '#1F1B16', opacity: 0.7 }}>
+                  Staff filed explanations on flagged incidents — accept to clear, or dismiss to keep counted.
+                </div>
+              </div>
+              <span style={{
+                background: '#FEF3C7', color: '#92400E',
+                padding: '2px 8px', borderRadius: 999,
+                fontSize: 11, fontWeight: 700,
+              }}>
+                {pendingDisputes.length}
+              </span>
+            </div>
+
+            <div className="divide-y" style={{ borderColor: 'rgba(146,64,14,0.1)' }}>
+              {pendingDisputes.map(d => {
+                const emp = (employees || []).find(e => e.id === d.employee_id);
+                const empName = emp?.name || d.employee_id;
+                const dateLabel = new Date(d.violation_date).toLocaleDateString('en-GB', {
+                  weekday: 'short', day: '2-digit', month: 'short',
+                });
+                const filedAgo = (() => {
+                  const days = Math.max(0, Math.floor((Date.now() - new Date(d.dispute_at).getTime()) / 86400000));
+                  if (days === 0) return 'today';
+                  if (days === 1) return 'yesterday';
+                  return `${days} days ago`;
+                })();
+                const typeLabel = ({
+                  late: 'Late', early_leave: 'Early', early: 'Early',
+                  missed_in: 'No punch-in', missed_out: 'No punch-out',
+                  unauthorized_absence: 'Unauthorized absence',
+                }[d.violation_type]) || d.violation_type;
+                return (
+                  <div key={d.id} className="px-3 py-3">
+                    <div className="flex items-start gap-2 flex-wrap">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap text-[12px]">
+                          <strong style={{ color: '#0A0A0A' }}>{empName}</strong>
+                          <span style={{ color: '#0A0A0A', opacity: 0.55, fontSize: 10 }}>{d.employee_id}</span>
+                          <span style={{ color: '#0A0A0A', opacity: 0.7 }}>·</span>
+                          <span style={{ color: '#0A0A0A' }}>{dateLabel}</span>
+                          <span style={{
+                            background: '#FEE2E2', color: '#7F1D1D',
+                            padding: '1px 6px', borderRadius: 999, fontSize: 9, fontWeight: 700, letterSpacing: '0.04em',
+                          }}>
+                            {typeLabel.toUpperCase()}
+                          </span>
+                          <span style={{ color: '#0A0A0A', opacity: 0.55, fontSize: 10 }}>
+                            disputed {filedAgo}
+                          </span>
+                        </div>
+                        <div className="mt-1.5 rounded p-2 text-[12px]"
+                             style={{ background: '#FFFFFF', border: '1px solid var(--border-soft, #E8E5D8)', color: '#1F1B16', whiteSpace: 'pre-wrap' }}>
+                          {d.dispute_text || <em style={{ opacity: 0.5 }}>(no explanation text)</em>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDisputeAction({ row: d, mode: 'accept' });
+                            setDisputeNote(d.dispute_text || '');
+                            setDisputeError('');
+                          }}
+                          className="text-[10px] inline-flex items-center gap-1 px-3 py-1.5 rounded-full font-semibold"
+                          style={{
+                            background: 'linear-gradient(135deg, #2D5F3F 0%, #1F4530 100%)',
+                            color: '#FFFFFF',
+                          }}
+                          title="Accept explanation — clears the violation"
+                        >
+                          <ShieldCheck className="w-3 h-3"/> Accept &amp; clear
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDisputeAction({ row: d, mode: 'dismiss' });
+                            setDisputeNote('');
+                            setDisputeError('');
+                          }}
+                          className="text-[10px] inline-flex items-center gap-1 px-3 py-1.5 rounded-full border font-medium"
+                          style={{
+                            borderColor: 'var(--border-soft, #E8E5D8)',
+                            background: '#FFFFFF', color: '#0A0A0A',
+                          }}
+                          title="Dismiss the dispute — violation continues to count"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Build 5 — chronic-borderline pattern panel. Surfaces staff
             who never crossed the monthly review line but have lived
             in the watch zone (5-9 pts) for 3+ months in the trailing
@@ -1058,6 +1211,185 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
           onChange={() => { /* realtime channel re-fetches and the
               row stays open with the freshest data */ }}
         />
+      )}
+
+      {/* Dispute action confirmation modal — Build 4 (Nadeem 2026-05-17).
+          Opens when Bashaier clicks "Accept & clear" or "Dismiss" on
+          a pending-dispute row. Either action is a single-row PATCH
+          on attendance_violations: accept stamps cleared_at + reason,
+          dismiss nulls dispute_at so it leaves the queue but the
+          violation continues to count. Realtime channel refreshes
+          everywhere automatically. */}
+      {disputeAction && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(20,30,25,0.55)', backdropFilter: 'blur(2px)' }}
+          onClick={() => !disputeBusy && setDisputeAction(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              className="px-5 py-4 rounded-t-2xl flex items-start justify-between gap-3"
+              style={{
+                background: disputeAction.mode === 'accept'
+                  ? 'linear-gradient(135deg, #2D5F3F 0%, #1F4530 100%)'
+                  : 'linear-gradient(135deg, #6B7280 0%, #4B5563 100%)',
+                color: '#fff',
+              }}
+            >
+              <div>
+                <div className="text-[10px] tracking-[0.25em] opacity-80 mb-1">
+                  — {disputeAction.mode === 'accept' ? 'ACCEPT DISPUTE' : 'DISMISS DISPUTE'}
+                </div>
+                <h2 className="text-lg font-serif">
+                  {(employees || []).find(e => e.id === disputeAction.row.employee_id)?.name || disputeAction.row.employee_id}
+                </h2>
+                <div className="text-[11px] opacity-85 mt-0.5">
+                  {new Date(disputeAction.row.violation_date).toLocaleDateString('en-GB', {
+                    weekday: 'long', day: '2-digit', month: 'long', year: 'numeric',
+                  })}
+                </div>
+              </div>
+              <button
+                onClick={() => !disputeBusy && setDisputeAction(null)}
+                className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-white/20 transition-colors flex-shrink-0"
+                style={{ color: '#fff' }}
+                aria-label="Close"
+                disabled={disputeBusy}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4 space-y-3">
+              <div className="text-[12px]" style={{ color: '#0A0A0A' }}>
+                {disputeAction.mode === 'accept'
+                  ? <>Clearing this violation removes it from the deduction. The reason below is stored on the row as audit trail. The staff member will see the badge change to <strong>cleared</strong>.</>
+                  : <>The violation continues to count toward the monthly deduction. The dispute is removed from this queue. Optionally add a note (private to HR audit).</>}
+              </div>
+
+              <div className="rounded p-2 text-[11px]"
+                   style={{ background: '#FBFAF6', border: '1px solid var(--border-soft, #E8E5D8)', color: '#1F1B16' }}>
+                <div className="opacity-60 mb-1" style={{ fontSize: 9, letterSpacing: '0.1em', fontWeight: 700 }}>
+                  STAFF EXPLANATION
+                </div>
+                <div style={{ whiteSpace: 'pre-wrap' }}>
+                  {disputeAction.row.dispute_text || <em style={{ opacity: 0.5 }}>(no text)</em>}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-[10px] mb-1 tracking-wider font-bold" style={{ color: '#0A0A0A' }}>
+                  {disputeAction.mode === 'accept' ? 'CLEARED REASON' : 'DISMISSAL NOTE (OPTIONAL)'}
+                </div>
+                <textarea
+                  value={disputeNote}
+                  onChange={(e) => setDisputeNote(e.target.value.slice(0, 280))}
+                  placeholder={disputeAction.mode === 'accept'
+                    ? 'e.g. "Verified with line manager — flat tire on Pepsi road"'
+                    : 'e.g. "Coached separately — same pattern as April"'}
+                  rows={3}
+                  className="w-full px-3 py-2 text-[12px] rounded border resize-none"
+                  style={{
+                    background: '#FFFFFF', color: '#0A0A0A',
+                    borderColor: 'var(--border-soft, #E8E5D8)', outline: 'none',
+                  }}
+                />
+                <div className="text-[10px] mt-1" style={{ color: '#0A0A0A', opacity: 0.6 }}>
+                  {disputeNote.length} / 280
+                </div>
+              </div>
+
+              {disputeError && (
+                <div className="text-[11px] px-2 py-1.5 rounded" style={{ background: '#FEE2E2', color: '#7F1D1D' }}>
+                  {disputeError}
+                </div>
+              )}
+            </div>
+
+            <div className="px-5 py-3 border-t flex items-center justify-end gap-2 rounded-b-2xl"
+                 style={{ borderColor: 'var(--border-soft, #E8E5D8)' }}>
+              <button
+                type="button"
+                onClick={() => setDisputeAction(null)}
+                disabled={disputeBusy}
+                className="text-[11px] px-3 py-1.5 rounded-full border font-medium"
+                style={{
+                  borderColor: 'var(--border-soft, #E8E5D8)',
+                  background: '#FFFFFF', color: '#0A0A0A',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (disputeAction.mode === 'accept' && !disputeNote.trim()) {
+                    setDisputeError('Please add a reason for the audit trail.');
+                    return;
+                  }
+                  setDisputeBusy(true);
+                  setDisputeError('');
+                  try {
+                    if (disputeAction.mode === 'accept') {
+                      await directPatch(
+                        'attendance_violations', 'id', disputeAction.row.id,
+                        {
+                          cleared_at:     new Date().toISOString(),
+                          cleared_by:     'H94830',
+                          cleared_reason: disputeNote.trim(),
+                        },
+                        { timeoutMs: 10000 },
+                      );
+                    } else {
+                      // Dismiss — null out dispute_at. Violation stays
+                      // counted. The note (if provided) is appended to
+                      // cleared_reason for audit, though the row itself
+                      // is NOT cleared — Bashaier is just removing the
+                      // dispute from her queue.
+                      const patch = { dispute_at: null };
+                      if (disputeNote.trim()) {
+                        patch.cleared_reason = `[Dispute dismissed] ${disputeNote.trim()}`;
+                      }
+                      await directPatch(
+                        'attendance_violations', 'id', disputeAction.row.id,
+                        patch,
+                        { timeoutMs: 10000 },
+                      );
+                    }
+                    // Optimistic: drop from local list. Realtime channel
+                    // also fires and refreshes everything.
+                    setPendingDisputes(prev => prev.filter(p => p.id !== disputeAction.row.id));
+                    setDisputeAction(null);
+                  } catch (e) {
+                    console.warn('[disputes] action failed:', e);
+                    setDisputeError(e?.message || 'Action failed — please try again.');
+                  } finally {
+                    setDisputeBusy(false);
+                  }
+                }}
+                disabled={disputeBusy}
+                className="text-[11px] px-4 py-1.5 rounded-full font-semibold inline-flex items-center gap-1.5"
+                style={{
+                  background: disputeAction.mode === 'accept'
+                    ? 'linear-gradient(135deg, #2D5F3F 0%, #1F4530 100%)'
+                    : 'linear-gradient(135deg, #6B7280 0%, #4B5563 100%)',
+                  color: '#FFFFFF',
+                  opacity: disputeBusy ? 0.6 : 1,
+                  cursor: disputeBusy ? 'wait' : 'pointer',
+                }}
+              >
+                {disputeBusy
+                  ? <><Loader2 className="w-3 h-3 animate-spin"/> Working…</>
+                  : disputeAction.mode === 'accept'
+                    ? <><ShieldCheck className="w-3 h-3"/> Accept &amp; clear</>
+                    : <>Dismiss dispute</>}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

@@ -1,6 +1,9 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Clock, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
-import { directGet } from '../supabaseClient.js';
+import {
+  Clock, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, Calendar,
+  MessageSquare, Loader2,
+} from 'lucide-react';
+import { directGet, directPatch } from '../supabaseClient.js';
 
 // ─────────────────────────────────────────────────────────────────────────
 // MyAttendanceCard
@@ -39,6 +42,16 @@ export default function MyAttendanceCard({ me }) {
   // from the DB rather than being computed in JS — keeps the UI in
   // sync with whatever math the view is doing.
   const [monthScore, setMonthScore] = useState(null);
+  // Dispute composer state — which row is currently open for editing,
+  // the in-flight text, and submission status. Build 4 of the
+  // EVALUATION FLAG rework (Nadeem 2026-05-17). Lets staff submit a
+  // short explanation for a flagged incident — Bashaier reviews and
+  // decides whether to clear it. The dispute itself doesn't auto-clear
+  // the violation; it just adds context HR can act on.
+  const [openDispute, setOpenDispute]     = useState(null);  // violation row id
+  const [disputeText, setDisputeText]     = useState('');
+  const [submitting,  setSubmitting]      = useState(false);
+  const [submitError, setSubmitError]     = useState('');
 
   // Pull the current-month evaluation score row, if HR has logged
   // one. Most staff (0–5 incidents) won't have a row — that's the
@@ -241,35 +254,181 @@ export default function MyAttendanceCard({ me }) {
           const dateLabel = d.toLocaleDateString('en-GB', {
             weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
           });
+          const isDisputed   = !!r.dispute_at;
+          const isOpening    = openDispute === r.id;
           return (
-            <li key={r.id} className="px-5 py-3 flex items-center gap-3 flex-wrap">
-              <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
-                style={{ background: cfg.tint || '#F4F4EE' }}>
-                <Icon className="w-4 h-4" style={{ color: cfg.color }}/>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span style={{ fontWeight: 600, fontSize: '14px', color: '#0A0A0A' }}>
-                    {dateLabel}
-                  </span>
-                  <span className="text-[10px] tracking-wider font-bold px-1.5 py-0.5 rounded"
-                    style={{ background: cfg.tint, color: cfg.color }}>
-                    {cfg.label.toUpperCase()}
-                  </span>
+            <li key={r.id} className="px-5 py-3 flex flex-col gap-2">
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                  style={{ background: cfg.tint || '#F4F4EE' }}>
+                  <Icon className="w-4 h-4" style={{ color: cfg.color }}/>
                 </div>
-                <div className="text-xs mt-0.5" style={{ color: '#0A0A0A', opacity: 0.85 }}>
-                  {r.violation_type === 'late' && r.punch_in_time && (
-                    <>Punched in at <span className="font-mono">{String(r.punch_in_time).slice(0,5)}</span>
-                    {r.minutes_off ? ` — ${r.minutes_off} min after grace` : ''}</>
-                  )}
-                  {r.violation_type === 'early_leave' && r.punch_out_time && (
-                    <>Punched out at <span className="font-mono">{String(r.punch_out_time).slice(0,5)}</span>
-                    {r.minutes_off ? ` — ${r.minutes_off} min before scheduled end` : ''}</>
-                  )}
-                  {r.violation_type === 'missed_in'  && <>No punch-in recorded</>}
-                  {r.violation_type === 'missed_out' && <>No punch-out recorded</>}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span style={{ fontWeight: 600, fontSize: '14px', color: '#0A0A0A' }}>
+                      {dateLabel}
+                    </span>
+                    <span className="text-[10px] tracking-wider font-bold px-1.5 py-0.5 rounded"
+                      style={{ background: cfg.tint, color: cfg.color }}>
+                      {cfg.label.toUpperCase()}
+                    </span>
+                    {isDisputed && (
+                      <span className="text-[10px] tracking-wider font-bold px-1.5 py-0.5 rounded inline-flex items-center gap-1"
+                        style={{ background: '#FEF3C7', color: '#92400E' }}>
+                        <MessageSquare className="w-3 h-3"/>
+                        AWAITING HR REVIEW
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs mt-0.5" style={{ color: '#0A0A0A', opacity: 0.85 }}>
+                    {r.violation_type === 'late' && r.punch_in_time && (
+                      <>Punched in at <span className="font-mono">{String(r.punch_in_time).slice(0,5)}</span>
+                      {r.minutes_off ? ` — ${r.minutes_off} min after grace` : ''}</>
+                    )}
+                    {r.violation_type === 'early_leave' && r.punch_out_time && (
+                      <>Punched out at <span className="font-mono">{String(r.punch_out_time).slice(0,5)}</span>
+                      {r.minutes_off ? ` — ${r.minutes_off} min before scheduled end` : ''}</>
+                    )}
+                    {r.violation_type === 'missed_in'  && <>No punch-in recorded</>}
+                    {r.violation_type === 'missed_out' && <>No punch-out recorded</>}
+                  </div>
                 </div>
+                {/* Dispute action — only available if not yet disputed
+                    AND not currently open for editing. Clean rows stay
+                    out of the way; disputed rows show the badge above
+                    instead. */}
+                {!isDisputed && !isOpening && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpenDispute(r.id);
+                      setDisputeText('');
+                      setSubmitError('');
+                    }}
+                    className="text-[10px] inline-flex items-center gap-1 px-2.5 py-1 rounded-full border font-medium flex-shrink-0"
+                    style={{
+                      borderColor: 'var(--border-soft, #E8E5D8)',
+                      background: '#FFFFFF',
+                      color: '#0A0A0A',
+                    }}
+                  >
+                    <MessageSquare className="w-3 h-3"/> This wasn't right
+                  </button>
+                )}
               </div>
+
+              {/* Already-submitted dispute — read-only view of what
+                  the staff member wrote, with the submission date. */}
+              {isDisputed && r.dispute_text && (
+                <div className="ml-11 rounded-lg p-2.5 text-[11px]"
+                     style={{ background: '#FFFBEB', border: '1px solid #FCD34D', color: '#1F1B16' }}>
+                  <div className="opacity-65 mb-1" style={{ fontSize: 9, letterSpacing: '0.1em', fontWeight: 700 }}>
+                    YOUR EXPLANATION · {new Date(r.dispute_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                  </div>
+                  <div style={{ whiteSpace: 'pre-wrap' }}>{r.dispute_text}</div>
+                </div>
+              )}
+
+              {/* Inline composer — appears when staff clicks "This
+                  wasn't right". Capped at 280 chars (Bashaier reviews
+                  many of these so brevity is a feature). Submits a
+                  PATCH to attendance_violations setting dispute_text +
+                  dispute_at. Does NOT clear the violation — that's
+                  Bashaier's decision after review. */}
+              {isOpening && (
+                <div className="ml-11 rounded-lg p-3 space-y-2"
+                     style={{ background: '#FBFAF6', border: '1px solid var(--border-soft, #E8E5D8)' }}>
+                  <div className="text-[10px] opacity-65" style={{ letterSpacing: '0.1em', fontWeight: 700, color: '#0A0A0A' }}>
+                    EXPLAIN WHAT HAPPENED — HR WILL REVIEW
+                  </div>
+                  <textarea
+                    value={disputeText}
+                    onChange={(e) => setDisputeText(e.target.value.slice(0, 280))}
+                    placeholder="Brief explanation — e.g. 'Traffic accident on Pepsi road, called my line manager at 7:45' or 'Network was down, badge didn't read'"
+                    rows={3}
+                    className="w-full px-3 py-2 text-[12px] rounded border resize-none"
+                    style={{
+                      background: '#FFFFFF', color: '#0A0A0A',
+                      borderColor: 'var(--border-soft, #E8E5D8)', outline: 'none',
+                    }}
+                  />
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="text-[10px]" style={{ color: '#0A0A0A', opacity: 0.6 }}>
+                      {disputeText.length} / 280 — keep it brief, factual
+                    </div>
+                    {submitError && (
+                      <div className="text-[10px] flex-1" style={{ color: '#7F1D1D' }}>
+                        {submitError}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenDispute(null);
+                          setDisputeText('');
+                          setSubmitError('');
+                        }}
+                        disabled={submitting}
+                        className="text-[10px] px-3 py-1.5 rounded-full border font-medium"
+                        style={{
+                          borderColor: 'var(--border-soft, #E8E5D8)',
+                          background: '#FFFFFF', color: '#0A0A0A',
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!disputeText.trim()) {
+                            setSubmitError('Please add a brief explanation.');
+                            return;
+                          }
+                          setSubmitting(true);
+                          setSubmitError('');
+                          try {
+                            await directPatch(
+                              'attendance_violations', 'id', r.id,
+                              {
+                                dispute_text: disputeText.trim(),
+                                dispute_at:   new Date().toISOString(),
+                              },
+                              { timeoutMs: 10000 },
+                            );
+                            // Optimistic update — reflect the dispute
+                            // locally so the badge appears immediately
+                            // without waiting for refetch.
+                            setRows(prev => prev.map(x =>
+                              x.id === r.id
+                                ? { ...x, dispute_text: disputeText.trim(), dispute_at: new Date().toISOString() }
+                                : x
+                            ));
+                            setOpenDispute(null);
+                            setDisputeText('');
+                          } catch (e) {
+                            console.warn('[MyAttendance] dispute submit failed:', e);
+                            setSubmitError('Submission failed. Please try again.');
+                          } finally {
+                            setSubmitting(false);
+                          }
+                        }}
+                        disabled={submitting || !disputeText.trim()}
+                        className="text-[10px] px-3 py-1.5 rounded-full font-semibold inline-flex items-center gap-1"
+                        style={{
+                          background: 'linear-gradient(135deg, #2D5F3F 0%, #1F4530 100%)',
+                          color: '#FFFFFF',
+                          opacity: (submitting || !disputeText.trim()) ? 0.5 : 1,
+                          cursor: (submitting || !disputeText.trim()) ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        {submitting ? <Loader2 className="w-3 h-3 animate-spin"/> : <CheckCircle2 className="w-3 h-3"/>}
+                        Submit to HR
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </li>
           );
         })}

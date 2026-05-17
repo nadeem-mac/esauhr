@@ -206,6 +206,8 @@ export default function EvaluationReviewModal({ row, employee, manager, onClose,
     try {
       // Direct insert — let the unique constraint enforce idempotency.
       // 23505 (duplicate key) is treated as success (already-logged).
+      // Build 6: write violation_ids[] so the score row is auditable
+      // back to the specific incidents that drove it (Nadeem 2026-05-17).
       await directPost('evaluation_scores', {
         employee_id:           employee.id,
         period_year:           periodYear,
@@ -213,6 +215,7 @@ export default function EvaluationReviewModal({ row, employee, manager, onClose,
         violation_count:       row.totalCount,
         base_score:            100,
         attendance_deduction:  pointsDeducted,
+        violation_ids:         Array.isArray(row.violationIds) ? row.violationIds : null,
         warning_email_sent:    true,
         warning_email_sent_at: new Date().toISOString(),
         warning_email_sent_to: managerEmail,
