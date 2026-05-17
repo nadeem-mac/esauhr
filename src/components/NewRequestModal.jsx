@@ -42,6 +42,20 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
   // HR sees them on Sehhaty itself when they verify the leave ID.
   const [sehhatyCode, setSehhatyCode] = useState('');
 
+  // ── Maternity type-details (saved into request.type_details JSONB)
+  // KSA Labour Law Articles 151–153. Captured at submit time so the
+  // approval PDF and HR records have the required medical-certificate
+  // and delivery context. Empty defaults so 'annual' submissions
+  // never accidentally write a maternity sub-row.
+  const [matExpectedDelivery, setMatExpectedDelivery] = useState('');
+  const [matHospital,         setMatHospital]         = useState('');
+  const [matCertRef,          setMatCertRef]          = useState('');
+  const [matPregnancyNumber,  setMatPregnancyNumber]  = useState('');
+  const [matPrenatalDays,     setMatPrenatalDays]     = useState('');
+  const [matAlreadyDelivered, setMatAlreadyDelivered] = useState(false);
+  const [matActualDelivery,   setMatActualDelivery]   = useState('');
+  const [matNursingRequest,   setMatNursingRequest]   = useState(true);
+
   const employee = employees.find(e => e.id === employeeId);
   const leaveType = leaveTypes.find(t => t.id === leaveTypeId);
 
@@ -143,6 +157,33 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
       if (!isSick) {
         substituteIds.forEach(psn => { decisions[psn] = { decision: 'pending' }; });
       }
+      // Build per-type details payload. For maternity, capture the
+      // Article 151 fields so the approval PDF and HR records have
+      // the medical-certificate context and delivery dates. Other
+      // types pass through unchanged for now (annual/sick already
+      // have their own pipelines — sehhaty for sick, no extra fields
+      // for annual). Future build: same pattern for paternity, hajj,
+      // marriage, bereavement.
+      let typeDetails = null;
+      if (leaveTypeId === 'maternity') {
+        typeDetails = {
+          expected_delivery:  matExpectedDelivery || null,
+          hospital:           matHospital.trim() || null,
+          cert_ref:           matCertRef.trim()  || null,
+          pregnancy_number:   matPregnancyNumber || null,
+          prenatal_days:      matPrenatalDays ? Number(matPrenatalDays) : null,
+          // Postnatal portion derived from the 70-day total (10 weeks
+          // under Article 151) so HR sees both halves without staff
+          // having to compute. Negative-clamped in case prenatal > 70.
+          postnatal_days:     matPrenatalDays
+                                ? Math.max(0, 70 - Number(matPrenatalDays))
+                                : null,
+          already_delivered:  matAlreadyDelivered,
+          actual_delivery:    matAlreadyDelivered ? (matActualDelivery || null) : null,
+          nursing_hours:      matNursingRequest,
+        };
+      }
+
       await onSubmit({
         employee_id: employeeId,
         leave_type_id: leaveTypeId,
@@ -161,6 +202,11 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
         // queries that read these fields.
         substitute_ids: isSick ? [] : substituteIds,
         substitute_decisions: decisions,
+        // type_details — JSONB column on leave_requests. Holds the
+        // type-specific fields the PDF generator reads (expected
+        // delivery for maternity, cert ref for sick, etc.). Null for
+        // types with no extra context to record.
+        type_details: typeDetails,
         // Stage routing — per Nadeem (2026-05-06) explicit rules:
         //   • ALL STAFF non-sick    → pending_substitutes
         //   • ALL STAFF sick        → pending_manager
@@ -494,6 +540,112 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* MATERNITY DETAILS — KSA Labour Law Article 151 requires
+              a medical-certificate-confirmed expected delivery date and
+              records the prenatal/postnatal split the employee chooses
+              within the 10-week (70-day) entitlement. Saved into the
+              request.type_details JSONB column for the approval PDF. */}
+          {leaveTypeId === 'maternity' && (
+            <div className="rounded-xl border p-4 space-y-3"
+                 style={{ borderColor: 'var(--border-soft)', background: '#FFF1F2' }}>
+              <div className="flex items-center gap-2">
+                <div className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.2em', fontWeight: 700 }}>
+                  — MATERNITY DETAILS
+                </div>
+                <span className="text-[10px]" style={{ color: '#1F1B16', opacity: 0.55 }}>
+                  Required per KSA Labour Law Art. 151
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <Label>Expected delivery date</Label>
+                  <input type="date" value={matExpectedDelivery}
+                    onChange={e => setMatExpectedDelivery(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border bg-white text-sm focus:outline-none"
+                    style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}/>
+                </div>
+                <div>
+                  <Label>Pregnancy number</Label>
+                  <select value={matPregnancyNumber}
+                    onChange={e => setMatPregnancyNumber(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border bg-white text-sm focus:outline-none"
+                    style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}>
+                    <option value="">Select…</option>
+                    <option value="1st">1st pregnancy</option>
+                    <option value="2nd">2nd pregnancy</option>
+                    <option value="3rd">3rd pregnancy</option>
+                    <option value="4th+">4th or later</option>
+                  </select>
+                </div>
+                <div className="sm:col-span-2">
+                  <Label>Hospital / clinic</Label>
+                  <input type="text" value={matHospital}
+                    onChange={e => setMatHospital(e.target.value)}
+                    placeholder="e.g. Saudi German Hospital, Al-Khobar"
+                    className="w-full px-3 py-2 rounded-lg border bg-white text-sm focus:outline-none"
+                    style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}/>
+                </div>
+                <div className="sm:col-span-2">
+                  <Label>
+                    Medical certificate reference
+                    <span className="opacity-60 ml-1 font-normal">(from your obstetrician — confirms pregnancy + EDD)</span>
+                  </Label>
+                  <input type="text" value={matCertRef}
+                    onChange={e => setMatCertRef(e.target.value)}
+                    placeholder="e.g. SGH-OB-2026-04298"
+                    className="w-full px-3 py-2 rounded-lg border bg-white text-sm focus:outline-none"
+                    style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}/>
+                </div>
+                <div className="sm:col-span-2">
+                  <Label>
+                    Prenatal days
+                    <span className="opacity-60 ml-1 font-normal">(how many of the 70-day total to use BEFORE delivery — max 28)</span>
+                  </Label>
+                  <div className="flex items-center gap-3">
+                    <input type="number" min="0" max="28" value={matPrenatalDays}
+                      onChange={e => setMatPrenatalDays(e.target.value)}
+                      placeholder="0"
+                      className="w-24 px-3 py-2 rounded-lg border bg-white text-sm focus:outline-none"
+                      style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}/>
+                    <span className="text-[12px]" style={{ color: '#0A0A0A' }}>
+                      prenatal · <strong>{matPrenatalDays ? Math.max(0, 70 - Number(matPrenatalDays)) : 70}</strong> postnatal
+                    </span>
+                  </div>
+                </div>
+                <div className="sm:col-span-2 pt-1">
+                  <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: '#0A0A0A' }}>
+                    <input type="checkbox" checked={matAlreadyDelivered}
+                      onChange={e => setMatAlreadyDelivered(e.target.checked)}/>
+                    <span>Already delivered</span>
+                  </label>
+                  {matAlreadyDelivered && (
+                    <div className="mt-2">
+                      <Label>Actual delivery date</Label>
+                      <input type="date" value={matActualDelivery}
+                        onChange={e => setMatActualDelivery(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border bg-white text-sm focus:outline-none"
+                        style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}/>
+                    </div>
+                  )}
+                </div>
+                <div className="sm:col-span-2 pt-1">
+                  <label className="flex items-start gap-2 text-sm cursor-pointer" style={{ color: '#0A0A0A' }}>
+                    <input type="checkbox" checked={matNursingRequest}
+                      onChange={e => setMatNursingRequest(e.target.checked)}
+                      className="mt-1"/>
+                    <span>
+                      Request nursing-hour entitlement upon return
+                      <div className="text-[11px] mt-0.5" style={{ color: '#0A0A0A', opacity: 0.75 }}>
+                        Article 153 — one paid nursing hour per day for 24 months after birth, in addition to standard rest periods.
+                      </div>
+                    </span>
+                  </label>
+                </div>
+              </div>
             </div>
           )}
 

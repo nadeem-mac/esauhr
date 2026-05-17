@@ -150,7 +150,7 @@ function drawLeaveTypeRow(pdf, y, ltKey) {
 // Renders the additional fields that matter for each leave type. Returns
 // the new y position; callers append it after the standard leave-details
 // section. Each variant aims for 2–4 rows to keep the page fitting A4.
-function drawTypeSpecificSection(pdf, y, request) {
+function drawTypeSpecificSection(pdf, y, request, employee = {}) {
   const t = request.leave_type_id;
   const d = request.type_details || {};
   switch (t) {
@@ -165,16 +165,39 @@ function drawTypeSpecificSection(pdf, y, request) {
          ['Fit-to-return date', fmtDateShort(d.fit_to_return)]],
       ]);
 
-    case 'maternity':
+    case 'maternity': {
       y = drawSectionHeader(pdf, y, 'MATERNITY DETAILS');
+      // Compute pay rate basis per KSA Labour Law Art. 151:
+      //   • Service ≥ 3 years          → 100% paid
+      //   • Service ≥ 1 yr, < 3 yrs    → 50% paid
+      //   • Service < 1 year           → unpaid (entitled to leave; not to pay)
+      const empJoin = employee?.join_date || null;
+      let payRateLabel = '—';
+      if (empJoin) {
+        const monthsSince = Math.max(0,
+          Math.round((new Date() - new Date(empJoin)) / (1000 * 60 * 60 * 24 * 30.44)));
+        const yrs = Math.floor(monthsSince / 12);
+        payRateLabel = yrs >= 3 ? '100% paid · ≥3 yrs service'
+                     : yrs >= 1 ? '50% paid · 1–3 yrs service'
+                     :            'unpaid · <1 yr service';
+      }
       return drawTwoColTable(pdf, y, [
         [['Expected delivery',     fmtDateShort(d.expected_delivery)],
          ['Hospital / clinic',     d.hospital]],
-        [['Prenatal portion',      d.prenatal_days ? `${d.prenatal_days} days` : '—'],
-         ['Postnatal portion',     d.postnatal_days ? `${d.postnatal_days} days` : '—']],
-        [['Nursing-hour request',  d.nursing_hours ? 'Yes (24 months)' : 'No'],
+        [['Medical certificate ref', d.cert_ref],
          ['Pregnancy number',      d.pregnancy_number]],
+        [['Prenatal portion',      d.prenatal_days  != null ? `${d.prenatal_days} days`  : '—'],
+         ['Postnatal portion',     d.postnatal_days != null ? `${d.postnatal_days} days` : '—']],
+        [['Actual delivery date',  d.already_delivered && d.actual_delivery
+                                     ? fmtDateShort(d.actual_delivery)
+                                     : (d.already_delivered ? 'Yes — date TBC' : 'Not yet delivered')],
+         ['Pay rate basis',        payRateLabel]],
+        [['Nursing-hour request',  d.nursing_hours
+                                     ? 'Yes — 1 paid hour/day for 24 months (Art. 153)'
+                                     : 'Not requested'],
+         ['Total entitlement',     '10 weeks (70 days) — Art. 151']],
       ]);
+    }
 
     case 'paternity':
       y = drawSectionHeader(pdf, y, 'PATERNITY DETAILS');
@@ -376,7 +399,7 @@ export async function generateLeaveApplicationPdfBlob({
 
   // ── TYPE-SPECIFIC SECTION (the enriched bit per leave type) ──
   const yBefore = y;
-  y = drawTypeSpecificSection(pdf, y, request);
+  y = drawTypeSpecificSection(pdf, y, request, employee);
   if (y > yBefore) y += 3;
 
   // Substitutes — only for leave types that need coverage during absence
