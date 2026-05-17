@@ -9,6 +9,7 @@ import BashaierTasksCard from './BashaierTasksCard.jsx';
 import PendingShiftApprovalsCard from './PendingShiftApprovalsCard.jsx';
 import HrShiftMonthCard from './HrShiftMonthCard.jsx';
 import HrLandingCard from './HrLandingCard.jsx';
+import QuickActionsCard from './QuickActionsCard.jsx';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
 import MyApplicationsCard from './MyApplicationsCard.jsx';
 
@@ -363,6 +364,25 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           }
         </p>
       </div>
+      )}
+
+      {/* QUICK ACTIONS — Bashaier's daily-work command center. Sits
+          above HrLandingCard so the cross-tab shortcuts she reaches
+          for every morning (apply leave for staff, review queue,
+          print form, sick cert upload, org chart) plus an inline
+          staff search are the first interactive surface after the
+          hero. Nadeem 2026-05-17. */}
+      {bashaierMode && (
+        <QuickActionsCard
+          me={me}
+          employees={employees}
+          pendingCount={pending.length}
+          onNewRequest={onNewRequest}
+          onGoToReviews={onGoToReviews}
+          onGoToRequests={onGoToRequests}
+          onOpenOrgChart={onOpenOrgChart}
+          onUploadCert={onUploadCert}
+        />
       )}
 
       {/* HR daily-digest card — Bashaier's editorial 'This Week' +
