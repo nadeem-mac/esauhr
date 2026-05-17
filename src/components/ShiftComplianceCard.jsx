@@ -10,6 +10,7 @@ import {
 import {
   renderHrSignature, renderHrSignatureHtml, DEFAULT_TEMPLATES,
 } from '../lib/emailTemplates.js';
+import { salutationFor } from '../lib/salutations.js';
 
 // =============================================================================
 // ShiftComplianceCard
@@ -122,7 +123,7 @@ function buildManagerDigest({ manager, monthLabel, rangeLabel, sonnieEmail }) {
   };
 
   const bodyPlain = [
-    `Dear ${(manager.managerName || '').split(' ')[0] || 'Manager'},`,
+    `Dear ${salutationFor({ id: manager.managerId, name: manager.managerName })},`,
     '',
     `As part of HR's monthly shift-compliance review, please find below the consolidated issues across your ${staffCount === 1 ? 'shift-staff direct report' : `${staffCount} shift-staff direct reports`} for ${rangeLabel}. Each row lists an assigned shift day where the actual attendance did not meet the policy (15-min grace on either side of the assigned start/end, both punches required).`,
     '',
@@ -143,7 +144,7 @@ function buildManagerDigest({ manager, monthLabel, rangeLabel, sonnieEmail }) {
 
   const tables = manager.staff.map(staffTableHtml).join('');
   const bodyHtml = `<div style="font-family:Calibri,Arial,sans-serif;font-size:14px;color:#0A0A0A;line-height:1.5;max-width:780px">
-  <p style="margin:0 0 12px 0">Dear ${escapeHtml((manager.managerName || '').split(' ')[0] || 'Manager')},</p>
+  <p style="margin:0 0 12px 0">Dear ${escapeHtml(salutationFor({ id: manager.managerId, name: manager.managerName }))},</p>
   <p style="margin:0 0 12px 0">As part of HR's monthly shift-compliance review, please find below the consolidated issues across your <strong>${staffCount}</strong> shift-staff direct report${staffCount === 1 ? '' : 's'} for <strong>${escapeHtml(rangeLabel)}</strong>. Each row lists an assigned shift day where the actual attendance did not meet the policy (15-min grace on either side of the assigned start/end, both punches required).</p>
   ${tables}
   <div style="margin:18px 0 8px 0;padding:10px 14px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:6px">
@@ -184,7 +185,7 @@ function buildStaffEmail({ staff, manager, monthLabel, rangeLabel }) {
   });
 
   const bodyPlain = [
-    `Dear ${(staff.empName || '').split(' ')[0] || 'Colleague'},`,
+    `Dear ${salutationFor({ id: staff.empId, name: staff.empName })},`,
     '',
     `As part of HR's monthly shift-attendance review for ${rangeLabel}, the following days from your assigned roster did not meet the standard policy (15-min grace on either side of your assigned start/end, both punches required):`,
     '',
@@ -212,7 +213,7 @@ function buildStaffEmail({ staff, manager, monthLabel, rangeLabel }) {
   }).join('');
 
   const bodyHtml = `<div style="font-family:Calibri,Arial,sans-serif;font-size:14px;color:#0A0A0A;line-height:1.5;max-width:780px">
-  <p style="margin:0 0 12px 0">Dear ${escapeHtml((staff.empName || '').split(' ')[0] || 'Colleague')},</p>
+  <p style="margin:0 0 12px 0">Dear ${escapeHtml(salutationFor({ id: staff.empId, name: staff.empName }))},</p>
   <p style="margin:0 0 12px 0">As part of HR's monthly shift-attendance review for <strong>${escapeHtml(rangeLabel)}</strong>, the following days from your assigned roster did not meet the standard policy (15-min grace on either side of your assigned start/end, both punches required):</p>
   <table style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;margin:12px 0">
     <thead>

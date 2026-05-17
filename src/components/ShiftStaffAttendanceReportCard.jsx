@@ -34,6 +34,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Clock, Download, ChevronDown, ChevronRight, FileText, Users, Mail } from 'lucide-react';
 import { directGet } from '../supabaseClient.js';
 import { todayLocal, addDaysIso } from '../lib/dateUtils.js';
+import { salutationFor } from '../lib/salutations.js';
 
 // ─── helpers ───────────────────────────────────────────────────────────────
 
@@ -388,7 +389,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     }
     const periodLabel = `${fmtDate(from)} – ${fmtDate(to)}`;
     const lines = [];
-    lines.push(`Dear ${manager.name?.split(' ')[0] || manager.name},`);
+    lines.push(`Dear ${salutationFor(manager)},`);
     lines.push('');
     lines.push(`Please review the attendance anomalies below for ${emp.name} (${emp.id}) covering ${periodLabel}, pulled from the fingerprint records.`);
     lines.push('');

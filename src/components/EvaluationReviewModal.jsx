@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { X, Mail, AlertTriangle, Check, Loader2, Calendar, ExternalLink } from 'lucide-react';
 import { directPost } from '../supabaseClient.js';
 import { parseEmailAddress } from '../lib/emailTemplates.js';
+import { salutationFor } from '../lib/salutations.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EvaluationReviewModal
@@ -100,7 +101,10 @@ function buildNotes({ monthLong, lateCount, earlyCount, missedCount, totalCount,
 function buildWarningEmail({ employee, manager, monthLong, totalCount, lateCount, earlyCount, missedCount, pointsDeducted, sampleDates }) {
   const empPsn = String(employee?.id || '').toUpperCase();
   const empName = String(employee?.name || '').toUpperCase();
-  const mgrFirst = (manager?.name || 'Manager').split(' ')[0];
+  // Salutation goes through the shared helper so per-PSN overrides
+  // (e.g. Capt. Sharique for H94460) apply consistently across every
+  // email composer in the app. Nadeem 2026-05-17.
+  const mgrFirst = salutationFor(manager);
 
   const subject = `Attendance Escalation — ${empPsn} ${empName} — ${monthLong}`;
 
