@@ -42,19 +42,15 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
   // HR sees them on Sehhaty itself when they verify the leave ID.
   const [sehhatyCode, setSehhatyCode] = useState('');
 
-  // ── Maternity type-details (saved into request.type_details JSONB)
-  // KSA Labour Law Articles 151–153. Captured at submit time so the
-  // approval PDF and HR records have the required medical-certificate
-  // and delivery context. Empty defaults so 'annual' submissions
-  // never accidentally write a maternity sub-row.
-  const [matExpectedDelivery, setMatExpectedDelivery] = useState('');
-  const [matHospital,         setMatHospital]         = useState('');
-  const [matCertRef,          setMatCertRef]          = useState('');
-  const [matPregnancyNumber,  setMatPregnancyNumber]  = useState('');
-  const [matPrenatalDays,     setMatPrenatalDays]     = useState('');
-  const [matAlreadyDelivered, setMatAlreadyDelivered] = useState(false);
-  const [matActualDelivery,   setMatActualDelivery]   = useState('');
-  const [matNursingRequest,   setMatNursingRequest]   = useState(true);
+  // ── Type-specific details (saved into request.type_details JSONB).
+  // A single object keyed by field name; each leave-type sub-form mutates
+  // the fields it needs. Reset when the user changes leave type so we
+  // don't carry stale paternity fields into a maternity submission.
+  // The submit handler picks only the keys relevant to the active type.
+  // Nadeem 2026-05-17: Phase A maternity → Phase B all other types.
+  const [typeDetails, setTypeDetails] = useState({});
+  const updTd = (patch) => setTypeDetails(prev => ({ ...prev, ...patch }));
+  useEffect(() => { setTypeDetails({}); }, [leaveTypeId]);
 
   const employee = employees.find(e => e.id === employeeId);
   const leaveType = leaveTypes.find(t => t.id === leaveTypeId);
@@ -157,30 +153,89 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
       if (!isSick) {
         substituteIds.forEach(psn => { decisions[psn] = { decision: 'pending' }; });
       }
-      // Build per-type details payload. For maternity, capture the
-      // Article 151 fields so the approval PDF and HR records have
-      // the medical-certificate context and delivery dates. Other
-      // types pass through unchanged for now (annual/sick already
-      // have their own pipelines — sehhaty for sick, no extra fields
-      // for annual). Future build: same pattern for paternity, hajj,
-      // marriage, bereavement.
-      let typeDetails = null;
+      // Build per-type details payload. The typeDetails state object
+      // already holds the fields the user filled in for the active
+      // leave type. We pick only the keys relevant to that type and
+      // derive computed fields (postnatal_days from prenatal_days for
+      // maternity). Annual/sick keep their existing pipelines untouched.
+      let payloadTypeDetails = null;
+      const td = typeDetails || {};
       if (leaveTypeId === 'maternity') {
-        typeDetails = {
-          expected_delivery:  matExpectedDelivery || null,
-          hospital:           matHospital.trim() || null,
-          cert_ref:           matCertRef.trim()  || null,
-          pregnancy_number:   matPregnancyNumber || null,
-          prenatal_days:      matPrenatalDays ? Number(matPrenatalDays) : null,
-          // Postnatal portion derived from the 70-day total (10 weeks
-          // under Article 151) so HR sees both halves without staff
-          // having to compute. Negative-clamped in case prenatal > 70.
-          postnatal_days:     matPrenatalDays
-                                ? Math.max(0, 70 - Number(matPrenatalDays))
-                                : null,
-          already_delivered:  matAlreadyDelivered,
-          actual_delivery:    matAlreadyDelivered ? (matActualDelivery || null) : null,
-          nursing_hours:      matNursingRequest,
+        const prenatal = td.prenatal_days != null && td.prenatal_days !== ''
+                          ? Number(td.prenatal_days) : null;
+        payloadTypeDetails = {
+          expected_delivery:  td.expected_delivery || null,
+          hospital:           (td.hospital || '').trim() || null,
+          cert_ref:           (td.cert_ref || '').trim() || null,
+          pregnancy_number:   td.pregnancy_number || null,
+          prenatal_days:      prenatal,
+          // Postnatal derived from 10-week (70-day) total per Art. 151.
+          postnatal_days:     prenatal != null ? Math.max(0, 70 - prenatal) : null,
+          already_delivered:  !!td.already_delivered,
+          actual_delivery:    td.already_delivered ? (td.actual_delivery || null) : null,
+          nursing_hours:      td.nursing_hours !== false,  // default true
+        };
+      } else if (leaveTypeId === 'paternity') {
+        payloadTypeDetails = {
+          spouse_name:        (td.spouse_name || '').trim() || null,
+          expected_delivery:  td.expected_delivery || null,
+          hospital:           (td.hospital || '').trim() || null,
+          actual_delivery:    td.actual_delivery || null,
+        };
+      } else if (leaveTypeId === 'hajj') {
+        payloadTypeDetails = {
+          season_year:        (td.season_year || '').trim() || null,
+          group:              (td.group || '').trim() || null,
+          departure_date:     td.departure_date || null,
+          return_date:        td.return_date || null,
+          first_time:         !!td.first_time,
+          service_years:      td.service_years || null,
+        };
+      } else if (leaveTypeId === 'marriage') {
+        payloadTypeDetails = {
+          spouse_name:        (td.spouse_name || '').trim() || null,
+          wedding_date:       td.wedding_date || null,
+          location:           (td.location || '').trim() || null,
+          contract_no:        (td.contract_no || '').trim() || null,
+        };
+      } else if (leaveTypeId === 'bereavement') {
+        payloadTypeDetails = {
+          deceased_name:      (td.deceased_name || '').trim() || null,
+          relationship:       (td.relationship || '').trim() || null,
+          date_of_passing:    td.date_of_passing || null,
+          funeral_location:   (td.funeral_location || '').trim() || null,
+        };
+      } else if (leaveTypeId === 'emergency') {
+        payloadTypeDetails = {
+          nature:             (td.nature || '').trim() || null,
+          contact_person:     (td.contact_person || '').trim() || null,
+          contact_phone:      (td.contact_phone || '').trim() || null,
+          location:           (td.location || '').trim() || null,
+        };
+      } else if (leaveTypeId === 'study') {
+        payloadTypeDetails = {
+          institution:        (td.institution || '').trim() || null,
+          course:             (td.course || '').trim() || null,
+          format:             td.format || 'Full-time',
+          total_duration:     (td.total_duration || '').trim() || null,
+          field:              (td.field || '').trim() || null,
+          relevance:          (td.relevance || '').trim() || null,
+        };
+      } else if (leaveTypeId === 'unpaid') {
+        payloadTypeDetails = {
+          reason:             (td.reason_detail || '').trim() || null,
+          return_commitment:  (td.return_commitment || '').trim() || null,
+        };
+      } else if (leaveTypeId === 'iddah') {
+        payloadTypeDetails = {
+          bereavement_date:   td.bereavement_date || null,
+          location:           (td.location || '').trim() || null,
+          cert_ref:           (td.cert_ref || '').trim() || null,
+          expected_end:       td.expected_end || null,
+        };
+      } else if (leaveTypeId === 'other') {
+        payloadTypeDetails = {
+          justification:      (td.justification || '').trim() || null,
         };
       }
 
@@ -206,7 +261,7 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
         // type-specific fields the PDF generator reads (expected
         // delivery for maternity, cert ref for sick, etc.). Null for
         // types with no extra context to record.
-        type_details: typeDetails,
+        type_details: payloadTypeDetails,
         // Stage routing — per Nadeem (2026-05-06) explicit rules:
         //   • ALL STAFF non-sick    → pending_substitutes
         //   • ALL STAFF sick        → pending_manager
@@ -543,111 +598,18 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
             </div>
           )}
 
-          {/* MATERNITY DETAILS — KSA Labour Law Article 151 requires
-              a medical-certificate-confirmed expected delivery date and
-              records the prenatal/postnatal split the employee chooses
-              within the 10-week (70-day) entitlement. Saved into the
-              request.type_details JSONB column for the approval PDF. */}
-          {leaveTypeId === 'maternity' && (
-            <div className="rounded-xl border p-4 space-y-3"
-                 style={{ borderColor: 'var(--border-soft)', background: '#FFF1F2' }}>
-              <div className="flex items-center gap-2">
-                <div className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.2em', fontWeight: 700 }}>
-                  — MATERNITY DETAILS
-                </div>
-                <span className="text-[10px]" style={{ color: '#1F1B16', opacity: 0.55 }}>
-                  Required per KSA Labour Law Art. 151
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <Label>Expected delivery date</Label>
-                  <input type="date" value={matExpectedDelivery}
-                    onChange={e => setMatExpectedDelivery(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border bg-white text-sm focus:outline-none"
-                    style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}/>
-                </div>
-                <div>
-                  <Label>Pregnancy number</Label>
-                  <select value={matPregnancyNumber}
-                    onChange={e => setMatPregnancyNumber(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border bg-white text-sm focus:outline-none"
-                    style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}>
-                    <option value="">Select…</option>
-                    <option value="1st">1st pregnancy</option>
-                    <option value="2nd">2nd pregnancy</option>
-                    <option value="3rd">3rd pregnancy</option>
-                    <option value="4th+">4th or later</option>
-                  </select>
-                </div>
-                <div className="sm:col-span-2">
-                  <Label>Hospital / clinic</Label>
-                  <input type="text" value={matHospital}
-                    onChange={e => setMatHospital(e.target.value)}
-                    placeholder="e.g. Saudi German Hospital, Al-Khobar"
-                    className="w-full px-3 py-2 rounded-lg border bg-white text-sm focus:outline-none"
-                    style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}/>
-                </div>
-                <div className="sm:col-span-2">
-                  <Label>
-                    Medical certificate reference
-                    <span className="opacity-60 ml-1 font-normal">(from your obstetrician — confirms pregnancy + EDD)</span>
-                  </Label>
-                  <input type="text" value={matCertRef}
-                    onChange={e => setMatCertRef(e.target.value)}
-                    placeholder="e.g. SGH-OB-2026-04298"
-                    className="w-full px-3 py-2 rounded-lg border bg-white text-sm focus:outline-none"
-                    style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}/>
-                </div>
-                <div className="sm:col-span-2">
-                  <Label>
-                    Prenatal days
-                    <span className="opacity-60 ml-1 font-normal">(how many of the 70-day total to use BEFORE delivery — max 28)</span>
-                  </Label>
-                  <div className="flex items-center gap-3">
-                    <input type="number" min="0" max="28" value={matPrenatalDays}
-                      onChange={e => setMatPrenatalDays(e.target.value)}
-                      placeholder="0"
-                      className="w-24 px-3 py-2 rounded-lg border bg-white text-sm focus:outline-none"
-                      style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}/>
-                    <span className="text-[12px]" style={{ color: '#0A0A0A' }}>
-                      prenatal · <strong>{matPrenatalDays ? Math.max(0, 70 - Number(matPrenatalDays)) : 70}</strong> postnatal
-                    </span>
-                  </div>
-                </div>
-                <div className="sm:col-span-2 pt-1">
-                  <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: '#0A0A0A' }}>
-                    <input type="checkbox" checked={matAlreadyDelivered}
-                      onChange={e => setMatAlreadyDelivered(e.target.checked)}/>
-                    <span>Already delivered</span>
-                  </label>
-                  {matAlreadyDelivered && (
-                    <div className="mt-2">
-                      <Label>Actual delivery date</Label>
-                      <input type="date" value={matActualDelivery}
-                        onChange={e => setMatActualDelivery(e.target.value)}
-                        className="w-full px-3 py-2 rounded-lg border bg-white text-sm focus:outline-none"
-                        style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}/>
-                    </div>
-                  )}
-                </div>
-                <div className="sm:col-span-2 pt-1">
-                  <label className="flex items-start gap-2 text-sm cursor-pointer" style={{ color: '#0A0A0A' }}>
-                    <input type="checkbox" checked={matNursingRequest}
-                      onChange={e => setMatNursingRequest(e.target.checked)}
-                      className="mt-1"/>
-                    <span>
-                      Request nursing-hour entitlement upon return
-                      <div className="text-[11px] mt-0.5" style={{ color: '#0A0A0A', opacity: 0.75 }}>
-                        Article 153 — one paid nursing hour per day for 24 months after birth, in addition to standard rest periods.
-                      </div>
-                    </span>
-                  </label>
-                </div>
-              </div>
-            </div>
-          )}
+          {/* TYPE-SPECIFIC DETAILS — saved into request.type_details JSONB
+              for the approval PDF. Each block is gated on the active
+              leave type; only one renders at a time. Field names match
+              what drawTypeSpecificSection() in leaveApplicationPdf.js
+              reads, so adding a row to the PDF is symmetric with adding
+              an input here. Nadeem 2026-05-17. */}
+          <TypeDetailsSection
+            leaveTypeId={leaveTypeId}
+            typeDetails={typeDetails}
+            updTd={updTd}
+            Label={Label}
+          />
 
           <div>
             <Label>Reason <span className="opacity-60">(optional)</span></Label>
@@ -788,4 +750,284 @@ function Warning({ kind, children }) {
       <div className="flex-1">{children}</div>
     </div>
   );
+}
+
+// =============================================================================
+// TypeDetailsSection
+//
+// Renders the leave-type-specific input panel. One block per type, gated by
+// `leaveTypeId`. Fields write to the shared `typeDetails` object via
+// `updTd({key: value})`. Field names must match what
+// `drawTypeSpecificSection()` in `leaveApplicationPdf.js` reads — adding a
+// row to the PDF is symmetric with adding an input here.
+//
+// Visual: warm-pink for maternity (matches Article 151 / KSA labour-law
+// theme), neutral light cream for the others so the form doesn't peacock
+// with colors. Each section has a one-line legal/policy caption explaining
+// the relevant KSA Labour Law article so the staff and HR both see the
+// context inline.
+//
+// Nadeem 2026-05-17: Phase B — all eight remaining types wired up.
+// =============================================================================
+function TypeDetailsSection({ leaveTypeId, typeDetails, updTd, Label }) {
+  // Reusable input — keeps the JSX below readable. Defaults to text input.
+  // The bg is white inside the colored panel so values pop and the panel
+  // tint provides the section identity.
+  const inp = (props) => (
+    <input
+      type={props.type || 'text'}
+      value={typeDetails[props.k] || ''}
+      onChange={e => updTd({ [props.k]: e.target.value })}
+      placeholder={props.placeholder || ''}
+      min={props.min} max={props.max}
+      className="w-full px-3 py-2 rounded-lg border bg-white text-sm focus:outline-none"
+      style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}
+    />
+  );
+
+  // Panel shell — common layout for all type sections so they line up
+  // visually with each other no matter how many fields they have.
+  const Panel = ({ title, subtitle, tint, children }) => (
+    <div className="rounded-xl border p-4 space-y-3"
+         style={{ borderColor: 'var(--border-soft)', background: tint || '#FAFAF7' }}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.2em', fontWeight: 700 }}>
+          — {title}
+        </div>
+        {subtitle && (
+          <span className="text-[10px]" style={{ color: '#1F1B16', opacity: 0.55 }}>
+            {subtitle}
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{children}</div>
+    </div>
+  );
+
+  // ── MATERNITY (Phase A, kept as-is) ──────────────────────────────────────
+  if (leaveTypeId === 'maternity') {
+    const prenatal = Number(typeDetails.prenatal_days) || 0;
+    return (
+      <Panel title="MATERNITY DETAILS" subtitle="Required per KSA Labour Law Art. 151" tint="#FFF1F2">
+        <div><Label>Expected delivery date</Label>{inp({ k: 'expected_delivery', type: 'date' })}</div>
+        <div>
+          <Label>Pregnancy number</Label>
+          <select value={typeDetails.pregnancy_number || ''}
+            onChange={e => updTd({ pregnancy_number: e.target.value })}
+            className="w-full px-3 py-2 rounded-lg border bg-white text-sm focus:outline-none"
+            style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}>
+            <option value="">Select…</option>
+            <option value="1st">1st pregnancy</option>
+            <option value="2nd">2nd pregnancy</option>
+            <option value="3rd">3rd pregnancy</option>
+            <option value="4th+">4th or later</option>
+          </select>
+        </div>
+        <div className="sm:col-span-2"><Label>Hospital / clinic</Label>{inp({ k: 'hospital', placeholder: 'e.g. Saudi German Hospital, Al-Khobar' })}</div>
+        <div className="sm:col-span-2">
+          <Label>Medical certificate reference <span className="opacity-60 ml-1 font-normal">(obstetrician's cert — confirms pregnancy + EDD)</span></Label>
+          {inp({ k: 'cert_ref', placeholder: 'e.g. SGH-OB-2026-04298' })}
+        </div>
+        <div className="sm:col-span-2">
+          <Label>Prenatal days <span className="opacity-60 ml-1 font-normal">(how many of the 70-day total to use BEFORE delivery — max 28)</span></Label>
+          <div className="flex items-center gap-3">
+            <input type="number" min="0" max="28"
+              value={typeDetails.prenatal_days || ''}
+              onChange={e => updTd({ prenatal_days: e.target.value })}
+              placeholder="0"
+              className="w-24 px-3 py-2 rounded-lg border bg-white text-sm focus:outline-none"
+              style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}/>
+            <span className="text-[12px]" style={{ color: '#0A0A0A' }}>
+              prenatal · <strong>{Math.max(0, 70 - prenatal)}</strong> postnatal
+            </span>
+          </div>
+        </div>
+        <div className="sm:col-span-2 pt-1">
+          <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: '#0A0A0A' }}>
+            <input type="checkbox" checked={!!typeDetails.already_delivered}
+              onChange={e => updTd({ already_delivered: e.target.checked })}/>
+            <span>Already delivered</span>
+          </label>
+          {typeDetails.already_delivered && (
+            <div className="mt-2"><Label>Actual delivery date</Label>{inp({ k: 'actual_delivery', type: 'date' })}</div>
+          )}
+        </div>
+        <div className="sm:col-span-2 pt-1">
+          <label className="flex items-start gap-2 text-sm cursor-pointer" style={{ color: '#0A0A0A' }}>
+            <input type="checkbox" checked={typeDetails.nursing_hours !== false}
+              onChange={e => updTd({ nursing_hours: e.target.checked })}
+              className="mt-1"/>
+            <span>
+              Request nursing-hour entitlement upon return
+              <div className="text-[11px] mt-0.5" style={{ color: '#0A0A0A', opacity: 0.75 }}>
+                Article 153 — one paid nursing hour per day for 24 months after birth.
+              </div>
+            </span>
+          </label>
+        </div>
+      </Panel>
+    );
+  }
+
+  // ── PATERNITY ────────────────────────────────────────────────────────────
+  if (leaveTypeId === 'paternity') {
+    return (
+      <Panel title="PATERNITY DETAILS" subtitle="Per KSA Labour Law Art. 113 — 3 days paid">
+        <div><Label>Spouse name</Label>{inp({ k: 'spouse_name' })}</div>
+        <div><Label>Expected delivery date</Label>{inp({ k: 'expected_delivery', type: 'date' })}</div>
+        <div><Label>Hospital / clinic</Label>{inp({ k: 'hospital' })}</div>
+        <div><Label>Actual delivery date <span className="opacity-60 ml-1 font-normal">(if already born)</span></Label>{inp({ k: 'actual_delivery', type: 'date' })}</div>
+      </Panel>
+    );
+  }
+
+  // ── HAJJ ─────────────────────────────────────────────────────────────────
+  if (leaveTypeId === 'hajj') {
+    return (
+      <Panel title="HAJJ DETAILS" subtitle="Per KSA Labour Law Art. 114 — once per career after 2 yrs service">
+        <div><Label>Hajj season (Hijri year)</Label>{inp({ k: 'season_year', placeholder: 'e.g. 1448 AH' })}</div>
+        <div><Label>Pilgrimage group / agency</Label>{inp({ k: 'group', placeholder: 'e.g. Group 4, Tawafa Establishment' })}</div>
+        <div><Label>Departure date</Label>{inp({ k: 'departure_date', type: 'date' })}</div>
+        <div><Label>Return date</Label>{inp({ k: 'return_date', type: 'date' })}</div>
+        <div className="sm:col-span-2">
+          <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: '#0A0A0A' }}>
+            <input type="checkbox" checked={!!typeDetails.first_time}
+              onChange={e => updTd({ first_time: e.target.checked })}/>
+            <span>This is my first Hajj <span className="opacity-60">(required for entitlement)</span></span>
+          </label>
+        </div>
+      </Panel>
+    );
+  }
+
+  // ── MARRIAGE ─────────────────────────────────────────────────────────────
+  if (leaveTypeId === 'marriage') {
+    return (
+      <Panel title="MARRIAGE DETAILS" subtitle="Per KSA Labour Law — 5 days paid">
+        <div><Label>Spouse name</Label>{inp({ k: 'spouse_name' })}</div>
+        <div><Label>Wedding date</Label>{inp({ k: 'wedding_date', type: 'date' })}</div>
+        <div><Label>Location <span className="opacity-60 ml-1 font-normal">(city/town)</span></Label>{inp({ k: 'location' })}</div>
+        <div><Label>Marriage contract no. <span className="opacity-60 ml-1 font-normal">(Aqd nikah)</span></Label>{inp({ k: 'contract_no' })}</div>
+      </Panel>
+    );
+  }
+
+  // ── BEREAVEMENT ──────────────────────────────────────────────────────────
+  if (leaveTypeId === 'bereavement') {
+    return (
+      <Panel title="BEREAVEMENT DETAILS" subtitle="Per KSA Labour Law — duration varies by relationship">
+        <div><Label>Deceased name</Label>{inp({ k: 'deceased_name' })}</div>
+        <div>
+          <Label>Relationship</Label>
+          <select value={typeDetails.relationship || ''}
+            onChange={e => updTd({ relationship: e.target.value })}
+            className="w-full px-3 py-2 rounded-lg border bg-white text-sm focus:outline-none"
+            style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}>
+            <option value="">Select…</option>
+            <option value="Spouse">Spouse</option>
+            <option value="Parent">Parent</option>
+            <option value="Child">Child</option>
+            <option value="Sibling">Sibling</option>
+            <option value="Grandparent">Grandparent</option>
+            <option value="In-law">In-law</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div><Label>Date of passing</Label>{inp({ k: 'date_of_passing', type: 'date' })}</div>
+        <div><Label>Funeral location</Label>{inp({ k: 'funeral_location' })}</div>
+      </Panel>
+    );
+  }
+
+  // ── EMERGENCY ────────────────────────────────────────────────────────────
+  if (leaveTypeId === 'emergency') {
+    return (
+      <Panel title="EMERGENCY DETAILS" subtitle="HR will treat this as time-sensitive">
+        <div className="sm:col-span-2"><Label>Nature of emergency</Label>{inp({ k: 'nature', placeholder: 'Brief description (HR-only)' })}</div>
+        <div><Label>Contact person</Label>{inp({ k: 'contact_person', placeholder: 'Family member or doctor' })}</div>
+        <div><Label>Contact phone</Label>{inp({ k: 'contact_phone', type: 'tel', placeholder: '+966 5xx xxx xxxx' })}</div>
+        <div className="sm:col-span-2"><Label>Location <span className="opacity-60 ml-1 font-normal">(if outside city)</span></Label>{inp({ k: 'location' })}</div>
+      </Panel>
+    );
+  }
+
+  // ── STUDY ────────────────────────────────────────────────────────────────
+  if (leaveTypeId === 'study') {
+    return (
+      <Panel title="STUDY DETAILS" subtitle="Approval discretionary — relevance to role considered">
+        <div><Label>Institution</Label>{inp({ k: 'institution' })}</div>
+        <div><Label>Course / program</Label>{inp({ k: 'course' })}</div>
+        <div>
+          <Label>Study format</Label>
+          <select value={typeDetails.format || 'Full-time'}
+            onChange={e => updTd({ format: e.target.value })}
+            className="w-full px-3 py-2 rounded-lg border bg-white text-sm focus:outline-none"
+            style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}>
+            <option value="Full-time">Full-time</option>
+            <option value="Part-time">Part-time</option>
+            <option value="Distance/online">Distance/online</option>
+            <option value="Block-release">Block-release</option>
+          </select>
+        </div>
+        <div><Label>Total duration <span className="opacity-60 ml-1 font-normal">(e.g. 6 months, 1 year)</span></Label>{inp({ k: 'total_duration' })}</div>
+        <div><Label>Field of study</Label>{inp({ k: 'field' })}</div>
+        <div><Label>Relevance to role <span className="opacity-60 ml-1 font-normal">(why HR should approve)</span></Label>{inp({ k: 'relevance' })}</div>
+      </Panel>
+    );
+  }
+
+  // ── UNPAID ───────────────────────────────────────────────────────────────
+  if (leaveTypeId === 'unpaid') {
+    return (
+      <Panel title="UNPAID LEAVE DETAILS" subtitle="No salary deducted from balance; counts against monthly attendance">
+        <div className="sm:col-span-2"><Label>Reason for unpaid leave</Label>
+          <textarea value={typeDetails.reason_detail || ''}
+            onChange={e => updTd({ reason_detail: e.target.value })}
+            rows={2}
+            placeholder="Why paid leave isn't sufficient for this case"
+            className="w-full px-3 py-2 rounded-lg border bg-white text-sm focus:outline-none resize-none"
+            style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}/>
+        </div>
+        <div className="sm:col-span-2"><Label>Return commitment</Label>
+          <textarea value={typeDetails.return_commitment || ''}
+            onChange={e => updTd({ return_commitment: e.target.value })}
+            rows={2}
+            placeholder="Stated intent to resume duties — gives HR a basis to hold the position"
+            className="w-full px-3 py-2 rounded-lg border bg-white text-sm focus:outline-none resize-none"
+            style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}/>
+        </div>
+      </Panel>
+    );
+  }
+
+  // ── IDDAH ────────────────────────────────────────────────────────────────
+  if (leaveTypeId === 'iddah') {
+    return (
+      <Panel title="IDDAH DETAILS" subtitle="Per KSA Labour Law Art. 160 — 4 months 10 days for widowed Muslim women">
+        <div><Label>Date of bereavement</Label>{inp({ k: 'bereavement_date', type: 'date' })}</div>
+        <div><Label>Location <span className="opacity-60 ml-1 font-normal">(where iddah will be observed)</span></Label>{inp({ k: 'location' })}</div>
+        <div><Label>Death certificate ref</Label>{inp({ k: 'cert_ref' })}</div>
+        <div><Label>Expected end date</Label>{inp({ k: 'expected_end', type: 'date' })}</div>
+      </Panel>
+    );
+  }
+
+  // ── OTHER ────────────────────────────────────────────────────────────────
+  if (leaveTypeId === 'other') {
+    return (
+      <Panel title="OTHER LEAVE — JUSTIFICATION" subtitle="Approval discretionary">
+        <div className="sm:col-span-2"><Label>Full justification</Label>
+          <textarea value={typeDetails.justification || ''}
+            onChange={e => updTd({ justification: e.target.value })}
+            rows={3}
+            placeholder="Why none of the standard leave types fit this case"
+            className="w-full px-3 py-2 rounded-lg border bg-white text-sm focus:outline-none resize-none"
+            style={{ borderColor: 'var(--border-soft)', color: '#0A0A0A' }}/>
+        </div>
+      </Panel>
+    );
+  }
+
+  // Annual / sick: no extra panel (sick has its own Sehhaty form elsewhere).
+  return null;
 }

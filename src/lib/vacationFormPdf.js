@@ -478,12 +478,14 @@ function drawLeaveTypeRow(pdf, startY, ltKey) {
 }
 
 function drawSubstitutesTable(pdf, startY, substitutes, request) {
-  // Row taller (12mm) to fit name+PSN on the left + a real signature
-  // line in the middle column — substitutes can ink-sign on a printed
-  // copy. "✓ Accepted online" becomes a small caption above the line
-  // so the digital + physical paths both have a place.
+  // Each row carries a visible SIGNATURE BOX (not just a line). When the
+  // substitute accepted online, the '✓ Accepted online' stamp sits at
+  // the top of the box; the rest of the box stays available for an
+  // ink signature on the printed copy. Some line managers require both
+  // a digital trail and a wet-ink signature on the physical form so
+  // this layout serves both workflows in one cell. Nadeem 2026-05-17.
   const headerH = 5.5;
-  const bodyH   = 12;
+  const bodyH   = 18;  // taller — was 12, gives the box real signing room
   const colWidths = [10, 60, 65, CONTENT_W - 10 - 60 - 65];
   let y = startY;
 
@@ -503,34 +505,50 @@ function drawSubstitutesTable(pdf, startY, substitutes, request) {
       { color: C.border, width: 0.15 });
     cx = MARGIN_X;
     // # column
-    drawText(pdf, String(i + 1), cx + 2, y + 7, {
+    drawText(pdf, String(i + 1), cx + 2, y + (bodyH / 2) + 1, {
       size: 9, color: C.text, style: 'bold',
     });
     cx += colWidths[0];
     // Substitute name + PSN
-    drawText(pdf, sub?.name || '—', cx + 2, y + 5, {
+    drawText(pdf, sub?.name || '—', cx + 2, y + 6, {
       size: 9.5, color: C.text, style: 'bold',
     });
-    drawText(pdf, sub?.id || sub?.employee_id || '', cx + 2, y + 9, {
+    drawText(pdf, sub?.id || sub?.employee_id || '', cx + 2, y + 11, {
       size: 7.5, color: C.muted, font: 'courier',
     });
     cx += colWidths[1];
-    // Signature: blank ink-signature line, no caption (moved to Date col).
-    drawLine(pdf, cx + 2, y + 9.5, cx + colWidths[2] - 3, y + 9.5,
-      { color: C.border, width: 0.3 });
+    // SIGNATURE BOX — drawn outline in every row regardless of online
+    // acceptance status. Online stamp sits at the top; physical signing
+    // space remains below.
+    const sigBoxX = cx + 2;
+    const sigBoxY = y + 2;
+    const sigBoxW = colWidths[2] - 4;
+    const sigBoxH = bodyH - 4;
+    drawRect(pdf, sigBoxX, sigBoxY, sigBoxW, sigBoxH, {
+      stroke: C.border, strokeWidth: 0.3,
+    });
+    const acceptedOnline = sub?.signature === 'accepted_online'
+                        || sub?.signature === true
+                        || sub?.accepted_at;
+    if (acceptedOnline) {
+      drawText(pdf, '✓ Accepted online', sigBoxX + 2, sigBoxY + 4.5, {
+        size: 7.5, color: C.brand, style: 'bold',
+      });
+      drawText(pdf, '— or sign physically below —', sigBoxX + 2, sigBoxY + 8.5, {
+        size: 5.5, color: C.muted, style: 'italic',
+      });
+    } else {
+      drawText(pdf, 'Sign here', sigBoxX + 2, sigBoxY + 4, {
+        size: 6.5, color: C.muted, style: 'italic',
+      });
+    }
     cx += colWidths[2];
-    // Date column — 'Accepted online' caption sits ABOVE the date,
-    // both centred horizontally + vertically in the cell. Dropped the
-    // ✓ glyph because it doesn't render in standard Helvetica encoding
-    // (renders as a corrupted ! or blank). The italic green colour
-    // alone communicates the accepted state.
+    // Date column
     const dateColCenter = cx + colWidths[3] / 2;
-    drawText(pdf, 'Accepted online', dateColCenter, y + 5, {
-      size: 7, color: C.brand, style: 'italic', align: 'center',
-    });
-    drawText(pdf, fmtStampCompact(request.requested_at), dateColCenter, y + 9, {
-      size: 8.5, color: C.text, align: 'center',
-    });
+    drawText(pdf, fmtStampCompact(sub?.accepted_at || sub?.date || request.requested_at),
+      dateColCenter, y + (bodyH / 2) + 1, {
+        size: 8.5, color: C.text, align: 'center',
+      });
     y += bodyH;
   });
   drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,

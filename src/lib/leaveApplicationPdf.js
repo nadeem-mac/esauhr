@@ -286,12 +286,19 @@ function drawTypeSpecificSection(pdf, y, request, employee = {}) {
 }
 
 // ─── substitutes table ────────────────────────────────────────────────────
+//
+// Every substitute row now gets a visible signature BOX (not just a line)
+// so the printed form has a clear physical-signing target regardless of
+// whether the substitute accepted online. When accepted online, the
+// 'Accepted online' stamp sits at the top of the box but the space
+// below is still available for a wet-ink signature — some line managers
+// require both. Nadeem 2026-05-17.
 
 function drawSubstitutes(pdf, y, subs = []) {
   y = drawSectionHeader(pdf, y, 'SUBSTITUTE COVERAGE');
   const colW = [10, 80, 60, 32];   // # · Name · Signature · Date
   const headers = ['#', 'SUBSTITUTE', 'SIGNATURE', 'DATE'];
-  const rowH = 11;
+  const rowH = 18;  // taller row so the signature box is genuinely usable
   // Header row
   drawRect(pdf, MARGIN_X, y, CONTENT_W, 7, { fill: C.labelBg });
   let cx = MARGIN_X;
@@ -306,23 +313,54 @@ function drawSubstitutes(pdf, y, subs = []) {
   const list = subs.length > 0 ? subs.slice(0, 3) : [{ name: '', signature: '', date: '' }];
   for (let i = 0; i < list.length; i++) {
     const s = list[i];
+    // Row separator
     drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
       { color: C.border, width: 0.15 });
     let cx = MARGIN_X;
-    drawText(pdf, String(i + 1), cx + 2, y + 7, { size: 9, color: C.text, style: 'bold' });
+
+    // # column
+    drawText(pdf, String(i + 1), cx + 2, y + (rowH / 2) + 1.5, {
+      size: 9, color: C.text, style: 'bold',
+    });
     cx += colW[0];
+
+    // Substitute name + PSN
     drawText(pdf, s.name || '', cx + 2, y + 7, { size: 9, color: C.text });
-    if (s.psn) drawText(pdf, s.psn, cx + 2, y + 10.5, { size: 7, color: C.muted });
+    if (s.psn) drawText(pdf, s.psn, cx + 2, y + 11, { size: 7, color: C.muted });
     cx += colW[1];
+
+    // SIGNATURE BOX — drawn for every row, always. When accepted online,
+    // the stamp sits inside the box at the top; physical signing space
+    // remains below. The box has subtle padding so the printed form
+    // looks like a proper form field, not a blank line.
+    const sigBoxX = cx + 2;
+    const sigBoxY = y + 2;
+    const sigBoxW = colW[2] - 4;
+    const sigBoxH = rowH - 4;
+    drawRect(pdf, sigBoxX, sigBoxY, sigBoxW, sigBoxH, {
+      stroke: C.border, strokeWidth: 0.3,
+    });
     if (s.signature === 'accepted_online') {
-      drawText(pdf, 'Accepted online', cx + 2, y + 5, { size: 8, color: C.brand, style: 'bold' });
-      drawText(pdf, 'Signature', cx + 2, y + 9, { size: 7, color: C.muted, style: 'italic' });
+      // Stamp at top of the box
+      drawText(pdf, '✓ Accepted online', sigBoxX + 2, sigBoxY + 4.5, {
+        size: 7.5, color: C.brand, style: 'bold',
+      });
+      // Faint dotted hint that physical signing space is also available
+      drawText(pdf, '— or sign physically below —', sigBoxX + 2, sigBoxY + 8.5, {
+        size: 5.5, color: C.muted, style: 'italic',
+      });
     } else {
-      drawLine(pdf, cx + 2, y + 8, cx + colW[2] - 2, y + 8,
-        { color: C.text, width: 0.3 });
+      drawText(pdf, 'Sign here', sigBoxX + 2, sigBoxY + 4, {
+        size: 6.5, color: C.muted, style: 'italic',
+      });
     }
     cx += colW[2];
-    drawText(pdf, fmtDateShort(s.date), cx + 2, y + 7, { size: 8.5, color: C.text });
+
+    // Date column
+    drawText(pdf, fmtDateShort(s.date), cx + 2, y + (rowH / 2) + 1.5, {
+      size: 8.5, color: C.text,
+    });
+
     y += rowH;
   }
   drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
@@ -360,7 +398,10 @@ export async function generateLeaveApplicationPdfBlob({
   y = drawLeaveTypeRow(pdf, y, ltKey);
   y += 3;
 
-  // Employee Information
+  // Employee Information — read from DB-canonical column names.
+  // employee.join_date (not 'joined'), service years computed inline
+  // since it isn't a DB column. Email/phone added so HR can contact
+  // the staff member during their leave without leaving the PDF.
   y = drawSectionHeader(pdf, y, 'EMPLOYEE INFORMATION');
   const deptLabel = position.department
     ? `${position.department}${DEPT_NAMES[position.department] ? ' — ' + DEPT_NAMES[position.department] : ''}`
@@ -368,32 +409,57 @@ export async function generateLeaveApplicationPdfBlob({
   const locLabel = position.location
     ? `${position.location}${LOC_NAMES[position.location] ? ' — ' + LOC_NAMES[position.location] : ''}`
     : '—';
+  // Service years derived from join_date so it's always current at
+  // PDF-generation time even if the row was pulled hours earlier.
+  let serviceLabel = '—';
+  if (employee.join_date) {
+    const ms = Date.now() - new Date(employee.join_date).getTime();
+    const yrs  = Math.floor(ms / (1000 * 60 * 60 * 24 * 365.25));
+    const mos  = Math.floor((ms / (1000 * 60 * 60 * 24 * 30.44)) % 12);
+    serviceLabel = `${yrs} year${yrs === 1 ? '' : 's'} ${mos} month${mos === 1 ? '' : 's'}`;
+  }
   y = drawTwoColTable(pdf, y, [
-    [['Full name',     employee.name],         ['PSN ID',         employee.id]],
-    [['Designation',   position.designation],  ['Department',     deptLabel]],
-    [['Location',      locLabel],              ['Reports to',     manager?.name]],
-    [['Joined',        fmtDateShort(employee.joined)],
-     ['Service years', employee.service_years || '—']],
+    [['Full name',     employee.name],                          ['PSN ID',         employee.id]],
+    [['Designation',   position.designation || employee.designation || '—'],
+                                                                ['Department',     deptLabel]],
+    [['Location',      locLabel],                               ['Reports to',     manager?.name || '—']],
+    [['Joined',        fmtDateShort(employee.join_date)],       ['Service',        serviceLabel]],
+    [['Email',         employee.email || '—'],                  ['Phone',          employee.phone || '—']],
   ]);
   y += 3;
 
-  // Leave Details
+  // Leave Details — read from DB-canonical names. `request.days` (not
+  // duration_days), `request.requested_at` (not submitted_at). Urgency
+  // derived from the notice window between requested_at and start_date
+  // since there's no separate `urgency` column.
   y = drawSectionHeader(pdf, y, 'LEAVE DETAILS');
   const periodLabel = request.start_date && request.end_date
     ? (request.start_date === request.end_date
         ? fmtDateLong(request.start_date)
         : `${fmtDateShort(request.start_date)}  —  ${fmtDateShort(request.end_date)}`)
     : '—';
+  // Notice window: planned if >= 14 days before start, urgent otherwise.
+  // Computed here so the PDF doesn't depend on a column that may not
+  // exist (`urgency` isn't on leave_requests).
+  let noticeLabel = '—';
+  if (request.requested_at && request.start_date) {
+    const noticeDays = Math.round(
+      (new Date(request.start_date) - new Date(request.requested_at)) / 86400000
+    );
+    noticeLabel = noticeDays >= 14
+      ? `Planned  (${noticeDays} days advance notice)`
+      : `Urgent  (${noticeDays} days notice — less than 14)`;
+  }
   y = drawTwoColTable(pdf, y, [
     [['Period',         periodLabel],
-     ['Duration',       request.duration_days ? `${request.duration_days} day${request.duration_days === 1 ? '' : 's'}` : '—']],
-    [['Notice',         request.urgency === 'urgent' ? 'Urgent (<14 days)' : 'Planned (at least 14 days)'],
+     ['Duration',       request.days ? `${request.days} day${Number(request.days) === 1 ? '' : 's'}` : '—']],
+    [['Notice',         noticeLabel],
      ['Half day',       request.is_half_day ? `Yes (${request.half_day_period || 'Morning'})` : 'No']],
-    [['Submitted',      fmtDateShort(request.submitted_at)],
+    [['Submitted',      fmtDateShort(request.requested_at)],
      ['Stage',          request.stage || 'pending_manager']],
   ]);
   y = drawLabelValueTable(pdf, y, [
-    ['Reason / details', request.reason],
+    ['Reason / details', request.reason || '—'],
   ]);
   y += 3;
 

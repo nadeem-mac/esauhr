@@ -265,8 +265,10 @@ export async function generateRejoiningReportPdfBlob({
 
   // Duration — prefer the stored count, otherwise compute inclusive
   // calendar days from start/end. Half-day leaves carry 0.5 in the
-  // stored value, so we can't unconditionally recompute.
-  let durationDays = request.duration_days;
+  // stored value, so we can't unconditionally recompute. Accepts both
+  // `request.days` (canonical DB column) and `request.duration_days`
+  // (legacy alias from earlier code paths) so it works either way.
+  let durationDays = request.days != null ? request.days : request.duration_days;
   if (durationDays == null && request.start_date && request.end_date) {
     const s = new Date(request.start_date);
     const e = new Date(request.end_date);
@@ -288,9 +290,11 @@ export async function generateRejoiningReportPdfBlob({
   const hrApprovedAt = approvals.hr_approved_at
     ? fmtStampCompact(approvals.hr_approved_at)
     : '—';
-  const submittedStamp = request.submitted_at
-    ? fmtStampCompact(request.submitted_at)
-    : '—';
+  // Submitted timestamp — canonical DB column is requested_at; submitted_at
+  // is a legacy alias still produced by some callers. Accept either so the
+  // signature subtitle has the right date.
+  const submittedIso = request.requested_at || request.submitted_at;
+  const submittedStamp = submittedIso ? fmtStampCompact(submittedIso) : '—';
   const managerName = manager?.name || approvals.manager_name || '—';
 
   let y = MARGIN_T;
@@ -332,7 +336,7 @@ export async function generateRejoiningReportPdfBlob({
     {
       label:    'EMPLOYEE',
       name:     employee.name || '',
-      subtitle: request.submitted_at ? `Submitted ${submittedStamp}` : 'Signature & Date',
+      subtitle: submittedIso ? `Submitted ${submittedStamp}` : 'Signature & Date',
     },
     {
       label:    'DEPT MGR',
