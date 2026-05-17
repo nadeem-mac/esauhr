@@ -87,6 +87,31 @@ export function monthsOfService(joinDate, asOf = new Date()) {
 }
 
 // ──────────────────────────────────────────────────────────────────────
+//  ACTIVE EMPLOYEE CHECK
+//
+//  Single source of truth for "is this employee part of the live
+//  roster?" Used by all the count-by-X computations on Bashaier's
+//  dashboard (active staff, by location, by department, by nationality,
+//  by gender, headcount summary line) plus the Employees list page's
+//  default filter.
+//
+//  Archived statuses ('inactive', 'departed', 'terminated') exclude
+//  the row from active queries. The Employees page surfaces them
+//  separately when the "Show inactive" toggle is on.
+//
+//  Treats missing employment_status as active — legacy rows from
+//  before the lifecycle column was widely populated default to
+//  active so removing the column doesn't accidentally hide everyone.
+// ──────────────────────────────────────────────────────────────────────
+const INACTIVE_STATUSES = new Set(['inactive', 'departed', 'terminated']);
+export function isActiveEmployee(emp) {
+  if (!emp) return false;
+  const s = emp.employment_status;
+  if (!s) return true;
+  return !INACTIVE_STATUSES.has(s);
+}
+
+// ──────────────────────────────────────────────────────────────────────
 //  FULL ANNUAL ENTITLEMENT by Saudi Labor Law
 //    < 5 years of service   → 21 days
 //    ≥ 5 years of service   → 30 days

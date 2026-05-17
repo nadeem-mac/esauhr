@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { Check, ArrowRight, Palmtree, Calendar, KeyRound, Mail, AlertCircle, AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 import { supabase } from '../supabaseClient.js';
-import { todayISO, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
+import { todayISO, fmtDateShort, getInitials, avatarColor, isActiveEmployee } from '../lib/leaveLogic.js';
 import { summariseMonth } from '../lib/permissionLogic.js';
 import { parseEmailAddress } from '../lib/emailTemplates.js';
 import { salutationFor } from '../lib/salutations.js';
@@ -83,31 +83,42 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
     }).length;
   }, [requests]);
 
+  // Active employees only — excludes anyone marked 'inactive',
+  // 'departed', or 'terminated' (the soft-delete states). Every count
+  // and breakdown on this dashboard reads from this filtered list so
+  // archived staff don't inflate "active staff" or skew the
+  // dept/location/gender splits. Inactive staff stay viewable through
+  // the Employees tab's "Show inactive" toggle. Nadeem 2026-05-17.
+  const activeEmployees = useMemo(
+    () => (employees || []).filter(isActiveEmployee),
+    [employees]
+  );
+
   const byLocation = useMemo(() => {
     const m = { DMM: 0, JED: 0, RYD: 0 };
-    employees.forEach(e => { m[e.location] = (m[e.location] || 0) + 1; });
+    activeEmployees.forEach(e => { m[e.location] = (m[e.location] || 0) + 1; });
     return m;
-  }, [employees]);
+  }, [activeEmployees]);
 
   const byDept = useMemo(() => {
     const m = {};
-    employees.forEach(e => { m[e.department] = (m[e.department] || 0) + 1; });
+    activeEmployees.forEach(e => { m[e.department] = (m[e.department] || 0) + 1; });
     return Object.entries(m).sort((a,b) => b[1] - a[1]);
-  }, [employees]);
+  }, [activeEmployees]);
 
   const byNationality = useMemo(() => {
     let saudi = 0, expat = 0;
-    employees.forEach(e => {
+    activeEmployees.forEach(e => {
       if (e.nationality === 'saudi') saudi++;
       else if (e.nationality === 'expat') expat++;
     });
     return { saudi, expat };
-  }, [employees]);
+  }, [activeEmployees]);
 
   const byGender = useMemo(() => {
     const FEM_FIRST = new Set(['BASHAIER','BADRIA','SHAHAD','AMNA','AMINAH','NORA','NORAH','NOURA','LAYLA','SARA','SARAH','MARIA','JOAN','JOY','GRACE','AISHA','AMINA','FATIMA','KHADIJA','MARIAM','MARYAM','ZAINAB','HAYA','REEM','REEMA','RANA','DANA','LINA','NADA','WAFA','AYESHA','PRINCESS','JESSICA','JENNIFER','ANNA','HANNAH','LISA','EMMA','OLIVIA','SOPHIA','PRIYA','NEHA','SAFIA','SAFIYA']);
     let male = 0, female = 0;
-    employees.forEach(e => {
+    activeEmployees.forEach(e => {
       const g = (e.gender || '').toLowerCase();
       if (g === 'female' || g === 'f') female++;
       else if (g === 'male' || g === 'm') male++;
@@ -118,7 +129,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
       }
     });
     return { male, female };
-  }, [employees]);
+  }, [activeEmployees]);
 
   // Per-department gender breakdown — used to render badges showing how many
   // men and women are in each department.
@@ -132,14 +143,14 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
       return FEM_FIRST.has(first);
     };
     const m = {};
-    employees.forEach(e => {
+    activeEmployees.forEach(e => {
       const dept = e.department || 'OTHER';
       if (!m[dept]) m[dept] = { male: 0, female: 0 };
       if (isFemale(e)) m[dept].female++;
       else m[dept].male++;
     });
     return m;
-  }, [employees]);
+  }, [activeEmployees]);
 
   // bashaierMode is the toggle for personal touches (warm hero
   // greeting + monthly task reminder modal with the 🧚 fairy emoji).
@@ -430,7 +441,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           </div>
           <div className="grid grid-cols-3 gap-4">
             <div>
-              <div className="serif text-2xl leading-none" style={{ color: '#1F1B16', fontWeight: 500 }}>{employees.length}</div>
+              <div className="serif text-2xl leading-none" style={{ color: '#1F1B16', fontWeight: 500 }}>{activeEmployees.length}</div>
               <div className="text-[11px] mt-1" style={{ color: '#1F1B16' }}>active staff</div>
               <div className="text-[10px] mt-0.5" style={{ color: '#1F1B16', opacity: 0.6 }}>
                 {byLocation.DMM || 0} DMM · {byLocation.JED || 0} JED · {byLocation.RYD || 0} RYD
@@ -442,7 +453,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
               </div>
               <div className="text-[11px] mt-1" style={{ color: '#1F1B16' }}>on leave today</div>
               <div className="text-[10px] mt-0.5" style={{ color: '#1F1B16', opacity: 0.6 }}>
-                {onLeaveToday.length === 0 ? 'full house' : `out of ${employees.length}`}
+                {onLeaveToday.length === 0 ? 'full house' : `out of ${activeEmployees.length}`}
               </div>
             </div>
             <div>
@@ -487,7 +498,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
             </div>
           </div>
           <div className="text-xs" style={{ color: '#1F1B16', fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
-            {employees.length} active · 🇸🇦 {byNationality.saudi} Saudi · 🌍 {byNationality.expat} Expat · 👨 {byGender.male} Men · 👩 {byGender.female} Women
+            {activeEmployees.length} active · 🇸🇦 {byNationality.saudi} Saudi · 🌍 {byNationality.expat} Expat · 👨 {byGender.male} Men · 👩 {byGender.female} Women
           </div>
         </summary>
 
@@ -530,7 +541,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
                         {dept}
                       </div>
                       <div className="text-[11px]" style={{ color: '#1F1B16', marginTop: '2px' }}>
-                        {Math.round((count / employees.length) * 100)}% of staff
+                        {Math.round((count / activeEmployees.length) * 100)}% of staff
                       </div>
                     </div>
                   </div>

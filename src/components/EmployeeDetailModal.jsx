@@ -68,39 +68,55 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
     }
   };
 
-  // ─── Header delete-employee state ────────────────────────────────
-  // Per Nadeem: Delete button moves up next to the PIN button at the
-  // top of the modal. Same multi-step confirmation flow as the
-  // previous DangerZone — just triggered from the header now and the
-  // confirm dialog slides down under the header (like the PIN panel).
-  const canDelete = (me?.is_admin || me?.is_hr_reviewer) && me?.id !== employee.id;
+  // ─── Header deactivate-employee state ────────────────────────────────
+  // Soft-delete pattern (Nadeem 2026-05-17). Previously this button
+  // called admin_delete_employee RPC which destructively wiped the
+  // employee row + all related history (requests, balances,
+  // attendance, etc.). Bashaier asked for a reversible inactive flow
+  // instead: keep the data, just mark the row as 'inactive' so it
+  // drops out of active counts but stays viewable via the Employees
+  // tab's "Show inactive" toggle. The destructive RPC stays in the
+  // database for admin edge-cases but is no longer wired to the UI.
+  const isAlreadyInactive = ['inactive', 'departed', 'terminated'].includes(employee?.employment_status);
+  const canDeactivate = (me?.is_admin || me?.is_hr_reviewer) && me?.id !== employee.id;
   const [delStage, setDelStage] = useState('idle');
   // 'idle' | 'confirm' | 'submitting' | 'done' | 'error'
-  const [delTyped, setDelTyped] = useState('');
   const [delError, setDelError] = useState('');
   const [delResult, setDelResult] = useState(null);
   React.useEffect(() => {
     setDelStage('idle');
-    setDelTyped('');
     setDelError('');
     setDelResult(null);
   }, [employee.id]);
 
-  const submitDelete = async () => {
+  // Submit handler — toggles the employment_status:
+  //   active → 'inactive'   (deactivate)
+  //   inactive/departed/terminated → 'active' (reactivate)
+  // Both directions use a single UPDATE via directPatch. No typed
+  // confirmation needed since the action is reversible.
+  const submitDeactivate = async () => {
     setDelStage('submitting');
     setDelError('');
     try {
-      const { data, error } = await supabase.rpc('admin_delete_employee', {
-        target_psn:   employee.id,
-        confirmation: delTyped.trim(),
+      const targetStatus = isAlreadyInactive ? 'active' : 'inactive';
+      const result = await directPatch('employees', 'id', employee.id, {
+        employment_status: targetStatus,
+        // Audit fields — who toggled the status and when. Schema
+        // columns are tolerant: if they don't exist the PATCH still
+        // succeeds because PostgREST drops unknown fields rather than
+        // 400. Adding them gives a paper trail when columns exist.
+        status_changed_by: me?.id || null,
+        status_changed_at: new Date().toISOString(),
       });
-      if (error) throw error;
-      if (!data?.ok) throw new Error(data?.error || 'Unknown error');
-      setDelResult(data);
+      setDelResult({ ok: true, status: targetStatus, name: employee.name });
       setDelStage('done');
       setTimeout(() => {
         if (typeof onDeleted === 'function') {
-          try { onDeleted(employee.id, data); } catch (_) { /* swallow */ }
+          // Reuse the onDeleted callback for backward compatibility —
+          // parent components already handle 'employee gone' by
+          // refetching the list. Inactive becomes invisible there
+          // unless the "Show inactive" toggle is on.
+          try { onDeleted(employee.id, { ok: true, status: targetStatus }); } catch (_) { /* swallow */ }
         }
         if (typeof onClose === 'function') {
           onClose();
@@ -234,36 +250,44 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                   <span>Reset PIN</span>
                 </button>
               )}
-              {canDelete && (
+              {canDeactivate && (
                 <button
                   onClick={() => {
                     if (delStage === 'idle') {
                       setDelStage('confirm');
-                      setDelTyped('');
                       setDelError('');
                       setPinOpen(false);
                     } else {
                       setDelStage('idle');
-                      setDelTyped('');
                       setDelError('');
                     }
                   }}
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] transition-colors"
                   style={{
-                    /* Delete button: clay-red tinted always — destructive
-                       action, must read as "danger" at a glance. Solid
-                       red when the confirm dialog is open. */
-                    background: delStage !== 'idle' ? '#991B1B' : '#FEF2F2',
-                    border: '1px solid ' + (delStage !== 'idle' ? '#991B1B' : '#FCA5A5'),
-                    color: delStage !== 'idle' ? '#FFFFFF' : '#991B1B',
+                    /* Inactive button: amber when activating, brand-green
+                       when reactivating. Both reversible — no destructive
+                       red. Solid fill when confirm panel is open. */
+                    background: delStage !== 'idle'
+                      ? (isAlreadyInactive ? '#0F4C2A' : '#92400E')
+                      : (isAlreadyInactive ? '#ECFDF5' : '#FEF3C7'),
+                    border: '1px solid ' + (delStage !== 'idle'
+                      ? (isAlreadyInactive ? '#0F4C2A' : '#92400E')
+                      : (isAlreadyInactive ? '#A7F3D0' : '#FCD34D')),
+                    color: delStage !== 'idle'
+                      ? '#FFFFFF'
+                      : (isAlreadyInactive ? '#0F4C2A' : '#92400E'),
                     fontWeight: 700,
                     lineHeight: 1,
                     cursor: 'pointer',
                   }}
-                  title="Permanently delete this employee"
+                  title={isAlreadyInactive
+                    ? 'Restore this employee to the active roster'
+                    : 'Mark this employee inactive — data is preserved'}
                 >
-                  <span style={{ fontSize: 13 }} aria-hidden="true">🗑️</span>
-                  <span>Delete</span>
+                  <span style={{ fontSize: 13 }} aria-hidden="true">
+                    {isAlreadyInactive ? '↻' : '⊘'}
+                  </span>
+                  <span>{isAlreadyInactive ? 'Reactivate' : 'Deactivate'}</span>
                 </button>
               )}
               <button onClick={onClose} className="p-1.5 rounded-full hover:bg-black/5" aria-label="Close" title="Close">
@@ -386,95 +410,72 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
               below the title row) so both header-triggered actions
               surface in the same predictable spot. Multi-step:
               confirm → submitting → done / error. */}
-          {canDelete && delStage !== 'idle' && (
-            <div className="mt-3 pt-3" style={{ borderTop: '1px dashed #FCA5A5' }}>
+          {canDeactivate && delStage !== 'idle' && (
+            <div className="mt-3 pt-3" style={{ borderTop: '1px dashed #FCD34D' }}>
               {delStage === 'done' ? (
-                /* Success — green banner with cleanup counts */
+                /* Success — soft green banner, reversible action */
                 <div className="flex items-start gap-2 rounded-lg" style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', padding: '10px 12px', color: '#0F4C2A' }}>
                   <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
                   <div className="text-[12px]">
-                    <div style={{ fontWeight: 700 }}>{delResult?.name || employee.name} removed</div>
-                    {delResult?.counts && (
-                      <div className="mt-0.5 text-[10.5px]" style={{ opacity: 0.85 }}>
-                        Cleaned up:{' '}
-                        {Object.entries(delResult.counts)
-                          .filter(([, n]) => n > 0)
-                          .map(([k, n]) => `${n} ${k.replace(/_/g, ' ')}`)
-                          .join(', ') || 'no associated records'}.
-                      </div>
-                    )}
+                    <div style={{ fontWeight: 700 }}>
+                      {delResult?.name || employee.name} {delResult?.status === 'active' ? 'reactivated' : 'marked inactive'}
+                    </div>
+                    <div className="mt-0.5 text-[10.5px]" style={{ opacity: 0.85 }}>
+                      {delResult?.status === 'active'
+                        ? 'Now appears in the active roster and counts.'
+                        : 'Data is preserved. Reactivate any time from the Employees tab with "Show inactive" on.'}
+                    </div>
                   </div>
                 </div>
               ) : (
-                /* Confirm / submitting / error — full warning */
+                /* Confirm / submitting / error — soft warning (reversible) */
                 <div>
                   <div className="flex items-start gap-2 mb-2">
-                    <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#991B1B' }} />
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: isAlreadyInactive ? '#0F4C2A' : '#92400E' }} />
                     <div>
-                      <div className="text-[11px]" style={{ color: '#991B1B', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase' }}>
-                        Delete {employee.name}?
+                      <div className="text-[11px]" style={{ color: isAlreadyInactive ? '#0F4C2A' : '#92400E', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase' }}>
+                        {isAlreadyInactive ? `Reactivate ${employee.name}?` : `Mark ${employee.name} as inactive?`}
                       </div>
-                      <div className="text-[11.5px] mt-1" style={{ color: '#7F1D1D', lineHeight: 1.5 }}>
-                        This <strong>cannot be undone</strong>. All data for this staff member will be deleted: profile, government records, leave requests &amp; balances, attendance records &amp; uploads, shift plans, permissions, and PSN authentication. The deletion is recorded in the activity log under your name.
+                      <div className="text-[11.5px] mt-1" style={{ color: '#1F1B16', lineHeight: 1.5, opacity: 0.85 }}>
+                        {isAlreadyInactive
+                          ? 'Restores this staff member to the active roster. They will appear in dashboard counts again and can submit requests.'
+                          : (<>This is <strong>reversible</strong>. All data stays intact — profile, history, balances, attendance. The employee just drops out of active counts. You can reactivate any time from the Employees tab with <strong>Show inactive</strong> on.</>)}
                       </div>
                     </div>
                   </div>
 
-                  {/* Typed-confirmation input + action buttons in one row */}
-                  <div className="flex items-end gap-2 flex-wrap mt-2">
-                    <div className="flex-1" style={{ minWidth: 180 }}>
-                      <label className="block text-[9px] tracking-[0.16em] mb-1" style={{ color: '#7F1D1D', fontWeight: 700 }}>
-                        TYPE <span className="font-mono px-1 py-0.5 rounded" style={{ background: '#FFFFFF', border: '1px solid #FCA5A5', letterSpacing: '0.1em' }}>{employee.id}</span> TO CONFIRM
-                      </label>
-                      <input
-                        type="text"
-                        value={delTyped}
-                        onChange={e => setDelTyped(e.target.value)}
-                        disabled={delStage === 'submitting'}
-                        autoFocus
-                        placeholder={employee.id}
-                        className="w-full px-3 py-1.5 rounded-lg border text-sm font-mono"
-                        style={{
-                          borderColor: delTyped && delTyped.trim() !== employee.id ? '#FCA5A5' : 'var(--border-soft)',
-                          background: '#FFFFFF',
-                          color: '#1F1B16',
-                          letterSpacing: '0.1em',
-                        }}
-                      />
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={() => { setDelStage('idle'); setDelTyped(''); setDelError(''); }}
-                        disabled={delStage === 'submitting'}
-                        className="text-[11px] px-3 py-1.5 rounded-full"
-                        style={{
-                          background: '#FFFFFF',
-                          border: '1px solid var(--border-soft)',
-                          color: '#0A0A0A',
-                          cursor: delStage === 'submitting' ? 'not-allowed' : 'pointer',
-                          fontWeight: 600,
-                        }}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={submitDelete}
-                        disabled={delStage === 'submitting' || delTyped.trim() !== employee.id}
-                        className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-full"
-                        style={{
-                          background: '#991B1B',
-                          color: '#FFFFFF',
-                          border: 'none',
-                          cursor: (delStage === 'submitting' || delTyped.trim() !== employee.id) ? 'not-allowed' : 'pointer',
-                          opacity: (delStage === 'submitting' || delTyped.trim() !== employee.id) ? 0.5 : 1,
-                          fontWeight: 700,
-                        }}
-                      >
-                        {delStage === 'submitting'
-                          ? <><Loader2 className="w-3 h-3 animate-spin" /> Deleting…</>
-                          : <><Trash2 className="w-3 h-3" /> Permanently delete</>}
-                      </button>
-                    </div>
+                  <div className="flex items-center gap-1.5 mt-3 justify-end">
+                    <button
+                      onClick={() => { setDelStage('idle'); setDelError(''); }}
+                      disabled={delStage === 'submitting'}
+                      className="text-[11px] px-3 py-1.5 rounded-full"
+                      style={{
+                        background: '#FFFFFF',
+                        border: '1px solid var(--border-soft)',
+                        color: '#0A0A0A',
+                        cursor: delStage === 'submitting' ? 'not-allowed' : 'pointer',
+                        fontWeight: 600,
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={submitDeactivate}
+                      disabled={delStage === 'submitting'}
+                      className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-full"
+                      style={{
+                        background: isAlreadyInactive ? '#0F4C2A' : '#92400E',
+                        color: '#FFFFFF',
+                        border: 'none',
+                        cursor: delStage === 'submitting' ? 'not-allowed' : 'pointer',
+                        opacity: delStage === 'submitting' ? 0.5 : 1,
+                        fontWeight: 700,
+                      }}
+                    >
+                      {delStage === 'submitting'
+                        ? <><Loader2 className="w-3 h-3 animate-spin" /> {isAlreadyInactive ? 'Reactivating…' : 'Deactivating…'}</>
+                        : <>{isAlreadyInactive ? '↻ Reactivate' : '⊘ Mark Inactive'}</>}
+                    </button>
                   </div>
 
                   {delError && (
