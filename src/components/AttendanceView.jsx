@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   Upload, FileText, Clock, AlertTriangle, Mail, CheckCircle2,
   X, Calendar, Briefcase, Users, Send, Sparkles, Anchor, FileSpreadsheet,
+  ShieldAlert,
 } from 'lucide-react';
 import { directGet, directPost } from '../supabaseClient.js';
 import { parseTimeCardXlsx, TimeCardParseError } from '../lib/timeCard.js';
@@ -1497,6 +1498,16 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   const [fileSize,       setFileSize]       = useState(0);
   const [existingUpload, setExistingUpload] = useState(null);
   const [uploadId,       setUploadId]       = useState(null); // current upload row pk
+
+  // Delta from the most recent recordAttendanceRows() call — describes
+  // which (employee, date) rows the upload added vs updated vs left
+  // alone. Used by the re-upload banner so Bashaier can see at a glance
+  // whether her 4pm re-upload caught new late-arrivals beyond what
+  // her 10am upload saw. Nadeem 2026-05-17.
+  // Shape: { newRows: [], updatedRows: [], unchangedRows: [],
+  //          changedFields: {first_punch, last_punch, status, total_minutes},
+  //          total } — or null when no upload has been processed yet.
+  const [uploadDelta, setUploadDelta] = useState(null);
 
   // Per-row email confirm modal state. Holds the entry being
   // emailed so the modal can show a TO/CC/SUBJECT preview before
@@ -3489,7 +3500,31 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           allRows.push(...rows);
         }
         if (allRows.length > 0) {
-          await recordAttendanceRows(allRows);
+          const delta = await recordAttendanceRows(allRows);
+          // Store the delta in component state so the UI can render
+          // the 'what changed in this upload' banner — Bashaier needs
+          // to know if her 4pm re-upload caught new late-arrivals
+          // beyond what her 10am upload saw. Nadeem 2026-05-17.
+          setUploadDelta(delta);
+          // Toast summary for the close action. The banner stays
+          // until the next upload or reset, so she can read it at
+          // her own pace; the toast is the immediate confirmation.
+          try {
+            const newCount   = delta.newRows.length;
+            const updCount   = delta.updatedRows.length;
+            const unchanged  = delta.unchangedRows.length;
+            const isReupload = (newCount + updCount) > 0 && unchanged > 0;
+            const evt = new CustomEvent('esauhr_toast', { detail: {
+              kind: isReupload ? 'info' : 'success',
+              title: isReupload
+                ? 'Re-upload processed'
+                : 'Attendance recorded',
+              body: isReupload
+                ? `${newCount} new · ${updCount} updated · ${unchanged} unchanged.`
+                : `${delta.total} ${delta.total === 1 ? 'row' : 'rows'} written to attendance master.`,
+            }});
+            window.dispatchEvent(evt);
+          } catch {}
         }
       } catch (e) {
         console.warn('attendance_daily recording failed (non-fatal):', e);
@@ -3536,6 +3571,9 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       setSentMarkers({});
       setUploadId(null);
       setExistingUpload(null);
+      // Clear the delta from any previous upload — the banner should
+      // only reflect the file currently being processed.
+      setUploadDelta(null);
       if (!result.dataDate) {
         setParseError('The file parsed but contained no usable rows. Check the export.');
         return;
@@ -5737,6 +5775,86 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
                 }}>
                 Enable actions anyway
               </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Re-upload delta banner — shows what THIS upload changed vs
+          the previous one for the same dates. Triggered when the
+          recorder finds existing attendance_daily rows that this
+          upload either added to or modified. The 'unchanged' count
+          is the proof that the system is comparing — if every row is
+          unchanged we don't show the banner (nothing actionable).
+          Nadeem 2026-05-17 — surfaces the difference between her
+          10am vs 4pm uploads so she can see new late-arrivals etc. */}
+      {hasFile && uploadDelta && (uploadDelta.newRows.length > 0 || uploadDelta.updatedRows.length > 0) && (
+        <div className="rounded-2xl border p-4 flex items-start gap-3"
+             style={{ borderColor: '#2D5F3F', background: '#F0FDF4' }}>
+          <ShieldAlert className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: '#2D5F3F' }}/>
+          <div className="text-sm flex-1 min-w-0" style={{ color: '#0A0A0A' }}>
+            <div className="font-bold mb-1">
+              {uploadDelta.unchangedRows.length > 0
+                ? 'Re-upload processed — here\'s what changed'
+                : 'Attendance recorded'}
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px]">
+              <span><strong style={{ color: '#0F4C2A' }}>{uploadDelta.newRows.length}</strong> new {uploadDelta.newRows.length === 1 ? 'entry' : 'entries'}</span>
+              <span><strong style={{ color: '#A16207' }}>{uploadDelta.updatedRows.length}</strong> updated</span>
+              {uploadDelta.unchangedRows.length > 0 && (
+                <span style={{ color: '#0A0A0A', opacity: 0.65 }}>
+                  {uploadDelta.unchangedRows.length} unchanged
+                </span>
+              )}
+            </div>
+            {uploadDelta.updatedRows.length > 0 && (
+              <div className="mt-2 text-[11px]" style={{ color: '#0A0A0A', opacity: 0.85 }}>
+                Changed fields:{' '}
+                {uploadDelta.changedFields.first_punch > 0 && (
+                  <span style={{ marginRight: 10 }}><strong>{uploadDelta.changedFields.first_punch}</strong> first-punch</span>
+                )}
+                {uploadDelta.changedFields.last_punch > 0 && (
+                  <span style={{ marginRight: 10 }}><strong>{uploadDelta.changedFields.last_punch}</strong> last-punch</span>
+                )}
+                {uploadDelta.changedFields.status > 0 && (
+                  <span style={{ marginRight: 10 }}><strong>{uploadDelta.changedFields.status}</strong> status</span>
+                )}
+                {uploadDelta.changedFields.total_minutes > 0 && (
+                  <span><strong>{uploadDelta.changedFields.total_minutes}</strong> worked-minutes</span>
+                )}
+              </div>
+            )}
+            {/* Sample affected rows so Bashaier can verify the changes
+                target the staff she expected (especially for late-
+                arrival check-ins on a re-upload). Capped at 6 so the
+                banner doesn't become a wall — full breakdown is in
+                the calendar grid. */}
+            {(uploadDelta.newRows.length + uploadDelta.updatedRows.length) > 0 && (
+              <div className="mt-2 text-[11px]" style={{ color: '#0A0A0A' }}>
+                {(() => {
+                  const all = [
+                    ...uploadDelta.newRows.map(r => ({ ...r, _kind: 'new' })),
+                    ...uploadDelta.updatedRows.map(r => ({ ...r, _kind: 'updated' })),
+                  ];
+                  const sample = all.slice(0, 6);
+                  return sample.map((r, i) => {
+                    const emp = empById[r.employee_id];
+                    const name = emp?.name || r.employee_id;
+                    const tag = r._kind === 'new' ? 'NEW' : 'UPD';
+                    const tagColor = r._kind === 'new' ? '#0F4C2A' : '#A16207';
+                    return (
+                      <span key={i} style={{ marginRight: 12, whiteSpace: 'nowrap' }}>
+                        <span style={{ color: tagColor, fontWeight: 700, marginRight: 4, fontSize: 9 }}>{tag}</span>
+                        {name} · {String(r.attendance_date).slice(5)}
+                      </span>
+                    );
+                  }).concat(all.length > 6 ? [
+                    <span key="more" style={{ opacity: 0.6 }}>
+                      … and {all.length - 6} more
+                    </span>,
+                  ] : []);
+                })()}
+              </div>
             )}
           </div>
         </div>

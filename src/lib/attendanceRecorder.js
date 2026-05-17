@@ -32,7 +32,7 @@
 //   correctly flips an erroneous 'absent' into 'annual_leave', etc.
 // =============================================================================
 
-import { directPost } from '../supabaseClient.js';
+import { directGet, directPost } from '../supabaseClient.js';
 
 // Map leave_type_id → attendance_daily.status. Identical mapping to
 // markLeaveAttendance.js — same per-type vocabulary so the recorder
@@ -291,11 +291,104 @@ export function buildAttendanceRows({
  * Upsert daily attendance rows. Conflict target is the unique
  * (employee_id, attendance_date) — re-runs overwrite cleanly.
  *
+ * Returns a delta summary describing what the upsert just did:
+ *   • newRows      — rows that did not exist before (insert)
+ *   • updatedRows  — rows where at least one tracked field changed
+ *   • unchangedRows— rows whose values exactly matched
+ *   • changedFields — per-field changed count (first_punch, last_punch,
+ *                    status, total_minutes) for the manager-facing
+ *                    "what changed in this upload" summary.
+ *
+ * The pre-fetch is best-effort: if it fails (network blip, table
+ * doesn't exist yet for a fresh install) we fall through to the
+ * blind upsert and return a delta object with all rows as 'new' —
+ * better than blocking the save on a diff that's just informational.
+ *
  * @param {Array} rows — output of buildAttendanceRows
- * @returns {Promise<void>}
+ * @returns {Promise<{
+ *   newRows: Array, updatedRows: Array, unchangedRows: Array,
+ *   changedFields: { first_punch: number, last_punch: number,
+ *                    status: number, total_minutes: number },
+ *   total: number,
+ * }>}
  */
 export async function recordAttendanceRows(rows) {
-  if (!Array.isArray(rows) || rows.length === 0) return;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return {
+      newRows: [], updatedRows: [], unchangedRows: [],
+      changedFields: { first_punch: 0, last_punch: 0, status: 0, total_minutes: 0 },
+      total: 0,
+    };
+  }
+
+  // Pre-fetch existing rows for the (employee_id, attendance_date)
+  // keys we're about to upsert. Used to classify each incoming row
+  // as new / updated / unchanged so the upload UI can show Bashaier
+  // exactly what this upload added vs what was already on file.
+  // Built as a PostgREST `in.(...)` filter over two dimensions — we
+  // fetch the entire window and filter in memory afterwards. The
+  // window is small enough (≤ 2 days × handful of employees) that
+  // pulling a slightly wider slab is cheaper than building a
+  // composite filter.
+  const empIds = [...new Set(rows.map(r => r.employee_id).filter(Boolean))];
+  const dates  = [...new Set(rows.map(r => r.attendance_date).filter(Boolean))];
+  const existing = new Map(); // empId|date → existing row
+
+  if (empIds.length > 0 && dates.length > 0) {
+    try {
+      const empFilter  = empIds.map(id => `"${String(id).replace(/"/g, '')}"`).join(',');
+      const dateFilter = dates.map(d => `"${String(d).replace(/"/g, '')}"`).join(',');
+      const prior = await directGet(
+        'attendance_daily',
+        `select=employee_id,attendance_date,first_punch,last_punch,status,total_minutes`
+        + `&employee_id=in.(${empFilter})`
+        + `&attendance_date=in.(${dateFilter})`,
+        { timeoutMs: 10000 },
+      );
+      for (const r of (prior || [])) {
+        const k = `${String(r.employee_id).toUpperCase()}|${String(r.attendance_date).slice(0,10)}`;
+        existing.set(k, r);
+      }
+    } catch (e) {
+      // Best-effort — log and continue with all rows treated as new.
+      // eslint-disable-next-line no-console
+      console.warn('[attendanceRecorder] pre-fetch failed, treating all rows as new:', e?.message || e);
+    }
+  }
+
+  // Classify each incoming row.
+  const newRows = [];
+  const updatedRows = [];
+  const unchangedRows = [];
+  const changedFields = { first_punch: 0, last_punch: 0, status: 0, total_minutes: 0 };
+
+  // Time normalisation: DB may return '08:00:00' where the incoming
+  // row has '08:00'. Compare as 'HH:MM' to avoid spurious diffs.
+  const normTime = (t) => (t ? String(t).slice(0,5) : null);
+  const sameTime = (a, b) => normTime(a) === normTime(b);
+
+  for (const r of rows) {
+    const k = `${String(r.employee_id).toUpperCase()}|${String(r.attendance_date).slice(0,10)}`;
+    const prior = existing.get(k);
+    if (!prior) {
+      newRows.push(r);
+      continue;
+    }
+    const fpChanged = !sameTime(prior.first_punch, r.first_punch);
+    const lpChanged = !sameTime(prior.last_punch,  r.last_punch);
+    const stChanged = String(prior.status || '') !== String(r.status || '');
+    const tmChanged = Number(prior.total_minutes || 0) !== Number(r.total_minutes || 0);
+    if (fpChanged || lpChanged || stChanged || tmChanged) {
+      updatedRows.push({ ...r, _prior: prior, _changes: { fpChanged, lpChanged, stChanged, tmChanged } });
+      if (fpChanged) changedFields.first_punch  += 1;
+      if (lpChanged) changedFields.last_punch   += 1;
+      if (stChanged) changedFields.status       += 1;
+      if (tmChanged) changedFields.total_minutes += 1;
+    } else {
+      unchangedRows.push(r);
+    }
+  }
+
   // Send in chunks of 100 to stay well under PostgREST's payload
   // limits and avoid one huge bulk hammering the channel.
   const CHUNK = 100;
@@ -307,4 +400,9 @@ export async function recordAttendanceRows(rows) {
       timeoutMs: 12000,
     });
   }
+
+  return {
+    newRows, updatedRows, unchangedRows, changedFields,
+    total: rows.length,
+  };
 }
