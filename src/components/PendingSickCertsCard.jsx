@@ -63,6 +63,7 @@ import { classifyPressure, PRESSURE_LABELS, formatDeclarationRange } from '../li
 import { reminderStatus, reminderKindLabel } from '../lib/sickReminderEmail.js';
 import { groupViolationsBySource, findStaffNeedingDigest, AUTO_UNMARK_WINDOW_DAYS } from '../lib/sickHardPressure.js';
 import { directPatch } from '../supabaseClient.js';
+import { salutationFor } from '../lib/salutations.js';
 import { logAction } from '../lib/audit.js';
 import { parseEmailAddress } from '../lib/emailTemplates.js';
 import CertExemptModal from './CertExemptModal.jsx';
@@ -94,7 +95,7 @@ function buildCertRequestEmail({ employee, request }) {
     : `${fmtShort(startStr)} → ${fmtShort(endStr)}`;
   const subject = `SEHHATY CERTIFICATE REQUIRED: ${employee?.id || ''} — ${empName} — ${subjectRange}`;
   const body =
-`Dear ${empName},
+`Dear ${salutationFor(employee)},
 
 Your sick leave on ${dateRange} has been approved by your manager and HR (cert-exempt) so the day off is on the books.
 

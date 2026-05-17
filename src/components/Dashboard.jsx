@@ -4,6 +4,7 @@ import { supabase } from '../supabaseClient.js';
 import { todayISO, fmtDateShort, getInitials, avatarColor } from '../lib/leaveLogic.js';
 import { summariseMonth } from '../lib/permissionLogic.js';
 import { parseEmailAddress } from '../lib/emailTemplates.js';
+import { salutationFor } from '../lib/salutations.js';
 import BashaierTasksCard from './BashaierTasksCard.jsx';
 import PendingShiftApprovalsCard from './PendingShiftApprovalsCard.jsx';
 import HrShiftMonthCard from './HrShiftMonthCard.jsx';
@@ -1085,7 +1086,7 @@ function PinRequestsCard({ me, employees, onCountChange }) {
       // Open mail client with pre-filled message
       const subject = encodeURIComponent('Your Evergreen HR PIN');
       const body = encodeURIComponent(
-        `Dear ${emp.name.split(' ').slice(0, 2).join(' ')},\n\n` +
+        `Dear ${salutationFor(emp)},\n\n` +
         `Your Evergreen HR PIN has been generated.\n\n` +
         `PSN ID: ${emp.id}\n` +
         `PIN: ${pin}\n\n` +

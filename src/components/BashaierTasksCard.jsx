@@ -11,6 +11,7 @@ import {
   weightForViolation, summariseViolations,
   REVIEW_THRESHOLD, WATCH_LOWER, BASE_SCORE,
 } from '../lib/evaluationWeights.js';
+import { salutationFor } from '../lib/salutations.js';
 
 // =============================================================================
 // CONSTANTS
@@ -824,7 +825,7 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold" style={{ color: '#1F1B16' }}>
                   {escalationsPending.length === 1
-                    ? `${escalationsPending[0].employeeName.split(' ')[0]} crossed the monthly review threshold`
+                    ? `${salutationFor({ id: escalationsPending[0].employeeId, name: escalationsPending[0].employeeName })} crossed the monthly review threshold`
                     : `${escalationsPending.length} staff crossed the monthly review threshold`}
                 </div>
                 <div className="text-[11px]" style={{ color: '#1F1B16' }}>
@@ -1067,7 +1068,7 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold" style={{ color: '#1F1B16' }}>
                   {chronicCandidates.length === 1
-                    ? `${chronicCandidates[0].employeeName.split(' ')[0]} has a chronic borderline pattern`
+                    ? `${salutationFor({ id: chronicCandidates[0].employeeId, name: chronicCandidates[0].employeeName })} has a chronic borderline pattern`
                     : `${chronicCandidates.length} staff have chronic borderline patterns`}
                 </div>
                 <div className="text-[11px]" style={{ color: '#1F1B16' }}>

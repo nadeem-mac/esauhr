@@ -35,6 +35,7 @@
 
 import { REMINDER_KINDS } from './sickDeclaration.js';
 import { renderHrSignature } from './emailTemplates.js';
+import { salutationFor } from './salutations.js';
 
 // HR signature is now rendered via the shared renderHrSignature()
 // helper from emailTemplates.js. That function:
@@ -75,7 +76,7 @@ function buildMailto(to, cc, subject, body) {
 // `extraNote`   — optional free-text note Bashaier added in the modal,
 //                 appended above the signature.
 function templateFor(kind, { declaration, employee, hrApprover, extraNote }) {
-  const firstName = (employee?.name || '').split(' ')[0] || 'Colleague';
+  const firstName = salutationFor(employee);
   const declStart = fmtDate(declaration.start_date);
   const declEnd = fmtDate(declaration.end_date || declaration.start_date);
   const dateRange = (declaration.start_date === declaration.end_date || !declaration.end_date)
@@ -259,7 +260,7 @@ export function buildUnauthorizedAbsenceDigestEmail({
   declarations = [],
   hrApprover,
 }) {
-  const firstName = (employee?.name || '').split(' ')[0] || 'Colleague';
+  const firstName = salutationFor(employee);
   const dayCount = violations.length;
   const dayList = [...new Set(violations.map(v => v.violation_date))]
     .sort()
