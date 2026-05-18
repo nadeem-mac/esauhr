@@ -56,37 +56,46 @@
 --
 -- ── SCOPED-RESET MODE ───────────────────────────────────────────────────
 --    To reset only for SPECIFIC employees (instead of everyone), edit
---    the EMP_FILTER assignment INSIDE the DO block below (look for the
---    big EDIT-ONLY-THIS-LINE banner — it's right after `DECLARE`).
+--    the INSERT INTO reset_scope statements near the top of this file.
+--    They're plain SQL INSERTs you can edit like any other SQL line —
+--    no PL/pgSQL gymnastics required.
 --
 --    Change the line from:
---      EMP_FILTER text[] := NULL;
+--      INSERT INTO reset_scope VALUES (NULL);
 --    to:
---      EMP_FILTER text[] := ARRAY['H94328', 'H94830', 'H94590'];
+--      INSERT INTO reset_scope VALUES ('H94328');
+--    Or for several employees, add one INSERT per PSN:
+--      INSERT INTO reset_scope VALUES ('H94328');
+--      INSERT INTO reset_scope VALUES ('H94830');
+--      INSERT INTO reset_scope VALUES ('H94590');
 --
---    DO NOT try to run that line on its own — PL/pgSQL declarations
---    only work INSIDE a DO $$ ... $$ block. Edit + run the whole file.
+--    These are plain INSERT statements — they live BEFORE the DO block
+--    and can be edited like any other SQL line. Paste + run the whole
+--    file as one piece (Supabase SQL Editor → Run, not Run Selection).
 -- ════════════════════════════════════════════════════════════════════════
+
+
+-- ─── STEP 1: scope filter (plain SQL — edit here if needed) ─────────────
+-- One row per PSN you want to scope to. Leave just the NULL row to reset
+-- for EVERY employee. The DO block below reads this table and treats a
+-- NULL-only row as 'no scope = everyone-mode'.
+
+DROP TABLE IF EXISTS reset_scope;
+CREATE TEMP TABLE reset_scope (psn text);
+INSERT INTO reset_scope VALUES (NULL);
+-- INSERT INTO reset_scope VALUES ('H94328');     -- ← uncomment + edit to scope
+-- INSERT INTO reset_scope VALUES ('H94830');     -- ← add more PSNs as needed
+
+
+-- ─── STEP 2: run the reset ──────────────────────────────────────────────
 
 DO $$
 DECLARE
-  -- ┌────────────────────────────────────────────────────────────────────┐
-  -- │  EDIT ONLY THE NEXT LINE TO SCOPE THE RESET                        │
-  -- │                                                                    │
-  -- │  • Reset for EVERY employee:                                       │
-  -- │      EMP_FILTER text[] := NULL;                                    │
-  -- │                                                                    │
-  -- │  • Reset for ONE employee only:                                    │
-  -- │      EMP_FILTER text[] := ARRAY['H94328'];                         │
-  -- │                                                                    │
-  -- │  • Reset for SEVERAL employees:                                    │
-  -- │      EMP_FILTER text[] := ARRAY['H94328', 'H94830', 'H94590'];     │
-  -- │                                                                    │
-  -- │  IMPORTANT: this line lives INSIDE the DO $$ ... $$ block. Do      │
-  -- │  not try to run it on its own — PL/pgSQL declarations are only     │
-  -- │  valid inside a DO block. Paste + run the WHOLE file.              │
-  -- └────────────────────────────────────────────────────────────────────┘
-  EMP_FILTER text[] := NULL;
+  -- EMP_FILTER is computed from the reset_scope temp table built above.
+  -- If no real PSNs were inserted, this becomes NULL → everyone-mode.
+  EMP_FILTER text[] := (
+    SELECT array_agg(psn) FROM reset_scope WHERE psn IS NOT NULL
+  );
 
   cnt_leaves      bigint;
   cnt_reminders   bigint;
@@ -392,3 +401,7 @@ BEGIN
   RAISE NOTICE ' RESET COMPLETE — start testing on esauhr.netlify.app';
   RAISE NOTICE '══════════════════════════════════════════════════════════';
 END $$;
+
+
+-- ─── STEP 3: clean up the temp scope table ──────────────────────────────
+DROP TABLE IF EXISTS reset_scope;
