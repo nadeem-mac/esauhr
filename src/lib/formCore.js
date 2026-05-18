@@ -396,7 +396,7 @@ export function drawPolicyBullets(pdf, y, bullets) {
 // subtitle are all centered horizontally within each cell.
 export function drawSignatures(pdf, y, cells) {
   const cellW  = CONTENT_W / 4;
-  const cellH  = 35.4;
+  const cellH  = 32;
   const innerW = cellW - 4;
   drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
     { color: C.border, width: 0.3 });
@@ -406,10 +406,10 @@ export function drawSignatures(pdf, y, cells) {
     if (i > 0) {
       drawLine(pdf, cx, y, cx, y + cellH, { color: C.border, width: 0.15 });
     }
-    drawText(pdf, cells[i].label, cellCenterX, y + 4.5, {
+    drawText(pdf, cells[i].label, cellCenterX, y + 4, {
       size: 8, color: C.muted, style: 'bold', align: 'center',
     });
-    const lineY = y + cellH - 11;
+    const lineY = y + cellH - 9;
     drawLine(pdf, cx + 2, lineY, cx + cellW - 2, lineY,
       { color: C.text, width: 0.3 });
 
@@ -429,12 +429,20 @@ export function drawSignatures(pdf, y, cells) {
       nameLines = pdf.splitTextToSize(cells[i].name || '_________________', innerW).slice(0, 2);
     }
     const lineH = nameSize * 0.45;
+    // Stack name lines BELOW the signature underline (not centred
+    // around it). For single-line names, the name sits at lineY+4 just
+    // under the line. For multi-line names (long manager names like
+    // 'SADAKATHULLAH SHADULY PALAYAM MEERA SAHIB' that need to wrap),
+    // subsequent lines push DOWN from the first, never up onto the
+    // line itself — which previously produced a strikethrough effect
+    // where the signature line cut through the first line of the name.
     nameLines.forEach((ln, idx) => {
       drawText(pdf, ln, cellCenterX,
-        lineY + 5 - (nameLines.length - 1 - idx) * lineH,
+        lineY + 4 + (idx * lineH),
         { size: nameSize, color: C.text, style: 'bold', align: 'center' });
     });
-    drawText(pdf, cells[i].subtitle, cellCenterX, lineY + 9, {
+    drawText(pdf, cells[i].subtitle, cellCenterX,
+      lineY + 4 + (nameLines.length * lineH) + 1.5, {
       size: 7.5, color: C.muted, style: 'italic', align: 'center',
     });
   }

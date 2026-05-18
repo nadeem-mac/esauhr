@@ -156,98 +156,107 @@ function drawTypeSpecificSection(pdf, y, request, employee = {}) {
   const d = request.type_details || {};
   switch (t) {
     case 'sick': {
-      // MEDICAL CERTIFICATE — clean drawSingleRow layout matching the rest
-      // of the form. Pulls every relevant field that LeaveApprovedModal /
-      // HrApprovalModal extract from the Sehhaty PDF the staff uploaded:
-      //   • Cert ref (UUID for internal lookup)
-      //   • GS verification code (the one HR types into Sehhaty.sa)
-      //   • Issued date, sick-period date range, total sick days
-      //   • Doctor + specialty + facility
-      //   • Diagnosis (or 'Not disclosed' fallback)
-      //   • Fit-to-return date
-      //   • Verification stamp (who in HR verified the cert + when)
-      // Only renders rows where the underlying field is actually present
-      // — empty rows aren't drawn, so the section adapts to whatever
-      // the Sehhaty extraction returned. Nadeem 2026-05-18.
+      // MEDICAL CERTIFICATE — compact 2-column layout so the whole leave
+      // application fits on a single A4 page. Pairs short fields side-by-
+      // side; uses full-width rows for long fields (Facility name,
+      // Diagnosis text) that would otherwise wrap awkwardly in a half-
+      // width cell. Pulls every relevant field LeaveApprovedModal /
+      // HrApprovalModal extract from the Sehhaty PDF the staff uploaded.
+      // Nadeem 2026-05-18: 'All application form should appear in one
+      // A4 size page, the sick leave is going second page, compact it
+      // to fit in 1 page only.'
       y = drawSectionHeader(pdf, y, 'MEDICAL CERTIFICATE');
 
       // Format the sick-period date range cleanly.
       let periodCovered = null;
       if (d.seen_start && d.seen_end) {
         periodCovered = d.seen_start === d.seen_end
-          ? fmtDateLong(d.seen_start)
-          : `${fmtDateShort(d.seen_start)}  —  ${fmtDateShort(d.seen_end)}`;
-        if (d.seen_days) periodCovered += `  ·  ${d.seen_days} day${Number(d.seen_days) === 1 ? '' : 's'}`;
+          ? fmtDateShort(d.seen_start)
+          : `${fmtDateShort(d.seen_start)} — ${fmtDateShort(d.seen_end)}`;
+        if (d.seen_days) periodCovered += ` · ${d.seen_days}d`;
       } else if (d.seen_days) {
         periodCovered = `${d.seen_days} day${Number(d.seen_days) === 1 ? '' : 's'}`;
       }
 
-      // Doctor + specialty in one line so the row reads naturally
-      // ('Dr. Mohammed Al-Otaibi · Internal Medicine').
+      // Doctor + specialty inline.
       const doctorLine = d.doctor_name
-        ? (d.specialty ? `${d.doctor_name}  ·  ${d.specialty}` : d.doctor_name)
+        ? (d.specialty ? `${d.doctor_name} · ${d.specialty}` : d.doctor_name)
         : null;
 
-      // Cert reference line — prefer the GS code (what HR uses to verify)
-      // and append the internal cert ref in parens so both are visible.
-      let certRefLine = null;
-      if (d.cert_code && d.cert_ref) {
-        certRefLine = `${d.cert_code}   (ref: ${d.cert_ref})`;
-      } else if (d.cert_code) {
-        certRefLine = d.cert_code;
-      } else if (d.cert_ref) {
-        certRefLine = d.cert_ref;
-      }
+      // Certificate code — prefer GS code (the verification handle).
+      // Keep this row terse so it pairs neatly with Issued.
+      const certRefLine = d.cert_code || d.cert_ref || null;
 
-      // Issued timestamp — show with seconds when available so HR can
-      // cross-reference with the Sehhaty audit log.
+      // Issued timestamp — DD MMM HH:MM (no seconds in compact layout
+      // to keep it inside a half-width cell). Seconds still go onto the
+      // substitute table where the audit stamp matters most.
       let issuedLine = null;
       if (d.cert_date) {
         const dt = new Date(d.cert_date);
         if (!isNaN(dt.getTime())) {
           const hasTime = dt.getHours() || dt.getMinutes() || dt.getSeconds();
           issuedLine = hasTime
-            ? `${fmtDateShort(d.cert_date)}  ·  ${
+            ? `${fmtDateShort(d.cert_date)} · ${
                 dt.toLocaleTimeString('en-GB', {
-                  hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+                  hour: '2-digit', minute: '2-digit', hour12: false,
                 })}`
             : fmtDateShort(d.cert_date);
         }
       }
 
-      // Verification stamp — only render when HR has verified the cert.
-      let verifiedLine = null;
-      if (d.verified_at) {
-        verifiedLine = d.verified_by
-          ? `${d.verified_by}  ·  ${fmtDateShort(d.verified_at)}`
-          : fmtDateShort(d.verified_at);
+      // Verification stamp — compact, name + date.
+      const verifiedLine = d.verified_at
+        ? (d.verified_by
+            ? `${d.verified_by} · ${fmtDateShort(d.verified_at)}`
+            : fmtDateShort(d.verified_at))
+        : null;
+
+      // Patient cross-check, compact.
+      const patientLine = (d.seen_patient_name || d.seen_patient_id)
+        ? [d.seen_patient_name, d.seen_patient_id].filter(Boolean).join(' · ')
+        : null;
+
+      // 2-column rows — pair short fields, leave a side null when the
+      // partner field is absent (drawTwoColTable handles half-empty rows).
+      // Long fields (facility, diagnosis) go full-width via single-row
+      // calls between the two-col blocks.
+      const certRows = [];
+      // Row 1: Cert code | Issued
+      if (certRefLine || issuedLine) {
+        certRows.push([
+          certRefLine ? ['Cert code', certRefLine] : null,
+          issuedLine  ? ['Issued',    issuedLine]  : null,
+        ]);
+      }
+      // Row 2: Doctor (with specialty) | Fit-to-return
+      if (doctorLine || d.fit_to_return) {
+        certRows.push([
+          doctorLine        ? ['Doctor',        doctorLine] : null,
+          d.fit_to_return   ? ['Fit-to-return', fmtDateShort(d.fit_to_return)] : null,
+        ]);
+      }
+      // Row 3: Period covered | Patient
+      if (periodCovered || patientLine) {
+        certRows.push([
+          periodCovered ? ['Period covered', periodCovered] : null,
+          patientLine   ? ['Patient',        patientLine]   : null,
+        ]);
+      }
+      // Row 4: HR verified | (null) - only when verified
+      if (verifiedLine) {
+        certRows.push([['HR verified', verifiedLine], null]);
+      }
+      if (certRows.length > 0) {
+        y = drawTwoColTable(pdf, y, certRows);
       }
 
-      // Patient cross-check (name + ID on the cert). Only show when the
-      // extraction populated both, so unverified rows don't sprout
-      // empty cross-check rows.
-      let patientLine = null;
-      if (d.seen_patient_name || d.seen_patient_id) {
-        patientLine = [d.seen_patient_name, d.seen_patient_id].filter(Boolean).join('   ·   ');
+      // Facility — full-width row since the name is often long.
+      if (d.facility) {
+        y = drawSingleRow(pdf, y, 'Facility', d.facility);
       }
-
-      // Build the row list dynamically — only include rows whose value
-      // is actually present.
-      const rows = [
-        ['Certificate code',  certRefLine,                                  { emphasis: true }],
-        ['Issued',            issuedLine],
-        ['Period covered',    periodCovered],
-        ['Treating doctor',   doctorLine],
-        ['Medical facility',  d.facility],
-        ['Diagnosis',         d.diagnosis || 'Not disclosed'],
-        ['Fit-to-return',     d.fit_to_return ? fmtDateShort(d.fit_to_return) : null, { emphasis: true }],
-        ['Patient on cert',   patientLine],
-        ['HR verified',       verifiedLine],
-      ];
-      for (const [label, value, opts] of rows) {
-        if (value == null || value === '') continue;
-        y = drawSingleRow(pdf, y, label, value, opts || {});
-      }
+      // Diagnosis — full-width row, prominent. ICD code typically
+      // included in the value already (e.g. 'Viral URI (J06.9)').
+      y = drawSingleRow(pdf, y, 'Diagnosis', d.diagnosis || 'Not disclosed');
       return y;
     }
 
@@ -395,7 +404,7 @@ function drawSubstitutes(pdf, y, subs = []) {
   y = drawSectionHeader(pdf, y, 'SUBSTITUTE COVERAGE');
   const colW = [10, 70, 50, 52];   // # · Name · Signature box · Date+accept
   const headers = ['#', 'SUBSTITUTE', 'SIGNATURE', 'DATE'];
-  const rowH = 18;
+  const rowH = 15;
 
   // Header row
   drawRect(pdf, MARGIN_X, y, CONTENT_W, 7, { fill: C.labelBg });
@@ -527,66 +536,66 @@ export async function generateLeaveApplicationPdfBlob({
 
   let y = MARGIN_T;
   y = drawHeader(pdf, y, { logoUrl, qrDataUrl, request, refPrefix: 'LV' });
-  y += 2;
+  y += 1;
   y = drawTitle(pdf, y, `Leave Application — ${typeLabel}`);
-  y += 2;
+  y += 1;
 
   // (Pre-flight checkbox row removed — the pill selector inside the
   // LEAVE DETAILS section below now serves that purpose. Showing it
   // twice was the noisy stripe at the top of the page.)
 
   // ═══════════════════════════════════════════════════════════════════
-  // EMPLOYEE INFORMATION — clean form-style rows (Permission Request
-  // pattern). Label on left in muted bold, value on right in primary
-  // text color, both vertically centered, single hairline divider per
-  // row, brand-green section header bar with thick left stripe. Same
-  // exact treatment as the Permission Request — Late Arrival form
-  // Nadeem said he liked. Nadeem 2026-05-18.
+  // EMPLOYEE INFORMATION — compact 2-column layout (3 rows of paired
+  // fields). Pairs short fields side-by-side to save vertical space.
+  // Long fields like manager's name get a dedicated full-width row.
+  // Nadeem 2026-05-18: 'All application form should appear in one A4
+  // size page, the sick leave is going second page, compact it.'
   // ═══════════════════════════════════════════════════════════════════
   y = drawSectionHeader(pdf, y, 'EMPLOYEE INFORMATION');
 
-  // Combined dept + location string. Department name expansion uses
-  // DEPT_NAMES (e.g. SUP → Supervisory). Location uses the long form
-  // (e.g. DMM → Dammam). Falls back to '—' when both are missing.
+  // Combined dept + location (e.g. 'Business · Dammam').
   const deptExpanded = position.department
     ? (DEPT_NAMES[position.department] || position.department)
     : '';
   const locExpanded = position.location
     ? (LOC_NAMES[position.location] || position.location)
     : '';
-  const deptLocLabel = [deptExpanded, locExpanded].filter(Boolean).join('  ·  ') || '—';
+  const deptLocLabel = [deptExpanded, locExpanded].filter(Boolean).join(' · ') || '—';
 
-  // Service tenure — always computed at PDF-gen time from join_date so
-  // it's never stale.
+  // Service tenure — computed at PDF-gen time. Compact format ('4y 9m')
+  // so it fits in a half-width cell.
   let joinedTenureLabel = '—';
   if (employee.join_date) {
     const ms = Date.now() - new Date(employee.join_date).getTime();
     const yrs = Math.floor(ms / (1000 * 60 * 60 * 24 * 365.25));
     const mos = Math.floor((ms / (1000 * 60 * 60 * 24 * 30.44)) % 12);
-    const tenure = `${yrs} year${yrs === 1 ? '' : 's'}${mos > 0 ? `, ${mos} month${mos === 1 ? '' : 's'}` : ''}`;
-    joinedTenureLabel = `${fmtDateShort(employee.join_date)}   ·   ${tenure}`;
+    const tenure = `${yrs}y${mos > 0 ? ` ${mos}m` : ''}`;
+    joinedTenureLabel = `${fmtDateShort(employee.join_date)} · ${tenure}`;
   }
 
-  y = drawSingleRow(pdf, y, 'Full name',       employee.name || '—', { emphasis: true });
-  y = drawSingleRow(pdf, y, 'PSN ID',          employee.id   || '—');
-  y = drawSingleRow(pdf, y, 'Designation',     position.designation || employee.designation || '—');
-  y = drawSingleRow(pdf, y, 'Department',      deptLocLabel);
-  y = drawSingleRow(pdf, y, 'Joined / Tenure', joinedTenureLabel);
-  y = drawSingleRow(pdf, y, 'Reports to',      manager?.name || '—');
-  y += 3;
+  // 2-column rows: 3 rows × 2 fields each = 6 fields in 3 rows of 7mm
+  // each (was 6 rows of 7.5mm = saves ~24mm).
+  y = drawTwoColTable(pdf, y, [
+    [['Full name',   employee.name || '—'],
+     ['PSN ID',      employee.id   || '—']],
+    [['Designation', position.designation || employee.designation || '—'],
+     ['Department',  deptLocLabel]],
+    [['Joined',      joinedTenureLabel],
+     ['Reports to',  manager?.name || '—']],
+  ]);
+  y += 1.5;
 
   // ═══════════════════════════════════════════════════════════════════
-  // LEAVE DETAILS — same row pattern, one field per line. Leave type
-  // is rendered as its proper label (e.g. 'Annual Leave') in the value
-  // column rather than as a pill row, since the permission form's
-  // 'Type of permission' field is just a value. Cleanest possible.
+  // LEAVE DETAILS — compact 2-column layout (3 rows). Leave type is
+  // shown alongside Period, Duration alongside Notice. Submitted gets
+  // its own half-row with the empty side blank.
   // ═══════════════════════════════════════════════════════════════════
   y = drawSectionHeader(pdf, y, 'LEAVE DETAILS');
 
   const periodLabel = request.start_date && request.end_date
     ? (request.start_date === request.end_date
         ? fmtDateLong(request.start_date)
-        : `${fmtDateShort(request.start_date)}  —  ${fmtDateShort(request.end_date)}`)
+        : `${fmtDateShort(request.start_date)} — ${fmtDateShort(request.end_date)}`)
     : '—';
 
   const durLabel = request.days
@@ -595,10 +604,9 @@ export async function generateLeaveApplicationPdfBlob({
       }`
     : '—';
 
-  // Notice math compares CALENDAR DATES only, not datetimes (see
-  // fc6fb10 — fixes the '-1 days notice' bug for same-day requests).
+  // Notice math — calendar-date difference, not datetime (avoids
+  // '-1 days notice' for same-day requests).
   let isPlanned = false;
-  let isUrgent  = false;
   let noticeDays = null;
   if (request.requested_at && request.start_date) {
     const startDay = new Date(request.start_date);
@@ -608,112 +616,71 @@ export async function generateLeaveApplicationPdfBlob({
     noticeDays = Math.round((startDay - reqDay) / 86400000);
     if (noticeDays < 0) noticeDays = 0;
     isPlanned = noticeDays >= 14;
-    isUrgent  = !isPlanned;
   }
   const noticeLabel = noticeDays == null
     ? '—'
     : isPlanned
-      ? `Planned  (${noticeDays} day${noticeDays === 1 ? '' : 's'} advance notice)`
+      ? `Planned (${noticeDays}d advance)`
       : (noticeDays === 0
-          ? 'Urgent  (same-day notice)'
-          : `Urgent  (${noticeDays} day${noticeDays === 1 ? '' : 's'} notice — less than 14)`);
+          ? 'Urgent (same-day)'
+          : `Urgent (${noticeDays}d notice)`);
 
-  // Submitted timestamp — DD MMM YYYY · HH:MM:SS so HR has a precise
-  // audit stamp visible on the printed form.
+  // Submitted — DD MMM YYYY · HH:MM:SS so HR has a precise audit stamp.
   const submittedLabel = request.requested_at
-    ? `${fmtDateShort(request.requested_at)}  ·  ${
+    ? `${fmtDateShort(request.requested_at)} · ${
         new Date(request.requested_at).toLocaleTimeString('en-GB', {
           hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
         })}`
     : '—';
 
-  y = drawSingleRow(pdf, y, 'Leave type', typeLabel, { emphasis: true });
-  y = drawSingleRow(pdf, y, 'Period',     periodLabel);
-  y = drawSingleRow(pdf, y, 'Duration',   durLabel,    { emphasis: true });
-  y = drawSingleRow(pdf, y, 'Notice',     noticeLabel);
-  y = drawSingleRow(pdf, y, 'Submitted',  submittedLabel);
-  y += 3;
+  y = drawTwoColTable(pdf, y, [
+    [['Leave type', typeLabel],
+     ['Period',     periodLabel]],
+    [['Duration',   durLabel],
+     ['Notice',     noticeLabel]],
+    [['Submitted',  submittedLabel],
+     null],
+  ]);
+  y += 1.5;
 
   // ═══════════════════════════════════════════════════════════════════
-  // REASON — same pattern. Reuses drawSingleRow which already wraps
-  // long values across multiple lines, so a multi-paragraph reason
-  // grows the row height automatically.
+  // REASON — only render the section if there's an actual reason AND
+  // we're not in a leave type where it would be redundant. For SICK
+  // leave the diagnosis line in MEDICAL CERTIFICATE already captures
+  // the reason — printing it twice wastes vertical space and risks
+  // pushing the policy + signature grid off the page.
   // ═══════════════════════════════════════════════════════════════════
-  y = drawSectionHeader(pdf, y, 'REASON');
-  y = drawSingleRow(pdf, y, 'Details', (request.reason || '').trim() || '—');
-  y += 3;
+  const reasonText = (request.reason || '').trim();
+  if (reasonText && ltKey !== 'sick') {
+    y = drawSectionHeader(pdf, y, 'REASON');
+    y = drawSingleRow(pdf, y, 'Details', reasonText);
+    y += 1.5;
+  }
 
   // ── TYPE-SPECIFIC SECTION (the enriched bit per leave type) ──
   const yBefore = y;
   y = drawTypeSpecificSection(pdf, y, request, employee);
-  if (y > yBefore) y += 3;
-
-  // ─── Page-break helper ──────────────────────────────────────────────
-  // Before each major section we check whether there's enough room for
-  // it to fit above the signature grid (which is anchored to a fixed
-  // position at the bottom of the page). If not, drop to a new page
-  // and reset y to the top margin. Section-specific height estimates
-  // are conservative — they err on the side of breaking sooner so a
-  // section never gets clipped mid-way.
-  //
-  // Why each section needs its own estimate: substitute table varies
-  // by substitute count, policy varies by bullet count, type-specific
-  // section varies by leave type. A blanket 'is y past sigY' check
-  // fires AFTER content is already drawn into the danger zone and
-  // doesn't help.
-  //
-  // Nadeem 2026-05-18: 'For sick leave form, the text are appearing
-  // wrapped and scrambled' — caused by substitutes + policy being
-  // drawn into the signature zone with no page break between them.
-  const sigH = 35.4;
-  const sigY = PAGE_H - MARGIN_T - sigH;
-  const ensureRoom = (currentY, neededMm) => {
-    if (currentY + neededMm > sigY - 4) {
-      pdf.addPage();
-      let yNew = MARGIN_T;
-      yNew = drawHeader(pdf, yNew, { logoUrl, qrDataUrl: null, request, refPrefix: 'LV' });
-      yNew += 2;
-      yNew = drawTitle(pdf, yNew, `Leave Application — ${typeLabel}  (cont.)`);
-      yNew += 4;
-      return yNew;
-    }
-    return currentY;
-  };
+  if (y > yBefore) y += 1.5;
 
   // Substitutes — only for leave types that need coverage during absence.
-  // Reserve ~30mm: 10mm section header + 7mm column header + up to 3
-  // substitutes × 18mm each (we cap at 3 substitutes so 54mm worst-case).
-  // Use a midpoint estimate of 30mm for the common 1-substitute case.
+  // No page-break helper any more: the compact layout above is sized
+  // so a sick-leave PDF with the full Sehhaty section + substitute +
+  // policy + signature grid all fit on one A4 page.
   if (!['emergency'].includes(ltKey)) {
-    const subRows = Math.max(1, (substitutes || []).length);
-    y = ensureRoom(y, 14 + (subRows * 18));
     y = drawSubstitutes(pdf, y, substitutes);
-    y += 3;
+    y += 1.5;
   }
 
-  // Policy specific to this leave type. Reserve ~10mm header + ~5mm
-  // per bullet. Most policies have 3 bullets so ~25mm reserve.
-  const policy = POLICY_BY_TYPE[ltKey] || POLICY_BY_TYPE.other;
-  y = ensureRoom(y, 10 + (policy.length * 6));
+  // Policy specific to this leave type
   y = drawSectionHeader(pdf, y, 'POLICY · KSA LABOR LAW');
+  const policy = POLICY_BY_TYPE[ltKey] || POLICY_BY_TYPE.other;
   y = drawPolicyBullets(pdf, y, policy);
-
-  // Final guard before signatures — if even after the section-level
-  // checks the page is full, force one more break. Rare but possible
-  // when policy bullets wrap to multiple lines.
-  if (y > sigY - 5) {
-    pdf.addPage();
-    let yNew = MARGIN_T;
-    yNew = drawHeader(pdf, yNew, { logoUrl, qrDataUrl: null, request, refPrefix: 'LV' });
-    yNew += 2;
-    yNew = drawTitle(pdf, yNew, `Leave Application — ${typeLabel}  (cont.)`);
-  }
 
   // 4-cell signature grid matching the Vacation_Sample.docx template:
   // EMPLOYEE / DEPT MGR / ESAU SUP / ESAU MGT — short labels with the
   // person's name + their status (Submitted / Approved date · time).
-  // Subtitles convey the workflow stage so the printed form reads as
-  // a full audit trail without HR having to annotate it.
+  const sigH = 32;
+  const sigY = PAGE_H - MARGIN_T - sigH;
 
   // Stamp subtitles — show when each role acted, in the same compact
   // 'DD MMM · HH:MM' format the sample uses. Falls back to 'Signature
