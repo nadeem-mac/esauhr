@@ -287,30 +287,37 @@ export function drawTwoColTable(pdf, startY, rows) {
 }
 
 // Single-column label/value (use when value is long and needs full width).
+//
+// Refined editorial treatment (Nadeem 2026-05-17): label sits ABOVE the
+// value rather than to the left, uppercase tracking-wide kicker style,
+// value renders in a slightly larger weight beneath. Reads as a
+// magazine info-card rather than a Word form table. Generates more
+// vertical rhythm and removes the visual noise of column dividers.
+//
+// Callers that want the OLD two-column layout (label left, value right)
+// can use drawTwoColTable instead — kept for backward compatibility.
 export function drawLabelValueTable(pdf, startY, rows) {
-  const labelW = 42;
-  const valueW = CONTENT_W - labelW;
-  let y = startY;
+  let y = startY + 1;
   for (const [label, value] of rows) {
-    const wrapped   = pdf.splitTextToSize(String(value || '—'), valueW - 6);
+    const wrapped   = pdf.splitTextToSize(String(value || '—'), CONTENT_W - 2);
     const lineCount = Array.isArray(wrapped) ? wrapped.length : 1;
-    const rowH      = Math.max(7, lineCount * 4.3 + 2.5);
-    if (y > startY) {
-      drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
-        { color: C.border, width: 0.15 });
+    // Row = small label line (3.2mm) + value line(s) + bottom padding (3mm)
+    const rowH = 3.4 + (lineCount * 4.6) + 3;
+    // Faint divider before subsequent rows
+    if (y > startY + 1) {
+      drawLine(pdf, MARGIN_X, y - 0.5, MARGIN_X + CONTENT_W, y - 0.5,
+        { color: C.border, width: 0.12 });
     }
-    drawText(pdf, label, MARGIN_X + 1, y + 4.8, {
-      size: 8.5, color: C.muted, style: 'bold',
+    drawText(pdf, label.toUpperCase(), MARGIN_X + 1, y + 2.8, {
+      size: 6.8, color: C.muted, style: 'bold',
     });
     pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(10);
+    pdf.setFontSize(10.5);
     pdf.setTextColor(...C.text);
-    pdf.text(wrapped, MARGIN_X + labelW + 2, y + 4.8);
+    pdf.text(wrapped, MARGIN_X + 1, y + 7.8);
     y += rowH;
   }
-  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
-    { color: C.border, width: 0.15 });
-  return y;
+  return y + 1;
 }
 
 // Bulleted policy list. Caller passes the list of bullet strings.
@@ -452,36 +459,34 @@ export function drawCheckboxRow(pdf, x, y, items, opts = {}) {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-//  Generic full-width single-row banner that combines an English label
-//  on the left and an Arabic placeholder on the right. Used for the
-//  section headers in the Vacation_Sample.docx template (e.g.
-//  'EMPLOYEE INFORMATION  ·  معلومات الموظف'). Falls back to English-
-//  only when Arabic font isn't loaded — the dash separator and the
-//  visual structure still match.
+//  Refined section header — minimal kicker style.
+//
+//  Replaces the bordered green bar with a lighter editorial treatment:
+//  a single brand-green left rule + small tracking-wide label + faint
+//  hairline on the right that runs to the edge. Reads as a magazine
+//  section break rather than a Word-style highlighted bar. Much less
+//  visual weight per section so the whole form can breathe.
+//
+//  The 'ar' arg is accepted but ignored — kept for backward compatibility
+//  with earlier code paths. English-only is the canonical look now.
 // ──────────────────────────────────────────────────────────────────────
-export function drawBilingualSectionHeader(pdf, y, en, ar) {
-  const h = 6.5;
-  drawRect(pdf, MARGIN_X, y, CONTENT_W, h, { fill: C.accent });
-  drawRect(pdf, MARGIN_X, y, 1.5, h, { fill: C.brand });
-  // English on the left
-  drawText(pdf, en, MARGIN_X + 5, y + 4.8, {
-    size: 9, color: C.brand, style: 'bold', letterSpacing: 0.18,
+export function drawBilingualSectionHeader(pdf, y, en /* ar ignored */) {
+  const padTop = 4;
+  y += padTop;
+  // Small filled square as the kicker anchor (left)
+  drawRect(pdf, MARGIN_X, y - 2.5, 2.2, 2.2, { fill: C.brand });
+  // Section label — tracking-wide caps, brand green
+  drawText(pdf, en, MARGIN_X + 4.5, y - 0.5, {
+    size: 8.5, color: C.brand, style: 'bold',
   });
-  // Arabic transliterated placeholder on the right (right-aligned).
-  // Real Arabic glyphs require font embedding (Noto Sans Arabic / Amiri)
-  // and are deferred — adding them is a separate task. The 'ar' arg is
-  // passed through for future use; for now we render a faint divider
-  // dot + a hint text so the visual rhythm matches the bilingual
-  // sample template even without the glyph support.
-  if (ar) {
-    drawText(pdf, '·', MARGIN_X + CONTENT_W - 18, y + 4.8, {
-      size: 9, color: C.muted, style: 'bold',
-    });
-    drawText(pdf, ar, MARGIN_X + CONTENT_W - 4, y + 4.8, {
-      size: 7.5, color: C.muted, style: 'italic', align: 'right',
-    });
-  }
-  return y + h;
+  // Hairline rule to the right edge — subtle horizontal stroke
+  // anchored after the label runs out, fading the line of sight to
+  // the next content row.
+  const labelW = pdf.getStringUnitWidth(en) * 8.5 / pdf.internal.scaleFactor;
+  const ruleX = MARGIN_X + 4.5 + labelW + 4;
+  drawLine(pdf, ruleX, y - 1.4, MARGIN_X + CONTENT_W, y - 1.4,
+    { color: C.border, width: 0.3 });
+  return y + 1.5;
 }
 
 // Create a fresh A4 PDF instance — single point of jsPDF config so

@@ -296,7 +296,7 @@ function drawTypeSpecificSection(pdf, y, request, employee = {}) {
 // require both. Nadeem 2026-05-17.
 
 function drawSubstitutes(pdf, y, subs = []) {
-  y = drawBilingualSectionHeader(pdf, y, 'SUBSTITUTE COVERAGE', 'البديل أثناء الغياب');
+  y = drawBilingualSectionHeader(pdf, y, 'SUBSTITUTE COVERAGE');
   const colW = [10, 80, 60, 32];   // # · Name · Signature · Date
   const headers = ['#', 'SUBSTITUTE', 'SIGNATURE', 'DATE'];
   const rowH = 18;  // taller row so the signature box is genuinely usable
@@ -408,7 +408,7 @@ export async function generateLeaveApplicationPdfBlob({
   // attendance views) and including them on the leave application
   // would clutter the form. Bilingual headers via
   // drawBilingualSectionHeader (Arabic glyphs deferred — see formCore).
-  y = drawBilingualSectionHeader(pdf, y, 'EMPLOYEE INFORMATION', 'معلومات الموظف');
+  y = drawBilingualSectionHeader(pdf, y, 'EMPLOYEE INFORMATION');
 
   // Combined dept + location string. Department name expansion uses
   // DEPT_NAMES (e.g. SUP → Supervisory). Location uses the long form
@@ -455,12 +455,12 @@ export async function generateLeaveApplicationPdfBlob({
   //   Notice    → ☑/☐ Planned (≥14 days)  ☑/☐ Urgent (<14 days)
   //   Reason    → free text or '—'
   //   Submitted → 'DD MMM YYYY · HH:MM' (no stage field on the sample)
-  y = drawBilingualSectionHeader(pdf, y, 'LEAVE DETAILS', 'تفاصيل الإجازة');
+  y = drawBilingualSectionHeader(pdf, y, 'LEAVE DETAILS');
 
-  // Leave type checkbox row — render every leave type, check only the
-  // active one. Order matches the sample (Annual first, Other last).
-  // Pre-build the row outside the table so we can use the wider
-  // checkbox row primitive. Anchor at the standard label column.
+  // ─── Leave type — pill-style chips (selected = filled brand-green) ──
+  // Cleaner than checkboxes — reads as a visual filter / segmented
+  // selector. Selected chip pops, unselected chips are outlined and
+  // muted. Wraps to multiple lines when there are too many to fit.
   const LEAVE_TYPE_LIST = [
     { id: 'annual',      label: 'Annual' },
     { id: 'sick',        label: 'Sick' },
@@ -473,118 +473,147 @@ export async function generateLeaveApplicationPdfBlob({
     { id: 'unpaid',      label: 'Unpaid' },
     { id: 'other',       label: 'Other' },
   ];
-  // Reserve a label column (42mm wide like drawLabelValueTable) so the
-  // checkbox row aligns visually with the other field rows.
-  const labelColW = 42;
-  // Outer container row — bordered top + bottom so it reads as one row
-  // of the field table. Height is dynamic since the checkbox row wraps.
-  const rowStartY = y;
-  drawText(pdf, 'Leave type', MARGIN_X + 1, y + 5, {
-    size: 8.5, color: C.muted, style: 'bold',
-  });
-  const cbResult = drawCheckboxRow(pdf,
-    MARGIN_X + labelColW + 2,
-    y + 1.5,
-    LEAVE_TYPE_LIST.map(t => ({
-      label: t.label,
-      checked: ltKey === t.id,
-    })),
-    { size: 2.8, labelSize: 8.5, gap: 2.5, lineGap: 4.5 }
-  );
-  // Row height = checkbox lines * line height + padding
-  const cbRowH = Math.max(7, cbResult.lineCount * 4.5 + 2);
-  y = rowStartY + cbRowH;
-  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
-    { color: C.border, width: 0.15 });
 
-  // Period row — long format for single-day leaves matches the sample;
-  // multi-day shows the inclusive range.
+  // Kicker label above the pills
+  drawText(pdf, 'LEAVE TYPE', MARGIN_X + 1, y + 3, {
+    size: 6.8, color: C.muted, style: 'bold',
+  });
+  y += 5;
+
+  // Lay out pills horizontally with wrap.
+  const pillH       = 4.8;
+  const pillFontSz  = 8;
+  const pillPadX    = 2.6;
+  const pillGap     = 1.8;
+  const lineGap     = 1.8;
+  const maxX        = MARGIN_X + CONTENT_W - 2;
+  let cx = MARGIN_X + 1;
+  let cy = y;
+  for (const t of LEAVE_TYPE_LIST) {
+    const selected = ltKey === t.id;
+    const labelW = pdf.getStringUnitWidth(t.label) * pillFontSz / pdf.internal.scaleFactor;
+    const pillW  = labelW + (pillPadX * 2);
+    if (cx + pillW > maxX) {
+      cx = MARGIN_X + 1;
+      cy += pillH + lineGap;
+    }
+    if (selected) {
+      // Filled brand pill
+      drawRect(pdf, cx, cy, pillW, pillH, { fill: C.brand });
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(pillFontSz);
+      pdf.setTextColor(255, 255, 255);
+      pdf.text(t.label, cx + pillPadX, cy + pillH - 1.5);
+    } else {
+      // Outlined muted pill
+      drawRect(pdf, cx, cy, pillW, pillH, {
+        stroke: C.border, strokeWidth: 0.25,
+      });
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(pillFontSz);
+      pdf.setTextColor(...C.muted);
+      pdf.text(t.label, cx + pillPadX, cy + pillH - 1.5);
+    }
+    cx += pillW + pillGap;
+  }
+  y = cy + pillH + 4;
+
+  // ─── Period · Duration (two-column compact row) ──────────────────────
   const periodLabel = request.start_date && request.end_date
     ? (request.start_date === request.end_date
         ? fmtDateLong(request.start_date)
         : `${fmtDateShort(request.start_date)}  —  ${fmtDateShort(request.end_date)}`)
     : '—';
-
-  // Duration + half-day checkbox combined into one cell to match the
-  // sample's '1 day · ☐ Half day' layout.
-  const durationY = y;
-  drawText(pdf, 'Duration', MARGIN_X + 1, durationY + 5, {
-    size: 8.5, color: C.muted, style: 'bold',
-  });
   const durLabel = request.days
-    ? `${request.days} day${Number(request.days) === 1 ? '' : 's'}`
+    ? `${request.days} day${Number(request.days) === 1 ? '' : 's'}${
+        request.is_half_day ? ` · half day${request.half_day_period ? ` (${request.half_day_period})` : ''}` : ''
+      }`
     : '—';
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(9.5);
-  pdf.setTextColor(...C.text);
-  pdf.text(durLabel, MARGIN_X + labelColW + 2, durationY + 5);
-  // Half-day checkbox inline, ~25mm to the right of the duration value
-  const halfDayX = MARGIN_X + labelColW + 2 +
-    (pdf.getStringUnitWidth(durLabel) * 9.5 / pdf.internal.scaleFactor) + 6;
-  drawText(pdf, '·', halfDayX - 3, durationY + 5,
-    { size: 9, color: C.muted });
-  drawCheckbox(pdf, halfDayX, durationY + 2.2,
-    `Half day${request.is_half_day && request.half_day_period ? ` (${request.half_day_period})` : ''}`,
-    !!request.is_half_day,
-    { size: 2.8, labelSize: 8.5 });
-  y = durationY + 7;
-  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
-    { color: C.border, width: 0.15 });
 
-  // Period row (single-line value, full-width)
-  const periodY = y;
-  drawText(pdf, 'Period', MARGIN_X + 1, periodY + 5, {
-    size: 8.5, color: C.muted, style: 'bold',
+  // Subtle separator before this row
+  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
+    { color: C.border, width: 0.12 });
+  y += 2;
+
+  const half = CONTENT_W / 2;
+  // Left: PERIOD
+  drawText(pdf, 'PERIOD', MARGIN_X + 1, y + 2.8, {
+    size: 6.8, color: C.muted, style: 'bold',
   });
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(9.5);
-  pdf.setTextColor(...C.text);
-  pdf.text(periodLabel, MARGIN_X + labelColW + 2, periodY + 5);
-  y = periodY + 7;
-  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
-    { color: C.border, width: 0.15 });
+  drawText(pdf, periodLabel, MARGIN_X + 1, y + 7.8, {
+    size: 10.5, color: C.text,
+  });
+  // Right: DURATION
+  drawText(pdf, 'DURATION', MARGIN_X + half + 1, y + 2.8, {
+    size: 6.8, color: C.muted, style: 'bold',
+  });
+  drawText(pdf, durLabel, MARGIN_X + half + 1, y + 7.8, {
+    size: 10.5, color: C.text,
+  });
+  y += 12;
 
-  // Notice — checkbox pair (Planned vs Urgent). Derived from the
-  // notice window between requested_at and start_date since there's
-  // no separate `urgency` column.
+  // ─── Notice · Submitted (two-column compact row) ─────────────────────
   let isPlanned = false;
   let isUrgent  = false;
+  let noticeDays = null;
   if (request.requested_at && request.start_date) {
-    const noticeDays = Math.round(
+    noticeDays = Math.round(
       (new Date(request.start_date) - new Date(request.requested_at)) / 86400000
     );
     isPlanned = noticeDays >= 14;
     isUrgent  = !isPlanned;
   }
-  const noticeY = y;
-  drawText(pdf, 'Notice', MARGIN_X + 1, noticeY + 5, {
-    size: 8.5, color: C.muted, style: 'bold',
-  });
-  let nx = MARGIN_X + labelColW + 2;
-  nx = drawCheckbox(pdf, nx, noticeY + 2.2, 'Planned (≥14 days)',
-    isPlanned, { size: 2.8, labelSize: 8.5, gap: 4 });
-  drawCheckbox(pdf, nx, noticeY + 2.2, 'Urgent (<14 days)',
-    isUrgent, { size: 2.8, labelSize: 8.5 });
-  y = noticeY + 7;
-  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
-    { color: C.border, width: 0.15 });
+  const noticeLabel = noticeDays == null
+    ? '—'
+    : isPlanned
+      ? `Planned · ${noticeDays} day${noticeDays === 1 ? '' : 's'} advance notice`
+      : `Urgent · ${noticeDays} day${noticeDays === 1 ? '' : 's'} notice (less than 14)`;
 
-  // Reason — multi-line, full-width value
-  y = drawLabelValueTable(pdf, y, [
-    ['Reason / details', request.reason || '—'],
-  ]);
-
-  // Submitted — last row, stamps the request creation time
   const submittedLabel = request.requested_at
     ? `${fmtDateShort(request.requested_at)}  ·  ${
         new Date(request.requested_at).toLocaleTimeString('en-GB', {
           hour: '2-digit', minute: '2-digit', hour12: false,
         })}`
     : '—';
-  y = drawLabelValueTable(pdf, y, [
-    ['Submitted', submittedLabel],
-  ]);
-  y += 3;
+
+  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
+    { color: C.border, width: 0.12 });
+  y += 2;
+
+  drawText(pdf, 'NOTICE', MARGIN_X + 1, y + 2.8, {
+    size: 6.8, color: C.muted, style: 'bold',
+  });
+  // Notice value with a small color cue — amber dot for urgent, green for planned
+  const noticeDotX = MARGIN_X + 1;
+  drawRect(pdf, noticeDotX, y + 6.5, 1.5, 1.5,
+    { fill: isUrgent ? [180, 83, 9] : (isPlanned ? C.brand : C.muted) });
+  drawText(pdf, noticeLabel, noticeDotX + 2.8, y + 7.8, {
+    size: 10.5, color: C.text,
+  });
+
+  drawText(pdf, 'SUBMITTED', MARGIN_X + half + 1, y + 2.8, {
+    size: 6.8, color: C.muted, style: 'bold',
+  });
+  drawText(pdf, submittedLabel, MARGIN_X + half + 1, y + 7.8, {
+    size: 10.5, color: C.text,
+  });
+  y += 12;
+
+  // ─── Reason — full-width, multiline ──────────────────────────────────
+  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
+    { color: C.border, width: 0.12 });
+  y += 2;
+  drawText(pdf, 'REASON', MARGIN_X + 1, y + 2.8, {
+    size: 6.8, color: C.muted, style: 'bold',
+  });
+  const reasonText = (request.reason || '—').trim() || '—';
+  const reasonWrapped = pdf.splitTextToSize(reasonText, CONTENT_W - 2);
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(10.5);
+  pdf.setTextColor(...C.text);
+  pdf.text(reasonWrapped, MARGIN_X + 1, y + 7.8);
+  const reasonH = 3.4 + (reasonWrapped.length * 4.6) + 3;
+  y += reasonH;
 
   // ── TYPE-SPECIFIC SECTION (the enriched bit per leave type) ──
   const yBefore = y;
@@ -598,7 +627,7 @@ export async function generateLeaveApplicationPdfBlob({
   }
 
   // Policy specific to this leave type
-  y = drawBilingualSectionHeader(pdf, y, 'POLICY · KSA LABOR LAW', 'سياسة الإجازات · نظام العمل السعودي');
+  y = drawBilingualSectionHeader(pdf, y, 'POLICY · KSA LABOR LAW');
   const policy = POLICY_BY_TYPE[ltKey] || POLICY_BY_TYPE.other;
   y = drawPolicyBullets(pdf, y, policy);
 
