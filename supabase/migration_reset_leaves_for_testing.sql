@@ -110,34 +110,86 @@ BEGIN
     RAISE NOTICE '  – sick_reminders table not present, skipping';
   END IF;
 
-  -- 3. notifications tied to leave events. We match on entity_type /
-  --    kind / category being any of the leave-related markers used
-  --    around the codebase. Multiple OR clauses so we catch every
-  --    notification kind the app emitted historically.
+  -- 3. notifications tied to leave events.
+  --
+  --    The schema of this table varies between Supabase projects (some
+  --    use entity_type, some use kind, some category, some all three).
+  --    Rather than hard-coding column names that may not exist (the
+  --    previous version hit '42703: column "entity_type" does not
+  --    exist'), we introspect information_schema.columns first and
+  --    build a DELETE that references ONLY columns that actually
+  --    exist. If none of our expected marker columns are present,
+  --    we skip the cleanup with an explanatory NOTICE rather than
+  --    blow up the whole script.
   IF to_regclass('public.notifications') IS NOT NULL THEN
-    IF EMP_FILTER IS NULL THEN
-      WITH del AS (
-        DELETE FROM notifications
-         WHERE COALESCE(entity_type, '')  IN ('leave_request', 'leave', 'sick_certificate')
-            OR COALESCE(kind, '')         LIKE 'leave_%'
-            OR COALESCE(kind, '')         LIKE 'sick_%'
-            OR COALESCE(category, '')     IN ('leave', 'sick_cert')
-        RETURNING 1
-      )
-      SELECT count(*) INTO cnt_notifs FROM del;
-    ELSE
-      WITH del AS (
-        DELETE FROM notifications
-         WHERE recipient_id = ANY(EMP_FILTER)
-           AND (COALESCE(entity_type, '')  IN ('leave_request', 'leave', 'sick_certificate')
-             OR COALESCE(kind, '')         LIKE 'leave_%'
-             OR COALESCE(kind, '')         LIKE 'sick_%'
-             OR COALESCE(category, '')     IN ('leave', 'sick_cert'))
-        RETURNING 1
-      )
-      SELECT count(*) INTO cnt_notifs FROM del;
-    END IF;
-    RAISE NOTICE '  ✓ deleted % leave-related notifications', cnt_notifs;
+    DECLARE
+      has_entity_type bool;
+      has_kind        bool;
+      has_category    bool;
+      has_type        bool;
+      has_recipient   bool;
+      where_clause    text := '';
+      sql_text        text;
+    BEGIN
+      SELECT bool_or(column_name = 'entity_type'),
+             bool_or(column_name = 'kind'),
+             bool_or(column_name = 'category'),
+             bool_or(column_name = 'type'),
+             bool_or(column_name = 'recipient_id')
+        INTO has_entity_type, has_kind, has_category, has_type, has_recipient
+        FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'notifications';
+
+      -- Build the OR-chain of column matchers, only including columns
+      -- the table actually has.
+      IF has_entity_type THEN
+        where_clause := where_clause || ' OR COALESCE(entity_type, '''') IN (''leave_request'', ''leave'', ''sick_certificate'')';
+      END IF;
+      IF has_kind THEN
+        where_clause := where_clause || ' OR COALESCE(kind, '''') LIKE ''leave_%''';
+        where_clause := where_clause || ' OR COALESCE(kind, '''') LIKE ''sick_%''';
+      END IF;
+      IF has_category THEN
+        where_clause := where_clause || ' OR COALESCE(category, '''') IN (''leave'', ''sick_cert'')';
+      END IF;
+      IF has_type THEN
+        where_clause := where_clause || ' OR COALESCE(type, '''') LIKE ''leave_%''';
+        where_clause := where_clause || ' OR COALESCE(type, '''') LIKE ''sick_%''';
+      END IF;
+
+      IF where_clause = '' THEN
+        RAISE NOTICE '  – notifications: no recognised leave/sick marker column, skipping';
+      ELSE
+        -- Strip the leading ' OR ' and wrap in parens so the scoped
+        -- mode can AND it with the employee filter cleanly.
+        where_clause := '(' || substring(where_clause from 5) || ')';
+
+        IF EMP_FILTER IS NULL THEN
+          sql_text := format(
+            'WITH del AS (DELETE FROM notifications WHERE %s RETURNING 1) SELECT count(*) FROM del',
+            where_clause);
+        ELSIF has_recipient THEN
+          sql_text := format(
+            'WITH del AS (DELETE FROM notifications WHERE recipient_id = ANY($1) AND %s RETURNING 1) SELECT count(*) FROM del',
+            where_clause);
+        ELSE
+          -- Scoped mode requested but no recipient_id column to filter
+          -- by — fall back to clearing for everyone since we can't
+          -- safely scope. Warn so HR knows.
+          RAISE NOTICE '  ! notifications: no recipient_id column for scoped delete — falling back to all';
+          sql_text := format(
+            'WITH del AS (DELETE FROM notifications WHERE %s RETURNING 1) SELECT count(*) FROM del',
+            where_clause);
+        END IF;
+
+        IF EMP_FILTER IS NULL OR NOT has_recipient THEN
+          EXECUTE sql_text INTO cnt_notifs;
+        ELSE
+          EXECUTE sql_text INTO cnt_notifs USING EMP_FILTER;
+        END IF;
+        RAISE NOTICE '  ✓ deleted % leave-related notifications', cnt_notifs;
+      END IF;
+    END;
   ELSE
     RAISE NOTICE '  – notifications table not present, skipping';
   END IF;
@@ -145,66 +197,124 @@ BEGIN
   -- 4. audit_log entries describing leave events. Action names follow
   --    the 'leave_*' / 'sick_*' / 'substitute_*' / 'rejoin_*' prefixes
   --    used by directPost('audit_log', …) call sites.
+  --    Same schema-aware introspection pattern as the notifications
+  --    block — verifies which columns exist before referencing them.
   IF to_regclass('public.audit_log') IS NOT NULL THEN
-    IF EMP_FILTER IS NULL THEN
-      WITH del AS (
-        DELETE FROM audit_log
-         WHERE COALESCE(action, '') LIKE 'leave_%'
-            OR COALESCE(action, '') LIKE 'sick_%'
-            OR COALESCE(action, '') LIKE 'substitute_%'
-            OR COALESCE(action, '') LIKE 'rejoin_%'
-        RETURNING 1
-      )
-      SELECT count(*) INTO cnt_audit FROM del;
-    ELSE
-      WITH del AS (
-        DELETE FROM audit_log
-         WHERE (actor_id = ANY(EMP_FILTER) OR target_id = ANY(EMP_FILTER))
-           AND (COALESCE(action, '') LIKE 'leave_%'
-             OR COALESCE(action, '') LIKE 'sick_%'
-             OR COALESCE(action, '') LIKE 'substitute_%'
-             OR COALESCE(action, '') LIKE 'rejoin_%')
-        RETURNING 1
-      )
-      SELECT count(*) INTO cnt_audit FROM del;
-    END IF;
-    RAISE NOTICE '  ✓ deleted % leave-related audit_log rows', cnt_audit;
+    DECLARE
+      has_action      bool;
+      has_actor_id    bool;
+      has_target_id   bool;
+      has_employee_id bool;
+      where_action    text := '';
+      where_scope     text := '';
+      sql_text        text;
+    BEGIN
+      SELECT bool_or(column_name = 'action'),
+             bool_or(column_name = 'actor_id'),
+             bool_or(column_name = 'target_id'),
+             bool_or(column_name = 'employee_id')
+        INTO has_action, has_actor_id, has_target_id, has_employee_id
+        FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'audit_log';
+
+      IF NOT has_action THEN
+        RAISE NOTICE '  – audit_log: no action column found, skipping';
+      ELSE
+        where_action := '(COALESCE(action, '''') LIKE ''leave_%''
+                       OR COALESCE(action, '''') LIKE ''sick_%''
+                       OR COALESCE(action, '''') LIKE ''substitute_%''
+                       OR COALESCE(action, '''') LIKE ''rejoin_%'')';
+
+        -- Scope clause uses whichever employee-pointer columns the
+        -- table actually has (actor_id / target_id / employee_id).
+        IF EMP_FILTER IS NOT NULL THEN
+          IF has_actor_id THEN
+            where_scope := where_scope || ' OR actor_id = ANY($1)';
+          END IF;
+          IF has_target_id THEN
+            where_scope := where_scope || ' OR target_id = ANY($1)';
+          END IF;
+          IF has_employee_id THEN
+            where_scope := where_scope || ' OR employee_id = ANY($1)';
+          END IF;
+          IF where_scope = '' THEN
+            RAISE NOTICE '  ! audit_log: no employee-id column for scoped delete — clearing all leave-related rows';
+          ELSE
+            where_scope := '(' || substring(where_scope from 5) || ') AND ';
+          END IF;
+        END IF;
+
+        IF EMP_FILTER IS NULL OR where_scope = '' THEN
+          sql_text := format(
+            'WITH del AS (DELETE FROM audit_log WHERE %s RETURNING 1) SELECT count(*) FROM del',
+            where_action);
+          EXECUTE sql_text INTO cnt_audit;
+        ELSE
+          sql_text := format(
+            'WITH del AS (DELETE FROM audit_log WHERE %s%s RETURNING 1) SELECT count(*) FROM del',
+            where_scope, where_action);
+          EXECUTE sql_text INTO cnt_audit USING EMP_FILTER;
+        END IF;
+        RAISE NOTICE '  ✓ deleted % leave-related audit_log rows', cnt_audit;
+      END IF;
+    END;
   ELSE
     RAISE NOTICE '  – audit_log table not present, skipping';
   END IF;
 
   -- 5. leave_balances — reset adjustments + carry_over to 0 so the
   --    runtime balance calc shows the clean annual entitlement.
-  --    (We don't DELETE the rows because they might carry the year
-  --    pointer; setting fields to defaults keeps the row + clears it.)
+  --    Same schema-aware introspection pattern: only touches columns
+  --    that actually exist.
   IF to_regclass('public.leave_balances') IS NOT NULL THEN
-    IF EMP_FILTER IS NULL THEN
-      WITH upd AS (
-        UPDATE leave_balances
-           SET carried_over    = 0,
-               adjustment      = 0,
-               adjustment_note = NULL
-         WHERE COALESCE(carried_over, 0) <> 0
-            OR COALESCE(adjustment, 0)    <> 0
-            OR adjustment_note IS NOT NULL
-        RETURNING 1
-      )
-      SELECT count(*) INTO cnt_balances FROM upd;
-    ELSE
-      WITH upd AS (
-        UPDATE leave_balances
-           SET carried_over    = 0,
-               adjustment      = 0,
-               adjustment_note = NULL
-         WHERE employee_id = ANY(EMP_FILTER)
-           AND (COALESCE(carried_over, 0) <> 0
-             OR COALESCE(adjustment, 0)    <> 0
-             OR adjustment_note IS NOT NULL)
-        RETURNING 1
-      )
-      SELECT count(*) INTO cnt_balances FROM upd;
-    END IF;
-    RAISE NOTICE '  ✓ reset % leave_balances adjustment rows', cnt_balances;
+    DECLARE
+      has_carried bool;
+      has_adj     bool;
+      has_note    bool;
+      set_clause  text := '';
+      where_dirty text := '';
+      sql_text    text;
+    BEGIN
+      SELECT bool_or(column_name = 'carried_over'),
+             bool_or(column_name = 'adjustment'),
+             bool_or(column_name = 'adjustment_note')
+        INTO has_carried, has_adj, has_note
+        FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'leave_balances';
+
+      IF has_carried THEN
+        set_clause  := set_clause  || ', carried_over = 0';
+        where_dirty := where_dirty || ' OR COALESCE(carried_over, 0) <> 0';
+      END IF;
+      IF has_adj THEN
+        set_clause  := set_clause  || ', adjustment = 0';
+        where_dirty := where_dirty || ' OR COALESCE(adjustment, 0) <> 0';
+      END IF;
+      IF has_note THEN
+        set_clause  := set_clause  || ', adjustment_note = NULL';
+        where_dirty := where_dirty || ' OR adjustment_note IS NOT NULL';
+      END IF;
+
+      IF set_clause = '' THEN
+        RAISE NOTICE '  – leave_balances: none of the adjustment columns exist, skipping';
+      ELSE
+        set_clause  := substring(set_clause from 3);          -- strip leading ', '
+        where_dirty := '(' || substring(where_dirty from 5) || ')'; -- strip leading ' OR '
+
+        IF EMP_FILTER IS NULL THEN
+          sql_text := format(
+            'WITH upd AS (UPDATE leave_balances SET %s WHERE %s RETURNING 1) SELECT count(*) FROM upd',
+            set_clause, where_dirty);
+          EXECUTE sql_text INTO cnt_balances;
+        ELSE
+          sql_text := format(
+            'WITH upd AS (UPDATE leave_balances SET %s WHERE employee_id = ANY($1) AND %s RETURNING 1) SELECT count(*) FROM upd',
+            set_clause, where_dirty);
+          EXECUTE sql_text INTO cnt_balances USING EMP_FILTER;
+        END IF;
+        RAISE NOTICE '  ✓ reset % leave_balances adjustment rows', cnt_balances;
+      END IF;
+    END;
   ELSE
     RAISE NOTICE '  – leave_balances table not present, skipping';
   END IF;
