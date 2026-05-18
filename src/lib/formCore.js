@@ -267,27 +267,21 @@ export function drawSectionHeader(pdf, y, text) {
 // including the closing hairline divider. Promoted from
 // permissionRequestPdf.js so every form generator can use the same
 // pattern. Nadeem 2026-05-18.
-//
-// Row height tuned to 7.5mm minimum (was 8.5mm) — saves ~11mm across
-// a 6+5+1 row form (employee/leave/reason) which is enough to keep
-// annual-leave PDFs single-page even with a substitute table. Text
-// vertical position (y+5.5) adjusted to stay centred in the tighter
-// row. Nadeem 2026-05-18 (sick-leave overflow fix).
 export function drawSingleRow(pdf, y, label, value, { emphasis = false } = {}) {
   const labelW  = 60;
   const valueW  = CONTENT_W - labelW - 4;
   const wrapped = pdf.splitTextToSize(String(value ?? '—'), valueW);
   const lineCount = Array.isArray(wrapped) ? wrapped.length : 1;
-  const rowH = Math.max(7.5, lineCount * 4.5 + 2.5);
+  const rowH = Math.max(8.5, lineCount * 4.5 + 2.5);
   drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
     { color: C.border, width: 0.2 });
-  drawText(pdf, label, MARGIN_X + 3, y + 5.5, {
+  drawText(pdf, label, MARGIN_X + 3, y + 6, {
     size: 10, color: C.muted, style: 'bold',
   });
   pdf.setFont('helvetica', emphasis ? 'bold' : 'normal');
   pdf.setFontSize(11);
   pdf.setTextColor(...C.text);
-  pdf.text(wrapped, MARGIN_X + labelW + 2, y + 5.5);
+  pdf.text(wrapped, MARGIN_X + labelW + 2, y + 6);
   drawLine(pdf, MARGIN_X, y + rowH, MARGIN_X + CONTENT_W, y + rowH,
     { color: C.border, width: 0.2 });
   return y + rowH;
@@ -396,7 +390,7 @@ export function drawPolicyBullets(pdf, y, bullets) {
 // subtitle are all centered horizontally within each cell.
 export function drawSignatures(pdf, y, cells) {
   const cellW  = CONTENT_W / 4;
-  const cellH  = 32;
+  const cellH  = 35.4;
   const innerW = cellW - 4;
   drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
     { color: C.border, width: 0.3 });
@@ -406,10 +400,10 @@ export function drawSignatures(pdf, y, cells) {
     if (i > 0) {
       drawLine(pdf, cx, y, cx, y + cellH, { color: C.border, width: 0.15 });
     }
-    drawText(pdf, cells[i].label, cellCenterX, y + 4, {
+    drawText(pdf, cells[i].label, cellCenterX, y + 4.5, {
       size: 8, color: C.muted, style: 'bold', align: 'center',
     });
-    const lineY = y + cellH - 9;
+    const lineY = y + cellH - 11;
     drawLine(pdf, cx + 2, lineY, cx + cellW - 2, lineY,
       { color: C.text, width: 0.3 });
 

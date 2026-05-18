@@ -305,7 +305,7 @@ export async function generateRejoiningReportPdfBlob({
   y = drawSingleRow(pdf, y, 'Return status',       'RETURNED', { emphasis: true });
   y = drawStatementRow(pdf, y, 'Statement / Notes', statement);
 
-  const sigH = 32;
+  const sigH = 35.4;
   const sigY = PAGE_H - MARGIN_T - sigH;
   drawSignatures(pdf, sigY, [
     {

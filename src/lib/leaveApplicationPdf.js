@@ -404,7 +404,7 @@ function drawSubstitutes(pdf, y, subs = []) {
   y = drawSectionHeader(pdf, y, 'SUBSTITUTE COVERAGE');
   const colW = [10, 70, 50, 52];   // # · Name · Signature box · Date+accept
   const headers = ['#', 'SUBSTITUTE', 'SIGNATURE', 'DATE'];
-  const rowH = 15;
+  const rowH = 18;
 
   // Header row
   drawRect(pdf, MARGIN_X, y, CONTENT_W, 7, { fill: C.labelBg });
@@ -536,66 +536,87 @@ export async function generateLeaveApplicationPdfBlob({
 
   let y = MARGIN_T;
   y = drawHeader(pdf, y, { logoUrl, qrDataUrl, request, refPrefix: 'LV' });
-  y += 1;
+  y += 2;
   y = drawTitle(pdf, y, `Leave Application — ${typeLabel}`);
-  y += 1;
+  y += 2;
 
   // (Pre-flight checkbox row removed — the pill selector inside the
   // LEAVE DETAILS section below now serves that purpose. Showing it
   // twice was the noisy stripe at the top of the page.)
 
   // ═══════════════════════════════════════════════════════════════════
-  // EMPLOYEE INFORMATION — compact 2-column layout (3 rows of paired
-  // fields). Pairs short fields side-by-side to save vertical space.
-  // Long fields like manager's name get a dedicated full-width row.
-  // Nadeem 2026-05-18: 'All application form should appear in one A4
-  // size page, the sick leave is going second page, compact it.'
+  // EMPLOYEE INFORMATION
+  //
+  // Layout branches on leave type:
+  //   • Sick    → compact 2-column drawTwoColTable (3 paired rows) so
+  //               the rich MEDICAL CERTIFICATE section + everything
+  //               else fits on a single A4 page.
+  //   • Others  → full layout with one drawSingleRow per field (the
+  //               clean Permission Request — Late Arrival style Nadeem
+  //               approved for annual and the rest).
+  // Nadeem 2026-05-18: 'I only want the sick leave to be in one page,
+  // annual was perfect before, roll back annual.'
   // ═══════════════════════════════════════════════════════════════════
+  const isCompact = ltKey === 'sick';
+
   y = drawSectionHeader(pdf, y, 'EMPLOYEE INFORMATION');
 
-  // Combined dept + location (e.g. 'Business · Dammam').
+  // Combined dept + location string. Department name expansion uses
+  // DEPT_NAMES (e.g. SUP → Supervisory). Location uses the long form
+  // (e.g. DMM → Dammam). Falls back to '—' when both are missing.
   const deptExpanded = position.department
     ? (DEPT_NAMES[position.department] || position.department)
     : '';
   const locExpanded = position.location
     ? (LOC_NAMES[position.location] || position.location)
     : '';
-  const deptLocLabel = [deptExpanded, locExpanded].filter(Boolean).join(' · ') || '—';
+  const deptLocLabel = [deptExpanded, locExpanded].filter(Boolean).join('  ·  ') || '—';
 
-  // Service tenure — computed at PDF-gen time. Compact format ('4y 9m')
-  // so it fits in a half-width cell.
+  // Service tenure — always computed at PDF-gen time. Long form for the
+  // standard full layout ('4 years, 9 months'); compact for sick
+  // where it's a half-width cell ('4y 9m').
   let joinedTenureLabel = '—';
   if (employee.join_date) {
     const ms = Date.now() - new Date(employee.join_date).getTime();
     const yrs = Math.floor(ms / (1000 * 60 * 60 * 24 * 365.25));
     const mos = Math.floor((ms / (1000 * 60 * 60 * 24 * 30.44)) % 12);
-    const tenure = `${yrs}y${mos > 0 ? ` ${mos}m` : ''}`;
-    joinedTenureLabel = `${fmtDateShort(employee.join_date)} · ${tenure}`;
+    const tenure = isCompact
+      ? `${yrs}y${mos > 0 ? ` ${mos}m` : ''}`
+      : `${yrs} year${yrs === 1 ? '' : 's'}${mos > 0 ? `, ${mos} month${mos === 1 ? '' : 's'}` : ''}`;
+    joinedTenureLabel = `${fmtDateShort(employee.join_date)}${isCompact ? ' · ' : '   ·   '}${tenure}`;
   }
 
-  // 2-column rows: 3 rows × 2 fields each = 6 fields in 3 rows of 7mm
-  // each (was 6 rows of 7.5mm = saves ~24mm).
-  y = drawTwoColTable(pdf, y, [
-    [['Full name',   employee.name || '—'],
-     ['PSN ID',      employee.id   || '—']],
-    [['Designation', position.designation || employee.designation || '—'],
-     ['Department',  deptLocLabel]],
-    [['Joined',      joinedTenureLabel],
-     ['Reports to',  manager?.name || '—']],
-  ]);
-  y += 1.5;
+  if (isCompact) {
+    // 2-col paired layout — only used for sick leave.
+    y = drawTwoColTable(pdf, y, [
+      [['Full name',   employee.name || '—'],
+       ['PSN ID',      employee.id   || '—']],
+      [['Designation', position.designation || employee.designation || '—'],
+       ['Department',  deptLocLabel]],
+      [['Joined',      joinedTenureLabel],
+       ['Reports to',  manager?.name || '—']],
+    ]);
+  } else {
+    // Full single-row layout — annual, paternity, maternity, hajj,
+    // marriage, bereavement, study, unpaid, iddah, other, emergency.
+    y = drawSingleRow(pdf, y, 'Full name',       employee.name || '—', { emphasis: true });
+    y = drawSingleRow(pdf, y, 'PSN ID',          employee.id   || '—');
+    y = drawSingleRow(pdf, y, 'Designation',     position.designation || employee.designation || '—');
+    y = drawSingleRow(pdf, y, 'Department',      deptLocLabel);
+    y = drawSingleRow(pdf, y, 'Joined / Tenure', joinedTenureLabel);
+    y = drawSingleRow(pdf, y, 'Reports to',      manager?.name || '—');
+  }
+  y += isCompact ? 1.5 : 3;
 
   // ═══════════════════════════════════════════════════════════════════
-  // LEAVE DETAILS — compact 2-column layout (3 rows). Leave type is
-  // shown alongside Period, Duration alongside Notice. Submitted gets
-  // its own half-row with the empty side blank.
+  // LEAVE DETAILS — same branching pattern.
   // ═══════════════════════════════════════════════════════════════════
   y = drawSectionHeader(pdf, y, 'LEAVE DETAILS');
 
   const periodLabel = request.start_date && request.end_date
     ? (request.start_date === request.end_date
         ? fmtDateLong(request.start_date)
-        : `${fmtDateShort(request.start_date)} — ${fmtDateShort(request.end_date)}`)
+        : `${fmtDateShort(request.start_date)}${isCompact ? ' — ' : '  —  '}${fmtDateShort(request.end_date)}`)
     : '—';
 
   const durLabel = request.days
@@ -617,58 +638,66 @@ export async function generateLeaveApplicationPdfBlob({
     if (noticeDays < 0) noticeDays = 0;
     isPlanned = noticeDays >= 14;
   }
+  // Notice label — short form for compact layout (fits in a half-width
+  // cell), long form for the standard layout.
   const noticeLabel = noticeDays == null
     ? '—'
-    : isPlanned
-      ? `Planned (${noticeDays}d advance)`
-      : (noticeDays === 0
-          ? 'Urgent (same-day)'
-          : `Urgent (${noticeDays}d notice)`);
+    : isCompact
+      ? (isPlanned
+          ? `Planned (${noticeDays}d advance)`
+          : (noticeDays === 0 ? 'Urgent (same-day)' : `Urgent (${noticeDays}d notice)`))
+      : (isPlanned
+          ? `Planned  (${noticeDays} day${noticeDays === 1 ? '' : 's'} advance notice)`
+          : (noticeDays === 0
+              ? 'Urgent  (same-day notice)'
+              : `Urgent  (${noticeDays} day${noticeDays === 1 ? '' : 's'} notice — less than 14)`));
 
-  // Submitted — DD MMM YYYY · HH:MM:SS so HR has a precise audit stamp.
+  // Submitted — DD MMM YYYY · HH:MM:SS for a precise audit stamp.
   const submittedLabel = request.requested_at
-    ? `${fmtDateShort(request.requested_at)} · ${
+    ? `${fmtDateShort(request.requested_at)}${isCompact ? ' · ' : '  ·  '}${
         new Date(request.requested_at).toLocaleTimeString('en-GB', {
           hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
         })}`
     : '—';
 
-  y = drawTwoColTable(pdf, y, [
-    [['Leave type', typeLabel],
-     ['Period',     periodLabel]],
-    [['Duration',   durLabel],
-     ['Notice',     noticeLabel]],
-    [['Submitted',  submittedLabel],
-     null],
-  ]);
-  y += 1.5;
+  if (isCompact) {
+    y = drawTwoColTable(pdf, y, [
+      [['Leave type', typeLabel],
+       ['Period',     periodLabel]],
+      [['Duration',   durLabel],
+       ['Notice',     noticeLabel]],
+      [['Submitted',  submittedLabel],
+       null],
+    ]);
+  } else {
+    y = drawSingleRow(pdf, y, 'Leave type', typeLabel, { emphasis: true });
+    y = drawSingleRow(pdf, y, 'Period',     periodLabel);
+    y = drawSingleRow(pdf, y, 'Duration',   durLabel,    { emphasis: true });
+    y = drawSingleRow(pdf, y, 'Notice',     noticeLabel);
+    y = drawSingleRow(pdf, y, 'Submitted',  submittedLabel);
+  }
+  y += isCompact ? 1.5 : 3;
 
   // ═══════════════════════════════════════════════════════════════════
-  // REASON — only render the section if there's an actual reason AND
-  // we're not in a leave type where it would be redundant. For SICK
-  // leave the diagnosis line in MEDICAL CERTIFICATE already captures
-  // the reason — printing it twice wastes vertical space and risks
-  // pushing the policy + signature grid off the page.
+  // REASON — skipped for sick leave (MEDICAL CERTIFICATE diagnosis
+  // covers it); always shown for every other type so HR sees the
+  // employee's stated reason on the printed form.
   // ═══════════════════════════════════════════════════════════════════
-  const reasonText = (request.reason || '').trim();
-  if (reasonText && ltKey !== 'sick') {
+  if (!isCompact) {
     y = drawSectionHeader(pdf, y, 'REASON');
-    y = drawSingleRow(pdf, y, 'Details', reasonText);
-    y += 1.5;
+    y = drawSingleRow(pdf, y, 'Details', (request.reason || '').trim() || '—');
+    y += 3;
   }
 
   // ── TYPE-SPECIFIC SECTION (the enriched bit per leave type) ──
   const yBefore = y;
   y = drawTypeSpecificSection(pdf, y, request, employee);
-  if (y > yBefore) y += 1.5;
+  if (y > yBefore) y += isCompact ? 1.5 : 3;
 
   // Substitutes — only for leave types that need coverage during absence.
-  // No page-break helper any more: the compact layout above is sized
-  // so a sick-leave PDF with the full Sehhaty section + substitute +
-  // policy + signature grid all fit on one A4 page.
   if (!['emergency'].includes(ltKey)) {
     y = drawSubstitutes(pdf, y, substitutes);
-    y += 1.5;
+    y += isCompact ? 1.5 : 3;
   }
 
   // Policy specific to this leave type
@@ -679,7 +708,7 @@ export async function generateLeaveApplicationPdfBlob({
   // 4-cell signature grid matching the Vacation_Sample.docx template:
   // EMPLOYEE / DEPT MGR / ESAU SUP / ESAU MGT — short labels with the
   // person's name + their status (Submitted / Approved date · time).
-  const sigH = 32;
+  const sigH = 35.4;
   const sigY = PAGE_H - MARGIN_T - sigH;
 
   // Stamp subtitles — show when each role acted, in the same compact

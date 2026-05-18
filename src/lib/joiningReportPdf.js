@@ -599,7 +599,7 @@ export async function generateJoiningReportPdfBlob({
   y += 3;
 
   // ── Section 6: Signatures (anchor to bottom of page) ──
-  const sigH = 32;
+  const sigH = 35.4;
   const sigY = PAGE_H - MARGIN_T - sigH;
   drawSignatures(pdf, sigY, { employee, manager, hrName });
 

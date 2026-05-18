@@ -137,7 +137,7 @@ export async function generatePermissionRequestPdfBlob({
   y = drawPolicyBullets(pdf, y, PERMISSION_POLICY);
 
   // Signatures anchored to bottom
-  const sigH = 32;
+  const sigH = 35.4;
   const sigY = PAGE_H - MARGIN_T - sigH;
   drawSignatures(pdf, sigY, [
     { label: 'EMPLOYEE',          name: employee.name || '',     subtitle: 'Signature & Date' },
