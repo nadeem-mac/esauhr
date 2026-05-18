@@ -400,8 +400,12 @@ function drawSubstitutes(pdf, y, subs = []) {
       drawText(pdf, 'Accepted online', dateCellX + 5, y + 7, {
         size: 8, color: C.brand, style: 'bold',
       });
+      // Timestamp sits in grey (muted) underneath the bold green stamp
+      // so the eye reads the 'accepted' assertion first, then the
+      // precise audit time as a secondary detail. Italic helps it
+      // visually recede further. Nadeem 2026-05-18.
       drawText(pdf, fmtFullStamp(s.date), dateCellX, y + 12, {
-        size: 7.5, color: C.text,
+        size: 7.5, color: C.muted, style: 'italic',
       });
     } else if (s.date) {
       drawText(pdf, fmtFullStamp(s.date), dateCellX, y + (rowH / 2) + 1.5, {
