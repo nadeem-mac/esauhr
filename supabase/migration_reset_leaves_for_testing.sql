@@ -55,16 +55,37 @@
 --      Dashboard → Database → Backups → Manual Backup
 --
 -- ── SCOPED-RESET MODE ───────────────────────────────────────────────────
---    To reset only for SPECIFIC employees (instead of everyone), change
---    the EMP_FILTER value at the top from NULL to an array of PSN IDs:
+--    To reset only for SPECIFIC employees (instead of everyone), edit
+--    the EMP_FILTER assignment INSIDE the DO block below (look for the
+--    big EDIT-ONLY-THIS-LINE banner — it's right after `DECLARE`).
+--
+--    Change the line from:
+--      EMP_FILTER text[] := NULL;
+--    to:
 --      EMP_FILTER text[] := ARRAY['H94328', 'H94830', 'H94590'];
---    The script then scopes every DELETE/UPDATE to those employees only.
+--
+--    DO NOT try to run that line on its own — PL/pgSQL declarations
+--    only work INSIDE a DO $$ ... $$ block. Edit + run the whole file.
 -- ════════════════════════════════════════════════════════════════════════
 
 DO $$
 DECLARE
-  -- Set to NULL to reset for EVERY employee, or to an array of PSN IDs
-  -- like ARRAY['H94328', 'H94830'] to reset just those people.
+  -- ┌────────────────────────────────────────────────────────────────────┐
+  -- │  EDIT ONLY THE NEXT LINE TO SCOPE THE RESET                        │
+  -- │                                                                    │
+  -- │  • Reset for EVERY employee:                                       │
+  -- │      EMP_FILTER text[] := NULL;                                    │
+  -- │                                                                    │
+  -- │  • Reset for ONE employee only:                                    │
+  -- │      EMP_FILTER text[] := ARRAY['H94328'];                         │
+  -- │                                                                    │
+  -- │  • Reset for SEVERAL employees:                                    │
+  -- │      EMP_FILTER text[] := ARRAY['H94328', 'H94830', 'H94590'];     │
+  -- │                                                                    │
+  -- │  IMPORTANT: this line lives INSIDE the DO $$ ... $$ block. Do      │
+  -- │  not try to run it on its own — PL/pgSQL declarations are only     │
+  -- │  valid inside a DO block. Paste + run the WHOLE file.              │
+  -- └────────────────────────────────────────────────────────────────────┘
   EMP_FILTER text[] := NULL;
 
   cnt_leaves      bigint;
