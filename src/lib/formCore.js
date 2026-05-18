@@ -252,13 +252,13 @@ export function drawTitle(pdf, y, titleText) {
 // the page, big enough to be unmistakable. The 11pt brand-green label
 // sits comfortably inside with breathing room on every side.
 export function drawSectionHeader(pdf, y, text) {
-  const h = 7.5;
+  const h = 6.5;
   drawRect(pdf, MARGIN_X, y, CONTENT_W, h, { fill: C.accent });
   drawRect(pdf, MARGIN_X, y, 2.2, h, { fill: C.brand });
-  drawText(pdf, text, MARGIN_X + 7, y + 5.2, {
-    size: 10.5, color: C.brand, style: 'bold',
+  drawText(pdf, text, MARGIN_X + 7, y + 4.6, {
+    size: 10, color: C.brand, style: 'bold',
   });
-  return y + h + 1;
+  return y + h + 0.8;
 }
 
 // Single info row — label on the left (muted), value on the right (text
@@ -272,16 +272,16 @@ export function drawSingleRow(pdf, y, label, value, { emphasis = false } = {}) {
   const valueW  = CONTENT_W - labelW - 4;
   const wrapped = pdf.splitTextToSize(String(value ?? '—'), valueW);
   const lineCount = Array.isArray(wrapped) ? wrapped.length : 1;
-  const rowH = Math.max(7, lineCount * 4.2 + 2);
+  const rowH = Math.max(6, lineCount * 4 + 1.5);
   drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
     { color: C.border, width: 0.2 });
-  drawText(pdf, label, MARGIN_X + 3, y + 5, {
-    size: 9.5, color: C.muted, style: 'bold',
+  drawText(pdf, label, MARGIN_X + 3, y + 4.3, {
+    size: 9, color: C.muted, style: 'bold',
   });
   pdf.setFont('helvetica', emphasis ? 'bold' : 'normal');
-  pdf.setFontSize(10.5);
+  pdf.setFontSize(10);
   pdf.setTextColor(...C.text);
-  pdf.text(wrapped, MARGIN_X + labelW + 2, y + 5);
+  pdf.text(wrapped, MARGIN_X + labelW + 2, y + 4.3);
   drawLine(pdf, MARGIN_X, y + rowH, MARGIN_X + CONTENT_W, y + rowH,
     { color: C.border, width: 0.2 });
   return y + rowH;

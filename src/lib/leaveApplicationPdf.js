@@ -404,18 +404,18 @@ function drawSubstitutes(pdf, y, subs = []) {
   y = drawSectionHeader(pdf, y, 'SUBSTITUTE COVERAGE');
   const colW = [10, 70, 50, 52];   // # · Name · Signature box · Date+accept
   const headers = ['#', 'SUBSTITUTE', 'SIGNATURE', 'DATE'];
-  const rowH = 18;
+  const rowH = 15;
 
   // Header row
-  drawRect(pdf, MARGIN_X, y, CONTENT_W, 7, { fill: C.labelBg });
+  drawRect(pdf, MARGIN_X, y, CONTENT_W, 6, { fill: C.labelBg });
   let cx = MARGIN_X;
   for (let i = 0; i < headers.length; i++) {
-    drawText(pdf, headers[i], cx + 2, y + 4.8, {
-      size: 8, color: C.muted, style: 'bold',
+    drawText(pdf, headers[i], cx + 2, y + 4.2, {
+      size: 7.5, color: C.muted, style: 'bold',
     });
     cx += colW[i];
   }
-  y += 7;
+  y += 6;
 
   // Format helper — DD MMM YYYY HH:MM:SS so the audit stamp is unambiguous.
   // Falls back to '' if no date provided so the cell renders blank rather
@@ -606,7 +606,7 @@ export async function generateLeaveApplicationPdfBlob({
     y = drawSingleRow(pdf, y, 'Joined / Tenure', joinedTenureLabel);
     y = drawSingleRow(pdf, y, 'Reports to',      manager?.name || '—');
   }
-  y += isCompact ? 1.5 : 3;
+  y += isCompact ? 1 : 1.5;
 
   // ═══════════════════════════════════════════════════════════════════
   // LEAVE DETAILS — same branching pattern.
@@ -676,28 +676,29 @@ export async function generateLeaveApplicationPdfBlob({
     y = drawSingleRow(pdf, y, 'Notice',     noticeLabel);
     y = drawSingleRow(pdf, y, 'Submitted',  submittedLabel);
   }
-  y += isCompact ? 1.5 : 3;
+  y += isCompact ? 1 : 1.5;
 
   // ═══════════════════════════════════════════════════════════════════
   // REASON — skipped for sick leave (MEDICAL CERTIFICATE diagnosis
-  // covers it); always shown for every other type so HR sees the
-  // employee's stated reason on the printed form.
+  // covers it); also skipped when the reason field is blank (would
+  // just show '—' and waste a section). Always shown when the user
+  // actually wrote something so HR sees the stated reason.
   // ═══════════════════════════════════════════════════════════════════
-  if (!isCompact) {
+  if (!isCompact && (request.reason || '').trim()) {
     y = drawSectionHeader(pdf, y, 'REASON');
-    y = drawSingleRow(pdf, y, 'Details', (request.reason || '').trim() || '—');
-    y += 3;
+    y = drawSingleRow(pdf, y, 'Details', request.reason.trim());
+    y += 1.5;
   }
 
   // ── TYPE-SPECIFIC SECTION (the enriched bit per leave type) ──
   const yBefore = y;
   y = drawTypeSpecificSection(pdf, y, request, employee);
-  if (y > yBefore) y += isCompact ? 1.5 : 3;
+  if (y > yBefore) y += isCompact ? 1 : 1.5;
 
   // Substitutes — only for leave types that need coverage during absence.
   if (!['emergency'].includes(ltKey)) {
     y = drawSubstitutes(pdf, y, substitutes);
-    y += isCompact ? 1.5 : 3;
+    y += isCompact ? 1 : 1.5;
   }
 
   // Policy specific to this leave type
