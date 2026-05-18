@@ -12,7 +12,8 @@
 
 import {
   newPdf, loadLogoDataUrl, generateQRCode,
-  drawHeader, drawPolicyBullets, drawSignatures, drawGeneratedStamp,
+  drawHeader, drawTitle, drawPolicyBullets, drawSignatures, drawGeneratedStamp,
+  drawSectionHeader, drawSingleRow,
   drawText, drawLine, drawRect,
   C, MARGIN_X, MARGIN_T, PAGE_W, PAGE_H, CONTENT_W,
   DEPT_NAMES, LOC_NAMES, CEO_NAME, CEO_TITLE_EN, HR_DEFAULT,
@@ -38,47 +39,10 @@ const PERMISSION_TYPES = [
 // Sizing tuned to fit 9 single rows + statement + 5 policy bullets +
 // signatures on a single A4 page without overflow.
 
-function drawTitle(pdf, y, titleText) {
-  drawText(pdf, titleText, PAGE_W / 2, y + 7, {
-    size: 20, color: C.brand, style: 'bold', align: 'center',
-  });
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(20);
-  const tw = pdf.getTextWidth(titleText);
-  drawLine(pdf, (PAGE_W - tw) / 2, y + 10, (PAGE_W + tw) / 2, y + 10,
-    { color: C.brand, width: 0.5 });
-  return y + 12;
-}
+// (drawTitle promoted to formCore — see formCore.js.)
 
-function drawSectionHeader(pdf, y, text) {
-  const h = 9;
-  drawRect(pdf, MARGIN_X, y, CONTENT_W, h, { fill: C.accent });
-  drawRect(pdf, MARGIN_X, y, 2.2, h, { fill: C.brand });
-  drawText(pdf, text, MARGIN_X + 7, y + 6.2, {
-    size: 11, color: C.brand, style: 'bold',
-  });
-  return y + h + 1.5;
-}
-
-function drawSingleRow(pdf, y, label, value, { emphasis = false } = {}) {
-  const labelW  = 60;
-  const valueW  = CONTENT_W - labelW - 4;
-  const wrapped = pdf.splitTextToSize(String(value ?? '—'), valueW);
-  const lineCount = Array.isArray(wrapped) ? wrapped.length : 1;
-  const rowH = Math.max(8.5, lineCount * 4.5 + 2.5);
-  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
-    { color: C.border, width: 0.2 });
-  drawText(pdf, label, MARGIN_X + 3, y + 6, {
-    size: 10, color: C.muted, style: 'bold',
-  });
-  pdf.setFont('helvetica', emphasis ? 'bold' : 'normal');
-  pdf.setFontSize(11);
-  pdf.setTextColor(...C.text);
-  pdf.text(wrapped, MARGIN_X + labelW + 2, y + 6);
-  drawLine(pdf, MARGIN_X, y + rowH, MARGIN_X + CONTENT_W, y + rowH,
-    { color: C.border, width: 0.2 });
-  return y + rowH;
-}
+// (drawSectionHeader + drawSingleRow promoted to formCore so every
+// form uses the same primitive — see formCore.js.)
 
 function drawReasonRow(pdf, y, label, paragraph) {
   const labelW  = 60;

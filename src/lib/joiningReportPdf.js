@@ -231,14 +231,20 @@ function drawTitle(pdf, y, type) {
   return y + 8;
 }
 
+// Section header — full-width green-tinted band with thick brand-
+// coloured left stripe. Matches the shared formCore drawSectionHeader
+// dimensions so leave applications, permission requests, rejoining
+// reports, and joining reports all use the same visual treatment.
+// Nadeem 2026-05-18: 'theme for all the form should be same as
+// Permission Request — Late Arrival'.
 function drawSectionHeader(pdf, y, text) {
-  const h = 7;
+  const h = 9;
   drawRect(pdf, MARGIN_X, y, CONTENT_W, h, { fill: C.accent });
-  drawRect(pdf, MARGIN_X, y, 1.5, h, { fill: C.brand });
-  drawText(pdf, text, MARGIN_X + 5, y + 4.8, {
-    size: 9.5, color: C.brand, style: 'bold',
+  drawRect(pdf, MARGIN_X, y, 2.2, h, { fill: C.brand });
+  drawText(pdf, text, MARGIN_X + 7, y + 6.2, {
+    size: 11, color: C.brand, style: 'bold',
   });
-  return y + h + 1;
+  return y + h + 1.5;
 }
 
 // Two-column label/value table — used for most sections so the page

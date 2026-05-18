@@ -25,7 +25,7 @@
 
 import {
   newPdf, loadLogoDataUrl, generateQRCode,
-  drawHeader, drawTitle, drawSectionHeader, drawTwoColTable,
+  drawHeader, drawTitle, drawSectionHeader, drawSingleRow, drawTwoColTable,
   drawLabelValueTable, drawPolicyBullets, drawSignatures, drawGeneratedStamp,
   drawTickbox, drawText, drawLine, drawRect,
   drawCheckbox, drawCheckboxRow, drawBilingualSectionHeader,
@@ -295,11 +295,23 @@ function drawTypeSpecificSection(pdf, y, request, employee = {}) {
 // below is still available for a wet-ink signature — some line managers
 // require both. Nadeem 2026-05-17.
 
+// ─── substitutes table — clean structure (Nadeem 2026-05-18) ──────────────
+//
+// Layout request from Nadeem: signature box is EMPTY with a border so
+// the substitute can physically sign inside. The DATE column carries
+// the online-acceptance info — a green check + 'Accepted online' label
+// + the date and time WITH SECONDS so HR has a precise audit stamp.
+//
+// Column widths chosen so the DATE column is wide enough for two
+// stacked lines ('✓ Accepted online' on top, 'DD MMM YYYY HH:MM:SS'
+// underneath) without wrapping.
+
 function drawSubstitutes(pdf, y, subs = []) {
-  y = drawBilingualSectionHeader(pdf, y, 'SUBSTITUTE COVERAGE');
-  const colW = [10, 80, 60, 32];   // # · Name · Signature · Date
+  y = drawSectionHeader(pdf, y, 'SUBSTITUTE COVERAGE');
+  const colW = [10, 70, 50, 52];   // # · Name · Signature box · Date+accept
   const headers = ['#', 'SUBSTITUTE', 'SIGNATURE', 'DATE'];
-  const rowH = 18;  // taller row so the signature box is genuinely usable
+  const rowH = 18;
+
   // Header row
   drawRect(pdf, MARGIN_X, y, CONTENT_W, 7, { fill: C.labelBg });
   let cx = MARGIN_X;
@@ -310,6 +322,23 @@ function drawSubstitutes(pdf, y, subs = []) {
     cx += colW[i];
   }
   y += 7;
+
+  // Format helper — DD MMM YYYY HH:MM:SS so the audit stamp is unambiguous.
+  // Falls back to '' if no date provided so the cell renders blank rather
+  // than showing 'Invalid Date'.
+  const fmtFullStamp = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = d.toLocaleString('en-GB', { month: 'short' });
+    const yy = d.getFullYear();
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mn = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    return `${dd} ${mm} ${yy}  ${hh}:${mn}:${ss}`;
+  };
+
   // Body rows — minimum 1, up to 3 substitutes
   const list = subs.length > 0 ? subs.slice(0, 3) : [{ name: '', signature: '', date: '' }];
   for (let i = 0; i < list.length; i++) {
@@ -326,14 +355,17 @@ function drawSubstitutes(pdf, y, subs = []) {
     cx += colW[0];
 
     // Substitute name + PSN
-    drawText(pdf, s.name || '', cx + 2, y + 7, { size: 9, color: C.text });
+    drawText(pdf, s.name || '', cx + 2, y + 7, {
+      size: 9, color: C.text, style: 'bold',
+    });
     if (s.psn) drawText(pdf, s.psn, cx + 2, y + 11, { size: 7, color: C.muted });
     cx += colW[1];
 
-    // SIGNATURE BOX — drawn for every row, always. When accepted online,
-    // the stamp sits inside the box at the top; physical signing space
-    // remains below. The box has subtle padding so the printed form
-    // looks like a proper form field, not a blank line.
+    // SIGNATURE BOX — bordered rectangle, EMPTY. The user explicitly asked
+    // for the box to be empty so staff can sign inside. The online-accept
+    // stamp lives in the DATE column on the right. The 'Sign here' hint
+    // appears only when not accepted yet; once accepted, the box stays
+    // empty so the substitute can additionally sign physically if needed.
     const sigBoxX = cx + 2;
     const sigBoxY = y + 2;
     const sigBoxW = colW[2] - 4;
@@ -341,26 +373,41 @@ function drawSubstitutes(pdf, y, subs = []) {
     drawRect(pdf, sigBoxX, sigBoxY, sigBoxW, sigBoxH, {
       stroke: C.border, strokeWidth: 0.3,
     });
-    if (s.signature === 'accepted_online') {
-      // Stamp at top of the box
-      drawText(pdf, '✓ Accepted online', sigBoxX + 2, sigBoxY + 4.5, {
-        size: 7.5, color: C.brand, style: 'bold',
-      });
-      // Faint dotted hint that physical signing space is also available
-      drawText(pdf, '— or sign physically below —', sigBoxX + 2, sigBoxY + 8.5, {
-        size: 5.5, color: C.muted, style: 'italic',
-      });
-    } else {
+    if (s.signature !== 'accepted_online') {
+      // Only show the placeholder hint when there's no online accept.
       drawText(pdf, 'Sign here', sigBoxX + 2, sigBoxY + 4, {
         size: 6.5, color: C.muted, style: 'italic',
       });
     }
     cx += colW[2];
 
-    // Date column
-    drawText(pdf, fmtDateShort(s.date), cx + 2, y + (rowH / 2) + 1.5, {
-      size: 8.5, color: C.text,
-    });
+    // DATE column — when accepted online, two stacked lines:
+    //   line 1: small drawn check mark + 'Accepted online' (bold brand-green)
+    //   line 2: 'DD MMM YYYY  HH:MM:SS' (text color)
+    // When not accepted: just the date if available, else blank.
+    // The check is drawn with two short lines rather than the Unicode
+    // glyph (U+2713) because standard Helvetica's encoding doesn't
+    // include it — the glyph renders as an apostrophe.
+    const dateCellX = cx + 2;
+    if (s.signature === 'accepted_online') {
+      // Drawn check mark — short rising stroke + longer descending stroke
+      const chkX = dateCellX;
+      const chkY = y + 7;
+      drawLine(pdf, chkX, chkY - 0.4, chkX + 1.2, chkY + 0.8,
+        { color: C.brand, width: 0.7 });
+      drawLine(pdf, chkX + 1.2, chkY + 0.8, chkX + 3.2, chkY - 2.2,
+        { color: C.brand, width: 0.7 });
+      drawText(pdf, 'Accepted online', dateCellX + 5, y + 7, {
+        size: 8, color: C.brand, style: 'bold',
+      });
+      drawText(pdf, fmtFullStamp(s.date), dateCellX, y + 12, {
+        size: 7.5, color: C.text,
+      });
+    } else if (s.date) {
+      drawText(pdf, fmtFullStamp(s.date), dateCellX, y + (rowH / 2) + 1.5, {
+        size: 8, color: C.text,
+      });
+    }
 
     y += rowH;
   }
@@ -399,20 +446,19 @@ export async function generateLeaveApplicationPdfBlob({
   // LEAVE DETAILS section below now serves that purpose. Showing it
   // twice was the noisy stripe at the top of the page.)
 
-  // Employee Information — 5 rows matching the Vacation_Sample.docx
-  // template exactly. Combined fields where the sample does so:
-  //   Department  = '{dept name} · {location}'   (e.g. 'Business · Dammam')
-  //   Joined/Tenure = '{join date}  ·  {tenure}' (e.g. '01 Aug 2021 · 4 years 9 months')
-  // Email, phone, reports-to, and stage are intentionally NOT in the
-  // sample — they live elsewhere in the system (Employee detail modal,
-  // attendance views) and including them on the leave application
-  // would clutter the form. Bilingual headers via
-  // drawBilingualSectionHeader (Arabic glyphs deferred — see formCore).
-  y = drawBilingualSectionHeader(pdf, y, 'EMPLOYEE INFORMATION');
+  // ═══════════════════════════════════════════════════════════════════
+  // EMPLOYEE INFORMATION — clean form-style rows (Permission Request
+  // pattern). Label on left in muted bold, value on right in primary
+  // text color, both vertically centered, single hairline divider per
+  // row, brand-green section header bar with thick left stripe. Same
+  // exact treatment as the Permission Request — Late Arrival form
+  // Nadeem said he liked. Nadeem 2026-05-18.
+  // ═══════════════════════════════════════════════════════════════════
+  y = drawSectionHeader(pdf, y, 'EMPLOYEE INFORMATION');
 
   // Combined dept + location string. Department name expansion uses
   // DEPT_NAMES (e.g. SUP → Supervisory). Location uses the long form
-  // (e.g. DMM → Dammam). Falls back gracefully when either is missing.
+  // (e.g. DMM → Dammam). Falls back to '—' when both are missing.
   const deptExpanded = position.department
     ? (DEPT_NAMES[position.department] || position.department)
     : '';
@@ -421,9 +467,8 @@ export async function generateLeaveApplicationPdfBlob({
     : '';
   const deptLocLabel = [deptExpanded, locExpanded].filter(Boolean).join('  ·  ') || '—';
 
-  // Service tenure — always computed at PDF-gen time from join_date
-  // so it's never stale. Combined with the join date in one cell to
-  // match the sample's 'Joined / Tenure' row.
+  // Service tenure — always computed at PDF-gen time from join_date so
+  // it's never stale.
   let joinedTenureLabel = '—';
   if (employee.join_date) {
     const ms = Date.now() - new Date(employee.join_date).getTime();
@@ -433,131 +478,36 @@ export async function generateLeaveApplicationPdfBlob({
     joinedTenureLabel = `${fmtDateShort(employee.join_date)}   ·   ${tenure}`;
   }
 
-  // Use the existing drawLabelValueTable (single column, label on left,
-  // value taking full width on right) since the sample's employee info
-  // rows are full-width with a single bold value, not two-column. This
-  // matches the sample layout better than the two-col table did.
-  y = drawLabelValueTable(pdf, y, [
-    ['Employee name',     employee.name || '—'],
-    ['PSN ID',            employee.id   || '—'],
-    ['Department',        deptLocLabel],
-    ['Designation',       position.designation || employee.designation || '—'],
-    ['Joined / Tenure',   joinedTenureLabel],
-  ]);
+  y = drawSingleRow(pdf, y, 'Full name',       employee.name || '—', { emphasis: true });
+  y = drawSingleRow(pdf, y, 'PSN ID',          employee.id   || '—');
+  y = drawSingleRow(pdf, y, 'Designation',     position.designation || employee.designation || '—');
+  y = drawSingleRow(pdf, y, 'Department',      deptLocLabel);
+  y = drawSingleRow(pdf, y, 'Joined / Tenure', joinedTenureLabel);
+  y = drawSingleRow(pdf, y, 'Reports to',      manager?.name || '—');
   y += 3;
 
-  // ─── Leave Details ──────────────────────────────────────────────────
-  // Sample format:
-  //   Leave type → checkbox row showing ALL 10 types with ☑ for selected
-  //   Period    → 'Wednesday, 13 May 2026' (long format for single day,
-  //               date range for multi-day)
-  //   Duration  → 'N day' + half-day checkbox inline
-  //   Notice    → ☑/☐ Planned (≥14 days)  ☑/☐ Urgent (<14 days)
-  //   Reason    → free text or '—'
-  //   Submitted → 'DD MMM YYYY · HH:MM' (no stage field on the sample)
-  y = drawBilingualSectionHeader(pdf, y, 'LEAVE DETAILS');
+  // ═══════════════════════════════════════════════════════════════════
+  // LEAVE DETAILS — same row pattern, one field per line. Leave type
+  // is rendered as its proper label (e.g. 'Annual Leave') in the value
+  // column rather than as a pill row, since the permission form's
+  // 'Type of permission' field is just a value. Cleanest possible.
+  // ═══════════════════════════════════════════════════════════════════
+  y = drawSectionHeader(pdf, y, 'LEAVE DETAILS');
 
-  // ─── Leave type — pill-style chips (selected = filled brand-green) ──
-  // Cleaner than checkboxes — reads as a visual filter / segmented
-  // selector. Selected chip pops, unselected chips are outlined and
-  // muted. Wraps to multiple lines when there are too many to fit.
-  const LEAVE_TYPE_LIST = [
-    { id: 'annual',      label: 'Annual' },
-    { id: 'sick',        label: 'Sick' },
-    { id: 'emergency',   label: 'Emergency' },
-    { id: 'hajj',        label: 'Hajj' },
-    { id: 'maternity',   label: 'Maternity' },
-    { id: 'paternity',   label: 'Paternity' },
-    { id: 'marriage',    label: 'Marriage' },
-    { id: 'bereavement', label: 'Bereavement' },
-    { id: 'unpaid',      label: 'Unpaid' },
-    { id: 'other',       label: 'Other' },
-  ];
-
-  // Kicker label above the pills
-  drawText(pdf, 'LEAVE TYPE', MARGIN_X + 1, y + 3, {
-    size: 6.8, color: C.muted, style: 'bold',
-  });
-  y += 5;
-
-  // Lay out pills horizontally with wrap.
-  const pillH       = 4.8;
-  const pillFontSz  = 8;
-  const pillPadX    = 2.6;
-  const pillGap     = 1.8;
-  const lineGap     = 1.8;
-  const maxX        = MARGIN_X + CONTENT_W - 2;
-  let cx = MARGIN_X + 1;
-  let cy = y;
-  for (const t of LEAVE_TYPE_LIST) {
-    const selected = ltKey === t.id;
-    const labelW = pdf.getStringUnitWidth(t.label) * pillFontSz / pdf.internal.scaleFactor;
-    const pillW  = labelW + (pillPadX * 2);
-    if (cx + pillW > maxX) {
-      cx = MARGIN_X + 1;
-      cy += pillH + lineGap;
-    }
-    if (selected) {
-      // Filled brand pill
-      drawRect(pdf, cx, cy, pillW, pillH, { fill: C.brand });
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(pillFontSz);
-      pdf.setTextColor(255, 255, 255);
-      pdf.text(t.label, cx + pillPadX, cy + pillH - 1.5);
-    } else {
-      // Outlined muted pill
-      drawRect(pdf, cx, cy, pillW, pillH, {
-        stroke: C.border, strokeWidth: 0.25,
-      });
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(pillFontSz);
-      pdf.setTextColor(...C.muted);
-      pdf.text(t.label, cx + pillPadX, cy + pillH - 1.5);
-    }
-    cx += pillW + pillGap;
-  }
-  y = cy + pillH + 4;
-
-  // ─── Period · Duration (two-column compact row) ──────────────────────
   const periodLabel = request.start_date && request.end_date
     ? (request.start_date === request.end_date
         ? fmtDateLong(request.start_date)
         : `${fmtDateShort(request.start_date)}  —  ${fmtDateShort(request.end_date)}`)
     : '—';
+
   const durLabel = request.days
     ? `${request.days} day${Number(request.days) === 1 ? '' : 's'}${
         request.is_half_day ? ` · half day${request.half_day_period ? ` (${request.half_day_period})` : ''}` : ''
       }`
     : '—';
 
-  // Subtle separator before this row
-  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
-    { color: C.border, width: 0.12 });
-  y += 2;
-
-  const half = CONTENT_W / 2;
-  // Left: PERIOD
-  drawText(pdf, 'PERIOD', MARGIN_X + 1, y + 2.8, {
-    size: 6.8, color: C.muted, style: 'bold',
-  });
-  drawText(pdf, periodLabel, MARGIN_X + 1, y + 7.8, {
-    size: 10.5, color: C.text,
-  });
-  // Right: DURATION
-  drawText(pdf, 'DURATION', MARGIN_X + half + 1, y + 2.8, {
-    size: 6.8, color: C.muted, style: 'bold',
-  });
-  drawText(pdf, durLabel, MARGIN_X + half + 1, y + 7.8, {
-    size: 10.5, color: C.text,
-  });
-  y += 12;
-
-  // ─── Notice · Submitted (two-column compact row) ─────────────────────
-  // Notice math compares CALENDAR DATES only, not datetimes. Without
-  // this, a leave starting today that was submitted at 22:54 today
-  // produces 'requested_at - start_date = -1 days' (rounded down)
-  // because requested_at carries hours/minutes while start_date is
-  // midnight. Strip the time component on both sides before subtracting.
+  // Notice math compares CALENDAR DATES only, not datetimes (see
+  // fc6fb10 — fixes the '-1 days notice' bug for same-day requests).
   let isPlanned = false;
   let isUrgent  = false;
   let noticeDays = null;
@@ -567,63 +517,42 @@ export async function generateLeaveApplicationPdfBlob({
     const reqDay = new Date(request.requested_at);
     reqDay.setHours(0, 0, 0, 0);
     noticeDays = Math.round((startDay - reqDay) / 86400000);
-    if (noticeDays < 0) noticeDays = 0; // belt-and-braces: same-day or past leaves
+    if (noticeDays < 0) noticeDays = 0;
     isPlanned = noticeDays >= 14;
     isUrgent  = !isPlanned;
   }
   const noticeLabel = noticeDays == null
     ? '—'
     : isPlanned
-      ? `Planned · ${noticeDays} day${noticeDays === 1 ? '' : 's'} advance notice`
+      ? `Planned  (${noticeDays} day${noticeDays === 1 ? '' : 's'} advance notice)`
       : (noticeDays === 0
-          ? 'Urgent · same-day notice'
-          : `Urgent · ${noticeDays} day${noticeDays === 1 ? '' : 's'} notice (less than 14)`);
+          ? 'Urgent  (same-day notice)'
+          : `Urgent  (${noticeDays} day${noticeDays === 1 ? '' : 's'} notice — less than 14)`);
 
+  // Submitted timestamp — DD MMM YYYY · HH:MM:SS so HR has a precise
+  // audit stamp visible on the printed form.
   const submittedLabel = request.requested_at
     ? `${fmtDateShort(request.requested_at)}  ·  ${
         new Date(request.requested_at).toLocaleTimeString('en-GB', {
-          hour: '2-digit', minute: '2-digit', hour12: false,
+          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
         })}`
     : '—';
 
-  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
-    { color: C.border, width: 0.12 });
-  y += 2;
+  y = drawSingleRow(pdf, y, 'Leave type', typeLabel, { emphasis: true });
+  y = drawSingleRow(pdf, y, 'Period',     periodLabel);
+  y = drawSingleRow(pdf, y, 'Duration',   durLabel,    { emphasis: true });
+  y = drawSingleRow(pdf, y, 'Notice',     noticeLabel);
+  y = drawSingleRow(pdf, y, 'Submitted',  submittedLabel);
+  y += 3;
 
-  drawText(pdf, 'NOTICE', MARGIN_X + 1, y + 2.8, {
-    size: 6.8, color: C.muted, style: 'bold',
-  });
-  // Notice value with a small color cue — amber dot for urgent, green for planned
-  const noticeDotX = MARGIN_X + 1;
-  drawRect(pdf, noticeDotX, y + 6.5, 1.5, 1.5,
-    { fill: isUrgent ? [180, 83, 9] : (isPlanned ? C.brand : C.muted) });
-  drawText(pdf, noticeLabel, noticeDotX + 2.8, y + 7.8, {
-    size: 10.5, color: C.text,
-  });
-
-  drawText(pdf, 'SUBMITTED', MARGIN_X + half + 1, y + 2.8, {
-    size: 6.8, color: C.muted, style: 'bold',
-  });
-  drawText(pdf, submittedLabel, MARGIN_X + half + 1, y + 7.8, {
-    size: 10.5, color: C.text,
-  });
-  y += 12;
-
-  // ─── Reason — full-width, multiline ──────────────────────────────────
-  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
-    { color: C.border, width: 0.12 });
-  y += 2;
-  drawText(pdf, 'REASON', MARGIN_X + 1, y + 2.8, {
-    size: 6.8, color: C.muted, style: 'bold',
-  });
-  const reasonText = (request.reason || '—').trim() || '—';
-  const reasonWrapped = pdf.splitTextToSize(reasonText, CONTENT_W - 2);
-  pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(10.5);
-  pdf.setTextColor(...C.text);
-  pdf.text(reasonWrapped, MARGIN_X + 1, y + 7.8);
-  const reasonH = 3.4 + (reasonWrapped.length * 4.6) + 3;
-  y += reasonH;
+  // ═══════════════════════════════════════════════════════════════════
+  // REASON — same pattern. Reuses drawSingleRow which already wraps
+  // long values across multiple lines, so a multi-paragraph reason
+  // grows the row height automatically.
+  // ═══════════════════════════════════════════════════════════════════
+  y = drawSectionHeader(pdf, y, 'REASON');
+  y = drawSingleRow(pdf, y, 'Details', (request.reason || '').trim() || '—');
+  y += 3;
 
   // ── TYPE-SPECIFIC SECTION (the enriched bit per leave type) ──
   const yBefore = y;
@@ -637,7 +566,7 @@ export async function generateLeaveApplicationPdfBlob({
   }
 
   // Policy specific to this leave type
-  y = drawBilingualSectionHeader(pdf, y, 'POLICY · KSA LABOR LAW');
+  y = drawSectionHeader(pdf, y, 'POLICY · KSA LABOR LAW');
   const policy = POLICY_BY_TYPE[ltKey] || POLICY_BY_TYPE.other;
   y = drawPolicyBullets(pdf, y, policy);
 

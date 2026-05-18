@@ -224,26 +224,67 @@ export function drawHeader(pdf, y, { logoUrl, qrDataUrl, request, refPrefix = 'L
   return y + h;
 }
 
-// Centered form title with brand-coloured underline.
+// Centered form title with brand-coloured underline. Sized to match
+// the Permission Request — Late Arrival title style (20pt centered
+// brand-green with a 0.5mm brand-coloured underline). All forms now
+// use this exact treatment so the title reads with the same authority
+// across leave applications, permissions, rejoining reports, and
+// joining reports. Nadeem 2026-05-18.
 export function drawTitle(pdf, y, titleText) {
-  drawText(pdf, titleText, PAGE_W / 2, y + 5, {
-    size: 16, color: C.brand, style: 'bold', align: 'center',
+  drawText(pdf, titleText, PAGE_W / 2, y + 7, {
+    size: 20, color: C.brand, style: 'bold', align: 'center',
   });
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(20);
   const tw = pdf.getTextWidth(titleText);
-  drawLine(pdf, (PAGE_W - tw) / 2, y + 7.5, (PAGE_W + tw) / 2, y + 7.5,
-    { color: C.brand, width: 0.4 });
-  return y + 8;
+  drawLine(pdf, (PAGE_W - tw) / 2, y + 10, (PAGE_W + tw) / 2, y + 10,
+    { color: C.brand, width: 0.5 });
+  return y + 12;
 }
 
-// Section header — green-tinted band with brand-coloured left edge.
+// Section header — full-width green-tinted band with a thicker brand-
+// coloured left stripe. Promoted from permissionRequestPdf.js so every
+// form uses the same visual treatment. Nadeem 2026-05-18: 'I really
+// like the clean structure in Permission Request — Late Arrival.'
+//
+// Why these dimensions: 9mm tall + 2.2mm left stripe reads as a
+// genuine section break at print size — small enough to not dominate
+// the page, big enough to be unmistakable. The 11pt brand-green label
+// sits comfortably inside with breathing room on every side.
 export function drawSectionHeader(pdf, y, text) {
-  const h = 7;
+  const h = 9;
   drawRect(pdf, MARGIN_X, y, CONTENT_W, h, { fill: C.accent });
-  drawRect(pdf, MARGIN_X, y, 1.5, h, { fill: C.brand });
-  drawText(pdf, text, MARGIN_X + 5, y + 4.8, {
-    size: 9.5, color: C.brand, style: 'bold',
+  drawRect(pdf, MARGIN_X, y, 2.2, h, { fill: C.brand });
+  drawText(pdf, text, MARGIN_X + 7, y + 6.2, {
+    size: 11, color: C.brand, style: 'bold',
   });
-  return y + h + 1;
+  return y + h + 1.5;
+}
+
+// Single info row — label on the left (muted), value on the right (text
+// color). The clean form-style row used throughout permission PDFs and
+// now adopted across every form. Returns the y position after the row,
+// including the closing hairline divider. Promoted from
+// permissionRequestPdf.js so every form generator can use the same
+// pattern. Nadeem 2026-05-18.
+export function drawSingleRow(pdf, y, label, value, { emphasis = false } = {}) {
+  const labelW  = 60;
+  const valueW  = CONTENT_W - labelW - 4;
+  const wrapped = pdf.splitTextToSize(String(value ?? '—'), valueW);
+  const lineCount = Array.isArray(wrapped) ? wrapped.length : 1;
+  const rowH = Math.max(8.5, lineCount * 4.5 + 2.5);
+  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
+    { color: C.border, width: 0.2 });
+  drawText(pdf, label, MARGIN_X + 3, y + 6, {
+    size: 10, color: C.muted, style: 'bold',
+  });
+  pdf.setFont('helvetica', emphasis ? 'bold' : 'normal');
+  pdf.setFontSize(11);
+  pdf.setTextColor(...C.text);
+  pdf.text(wrapped, MARGIN_X + labelW + 2, y + 6);
+  drawLine(pdf, MARGIN_X, y + rowH, MARGIN_X + CONTENT_W, y + rowH,
+    { color: C.border, width: 0.2 });
+  return y + rowH;
 }
 
 // Two-column label-value table. Each row is [[labelA, valueA], [labelB, valueB]];
