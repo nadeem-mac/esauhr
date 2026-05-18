@@ -1,18 +1,26 @@
 -- ════════════════════════════════════════════════════════════════════════
 --  migration_reset_leaves_for_testing.sql
 --
---  Clears every leave application + related transactional data so HR can
---  test the full leave workflow on real employees from scratch. Run this
---  ONCE in the Supabase SQL Editor before kicking off a testing round.
+--  Clears every leave application + permission request + related
+--  transactional data so HR can test the full leave + permission
+--  workflows on real employees from scratch. Run this ONCE in the
+--  Supabase SQL Editor before kicking off a testing round.
 --
 --  Nadeem 2026-05-18: 'okay let us do the testing for staff, reset all
 --  leaves so we can try testing on few staff and see how it works.'
+--  '… permission request should be reset, i want to try each case one
+--  by one'
 --
 -- ── WHAT GETS DELETED ───────────────────────────────────────────────────
 --    • leave_requests             — every submitted leave (all statuses)
+--    • permission_requests        — every late-arrival / early-departure
+--                                   request (the separate workflow)
 --    • sick_reminders             — daily reminder rows for pending certs
---    • notifications (leave only) — bell-badge entries tied to leaves
---    • audit_log (leave only)     — audit rows for leave events
+--    • notifications (leave/perm) — bell-badge entries tied to leaves
+--                                   or permissions
+--    • audit_log (leave/perm)     — audit rows for leave / sick /
+--                                   substitute / rejoin / permission
+--                                   events
 --    • leave_balances adjustments — manual HR-set carry/adjustment values
 --                                   (set back to 0 / NULL so balances
 --                                   show the clean entitlement)
@@ -25,7 +33,6 @@
 --    • attendance_uploads         — historical Excel imports
 --    • attendance_violations      — independent of leave data
 --    • evaluation_scores          — computed from violations, untouched
---    • permission_requests        — separate workflow (Late Arrival / EOD)
 --    • rejoining_reports          — rejoin signatures (kept as paper trail)
 --                                   Note: if you also want these cleared,
 --                                   uncomment the rejoin block below.
@@ -60,12 +67,13 @@ DECLARE
   -- like ARRAY['H94328', 'H94830'] to reset just those people.
   EMP_FILTER text[] := NULL;
 
-  cnt_leaves    bigint;
-  cnt_reminders bigint;
-  cnt_notifs    bigint;
-  cnt_audit     bigint;
-  cnt_balances  bigint;
-  scope_label   text;
+  cnt_leaves      bigint;
+  cnt_reminders   bigint;
+  cnt_permissions bigint;
+  cnt_notifs      bigint;
+  cnt_audit       bigint;
+  cnt_balances    bigint;
+  scope_label     text;
 BEGIN
   scope_label := CASE
     WHEN EMP_FILTER IS NULL THEN 'ALL EMPLOYEES'
@@ -110,6 +118,27 @@ BEGIN
     RAISE NOTICE '  – sick_reminders table not present, skipping';
   END IF;
 
+  -- ── permission_requests ────────────────────────────────────────────
+  -- Late-arrival / early-departure requests — separate workflow from
+  -- leave but follows the same testing pattern. Cleared so HR can
+  -- submit fresh permission tests too. Nadeem 2026-05-18: 'permission
+  -- request should be reset, i want to try each case one by one'.
+  IF to_regclass('public.permission_requests') IS NOT NULL THEN
+    IF EMP_FILTER IS NULL THEN
+      SELECT count(*) INTO cnt_permissions FROM permission_requests;
+      DELETE FROM permission_requests WHERE TRUE;
+    ELSE
+      SELECT count(*) INTO cnt_permissions
+        FROM permission_requests
+       WHERE employee_id = ANY(EMP_FILTER);
+      DELETE FROM permission_requests
+       WHERE employee_id = ANY(EMP_FILTER);
+    END IF;
+    RAISE NOTICE '  ✓ deleted % permission_requests rows', cnt_permissions;
+  ELSE
+    RAISE NOTICE '  – permission_requests table not present, skipping';
+  END IF;
+
   -- 3. notifications tied to leave events.
   --
   --    The schema of this table varies between Supabase projects (some
@@ -143,18 +172,20 @@ BEGIN
       -- Build the OR-chain of column matchers, only including columns
       -- the table actually has.
       IF has_entity_type THEN
-        where_clause := where_clause || ' OR COALESCE(entity_type, '''') IN (''leave_request'', ''leave'', ''sick_certificate'')';
+        where_clause := where_clause || ' OR COALESCE(entity_type, '''') IN (''leave_request'', ''leave'', ''sick_certificate'', ''permission_request'', ''permission'')';
       END IF;
       IF has_kind THEN
         where_clause := where_clause || ' OR COALESCE(kind, '''') LIKE ''leave_%''';
         where_clause := where_clause || ' OR COALESCE(kind, '''') LIKE ''sick_%''';
+        where_clause := where_clause || ' OR COALESCE(kind, '''') LIKE ''permission_%''';
       END IF;
       IF has_category THEN
-        where_clause := where_clause || ' OR COALESCE(category, '''') IN (''leave'', ''sick_cert'')';
+        where_clause := where_clause || ' OR COALESCE(category, '''') IN (''leave'', ''sick_cert'', ''permission'')';
       END IF;
       IF has_type THEN
         where_clause := where_clause || ' OR COALESCE(type, '''') LIKE ''leave_%''';
         where_clause := where_clause || ' OR COALESCE(type, '''') LIKE ''sick_%''';
+        where_clause := where_clause || ' OR COALESCE(type, '''') LIKE ''permission_%''';
       END IF;
 
       IF where_clause = '' THEN
@@ -223,7 +254,8 @@ BEGIN
         where_action := '(COALESCE(action, '''') LIKE ''leave_%''
                        OR COALESCE(action, '''') LIKE ''sick_%''
                        OR COALESCE(action, '''') LIKE ''substitute_%''
-                       OR COALESCE(action, '''') LIKE ''rejoin_%'')';
+                       OR COALESCE(action, '''') LIKE ''rejoin_%''
+                       OR COALESCE(action, '''') LIKE ''permission_%'')';
 
         -- Scope clause uses whichever employee-pointer columns the
         -- table actually has (actor_id / target_id / employee_id).
