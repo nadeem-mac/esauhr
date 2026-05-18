@@ -272,15 +272,40 @@ export function calculateBalance({ employee, leaveType, year, requests = [], adj
 }
 
 // ──────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────
 //  OVERLAP DETECTION — returns requests that conflict with a proposed range
+//
+//  Active = approved OR any pending_* stage. We deliberately catch
+//  every pending sub-state (pending_substitutes, pending_manager,
+//  pending_hr, pending_certificate) so a staff member can't submit
+//  multiple overlapping requests while one is in flight.
+//
+//  Stage is the modern source of truth. The legacy `status` column
+//  is still set by HrApprovalModal for finalised rows, so we fall
+//  back to it for any row where stage is missing — covers schema-
+//  era data from before the stage migration. Nadeem 2026-05-18:
+//  'LV-1B33AC2A is overlapping' — confirmed the prior narrow filter
+//  ('status === pending' literal) missed every modern pending row,
+//  hence overlap warnings only fired against HR-approved leaves.
 // ──────────────────────────────────────────────────────────────────────
 export function findOverlappingRequests(employeeId, startDate, endDate, requests, excludeId = null) {
-  return requests.filter(r =>
-    r.employee_id === employeeId &&
-    r.id !== excludeId &&
-    (r.status === 'approved' || r.status === 'pending') &&
-    !(r.end_date < startDate || r.start_date > endDate)
-  );
+  return requests.filter(r => {
+    if (r.employee_id !== employeeId) return false;
+    if (r.id === excludeId)          return false;
+
+    const stage  = r.stage  || '';
+    const status = r.status || '';
+    const isActive =
+        stage === 'approved'
+     || stage.startsWith('pending')
+     || status === 'approved'                      // legacy fallback
+     || status === 'pending';                      // legacy fallback
+    if (!isActive) return false;
+
+    // Date-range overlap: two ranges overlap unless one ends before
+    // the other starts. String comparison works for ISO YYYY-MM-DD.
+    return !(r.end_date < startDate || r.start_date > endDate);
+  });
 }
 
 // ──────────────────────────────────────────────────────────────────────

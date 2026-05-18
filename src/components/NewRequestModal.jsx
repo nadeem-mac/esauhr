@@ -511,7 +511,12 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
             <Warning kind="warn">
               Overlaps with {overlapping.length} other {overlapping.length === 1 ? 'request' : 'requests'} for this employee:
               <ul className="mt-1 ml-4 list-disc">
-                {overlapping.map(o => <li key={o.id}>{fmtDateShort(o.start_date)} → {fmtDateShort(o.end_date)} ({o.status})</li>)}
+                {overlapping.map(o => (
+                  <li key={o.id}>
+                    {fmtDateShort(o.start_date)} → {fmtDateShort(o.end_date)}
+                    {' '}({o.stage || o.status || 'unknown'})
+                  </li>
+                ))}
               </ul>
             </Warning>
           )}
