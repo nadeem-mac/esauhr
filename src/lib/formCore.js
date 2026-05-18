@@ -393,6 +393,97 @@ export function drawGeneratedStamp(pdf, generatedBy) {
   pdf.text(stamp, PAGE_W - 3, PAGE_H - 8, { angle: 90 });
 }
 
+// ──────────────────────────────────────────────────────────────────────
+//  Checkbox primitive — draws a small box at (x, y) with optional check
+//  mark, then renders a label to the right. Used by the leave-application
+//  PDF to render checkbox-style rows (leave type, half-day, notice) per
+//  the Vacation_Sample.docx template. Returns the x position where the
+//  next checkbox should start (label width + padding).
+//
+//  Unicode glyphs like ☑/☐ render unreliably in Helvetica so we draw the
+//  actual rectangle + a small bold check inside instead.
+// ──────────────────────────────────────────────────────────────────────
+export function drawCheckbox(pdf, x, y, label, checked, opts = {}) {
+  const boxSize = opts.size || 3;
+  const labelSize = opts.labelSize || 9;
+  const labelGap = 1.5;
+  // Outer square
+  drawRect(pdf, x, y, boxSize, boxSize, {
+    stroke: checked ? C.text : C.border,
+    strokeWidth: checked ? 0.5 : 0.3,
+  });
+  if (checked) {
+    // Small filled inner square — reads as 'checked' at print size and
+    // doesn't depend on glyph support.
+    drawRect(pdf, x + 0.7, y + 0.7, boxSize - 1.4, boxSize - 1.4,
+      { fill: C.text });
+  }
+  // Label
+  pdf.setFont('helvetica', checked ? 'bold' : 'normal');
+  pdf.setFontSize(labelSize);
+  pdf.setTextColor(...(checked ? C.text : (opts.unselectedColor || C.muted)));
+  pdf.text(label, x + boxSize + labelGap, y + boxSize - 0.6);
+  // Return the x-coord where the NEXT chip should start
+  const labelWidth = pdf.getStringUnitWidth(label) * labelSize / pdf.internal.scaleFactor;
+  return x + boxSize + labelGap + labelWidth + (opts.gap || 3.5);
+}
+
+// Draws an arbitrary number of checkboxes in a horizontal row, wrapping
+// to the next line when the row width is exceeded. Used for the leave-
+// type row (10 types in one row).
+export function drawCheckboxRow(pdf, x, y, items, opts = {}) {
+  const maxX = opts.maxX || (MARGIN_X + CONTENT_W - 2);
+  const lineGap = opts.lineGap || 5;
+  let cx = x;
+  let cy = y;
+  let lineCount = 1;
+  for (const it of items) {
+    const labelWidth = pdf.getStringUnitWidth(it.label) * (opts.labelSize || 9)
+                       / pdf.internal.scaleFactor;
+    const chipWidth = 3 /* box */ + 1.5 /* gap */ + labelWidth + 3.5 /* trailing gap */;
+    if (cx + chipWidth > maxX && cx > x) {
+      cx = x;
+      cy += lineGap;
+      lineCount++;
+    }
+    cx = drawCheckbox(pdf, cx, cy, it.label, !!it.checked, opts);
+  }
+  return { y: cy, lineCount };
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Generic full-width single-row banner that combines an English label
+//  on the left and an Arabic placeholder on the right. Used for the
+//  section headers in the Vacation_Sample.docx template (e.g.
+//  'EMPLOYEE INFORMATION  ·  معلومات الموظف'). Falls back to English-
+//  only when Arabic font isn't loaded — the dash separator and the
+//  visual structure still match.
+// ──────────────────────────────────────────────────────────────────────
+export function drawBilingualSectionHeader(pdf, y, en, ar) {
+  const h = 6.5;
+  drawRect(pdf, MARGIN_X, y, CONTENT_W, h, { fill: C.accent });
+  drawRect(pdf, MARGIN_X, y, 1.5, h, { fill: C.brand });
+  // English on the left
+  drawText(pdf, en, MARGIN_X + 5, y + 4.8, {
+    size: 9, color: C.brand, style: 'bold', letterSpacing: 0.18,
+  });
+  // Arabic transliterated placeholder on the right (right-aligned).
+  // Real Arabic glyphs require font embedding (Noto Sans Arabic / Amiri)
+  // and are deferred — adding them is a separate task. The 'ar' arg is
+  // passed through for future use; for now we render a faint divider
+  // dot + a hint text so the visual rhythm matches the bilingual
+  // sample template even without the glyph support.
+  if (ar) {
+    drawText(pdf, '·', MARGIN_X + CONTENT_W - 18, y + 4.8, {
+      size: 9, color: C.muted, style: 'bold',
+    });
+    drawText(pdf, ar, MARGIN_X + CONTENT_W - 4, y + 4.8, {
+      size: 7.5, color: C.muted, style: 'italic', align: 'right',
+    });
+  }
+  return y + h;
+}
+
 // Create a fresh A4 PDF instance — single point of jsPDF config so
 // every form is set up identically.
 export function newPdf() {

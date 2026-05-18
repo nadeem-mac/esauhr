@@ -28,6 +28,7 @@ import {
   drawHeader, drawTitle, drawSectionHeader, drawTwoColTable,
   drawLabelValueTable, drawPolicyBullets, drawSignatures, drawGeneratedStamp,
   drawTickbox, drawText, drawLine, drawRect,
+  drawCheckbox, drawCheckboxRow, drawBilingualSectionHeader,
   C, MARGIN_X, MARGIN_T, PAGE_W, PAGE_H, CONTENT_W,
   DEPT_NAMES, LOC_NAMES, CEO_NAME, CEO_TITLE_EN, HR_DEFAULT,
   fmtDateLong, fmtDateShort, shortRef,
@@ -295,7 +296,7 @@ function drawTypeSpecificSection(pdf, y, request, employee = {}) {
 // require both. Nadeem 2026-05-17.
 
 function drawSubstitutes(pdf, y, subs = []) {
-  y = drawSectionHeader(pdf, y, 'SUBSTITUTE COVERAGE');
+  y = drawBilingualSectionHeader(pdf, y, 'SUBSTITUTE COVERAGE', 'البديل أثناء الغياب');
   const colW = [10, 80, 60, 32];   // # · Name · Signature · Date
   const headers = ['#', 'SUBSTITUTE', 'SIGNATURE', 'DATE'];
   const rowH = 18;  // taller row so the signature box is genuinely usable
@@ -398,68 +399,190 @@ export async function generateLeaveApplicationPdfBlob({
   y = drawLeaveTypeRow(pdf, y, ltKey);
   y += 3;
 
-  // Employee Information — read from DB-canonical column names.
-  // employee.join_date (not 'joined'), service years computed inline
-  // since it isn't a DB column. Email/phone added so HR can contact
-  // the staff member during their leave without leaving the PDF.
-  y = drawSectionHeader(pdf, y, 'EMPLOYEE INFORMATION');
-  const deptLabel = position.department
-    ? `${position.department}${DEPT_NAMES[position.department] ? ' — ' + DEPT_NAMES[position.department] : ''}`
-    : '—';
-  const locLabel = position.location
-    ? `${position.location}${LOC_NAMES[position.location] ? ' — ' + LOC_NAMES[position.location] : ''}`
-    : '—';
-  // Service years derived from join_date so it's always current at
-  // PDF-generation time even if the row was pulled hours earlier.
-  let serviceLabel = '—';
+  // Employee Information — 5 rows matching the Vacation_Sample.docx
+  // template exactly. Combined fields where the sample does so:
+  //   Department  = '{dept name} · {location}'   (e.g. 'Business · Dammam')
+  //   Joined/Tenure = '{join date}  ·  {tenure}' (e.g. '01 Aug 2021 · 4 years 9 months')
+  // Email, phone, reports-to, and stage are intentionally NOT in the
+  // sample — they live elsewhere in the system (Employee detail modal,
+  // attendance views) and including them on the leave application
+  // would clutter the form. Bilingual headers via
+  // drawBilingualSectionHeader (Arabic glyphs deferred — see formCore).
+  y = drawBilingualSectionHeader(pdf, y, 'EMPLOYEE INFORMATION', 'معلومات الموظف');
+
+  // Combined dept + location string. Department name expansion uses
+  // DEPT_NAMES (e.g. SUP → Supervisory). Location uses the long form
+  // (e.g. DMM → Dammam). Falls back gracefully when either is missing.
+  const deptExpanded = position.department
+    ? (DEPT_NAMES[position.department] || position.department)
+    : '';
+  const locExpanded = position.location
+    ? (LOC_NAMES[position.location] || position.location)
+    : '';
+  const deptLocLabel = [deptExpanded, locExpanded].filter(Boolean).join('  ·  ') || '—';
+
+  // Service tenure — always computed at PDF-gen time from join_date
+  // so it's never stale. Combined with the join date in one cell to
+  // match the sample's 'Joined / Tenure' row.
+  let joinedTenureLabel = '—';
   if (employee.join_date) {
     const ms = Date.now() - new Date(employee.join_date).getTime();
-    const yrs  = Math.floor(ms / (1000 * 60 * 60 * 24 * 365.25));
-    const mos  = Math.floor((ms / (1000 * 60 * 60 * 24 * 30.44)) % 12);
-    serviceLabel = `${yrs} year${yrs === 1 ? '' : 's'} ${mos} month${mos === 1 ? '' : 's'}`;
+    const yrs = Math.floor(ms / (1000 * 60 * 60 * 24 * 365.25));
+    const mos = Math.floor((ms / (1000 * 60 * 60 * 24 * 30.44)) % 12);
+    const tenure = `${yrs} year${yrs === 1 ? '' : 's'}${mos > 0 ? `, ${mos} month${mos === 1 ? '' : 's'}` : ''}`;
+    joinedTenureLabel = `${fmtDateShort(employee.join_date)}   ·   ${tenure}`;
   }
-  y = drawTwoColTable(pdf, y, [
-    [['Full name',     employee.name],                          ['PSN ID',         employee.id]],
-    [['Designation',   position.designation || employee.designation || '—'],
-                                                                ['Department',     deptLabel]],
-    [['Location',      locLabel],                               ['Reports to',     manager?.name || '—']],
-    [['Joined',        fmtDateShort(employee.join_date)],       ['Service',        serviceLabel]],
-    [['Email',         employee.email || '—'],                  ['Phone',          employee.phone || '—']],
+
+  // Use the existing drawLabelValueTable (single column, label on left,
+  // value taking full width on right) since the sample's employee info
+  // rows are full-width with a single bold value, not two-column. This
+  // matches the sample layout better than the two-col table did.
+  y = drawLabelValueTable(pdf, y, [
+    ['Employee name',     employee.name || '—'],
+    ['PSN ID',            employee.id   || '—'],
+    ['Department',        deptLocLabel],
+    ['Designation',       position.designation || employee.designation || '—'],
+    ['Joined / Tenure',   joinedTenureLabel],
   ]);
   y += 3;
 
-  // Leave Details — read from DB-canonical names. `request.days` (not
-  // duration_days), `request.requested_at` (not submitted_at). Urgency
-  // derived from the notice window between requested_at and start_date
-  // since there's no separate `urgency` column.
-  y = drawSectionHeader(pdf, y, 'LEAVE DETAILS');
+  // ─── Leave Details ──────────────────────────────────────────────────
+  // Sample format:
+  //   Leave type → checkbox row showing ALL 10 types with ☑ for selected
+  //   Period    → 'Wednesday, 13 May 2026' (long format for single day,
+  //               date range for multi-day)
+  //   Duration  → 'N day' + half-day checkbox inline
+  //   Notice    → ☑/☐ Planned (≥14 days)  ☑/☐ Urgent (<14 days)
+  //   Reason    → free text or '—'
+  //   Submitted → 'DD MMM YYYY · HH:MM' (no stage field on the sample)
+  y = drawBilingualSectionHeader(pdf, y, 'LEAVE DETAILS', 'تفاصيل الإجازة');
+
+  // Leave type checkbox row — render every leave type, check only the
+  // active one. Order matches the sample (Annual first, Other last).
+  // Pre-build the row outside the table so we can use the wider
+  // checkbox row primitive. Anchor at the standard label column.
+  const LEAVE_TYPE_LIST = [
+    { id: 'annual',      label: 'Annual' },
+    { id: 'sick',        label: 'Sick' },
+    { id: 'emergency',   label: 'Emergency' },
+    { id: 'hajj',        label: 'Hajj' },
+    { id: 'maternity',   label: 'Maternity' },
+    { id: 'paternity',   label: 'Paternity' },
+    { id: 'marriage',    label: 'Marriage' },
+    { id: 'bereavement', label: 'Bereavement' },
+    { id: 'unpaid',      label: 'Unpaid' },
+    { id: 'other',       label: 'Other' },
+  ];
+  // Reserve a label column (42mm wide like drawLabelValueTable) so the
+  // checkbox row aligns visually with the other field rows.
+  const labelColW = 42;
+  // Outer container row — bordered top + bottom so it reads as one row
+  // of the field table. Height is dynamic since the checkbox row wraps.
+  const rowStartY = y;
+  drawText(pdf, 'Leave type', MARGIN_X + 1, y + 5, {
+    size: 8.5, color: C.muted, style: 'bold',
+  });
+  const cbResult = drawCheckboxRow(pdf,
+    MARGIN_X + labelColW + 2,
+    y + 1.5,
+    LEAVE_TYPE_LIST.map(t => ({
+      label: t.label,
+      checked: ltKey === t.id,
+    })),
+    { size: 2.8, labelSize: 8.5, gap: 2.5, lineGap: 4.5 }
+  );
+  // Row height = checkbox lines * line height + padding
+  const cbRowH = Math.max(7, cbResult.lineCount * 4.5 + 2);
+  y = rowStartY + cbRowH;
+  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
+    { color: C.border, width: 0.15 });
+
+  // Period row — long format for single-day leaves matches the sample;
+  // multi-day shows the inclusive range.
   const periodLabel = request.start_date && request.end_date
     ? (request.start_date === request.end_date
         ? fmtDateLong(request.start_date)
         : `${fmtDateShort(request.start_date)}  —  ${fmtDateShort(request.end_date)}`)
     : '—';
-  // Notice window: planned if >= 14 days before start, urgent otherwise.
-  // Computed here so the PDF doesn't depend on a column that may not
-  // exist (`urgency` isn't on leave_requests).
-  let noticeLabel = '—';
+
+  // Duration + half-day checkbox combined into one cell to match the
+  // sample's '1 day · ☐ Half day' layout.
+  const durationY = y;
+  drawText(pdf, 'Duration', MARGIN_X + 1, durationY + 5, {
+    size: 8.5, color: C.muted, style: 'bold',
+  });
+  const durLabel = request.days
+    ? `${request.days} day${Number(request.days) === 1 ? '' : 's'}`
+    : '—';
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(9.5);
+  pdf.setTextColor(...C.text);
+  pdf.text(durLabel, MARGIN_X + labelColW + 2, durationY + 5);
+  // Half-day checkbox inline, ~25mm to the right of the duration value
+  const halfDayX = MARGIN_X + labelColW + 2 +
+    (pdf.getStringUnitWidth(durLabel) * 9.5 / pdf.internal.scaleFactor) + 6;
+  drawText(pdf, '·', halfDayX - 3, durationY + 5,
+    { size: 9, color: C.muted });
+  drawCheckbox(pdf, halfDayX, durationY + 2.2,
+    `Half day${request.is_half_day && request.half_day_period ? ` (${request.half_day_period})` : ''}`,
+    !!request.is_half_day,
+    { size: 2.8, labelSize: 8.5 });
+  y = durationY + 7;
+  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
+    { color: C.border, width: 0.15 });
+
+  // Period row (single-line value, full-width)
+  const periodY = y;
+  drawText(pdf, 'Period', MARGIN_X + 1, periodY + 5, {
+    size: 8.5, color: C.muted, style: 'bold',
+  });
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(9.5);
+  pdf.setTextColor(...C.text);
+  pdf.text(periodLabel, MARGIN_X + labelColW + 2, periodY + 5);
+  y = periodY + 7;
+  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
+    { color: C.border, width: 0.15 });
+
+  // Notice — checkbox pair (Planned vs Urgent). Derived from the
+  // notice window between requested_at and start_date since there's
+  // no separate `urgency` column.
+  let isPlanned = false;
+  let isUrgent  = false;
   if (request.requested_at && request.start_date) {
     const noticeDays = Math.round(
       (new Date(request.start_date) - new Date(request.requested_at)) / 86400000
     );
-    noticeLabel = noticeDays >= 14
-      ? `Planned  (${noticeDays} days advance notice)`
-      : `Urgent  (${noticeDays} days notice — less than 14)`;
+    isPlanned = noticeDays >= 14;
+    isUrgent  = !isPlanned;
   }
-  y = drawTwoColTable(pdf, y, [
-    [['Period',         periodLabel],
-     ['Duration',       request.days ? `${request.days} day${Number(request.days) === 1 ? '' : 's'}` : '—']],
-    [['Notice',         noticeLabel],
-     ['Half day',       request.is_half_day ? `Yes (${request.half_day_period || 'Morning'})` : 'No']],
-    [['Submitted',      fmtDateShort(request.requested_at)],
-     ['Stage',          request.stage || 'pending_manager']],
-  ]);
+  const noticeY = y;
+  drawText(pdf, 'Notice', MARGIN_X + 1, noticeY + 5, {
+    size: 8.5, color: C.muted, style: 'bold',
+  });
+  let nx = MARGIN_X + labelColW + 2;
+  nx = drawCheckbox(pdf, nx, noticeY + 2.2, 'Planned (≥14 days)',
+    isPlanned, { size: 2.8, labelSize: 8.5, gap: 4 });
+  drawCheckbox(pdf, nx, noticeY + 2.2, 'Urgent (<14 days)',
+    isUrgent, { size: 2.8, labelSize: 8.5 });
+  y = noticeY + 7;
+  drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
+    { color: C.border, width: 0.15 });
+
+  // Reason — multi-line, full-width value
   y = drawLabelValueTable(pdf, y, [
     ['Reason / details', request.reason || '—'],
+  ]);
+
+  // Submitted — last row, stamps the request creation time
+  const submittedLabel = request.requested_at
+    ? `${fmtDateShort(request.requested_at)}  ·  ${
+        new Date(request.requested_at).toLocaleTimeString('en-GB', {
+          hour: '2-digit', minute: '2-digit', hour12: false,
+        })}`
+    : '—';
+  y = drawLabelValueTable(pdf, y, [
+    ['Submitted', submittedLabel],
   ]);
   y += 3;
 
@@ -475,18 +598,44 @@ export async function generateLeaveApplicationPdfBlob({
   }
 
   // Policy specific to this leave type
-  y = drawSectionHeader(pdf, y, 'POLICY · KSA LABOR LAW');
+  y = drawBilingualSectionHeader(pdf, y, 'POLICY · KSA LABOR LAW', 'سياسة الإجازات · نظام العمل السعودي');
   const policy = POLICY_BY_TYPE[ltKey] || POLICY_BY_TYPE.other;
   y = drawPolicyBullets(pdf, y, policy);
 
-  // Signatures anchored to bottom
+  // 4-cell signature grid matching the Vacation_Sample.docx template:
+  // EMPLOYEE / DEPT MGR / ESAU SUP / ESAU MGT — short labels with the
+  // person's name + their status (Submitted / Approved date · time).
+  // Subtitles convey the workflow stage so the printed form reads as
+  // a full audit trail without HR having to annotate it.
   const sigH = 35.4;
   const sigY = PAGE_H - MARGIN_T - sigH;
+
+  // Stamp subtitles — show when each role acted, in the same compact
+  // 'DD MMM · HH:MM' format the sample uses. Falls back to 'Signature
+  // & Date' when the role hasn't acted yet.
+  const fmtCompactStamp = (iso) => {
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return null;
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = d.toLocaleString('en-GB', { month: 'short' });
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mn = String(d.getMinutes()).padStart(2, '0');
+    return `${dd} ${mm}  ·  ${hh}:${mn}`;
+  };
+  const submittedStamp = fmtCompactStamp(request.requested_at);
+  const managerStamp   = fmtCompactStamp(request.manager_decided_at);
+  const hrStamp        = fmtCompactStamp(request.hr_decided_at);
+
   drawSignatures(pdf, sigY, [
-    { label: 'EMPLOYEE',          name: employee.name || '',     subtitle: 'Signature & Date' },
-    { label: 'DEPARTMENT HEAD',   name: manager?.name || '',     subtitle: 'Approve & Date' },
-    { label: 'ESAU HR',           name: hrName,                  subtitle: 'Process & Stamp' },
-    { label: 'MANAGEMENT',        name: CEO_NAME,                subtitle: CEO_TITLE_EN },
+    { label: 'EMPLOYEE',  name: employee.name || '',
+      subtitle: submittedStamp ? `Submitted ${submittedStamp}` : 'Signature & Date' },
+    { label: 'DEPT MGR',  name: manager?.name || '',
+      subtitle: managerStamp ? `Approved ${managerStamp}` : 'Approve & Date' },
+    { label: 'ESAU SUP',  name: hrName,
+      subtitle: hrStamp ? `Approved ${hrStamp}` : 'Process & Stamp' },
+    { label: 'ESAU MGT',  name: CEO_NAME,
+      subtitle: CEO_TITLE_EN },
   ]);
 
   drawGeneratedStamp(pdf, hrName);
