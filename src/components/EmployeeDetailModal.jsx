@@ -551,7 +551,7 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                       padding: '8px 10px 8px',
                       paddingTop: 10,
                     }}
-                    title={`${balance.used} used · ${balance.pending} pending · ${balance.available} available${balance.accrualNote ? ' · ' + balance.accrualNote : ''}`}
+                    title={`${balance.used} used · ${balance.pending} pending · ${balance.available} available`}
                   >
                     {/* Color stripe */}
                     <div

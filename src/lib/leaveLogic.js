@@ -122,42 +122,101 @@ export function fullAnnualEntitlement(joinDate, asOf = new Date()) {
 
 // ──────────────────────────────────────────────────────────────────────
 //  PRO-RATA ANNUAL ENTITLEMENT for a given year
-//  - If the employee joined before the year started, they get the full entitlement.
-//  - If they joined during the year, entitlement is pro-rated from their join date.
-//  - Days earned so far = (days served this year / days in year) × full entitlement
+//
+//  KSA Labour Law Article 109: 21 days/year for the first 5 years of
+//  service; 30 days/year from the 5-year anniversary onward. When the
+//  5-year mark falls MID-YEAR (common case for ESAU's 2021 hires
+//  crossing the line in 2026), we pro-rate the year:
+//
+//      proRatedForYear = 21 × (days before anniversary / 365)
+//                      + 30 × (days from anniversary  / 365)
+//
+//  Edge cases:
+//   • 5-year anniversary already passed before the year started
+//       → whole year at the 30-day rate
+//   • 5-year anniversary still ahead at year end
+//       → whole year at the 21-day rate
+//   • Employee joined mid-year (no previous service)
+//       → only count from their join date through year end
+//
+//  `earned` follows the same split logic but caps at today (asOf) so
+//  the front-loaded display can still show 'earned to date' if a
+//  caller wants it. The NewRequestModal no longer renders that note
+//  (Nadeem 2026-05-18: front-loaded policy means the footnote is
+//  misleading) — but the field stays on the return for any future
+//  caller that does want an accrual-aware view.
 // ──────────────────────────────────────────────────────────────────────
 export function annualEntitlementForYear(joinDate, year, asOf = new Date()) {
-  if (!joinDate) return { full: 21, earned: 21, remaining: 0 };
+  if (!joinDate) return { full: 21, proRatedForYear: 21, earned: 21, remaining: 0 };
 
   const yearStart = new Date(year, 0, 1);
-  const yearEnd = new Date(year, 11, 31);
-  const join = new Date(joinDate);
-  const today = asOf instanceof Date ? asOf : new Date(asOf);
+  const yearEnd   = new Date(year, 11, 31);
+  const join      = new Date(joinDate);
+  const today     = asOf instanceof Date ? asOf : new Date(asOf);
 
-  const fullEntitlement = fullAnnualEntitlement(joinDate, yearEnd);
+  // 5-year anniversary — the day the rate steps from 21 → 30.
+  const fiveYears = new Date(join);
+  fiveYears.setFullYear(fiveYears.getFullYear() + 5);
 
-  // If they joined after the year ends, zero
-  if (join > yearEnd) return { full: fullEntitlement, earned: 0, remaining: 0 };
+  // 'full' is the rate at year end. Useful for display headers
+  // ('Eligible for 30 days/year') even when this specific year's
+  // pro-rated total is less than 30 due to a mid-year transition.
+  const fullEntitlement = fiveYears <= yearEnd ? 30 : 21;
 
+  // Joined after the year ends → zero entitlement for this year.
+  if (join > yearEnd) {
+    return { full: fullEntitlement, proRatedForYear: 0, earned: 0, remaining: 0 };
+  }
+
+  // Effective start = later of (employee join, year start).
   const effectiveStart = join > yearStart ? join : yearStart;
-  const totalDaysInYear =
-    Math.floor((yearEnd - yearStart) / MS_PER_DAY) + 1;
-  const daysAsEmployee =
-    Math.floor((yearEnd - effectiveStart) / MS_PER_DAY) + 1;
 
-  const fullForThisYear =
-    (daysAsEmployee / totalDaysInYear) * fullEntitlement;
+  const totalDaysInYear = Math.floor((yearEnd - yearStart) / MS_PER_DAY) + 1;
 
-  // Days earned "so far" (for accrual-aware balance display)
-  const asOfCapped = today > yearEnd ? yearEnd : today < effectiveStart ? effectiveStart : today;
-  const daysElapsed = Math.floor((asOfCapped - effectiveStart) / MS_PER_DAY) + 1;
-  const earned = (daysElapsed / totalDaysInYear) * fullEntitlement;
+  // Helper: count days at the 21-rate vs 30-rate within a sub-range
+  // of the year, returning [daysAt21, daysAt30].
+  const splitRates = (rangeStart, rangeEnd) => {
+    if (rangeEnd < rangeStart) return [0, 0];
+    if (fiveYears <= rangeStart) {
+      // Entire range is on/after the anniversary → all at 30
+      const days = Math.floor((rangeEnd - rangeStart) / MS_PER_DAY) + 1;
+      return [0, days];
+    }
+    if (fiveYears > rangeEnd) {
+      // Entire range is before the anniversary → all at 21
+      const days = Math.floor((rangeEnd - rangeStart) / MS_PER_DAY) + 1;
+      return [days, 0];
+    }
+    // Split: [rangeStart … day-before-anniversary] @ 21
+    //        [anniversary … rangeEnd]              @ 30
+    const dayBeforeAnniv = new Date(fiveYears);
+    dayBeforeAnniv.setDate(dayBeforeAnniv.getDate() - 1);
+    const daysAt21 = Math.floor((dayBeforeAnniv - rangeStart) / MS_PER_DAY) + 1;
+    const daysAt30 = Math.floor((rangeEnd - fiveYears) / MS_PER_DAY) + 1;
+    return [Math.max(0, daysAt21), Math.max(0, daysAt30)];
+  };
+
+  // Whole-year pro-rated entitlement (effectiveStart → yearEnd).
+  const [yearDays21, yearDays30] = splitRates(effectiveStart, yearEnd);
+  const proRatedForYear =
+      21 * (yearDays21 / totalDaysInYear)
+    + 30 * (yearDays30 / totalDaysInYear);
+
+  // Earned-to-date (effectiveStart → today, capped at year end).
+  const asOfCapped =
+        today > yearEnd        ? yearEnd
+      : today < effectiveStart ? effectiveStart
+      :                          today;
+  const [earnedDays21, earnedDays30] = splitRates(effectiveStart, asOfCapped);
+  const earned =
+      21 * (earnedDays21 / totalDaysInYear)
+    + 30 * (earnedDays30 / totalDaysInYear);
 
   return {
-    full: fullEntitlement,
-    proRatedForYear: round2(fullForThisYear),
-    earned: round2(earned),
-    remaining: round2(fullForThisYear - earned),
+    full:            fullEntitlement,
+    proRatedForYear: round2(proRatedForYear),
+    earned:          round2(earned),
+    remaining:       round2(proRatedForYear - earned),
   };
 }
 
@@ -190,13 +249,11 @@ export function calculateBalance({ employee, leaveType, year, requests = [], adj
 
   let entitlement = Number(leaveType.default_days || 0);
   let earned = entitlement;
-  let accrualNote = '';
 
   if (leaveType.id === 'annual' && employee.join_date) {
     const ent = annualEntitlementForYear(employee.join_date, y, asOf);
     entitlement = ent.proRatedForYear ?? ent.full;
     earned = ent.earned;
-    accrualNote = `${entitlement} days pro-rated · ${earned} earned so far`;
   }
 
   const total = entitlement + carried + adjustment;
@@ -204,14 +261,13 @@ export function calculateBalance({ employee, leaveType, year, requests = [], adj
 
   return {
     entitlement: round2(entitlement),
-    earned: round2(earned),
-    carried: round2(carried),
-    adjustment: round2(adjustment),
-    total: round2(total),
-    used: round2(used),
-    pending: round2(pending),
-    available: round2(available),
-    accrualNote,
+    earned:      round2(earned),
+    carried:     round2(carried),
+    adjustment:  round2(adjustment),
+    total:       round2(total),
+    used:        round2(used),
+    pending:     round2(pending),
+    available:   round2(available),
   };
 }
 

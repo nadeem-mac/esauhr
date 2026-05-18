@@ -491,10 +491,6 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
                         accent={willExceedBalance ? 'var(--clay)' : 'var(--evergreen-500)'}/>
                 </div>
               )}
-
-              {currentBalance?.accrualNote && (
-                <div className="text-xs opacity-60">{currentBalance.accrualNote}</div>
-              )}
             </div>
           )}
 
