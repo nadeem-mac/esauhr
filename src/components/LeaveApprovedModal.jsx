@@ -123,12 +123,19 @@ export default function LeaveApprovedModal({ request, employee, manager, hrAppro
           department:  employee?.department,
           location:    employee?.location,
         },
-        substitutes: (substitutes || []).map(s => ({
-          name:      s?.name,
-          psn:       s?.id || s?.psn,
-          signature: s?.signature || 'accepted_online',
-          date:      s?.accepted_at || s?.date,
-        })),
+        substitutes: (substitutes || []).map(s => {
+          // Acceptance timestamp comes from request.substitute_decisions[s.id]
+          // ({ decision, at: ISO }), not from the employee record.
+          // See HrApprovalModal for the matching fix. Nadeem 2026-05-18.
+          const raw = request?.substitute_decisions?.[s?.id];
+          const decAt = (raw && typeof raw === 'object') ? raw.at : null;
+          return {
+            name:      s?.name,
+            psn:       s?.id || s?.psn,
+            signature: s?.signature || 'accepted_online',
+            date:      decAt || s?.accepted_at || s?.date,
+          };
+        }),
         manager,
         hrName: hrApprover?.name,
       });

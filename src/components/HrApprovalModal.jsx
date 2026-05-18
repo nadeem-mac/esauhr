@@ -533,12 +533,21 @@ export default function HrApprovalModal({ request, employee, manager, substitute
           department:  employee?.department,
           location:    employee?.location,
         },
-        substitutes: (substitutes || []).map(s => ({
-          name:      s?.name,
-          psn:       s?.id || s?.psn,
-          signature: s?.signature || 'accepted_online',
-          date:      s?.accepted_at || s?.date,
-        })),
+        substitutes: (substitutes || []).map(s => {
+          // The acceptance timestamp lives on request.substitute_decisions[s.id]
+          // (written by PendingSubstitutionsCard.respond() as
+          // { decision, at: ISO }). The employee record passed in `s`
+          // has no accepted_at field — pulling from there gave us a
+          // blank stamp on the PDF. Nadeem 2026-05-18.
+          const raw = request?.substitute_decisions?.[s?.id];
+          const decAt = (raw && typeof raw === 'object') ? raw.at : null;
+          return {
+            name:      s?.name,
+            psn:       s?.id || s?.psn,
+            signature: s?.signature || 'accepted_online',
+            date:      decAt || s?.accepted_at || s?.date,
+          };
+        }),
         manager,
         hrName: me?.name,
       });
