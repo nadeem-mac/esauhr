@@ -2030,10 +2030,35 @@ function HistoryItem({ req, empMap, onReopenPermission, onReopenRejoining, onReo
                   : (req.type === 'early_leave' ? '#BE185D' : '#A16207');
 
   const summary = isLeave
-    ? `Leave · ${fmtDate(req.start_date)}${req.end_date && req.end_date !== req.start_date ? ` → ${fmtDate(req.end_date)}` : ''}${req.days ? ` · ${req.days}d` : ''}`
+    ? `${fmtDate(req.start_date)}${req.end_date && req.end_date !== req.start_date ? ` → ${fmtDate(req.end_date)}` : ''}${req.days ? ` · ${req.days}d` : ''}`
     : isRejoin
-      ? `Rejoining · returned ${fmtDate(req.actual_return_date)}${req.balance_after > 0 ? ` · +${req.balance_after}d credited` : ''}`
-      : `${PERMISSION_TYPES[req.type]?.label || req.type} · ${Number(req.hours)}h · ${fmtDate(req.permission_date)}`;
+      ? `returned ${fmtDate(req.actual_return_date)}${req.balance_after > 0 ? ` · +${req.balance_after}d credited` : ''}`
+      : `${Number(req.hours)}h · ${fmtDate(req.permission_date)}`;
+
+  // Type label rendered as its own coloured pill so HR can see the
+  // request kind at a glance — previously it was buried inside the
+  // muted grey summary line ('Late arrival · 1h · 18 May 2026') and
+  // hard to scan. Nadeem 2026-05-18.
+  //
+  //   Leaves       → 'Annual', 'Sick', 'Maternity', etc.  + leave-type colour
+  //   Permissions  → 'Late arrival' / 'Early leave'        + permission-type colour
+  //   Rejoining    → 'Rejoining'                           + brand-green
+  const typeLabel = isLeave
+    ? `${labelForLeave(req.leave_type_id)} Leave`
+    : isRejoin
+      ? 'Rejoining'
+      : (PERMISSION_TYPES[req.type]?.label || req.type);
+
+  // Pill colour matches the icon colour for consistency. Use the
+  // existing leave-type palette for leaves; the same sunrise/sunset
+  // colours we used on the icon for permissions; brand-green for
+  // rejoining.
+  const typePillFg = isLeave
+    ? pickLeaveTypeColor(req.leave_type_id)
+    : isRejoin
+      ? '#0F4C2A'
+      : (req.type === 'early_leave' ? '#BE185D' : '#A16207');
+  const typePillBg = typePillFg + '1A'; // ~10% opacity tint
 
   // Build the rejection-email draft on demand. The email opens
   // pre-filled with the standardised reason label, the free-text
@@ -2073,6 +2098,17 @@ function HistoryItem({ req, empMap, onReopenPermission, onReopenRejoining, onReo
                 {emp.department}
               </span>
             )}
+            {/* Type pill — highlighted so HR can see the request kind at
+                a glance. Colour matches the row icon. */}
+            <span
+              className="text-[10px] px-2 py-0.5 rounded-full font-bold"
+              style={{
+                background: typePillBg,
+                color:      typePillFg,
+                letterSpacing: '0.04em',
+              }}>
+              {typeLabel}
+            </span>
             <span className="text-[11px]" style={{ color: '#1F1B16', opacity: 0.6 }}>
               · {summary}
             </span>
