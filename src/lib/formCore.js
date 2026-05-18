@@ -252,13 +252,13 @@ export function drawTitle(pdf, y, titleText) {
 // the page, big enough to be unmistakable. The 11pt brand-green label
 // sits comfortably inside with breathing room on every side.
 export function drawSectionHeader(pdf, y, text) {
-  const h = 9;
+  const h = 7.5;
   drawRect(pdf, MARGIN_X, y, CONTENT_W, h, { fill: C.accent });
   drawRect(pdf, MARGIN_X, y, 2.2, h, { fill: C.brand });
-  drawText(pdf, text, MARGIN_X + 7, y + 6.2, {
-    size: 11, color: C.brand, style: 'bold',
+  drawText(pdf, text, MARGIN_X + 7, y + 5.2, {
+    size: 10.5, color: C.brand, style: 'bold',
   });
-  return y + h + 1.5;
+  return y + h + 1;
 }
 
 // Single info row — label on the left (muted), value on the right (text
@@ -272,16 +272,16 @@ export function drawSingleRow(pdf, y, label, value, { emphasis = false } = {}) {
   const valueW  = CONTENT_W - labelW - 4;
   const wrapped = pdf.splitTextToSize(String(value ?? '—'), valueW);
   const lineCount = Array.isArray(wrapped) ? wrapped.length : 1;
-  const rowH = Math.max(8.5, lineCount * 4.5 + 2.5);
+  const rowH = Math.max(7, lineCount * 4.2 + 2);
   drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
     { color: C.border, width: 0.2 });
-  drawText(pdf, label, MARGIN_X + 3, y + 6, {
-    size: 10, color: C.muted, style: 'bold',
+  drawText(pdf, label, MARGIN_X + 3, y + 5, {
+    size: 9.5, color: C.muted, style: 'bold',
   });
   pdf.setFont('helvetica', emphasis ? 'bold' : 'normal');
-  pdf.setFontSize(11);
+  pdf.setFontSize(10.5);
   pdf.setTextColor(...C.text);
-  pdf.text(wrapped, MARGIN_X + labelW + 2, y + 6);
+  pdf.text(wrapped, MARGIN_X + labelW + 2, y + 5);
   drawLine(pdf, MARGIN_X, y + rowH, MARGIN_X + CONTENT_W, y + rowH,
     { color: C.border, width: 0.2 });
   return y + rowH;
@@ -299,7 +299,7 @@ export function drawTwoColTable(pdf, startY, rows) {
     const leftLines  = left  ? pdf.splitTextToSize(String(left[1]  || '—'), valueW) : [''];
     const rightLines = right ? pdf.splitTextToSize(String(right[1] || '—'), valueW) : [''];
     const lineCount  = Math.max(leftLines.length, rightLines.length, 1);
-    const rowH       = Math.max(7, lineCount * 4.3 + 2.5);
+    const rowH       = Math.max(6, lineCount * 4 + 2);
 
     if (y > startY) {
       drawLine(pdf, MARGIN_X, y, MARGIN_X + CONTENT_W, y,
@@ -309,22 +309,22 @@ export function drawTwoColTable(pdf, startY, rows) {
       { color: C.border, width: 0.15 });
 
     if (left) {
-      drawText(pdf, left[0], MARGIN_X + 1, y + 4.8, {
-        size: 8, color: C.muted, style: 'bold',
+      drawText(pdf, left[0], MARGIN_X + 1, y + 4.2, {
+        size: 7.5, color: C.muted, style: 'bold',
       });
       pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(9.5);
+      pdf.setFontSize(9);
       pdf.setTextColor(...C.text);
-      pdf.text(leftLines, MARGIN_X + labelW + 2, y + 4.8);
+      pdf.text(leftLines, MARGIN_X + labelW + 2, y + 4.2);
     }
     if (right) {
-      drawText(pdf, right[0], MARGIN_X + colW + 2, y + 4.8, {
-        size: 8, color: C.muted, style: 'bold',
+      drawText(pdf, right[0], MARGIN_X + colW + 2, y + 4.2, {
+        size: 7.5, color: C.muted, style: 'bold',
       });
       pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(9.5);
+      pdf.setFontSize(9);
       pdf.setTextColor(...C.text);
-      pdf.text(rightLines, MARGIN_X + colW + labelW + 3, y + 4.8);
+      pdf.text(rightLines, MARGIN_X + colW + labelW + 3, y + 4.2);
     }
     y += rowH;
   }
@@ -344,43 +344,43 @@ export function drawTwoColTable(pdf, startY, rows) {
 // Callers that want the OLD two-column layout (label left, value right)
 // can use drawTwoColTable instead — kept for backward compatibility.
 export function drawLabelValueTable(pdf, startY, rows) {
-  let y = startY + 1;
+  let y = startY + 0.5;
   for (const [label, value] of rows) {
     const wrapped   = pdf.splitTextToSize(String(value || '—'), CONTENT_W - 2);
     const lineCount = Array.isArray(wrapped) ? wrapped.length : 1;
-    // Row = small label line (3.2mm) + value line(s) + bottom padding (3mm)
-    const rowH = 3.4 + (lineCount * 4.6) + 3;
+    // Row = small label line (3mm) + value line(s) + bottom padding (2mm)
+    const rowH = 2.8 + (lineCount * 4.2) + 2;
     // Faint divider before subsequent rows
     if (y > startY + 1) {
       drawLine(pdf, MARGIN_X, y - 0.5, MARGIN_X + CONTENT_W, y - 0.5,
         { color: C.border, width: 0.12 });
     }
-    drawText(pdf, label.toUpperCase(), MARGIN_X + 1, y + 2.8, {
-      size: 6.8, color: C.muted, style: 'bold',
+    drawText(pdf, label.toUpperCase(), MARGIN_X + 1, y + 2.4, {
+      size: 6.5, color: C.muted, style: 'bold',
     });
     pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(10.5);
+    pdf.setFontSize(10);
     pdf.setTextColor(...C.text);
-    pdf.text(wrapped, MARGIN_X + 1, y + 7.8);
+    pdf.text(wrapped, MARGIN_X + 1, y + 7);
     y += rowH;
   }
-  return y + 1;
+  return y + 0.5;
 }
 
 // Bulleted policy list. Caller passes the list of bullet strings.
 export function drawPolicyBullets(pdf, y, bullets) {
-  const lineH = 3.8;
+  const lineH = 3.4;
   pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(8.5);
+  pdf.setFontSize(8);
   pdf.setTextColor(...C.text);
   bullets.forEach((b, i) => {
     const num = `${(i + 1).toString().padStart(2, '0')}.`;
-    drawText(pdf, num, MARGIN_X + 4, y + 3.5, {
-      size: 8, color: C.brand, style: 'bold',
+    drawText(pdf, num, MARGIN_X + 4, y + 3.2, {
+      size: 7.5, color: C.brand, style: 'bold',
     });
     const wrapped = pdf.splitTextToSize(b, CONTENT_W - 16);
-    pdf.text(wrapped, MARGIN_X + 12, y + 3.5);
-    y += wrapped.length * lineH + 0.5;
+    pdf.text(wrapped, MARGIN_X + 12, y + 3.2);
+    y += wrapped.length * lineH + 0.3;
   });
   return y;
 }
