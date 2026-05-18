@@ -708,8 +708,14 @@ export async function generateLeaveApplicationPdfBlob({
   // 4-cell signature grid matching the Vacation_Sample.docx template:
   // EMPLOYEE / DEPT MGR / ESAU SUP / ESAU MGT — short labels with the
   // person's name + their status (Submitted / Approved date · time).
+  //
+  // sigY anchored to bottom of page, BUT pushed lower if the policy
+  // bullets flowed past it (long policy lists overlap the signatures
+  // otherwise). Nadeem 2026-05-18: '21/30/cancel rule + signature row
+  // wrapped on top of each other'.
   const sigH = 35.4;
-  const sigY = PAGE_H - MARGIN_T - sigH;
+  const sigYFixed = PAGE_H - MARGIN_T - sigH;
+  const sigY = Math.max(sigYFixed, y + 4);
 
   // Stamp subtitles — show when each role acted, in the same compact
   // 'DD MMM · HH:MM' format the sample uses. Falls back to 'Signature
