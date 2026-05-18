@@ -395,9 +395,9 @@ export async function generateLeaveApplicationPdfBlob({
   y = drawTitle(pdf, y, `Leave Application — ${typeLabel}`);
   y += 2;
 
-  // Leave-type checkbox row (preserves the visual cue from the paper form)
-  y = drawLeaveTypeRow(pdf, y, ltKey);
-  y += 3;
+  // (Pre-flight checkbox row removed — the pill selector inside the
+  // LEAVE DETAILS section below now serves that purpose. Showing it
+  // twice was the noisy stripe at the top of the page.)
 
   // Employee Information — 5 rows matching the Vacation_Sample.docx
   // template exactly. Combined fields where the sample does so:
@@ -553,13 +553,21 @@ export async function generateLeaveApplicationPdfBlob({
   y += 12;
 
   // ─── Notice · Submitted (two-column compact row) ─────────────────────
+  // Notice math compares CALENDAR DATES only, not datetimes. Without
+  // this, a leave starting today that was submitted at 22:54 today
+  // produces 'requested_at - start_date = -1 days' (rounded down)
+  // because requested_at carries hours/minutes while start_date is
+  // midnight. Strip the time component on both sides before subtracting.
   let isPlanned = false;
   let isUrgent  = false;
   let noticeDays = null;
   if (request.requested_at && request.start_date) {
-    noticeDays = Math.round(
-      (new Date(request.start_date) - new Date(request.requested_at)) / 86400000
-    );
+    const startDay = new Date(request.start_date);
+    startDay.setHours(0, 0, 0, 0);
+    const reqDay = new Date(request.requested_at);
+    reqDay.setHours(0, 0, 0, 0);
+    noticeDays = Math.round((startDay - reqDay) / 86400000);
+    if (noticeDays < 0) noticeDays = 0; // belt-and-braces: same-day or past leaves
     isPlanned = noticeDays >= 14;
     isUrgent  = !isPlanned;
   }
@@ -567,7 +575,9 @@ export async function generateLeaveApplicationPdfBlob({
     ? '—'
     : isPlanned
       ? `Planned · ${noticeDays} day${noticeDays === 1 ? '' : 's'} advance notice`
-      : `Urgent · ${noticeDays} day${noticeDays === 1 ? '' : 's'} notice (less than 14)`;
+      : (noticeDays === 0
+          ? 'Urgent · same-day notice'
+          : `Urgent · ${noticeDays} day${noticeDays === 1 ? '' : 's'} notice (less than 14)`);
 
   const submittedLabel = request.requested_at
     ? `${fmtDateShort(request.requested_at)}  ·  ${

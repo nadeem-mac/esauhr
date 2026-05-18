@@ -77,7 +77,13 @@ export function fmtStampCompact(iso) {
 }
 
 export function shortRef(id, prefix = 'LV') {
-  const s = String(id ?? '');
+  const s = String(id ?? '').trim();
+  // If the id already starts with the desired prefix (e.g. caller
+  // passed a human-readable 'LV-61F7EA2F'), don't double-prefix it.
+  const upperPrefix = `${prefix}-`.toUpperCase();
+  if (s.toUpperCase().startsWith(upperPrefix)) {
+    return s.toUpperCase();
+  }
   const hex = s.replace(/-/g, '');
   if (hex.length > 8 && /^[0-9a-f]+$/i.test(hex)) {
     return `${prefix}-${hex.slice(0, 8).toUpperCase()}`;
