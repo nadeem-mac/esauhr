@@ -155,16 +155,101 @@ function drawTypeSpecificSection(pdf, y, request, employee = {}) {
   const t = request.leave_type_id;
   const d = request.type_details || {};
   switch (t) {
-    case 'sick':
+    case 'sick': {
+      // MEDICAL CERTIFICATE — clean drawSingleRow layout matching the rest
+      // of the form. Pulls every relevant field that LeaveApprovedModal /
+      // HrApprovalModal extract from the Sehhaty PDF the staff uploaded:
+      //   • Cert ref (UUID for internal lookup)
+      //   • GS verification code (the one HR types into Sehhaty.sa)
+      //   • Issued date, sick-period date range, total sick days
+      //   • Doctor + specialty + facility
+      //   • Diagnosis (or 'Not disclosed' fallback)
+      //   • Fit-to-return date
+      //   • Verification stamp (who in HR verified the cert + when)
+      // Only renders rows where the underlying field is actually present
+      // — empty rows aren't drawn, so the section adapts to whatever
+      // the Sehhaty extraction returned. Nadeem 2026-05-18.
       y = drawSectionHeader(pdf, y, 'MEDICAL CERTIFICATE');
-      return drawTwoColTable(pdf, y, [
-        [['Certificate ref',    d.cert_ref],
-         ['Issue date',         fmtDateShort(d.cert_date)]],
-        [['Treating doctor',    d.doctor_name],
-         ['Medical facility',   d.facility]],
-        [['Diagnosis',          d.diagnosis || 'Not disclosed'],
-         ['Fit-to-return date', fmtDateShort(d.fit_to_return)]],
-      ]);
+
+      // Format the sick-period date range cleanly.
+      let periodCovered = null;
+      if (d.seen_start && d.seen_end) {
+        periodCovered = d.seen_start === d.seen_end
+          ? fmtDateLong(d.seen_start)
+          : `${fmtDateShort(d.seen_start)}  —  ${fmtDateShort(d.seen_end)}`;
+        if (d.seen_days) periodCovered += `  ·  ${d.seen_days} day${Number(d.seen_days) === 1 ? '' : 's'}`;
+      } else if (d.seen_days) {
+        periodCovered = `${d.seen_days} day${Number(d.seen_days) === 1 ? '' : 's'}`;
+      }
+
+      // Doctor + specialty in one line so the row reads naturally
+      // ('Dr. Mohammed Al-Otaibi · Internal Medicine').
+      const doctorLine = d.doctor_name
+        ? (d.specialty ? `${d.doctor_name}  ·  ${d.specialty}` : d.doctor_name)
+        : null;
+
+      // Cert reference line — prefer the GS code (what HR uses to verify)
+      // and append the internal cert ref in parens so both are visible.
+      let certRefLine = null;
+      if (d.cert_code && d.cert_ref) {
+        certRefLine = `${d.cert_code}   (ref: ${d.cert_ref})`;
+      } else if (d.cert_code) {
+        certRefLine = d.cert_code;
+      } else if (d.cert_ref) {
+        certRefLine = d.cert_ref;
+      }
+
+      // Issued timestamp — show with seconds when available so HR can
+      // cross-reference with the Sehhaty audit log.
+      let issuedLine = null;
+      if (d.cert_date) {
+        const dt = new Date(d.cert_date);
+        if (!isNaN(dt.getTime())) {
+          const hasTime = dt.getHours() || dt.getMinutes() || dt.getSeconds();
+          issuedLine = hasTime
+            ? `${fmtDateShort(d.cert_date)}  ·  ${
+                dt.toLocaleTimeString('en-GB', {
+                  hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+                })}`
+            : fmtDateShort(d.cert_date);
+        }
+      }
+
+      // Verification stamp — only render when HR has verified the cert.
+      let verifiedLine = null;
+      if (d.verified_at) {
+        verifiedLine = d.verified_by
+          ? `${d.verified_by}  ·  ${fmtDateShort(d.verified_at)}`
+          : fmtDateShort(d.verified_at);
+      }
+
+      // Patient cross-check (name + ID on the cert). Only show when the
+      // extraction populated both, so unverified rows don't sprout
+      // empty cross-check rows.
+      let patientLine = null;
+      if (d.seen_patient_name || d.seen_patient_id) {
+        patientLine = [d.seen_patient_name, d.seen_patient_id].filter(Boolean).join('   ·   ');
+      }
+
+      // Build the row list dynamically — only include rows whose value
+      // is actually present.
+      const rows = [
+        ['Certificate code',  certRefLine,                                  { emphasis: true }],
+        ['Issued',            issuedLine],
+        ['Period covered',    periodCovered],
+        ['Treating doctor',   doctorLine],
+        ['Medical facility',  d.facility],
+        ['Diagnosis',         d.diagnosis || 'Not disclosed'],
+        ['Fit-to-return',     d.fit_to_return ? fmtDateShort(d.fit_to_return) : null, { emphasis: true }],
+        ['Patient on cert',   patientLine],
+        ['HR verified',       verifiedLine],
+      ];
+      for (const [label, value, opts] of rows) {
+        if (value == null || value === '') continue;
+        y = drawSingleRow(pdf, y, label, value, opts || {});
+      }
+      return y;
+    }
 
     case 'maternity': {
       y = drawSectionHeader(pdf, y, 'MATERNITY DETAILS');
@@ -563,24 +648,72 @@ export async function generateLeaveApplicationPdfBlob({
   y = drawTypeSpecificSection(pdf, y, request, employee);
   if (y > yBefore) y += 3;
 
-  // Substitutes — only for leave types that need coverage during absence
+  // ─── Page-break helper ──────────────────────────────────────────────
+  // Before each major section we check whether there's enough room for
+  // it to fit above the signature grid (which is anchored to a fixed
+  // position at the bottom of the page). If not, drop to a new page
+  // and reset y to the top margin. Section-specific height estimates
+  // are conservative — they err on the side of breaking sooner so a
+  // section never gets clipped mid-way.
+  //
+  // Why each section needs its own estimate: substitute table varies
+  // by substitute count, policy varies by bullet count, type-specific
+  // section varies by leave type. A blanket 'is y past sigY' check
+  // fires AFTER content is already drawn into the danger zone and
+  // doesn't help.
+  //
+  // Nadeem 2026-05-18: 'For sick leave form, the text are appearing
+  // wrapped and scrambled' — caused by substitutes + policy being
+  // drawn into the signature zone with no page break between them.
+  const sigH = 35.4;
+  const sigY = PAGE_H - MARGIN_T - sigH;
+  const ensureRoom = (currentY, neededMm) => {
+    if (currentY + neededMm > sigY - 4) {
+      pdf.addPage();
+      let yNew = MARGIN_T;
+      yNew = drawHeader(pdf, yNew, { logoUrl, qrDataUrl: null, request, refPrefix: 'LV' });
+      yNew += 2;
+      yNew = drawTitle(pdf, yNew, `Leave Application — ${typeLabel}  (cont.)`);
+      yNew += 4;
+      return yNew;
+    }
+    return currentY;
+  };
+
+  // Substitutes — only for leave types that need coverage during absence.
+  // Reserve ~30mm: 10mm section header + 7mm column header + up to 3
+  // substitutes × 18mm each (we cap at 3 substitutes so 54mm worst-case).
+  // Use a midpoint estimate of 30mm for the common 1-substitute case.
   if (!['emergency'].includes(ltKey)) {
+    const subRows = Math.max(1, (substitutes || []).length);
+    y = ensureRoom(y, 14 + (subRows * 18));
     y = drawSubstitutes(pdf, y, substitutes);
     y += 3;
   }
 
-  // Policy specific to this leave type
-  y = drawSectionHeader(pdf, y, 'POLICY · KSA LABOR LAW');
+  // Policy specific to this leave type. Reserve ~10mm header + ~5mm
+  // per bullet. Most policies have 3 bullets so ~25mm reserve.
   const policy = POLICY_BY_TYPE[ltKey] || POLICY_BY_TYPE.other;
+  y = ensureRoom(y, 10 + (policy.length * 6));
+  y = drawSectionHeader(pdf, y, 'POLICY · KSA LABOR LAW');
   y = drawPolicyBullets(pdf, y, policy);
+
+  // Final guard before signatures — if even after the section-level
+  // checks the page is full, force one more break. Rare but possible
+  // when policy bullets wrap to multiple lines.
+  if (y > sigY - 5) {
+    pdf.addPage();
+    let yNew = MARGIN_T;
+    yNew = drawHeader(pdf, yNew, { logoUrl, qrDataUrl: null, request, refPrefix: 'LV' });
+    yNew += 2;
+    yNew = drawTitle(pdf, yNew, `Leave Application — ${typeLabel}  (cont.)`);
+  }
 
   // 4-cell signature grid matching the Vacation_Sample.docx template:
   // EMPLOYEE / DEPT MGR / ESAU SUP / ESAU MGT — short labels with the
   // person's name + their status (Submitted / Approved date · time).
   // Subtitles convey the workflow stage so the printed form reads as
   // a full audit trail without HR having to annotate it.
-  const sigH = 35.4;
-  const sigY = PAGE_H - MARGIN_T - sigH;
 
   // Stamp subtitles — show when each role acted, in the same compact
   // 'DD MMM · HH:MM' format the sample uses. Falls back to 'Signature

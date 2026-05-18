@@ -504,15 +504,26 @@ export default function HrApprovalModal({ request, employee, manager, substitute
       const { generateLeaveApplicationPdfBlob } = await import('../lib/leaveApplicationPdf.js');
       // Promote legacy sick-leave fields from the top-level request into
       // type_details so the new MEDICAL CERTIFICATE section is populated
-      // even for rows created before type_details was introduced.
+      // even for rows created before type_details was introduced. The
+      // expanded set (GS code, date range, specialty, patient cross-
+      // check) lets HR verify the cert end-to-end. Nadeem 2026-05-18.
       const td = { ...(request.type_details || {}) };
       if (request.leave_type_id === 'sick') {
-        td.cert_ref      = td.cert_ref      || request.sehhaty_cert_id;
-        td.cert_date     = td.cert_date     || request.sehhaty_issued_at;
-        td.facility      = td.facility      || request.sehhaty_facility;
-        td.doctor_name   = td.doctor_name   || request.sehhaty_doctor;
-        td.diagnosis     = td.diagnosis     || request.sehhaty_diagnosis;
-        td.fit_to_return = td.fit_to_return || request.sehhaty_fit_date;
+        td.cert_ref          = td.cert_ref          || request.sehhaty_cert_id;
+        td.cert_code         = td.cert_code         || request.sehhaty_code;
+        td.cert_date         = td.cert_date         || request.sehhaty_issued_at || request.sehhaty_issue_date;
+        td.facility          = td.facility          || request.sehhaty_facility || request.sehhaty_clinic;
+        td.doctor_name       = td.doctor_name       || request.sehhaty_doctor;
+        td.specialty         = td.specialty         || request.sehhaty_seen_specialty;
+        td.diagnosis         = td.diagnosis         || request.sehhaty_diagnosis;
+        td.fit_to_return     = td.fit_to_return     || request.sehhaty_fit_date;
+        td.seen_start        = td.seen_start        || request.sehhaty_seen_start;
+        td.seen_end          = td.seen_end          || request.sehhaty_seen_end;
+        td.seen_days         = td.seen_days         || request.sehhaty_seen_days;
+        td.seen_patient_name = td.seen_patient_name || request.sehhaty_seen_name;
+        td.seen_patient_id   = td.seen_patient_id   || request.sehhaty_seen_id_number;
+        td.verified_at       = td.verified_at       || request.sehhaty_verified_at;
+        td.verified_by       = td.verified_by       || request.sehhaty_verified_by;
       }
       const blob = await generateLeaveApplicationPdfBlob({
         request: { ...request, type_details: td },
