@@ -28,9 +28,17 @@ const PERMISSION_POLICY = [
   'It is the employee\'s responsibility to arrange replacement coverage where their absence affects operations.',
 ];
 
+// Permission type keys MUST match what the rest of the app stores —
+// requests are persisted as 'late_arrival' | 'early_leave' (see the
+// new-request modal at NewRequestModal.jsx and the violation_type
+// column on attendance_violations). Earlier this file had
+// 'early_departure' as the key, which silently failed the lookup
+// on every early-leave request and left the PDF title as a generic
+// 'Permission Request' instead of 'Permission Request — Early leave'.
+// Nadeem 2026-05-18 fix.
 const PERMISSION_TYPES = [
-  { key: 'late_arrival',    label: 'Late Arrival' },
-  { key: 'early_departure', label: 'Early Departure' },
+  { key: 'late_arrival', label: 'Late arrival' },
+  { key: 'early_leave',  label: 'Early leave'  },
 ];
 
 // ─── relaxed layout helpers ───────────────────────────────────────────────
