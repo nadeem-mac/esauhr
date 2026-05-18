@@ -77,9 +77,13 @@ BEGIN
   RAISE NOTICE '══════════════════════════════════════════════════════════';
 
   -- 1. leave_requests
+  --    Supabase enforces safeupdate (DELETE/UPDATE without WHERE is
+  --    blocked with SQLSTATE 21000). We add `WHERE TRUE` for the
+  --    everyone-mode DELETE so the guard is satisfied — semantically
+  --    identical to no WHERE, but explicit.
   IF EMP_FILTER IS NULL THEN
     SELECT count(*) INTO cnt_leaves FROM leave_requests;
-    DELETE FROM leave_requests;
+    DELETE FROM leave_requests WHERE TRUE;
   ELSE
     SELECT count(*) INTO cnt_leaves
       FROM leave_requests
@@ -93,7 +97,7 @@ BEGIN
   IF to_regclass('public.sick_reminders') IS NOT NULL THEN
     IF EMP_FILTER IS NULL THEN
       SELECT count(*) INTO cnt_reminders FROM sick_reminders;
-      DELETE FROM sick_reminders;
+      DELETE FROM sick_reminders WHERE TRUE;
     ELSE
       SELECT count(*) INTO cnt_reminders
         FROM sick_reminders
@@ -209,10 +213,12 @@ BEGIN
   -- Uncomment this block if you also want to clear the rejoining
   -- signatures (the post-leave 'I have returned' PDFs). By default we
   -- KEEP them as a paper trail even when leaves are cleared.
+  -- Note: Supabase safeupdate requires WHERE even for everyone-mode,
+  -- hence the `WHERE TRUE`.
   --
   -- IF to_regclass('public.rejoining_reports') IS NOT NULL THEN
   --   IF EMP_FILTER IS NULL THEN
-  --     DELETE FROM rejoining_reports;
+  --     DELETE FROM rejoining_reports WHERE TRUE;
   --   ELSE
   --     DELETE FROM rejoining_reports WHERE employee_id = ANY(EMP_FILTER);
   --   END IF;
