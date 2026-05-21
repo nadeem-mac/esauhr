@@ -255,19 +255,18 @@ export default function AppShell({ session, me, onRefreshMe }) {
     [employees, me?.id]
   );
 
-  // Read-only Hiring viewers — Badria, Jaffar. They see the offer
-  // pipeline (status, history, contract preview) but cannot create,
-  // withdraw, edit, or download anything. Identified by PSN/email;
-  // matching is exact. Nadeem (admin) and Bashaier (HR reviewer)
-  // continue to have full edit rights via the isAdmin / isHrReviewer
-  // flags above — this allowlist is purely additive for read-only.
+  // Read-only Hiring viewers — currently EMPTY. Only Nadeem (admin)
+  // and Bashaier (HR reviewer) have Hiring access, via their isAdmin
+  // and isHrReviewer flags above. The viewer allowlist mechanism is
+  // preserved (not deleted) in case HR wants to grant read-only
+  // access to others again in future — just add PSN/email entries.
   //
-  // Removed Fahad Sulaiman H94712 on 2026-05-18 per Nadeem's request.
+  // History:
+  //   2026-05-18  Removed Fahad H94712 per Nadeem
+  //   2026-05-18  Removed Badria + Jaffar per Nadeem ('only Bashaier
+  //               has the access')
   const HIRING_VIEWER_PSNS = [];
-  const HIRING_VIEWER_EMAILS = [
-    'badria.alhassan@evergreen-shipping.com.sa',
-    'jaffar.aldarweash@evergreen-shipping.com.sa',
-  ];
+  const HIRING_VIEWER_EMAILS = [];
   const HIRING_VIEWER_EMAILS = [
     'badria.alhassan@evergreen-shipping.com.sa',
     'jaffar.aldarweash@evergreen-shipping.com.sa',
