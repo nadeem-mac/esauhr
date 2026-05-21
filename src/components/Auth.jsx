@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { supabase } from '../supabaseClient.js';
+import { supabase, directPatch } from '../supabaseClient.js';
 import { psnToEmail, resolvePsnSigninEmail } from '../lib/psnAuth.js';
 import { ArrowRight, User, Lock, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 
@@ -50,6 +50,27 @@ export default function Auth() {
         if (authErr.message?.toLowerCase().includes('invalid'))
           throw new Error('PSN or PIN is incorrect. Need a new PIN? Contact your admin.');
         throw authErr;
+      }
+
+      // Single-session enforcement — generate a fresh session UUID,
+      // write it to employees.current_session_id, and store the same
+      // UUID locally. AppShell's session guard compares them on every
+      // load (and via polling) and kicks the older session if a newer
+      // login happens elsewhere. Nadeem 2026-05-21.
+      try {
+        const sessionId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        await directPatch('employees', 'id', cleanPsn, {
+          current_session_id: sessionId,
+          current_session_at: new Date().toISOString(),
+        });
+        try { localStorage.setItem('esau_session_id', sessionId); } catch {}
+      } catch (sessionErr) {
+        // Non-fatal — sign-in succeeded, but single-session guard
+        // won't enforce against the previous device until the next
+        // poll/refresh. Log for visibility.
+        console.warn('session-id write failed:', sessionErr?.message || sessionErr);
       }
     } catch (err) {
       setError(err.message);

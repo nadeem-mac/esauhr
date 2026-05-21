@@ -47,6 +47,7 @@ const OrgChartView            = lazy(() => import('./OrgChartView.jsx'));
 import { getBlockingDeclarations, getExtendableDeclaration } from '../lib/sickDeclaration.js';
 import { logAction } from '../lib/audit.js';
 import { fmtDate } from '../lib/leaveLogic.js';
+import { useSessionGuard } from '../lib/sessionGuard.js';
 
 // Fallback shown while a lazy-loaded chunk is in flight. Light-weight
 // so it doesn't compete for paint with whatever is about to mount.
@@ -649,6 +650,8 @@ export default function AppShell({ session, me, onRefreshMe }) {
       Object.keys(sessionStorage).forEach((k) => {
         if (k.startsWith('sb-') || k.startsWith('supabase.')) sessionStorage.removeItem(k);
       });
+      // Clear the single-session UUID too so the next login starts clean.
+      localStorage.removeItem('esau_session_id');
     } catch (_) { /* storage may be unavailable in private mode */ }
     try {
       await Promise.race([
@@ -661,6 +664,12 @@ export default function AppShell({ session, me, onRefreshMe }) {
     // Hard-redirect to the root — App.jsx will see no session and render <Auth />.
     window.location.href = '/';
   };
+
+  // Single-session enforcement + 10-min idle auto-logout. Polls every
+  // 30s for the server's current_session_id and listens for activity
+  // events to reset the idle timer. See src/lib/sessionGuard.js for
+  // the mechanism. Nadeem 2026-05-21.
+  useSessionGuard(me, signOut);
 
   const createRequest = async (payload) => {
     // CRITICAL — use directPost, not supabase.from().insert(). The
