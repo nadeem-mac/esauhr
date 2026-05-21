@@ -399,35 +399,12 @@ export default function PersonalDashboard({
         );
       })()}
 
-      {/* TILE GRID — 3 cols. Row 1: leave-context tiles (annual / sick /
-          next / pending). Row 2: permission tiles (late / early
-          adjacent) + tenure + evaluation status. Late + Early sit beside
-          each other so the combined-quota story reads naturally. Sick
-          sits beside Annual since they're both Article-117/labor-law
-          entitlement balances and staff read them together. */}
+      {/* TILE GRID — 3 cols. Row 1: NEXT vacation + PENDING + permission
+          tiles. Annual + Sick balance tiles were removed 2026-05-18
+          per Nadeem — staff don't need self-service balance visibility
+          during testing phase (HR is the source of truth on remaining
+          balance). Tenure + evaluation tiles remain at the bottom. */}
       <section className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-        <ColorTile
-          accent="#008C9E"
-          label="ANNUAL LEAVE" icon={Calendar}
-          stat={remaining} unit=" days"
-          desc={`Of your ${totalEntitlement}-day yearly entitlement.`}
-          progress={100 - usedPct}
-        />
-        <ColorTile
-          accent={sickTier.color}
-          label="SICK LEAVE" icon={HeartPulse}
-          stat={sickYtd} unit={sickYtd === 1 ? ' day used' : ' days used'}
-          desc={
-            sickTier.daysLeft === 0
-              ? 'Quota exhausted under Article 117.'
-              : sickTier.paidPct === 100
-                ? `${sickTier.daysLeft} day${sickTier.daysLeft === 1 ? '' : 's'} remain at full pay (Art. 117).`
-                : sickTier.paidPct === 75
-                  ? `${sickTier.daysLeft} day${sickTier.daysLeft === 1 ? '' : 's'} remain at 75% pay.`
-                  : `${sickTier.daysLeft} unpaid day${sickTier.daysLeft === 1 ? '' : 's'} remain.`
-          }
-          progress={Math.min(100, (sickYtd / 120) * 100)}
-        />
         <ColorTile
           accent="#4F46E5"
           label="NEXT VACATION" icon={Plane}
