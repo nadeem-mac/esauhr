@@ -400,7 +400,7 @@ function drawTypeSpecificSection(pdf, y, request, employee = {}) {
 // stacked lines ('✓ Accepted online' on top, 'DD MMM YYYY HH:MM:SS'
 // underneath) without wrapping.
 
-function drawSubstitutes(pdf, y, subs = [], { isManualEntry = false } = {}) {
+function drawSubstitutes(pdf, y, subs = [], { showAcceptedTimestamp = true } = {}) {
   y = drawSectionHeader(pdf, y, 'SUBSTITUTE COVERAGE');
   const colW = [10, 70, 50, 52];   // # · Name · Signature box · Date+accept
   const headers = ['#', 'SUBSTITUTE', 'SIGNATURE', 'DATE'];
@@ -512,9 +512,10 @@ function drawSubstitutes(pdf, y, subs = [], { isManualEntry = false } = {}) {
       // so the eye reads the 'accepted' assertion first, then the
       // precise audit time as a secondary detail. Italic helps it
       // visually recede further. Nadeem 2026-05-18.
-      // Skipped for manual Logbook entries — paper applications don't
-      // carry the precise online-acceptance timestamp. Nadeem 2026-05-21.
-      if (!isManualEntry) {
+      // Suppressed when showAcceptedTimestamp=false — used by the
+      // separate Logbook PDF generator so paper-equivalent forms
+      // don't carry server timestamps. Nadeem 2026-05-21.
+      if (showAcceptedTimestamp) {
         drawText(pdf, fmtFullStamp(s.date), dateCellX, y + 12, {
           size: 7.5, color: C.muted, style: 'italic',
         });
@@ -532,7 +533,32 @@ function drawSubstitutes(pdf, y, subs = [], { isManualEntry = false } = {}) {
   return y;
 }
 
-// ─── main export ───────────────────────────────────────────────────────────
+// ─── main exports ──────────────────────────────────────────────────────────
+//
+// Two distinct generators:
+//
+//   generateLeaveApplicationPdfBlob (REGULAR PORTAL FLOW)
+//   ─────────────────────────────────────────────────────
+//   Full audit form. QR code, substitute-accept timestamps, signature-
+//   row timestamps (Submitted/Approved · DD MMM · HH:MM), and the
+//   rotated 'Generated on …' stamp at the right margin. This is the
+//   canonical form a staff member receives after going through the
+//   normal flow: submit → substitute accept → manager approve →
+//   Bashaier finalise.
+//
+//   generateLogbookPdfBlob (MANUAL LOGBOOK FLOW — Bashaier only)
+//   ───────────────────────────────────────────────────────────
+//   Stripped-down version for paper/email applications Bashaier
+//   records manually. Skips: QR code, accept timestamps under green
+//   stamps, signature-row timestamps, and the generated-on stamp.
+//   Bashaier signs / dates the printed form by hand.
+//
+// The two functions are completely separate at this top level so a
+// change to one cannot accidentally leak into the other. They share
+// only the low-level drawing primitives (drawHeader, drawSubstitutes,
+// drawSignatures, drawSectionHeader, etc.) — which are pure-render
+// helpers parameterised by the orchestration above. Nadeem 2026-05-21:
+// 'truly separate functions … absolute mechanical isolation'.
 
 export async function generateLeaveApplicationPdfBlob({
   request = {},
@@ -544,20 +570,10 @@ export async function generateLeaveApplicationPdfBlob({
 } = {}) {
   const pdf = newPdf();
   const logoUrl = await loadLogoDataUrl();
-
-  // Logbook entries (paper/email applications recorded by Bashaier)
-  // get a STRIPPED-DOWN form — no QR code, no Accepted-online
-  // timestamps, no generated-on stamp — because they represent
-  // physical paper trails that don't have online verification
-  // signals. Detected by the 'Manual entry · …' reason prefix that
-  // Logbook writes on every insert. Nadeem 2026-05-21.
-  const isManualEntry = (request.reason || '').startsWith('Manual entry');
-
   // QR encodes the public verify URL — must match the /verify-leave/:uuid
-  // route in App.jsx. Skipped for manual entries.
-  const qrDataUrl = isManualEntry
-    ? null
-    : await generateQRCode(`/verify-leave/${request.id}`);
+  // route in App.jsx. Earlier versions encoded the display ref ('LV-XXX...')
+  // which didn't match any route, so the QR scan went nowhere.
+  const qrDataUrl = await generateQRCode(`/verify-leave/${request.id}`);
 
   const ltKey = request.leave_type_id || 'annual';
   const typeLabel = LEAVE_TYPE_LABEL[ltKey] || 'Leave';
@@ -725,7 +741,7 @@ export async function generateLeaveApplicationPdfBlob({
 
   // Substitutes — only for leave types that need coverage during absence.
   if (!['emergency'].includes(ltKey)) {
-    y = drawSubstitutes(pdf, y, substitutes, { isManualEntry });
+    y = drawSubstitutes(pdf, y, substitutes);
     y += isCompact ? 1 : 1.5;
   }
 
@@ -763,30 +779,168 @@ export async function generateLeaveApplicationPdfBlob({
   const managerStamp   = fmtCompactStamp(request.manager_decided_at);
   const hrStamp        = fmtCompactStamp(request.hr_decided_at);
 
-  // Manual Logbook entries hide every server-side timestamp in the
-  // signature row so the printed form reads like a clean physical
-  // document. Subtitles fall back to the generic 'Signature & Date',
-  // 'Approve & Date', 'Process & Stamp' hints — Bashaier writes the
-  // real dates by hand once the form is signed. Nadeem 2026-05-21.
   drawSignatures(pdf, sigY, [
     { label: 'EMPLOYEE',  name: employee.name || '',
-      subtitle: (!isManualEntry && submittedStamp)
-        ? `Submitted ${submittedStamp}` : 'Signature & Date' },
+      subtitle: submittedStamp ? `Submitted ${submittedStamp}` : 'Signature & Date' },
     { label: 'DEPT MGR',  name: manager?.name || '',
-      subtitle: (!isManualEntry && managerStamp)
-        ? `Approved ${managerStamp}` : 'Approve & Date' },
+      subtitle: managerStamp ? `Approved ${managerStamp}` : 'Approve & Date' },
     { label: 'ESAU SUP',  name: hrName,
-      subtitle: (!isManualEntry && hrStamp)
-        ? `Approved ${hrStamp}` : 'Process & Stamp' },
+      subtitle: hrStamp ? `Approved ${hrStamp}` : 'Process & Stamp' },
     { label: 'ESAU MGT',  name: CEO_NAME,
       subtitle: CEO_TITLE_EN },
   ]);
 
-  // Generated-on stamp also skipped for manual entries — same
-  // rationale, no server timestamps on paper-equivalent forms.
-  if (!isManualEntry) {
-    drawGeneratedStamp(pdf, hrName);
+  drawGeneratedStamp(pdf, hrName);
+  return pdf.output('blob');
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+//  generateLogbookPdfBlob — separate generator for Bashaier's Logbook
+//
+//  Same body as the portal generator above, but with these features
+//  EXPLICITLY removed:
+//    • QR code in header (qrDataUrl passed as null)
+//    • Timestamp under each substitute's 'Accepted online' stamp
+//    • Server timestamps in the signature row
+//    • Rotated 'Generated on …' stamp at the right margin
+//
+//  Bashaier writes real dates on the printed form by hand.
+//
+//  KEPT IN COMMON via shared low-level helpers:
+//    • Logo + branch info + reference (LV-XXXXXXXX) in header
+//    • Title + leave-type label
+//    • EMPLOYEE INFORMATION + LEAVE DETAILS sections
+//    • REASON section (if reason is present)
+//    • SUBSTITUTE COVERAGE table with green 'Accepted online' stamp
+//    • POLICY · KSA LABOR LAW block
+//    • 4-cell signature grid with names + generic prompts
+//
+//  Future maintenance: this function is INTENTIONALLY a copy of the
+//  portal body so changes to one don't bleed into the other. If a
+//  layout improvement should apply to both, edit both. If it should
+//  apply to only one, edit only that one. Nadeem 2026-05-21.
+// ───────────────────────────────────────────────────────────────────────────
+
+export async function generateLogbookPdfBlob({
+  request = {},
+  employee = {},
+  position = {},
+  substitutes = [],
+  manager = {},
+  hrName = HR_DEFAULT,
+} = {}) {
+  const pdf = newPdf();
+  const logoUrl = await loadLogoDataUrl();
+  // No QR for paper-equivalent forms.
+  const qrDataUrl = null;
+
+  const ltKey = request.leave_type_id || 'annual';
+  const typeLabel = LEAVE_TYPE_LABEL[ltKey] || 'Leave';
+
+  let y = MARGIN_T;
+  y = drawHeader(pdf, y, { logoUrl, qrDataUrl, request, refPrefix: 'LV' });
+  y += 2;
+  y = drawTitle(pdf, y, `Leave Application — ${typeLabel}`);
+  y += 2;
+
+  // EMPLOYEE INFORMATION + LEAVE DETAILS — use the exact same builders
+  // as the portal generator so the form layout reads identical above
+  // the signature row. See the portal generator for full annotation.
+  const isCompact = ltKey === 'sick';
+  y = drawSectionHeader(pdf, y, 'EMPLOYEE INFORMATION');
+  if (isCompact) {
+    y = drawTwoColTable(pdf, y, [
+      [['Employee',     employee.name || '—'],
+       ['PSN ID',       employee.id || '—']],
+      [['Designation',  position.designation || employee.designation || '—'],
+       ['Department',   position.department || employee.department || '—']],
+      [['Branch',       position.location || employee.location || '—'],
+       ['Reports to',   manager?.name || '—']],
+    ]);
+  } else {
+    y = drawSingleRow(pdf, y, 'Employee',     employee.name || '—', { emphasis: true });
+    y = drawSingleRow(pdf, y, 'PSN ID',       employee.id || '—');
+    y = drawSingleRow(pdf, y, 'Designation',  position.designation || employee.designation || '—');
+    y = drawSingleRow(pdf, y, 'Department',   position.department || employee.department || '—');
+    y = drawSingleRow(pdf, y, 'Branch',       position.location || employee.location || '—');
+    y = drawSingleRow(pdf, y, 'Reports to',   manager?.name || '—');
   }
+  y += isCompact ? 1 : 1.5;
+
+  y = drawSectionHeader(pdf, y, 'LEAVE DETAILS');
+  const periodLabel = request.start_date === request.end_date
+    ? fmtDateMed(request.start_date)
+    : `${fmtDateMed(request.start_date)}  →  ${fmtDateMed(request.end_date)}`;
+  const durLabel = `${request.days} day${request.days === 1 ? '' : 's'}${request.is_half_day ? ' (half day)' : ''}`;
+  const noticeLabel = (() => {
+    if (!request.requested_at || !request.start_date) return '—';
+    const days = Math.round(
+      (new Date(request.start_date) - new Date(request.requested_at)) / (1000 * 60 * 60 * 24)
+    );
+    if (days < 0) return 'Retroactive';
+    return days >= 14 ? `Planned (${days} days notice)` : `Urgent (${days} days notice)`;
+  })();
+  const submittedLabel = request.requested_at
+    ? `${fmtDateMed(request.requested_at)}  ·  ${new Date(request.requested_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`
+    : '—';
+  if (isCompact) {
+    y = drawTwoColTable(pdf, y, [
+      [['Leave type', typeLabel],
+       ['Period',     periodLabel]],
+      [['Duration',   durLabel],
+       ['Notice',     noticeLabel]],
+      [['Submitted',  submittedLabel],
+       null],
+    ]);
+  } else {
+    y = drawSingleRow(pdf, y, 'Leave type', typeLabel, { emphasis: true });
+    y = drawSingleRow(pdf, y, 'Period',     periodLabel);
+    y = drawSingleRow(pdf, y, 'Duration',   durLabel,    { emphasis: true });
+    y = drawSingleRow(pdf, y, 'Notice',     noticeLabel);
+    y = drawSingleRow(pdf, y, 'Submitted',  submittedLabel);
+  }
+  y += isCompact ? 1 : 1.5;
+
+  if (!isCompact && (request.reason || '').trim()) {
+    y = drawSectionHeader(pdf, y, 'REASON');
+    y = drawSingleRow(pdf, y, 'Details', request.reason.trim());
+    y += 1.5;
+  }
+
+  const yBefore = y;
+  y = drawTypeSpecificSection(pdf, y, request, employee);
+  if (y > yBefore) y += isCompact ? 1 : 1.5;
+
+  // Substitutes — green 'Accepted online' stamps render, but the
+  // timestamp underneath is suppressed for paper-equivalent forms.
+  if (!['emergency'].includes(ltKey)) {
+    y = drawSubstitutes(pdf, y, substitutes, { showAcceptedTimestamp: false });
+    y += isCompact ? 1 : 1.5;
+  }
+
+  y = drawSectionHeader(pdf, y, 'POLICY · KSA LABOR LAW');
+  const policy = POLICY_BY_TYPE[ltKey] || POLICY_BY_TYPE.other;
+  y = drawPolicyBullets(pdf, y, policy);
+
+  const sigH = 35.4;
+  const sigYFixed = PAGE_H - MARGIN_T - sigH;
+  const sigY = Math.max(sigYFixed, y + 4);
+
+  // No server timestamps in the signature row — paper signers fill
+  // dates by hand.
+  drawSignatures(pdf, sigY, [
+    { label: 'EMPLOYEE',  name: employee.name || '',
+      subtitle: 'Signature & Date' },
+    { label: 'DEPT MGR',  name: manager?.name || '',
+      subtitle: 'Approve & Date' },
+    { label: 'ESAU SUP',  name: hrName,
+      subtitle: 'Process & Stamp' },
+    { label: 'ESAU MGT',  name: CEO_NAME,
+      subtitle: CEO_TITLE_EN },
+  ]);
+
+  // No generated-on stamp.
+
   return pdf.output('blob');
 }
 

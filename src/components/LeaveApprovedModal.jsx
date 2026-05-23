@@ -44,7 +44,7 @@ function downloadBlob(blob, filename) {
 // flow (when offered) and the later re-send via the history list.
 // =============================================================================
 
-export default function LeaveApprovedModal({ request, employee, manager, hrApprover, empMap, substitutes = [], onClose }) {
+export default function LeaveApprovedModal({ request, employee, manager, hrApprover, empMap, substitutes = [], onClose, pdfGenerator }) {
   const [downloading, setDownloading] = useState(false);
   const [downloaded,  setDownloaded]  = useState(false);
   const [error,       setError]       = useState('');
@@ -115,7 +115,11 @@ export default function LeaveApprovedModal({ request, employee, manager, hrAppro
       }
       // Position + employee enriched view so the PDF can render
       // department / location / manager properly.
-      const blob = await generateLeaveApplicationPdfBlob({
+      // Use the caller-supplied generator if any (Logbook passes the
+      // stripped-down generateLogbookPdfBlob), otherwise fall back to
+      // the canonical portal generator with QR + full timestamps.
+      const generator = pdfGenerator || generateLeaveApplicationPdfBlob;
+      const blob = await generator({
         request: { ...request, type_details: td },
         employee,
         position: {

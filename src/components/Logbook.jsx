@@ -50,6 +50,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { directGet, directPost } from '../supabaseClient.js';
 import { NotebookPen, Save, Loader2, Search, CheckCircle2, AlertCircle, Wallet } from 'lucide-react';
 import { calculateRequestDays, calculateBalance, fmtDate } from '../lib/leaveLogic.js';
+import { generateLogbookPdfBlob } from '../lib/leaveApplicationPdf.js';
 import LeaveApprovedModal from './LeaveApprovedModal.jsx';
 
 export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }) {
@@ -738,6 +739,7 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
           hrApprover={savedModal.hrApprover}
           empMap={savedModal.empMap}
           substitutes={savedModal.substitutes}
+          pdfGenerator={generateLogbookPdfBlob}
           onClose={() => setSavedModal(null)}
         />
       )}
