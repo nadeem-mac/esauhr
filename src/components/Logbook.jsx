@@ -70,9 +70,13 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
   // weekends, which is how the legacy Excel tracker recorded leaves.
   const [daysOverride, setDaysOverride] = useState(null);
   const [savedModal, setSavedModal] = useState(null);
-  // Live balance for the picked employee + leave type. Fetched
-  // whenever empId or leaveType changes so Bashaier sees exactly
-  // what the staff has available BEFORE she records the entry.
+  // Substitutes — Bashaier picks from the staff's own department +
+  // location (same eligibility rules as the main workflow). Since
+  // she's recording a paper application that's already been signed
+  // off, the picked substitutes auto-record as 'accepted' with the
+  // current timestamp. Max 3, matching the regular flow's cap.
+  const [substituteIds, setSubstituteIds] = useState([]);
+  const [subSearch, setSubSearch] = useState('');
   const [balance, setBalance] = useState(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
 
@@ -125,6 +129,14 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
     loadRecent();
     return () => { cancelled = true; };
   }, [msg]);  // reload after each successful save
+
+  // Reset substitutes whenever the picked employee changes — they're
+  // department-scoped, so swapping employees invalidates the previous
+  // picks. Also clears the search box.
+  useEffect(() => {
+    setSubstituteIds([]);
+    setSubSearch('');
+  }, [empId]);
 
   // ── Live balance for the selected employee + leave type ─────────────
   // Fetches leave_balances + this employee's approved leave_requests
@@ -187,6 +199,18 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
     setMsg(null);
     try {
       const now = new Date().toISOString();
+      // Build substitute_decisions in the same shape PendingSubstitutionsCard
+      // writes when a sub accepts online: { decision: 'accepted', at: ISO }.
+      // This makes the PDF substitute table render the green 'Accepted
+      // online' stamp with Bashaier's logged timestamp as the acceptance
+      // moment. Sick leaves intentionally carry NO substitutes (matches
+      // main flow — sick goes straight to manager without sub layer).
+      const isSick = leaveType === 'sick';
+      const subIds = isSick ? [] : substituteIds;
+      const subDecisions = {};
+      subIds.forEach(psn => {
+        subDecisions[psn] = { decision: 'accepted', at: now };
+      });
       const payload = {
         employee_id:         empId,
         leave_type_id:       leaveType,
@@ -200,8 +224,8 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
         requested_at:        now,
         manager_decided_at:  now,
         hr_decided_at:       now,
-        substitute_ids:      [],
-        substitute_decisions: {},
+        substitute_ids:      subIds,
+        substitute_decisions: subDecisions,
         requested_by:        me?.id || null,
       };
       const inserted = await directPost('leave_requests', payload);
@@ -227,7 +251,12 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
         manager:    mgr,
         hrApprover: me,
         empMap,
-        substitutes: [],   // manual paper leaves don't go through online subs
+        // Look up each substitute's employee record so the PDF table
+        // renders the full name/PSN, then the modal pulls the
+        // 'accepted'+timestamp from substitute_decisions on the row.
+        substitutes: subIds
+          .map(psn => (employees || []).find(e => e.id === psn))
+          .filter(Boolean),
       });
 
       setMsg({ kind: 'ok', text: `Logged ${days}d for ${emp?.name || empId}` });
@@ -239,6 +268,8 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
       setIsHalfDay(false);
       setReason('');
       setDaysOverride(null);
+      setSubstituteIds([]);
+      setSubSearch('');
       onSaved?.();
     } catch (err) {
       console.error('logbook save error:', err);
@@ -481,6 +512,91 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
             className="w-full text-sm rounded border border-black/15 bg-white px-3 py-2 outline-none min-h-[60px]"
           />
         </div>
+
+        {/* Substitutes — same eligibility rule as the main workflow
+            (same department + same location, max 3, can't pick self).
+            Bashaier picks who appeared on the paper application; they
+            auto-record as 'accepted' with the save timestamp so the
+            PDF renders the green 'Accepted online' stamp. Hidden for
+            sick leaves — matches main flow. */}
+        {selectedEmp && leaveType !== 'sick' && (
+          <div className="space-y-2">
+            <label className="text-xs font-semibold uppercase" style={{ color: '#1F1B16' }}>
+              Substitutes
+              <span className="font-normal" style={{ opacity: 0.6 }}>
+                {' '}(pick up to 3 from {selectedEmp.department || '—'} · {selectedEmp.location || '—'})
+              </span>
+            </label>
+
+            {/* Picked subs as removable chips */}
+            {substituteIds.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {substituteIds.map(id => {
+                  const e = (employees || []).find(x => x.id === id);
+                  return (
+                    <span key={id}
+                          className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs"
+                          style={{ background: '#D1FAE5', color: '#0F4C2A' }}>
+                      <CheckCircle2 size={11} />
+                      <span style={{ fontWeight: 500 }}>{e?.name || id}</span>
+                      <button type="button"
+                              onClick={() => setSubstituteIds(substituteIds.filter(x => x !== id))}
+                              className="ml-1 hover:opacity-70"
+                              aria-label="Remove substitute">
+                        ×
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+
+            {substituteIds.length < 3 ? (
+              <>
+                <input
+                  value={subSearch}
+                  onChange={(e) => setSubSearch(e.target.value)}
+                  placeholder="Search by name or PSN…"
+                  className="w-full text-sm rounded border border-black/15 bg-white px-3 py-2 outline-none"
+                />
+                <div className="max-h-32 overflow-y-auto rounded border border-black/10">
+                  {(() => {
+                    const pool = (employees || []).filter(e =>
+                      e.id !== selectedEmp.id &&
+                      e.department === selectedEmp.department &&
+                      e.location === selectedEmp.location &&
+                      !substituteIds.includes(e.id) &&
+                      (!subSearch ||
+                        (e.name || '').toLowerCase().includes(subSearch.toLowerCase()) ||
+                        e.id.toLowerCase().includes(subSearch.toLowerCase()))
+                    ).slice(0, 8);
+                    if (pool.length === 0) {
+                      return (
+                        <div className="px-3 py-2 text-xs" style={{ color: '#1F1B16', opacity: 0.55 }}>
+                          No eligible colleagues from {selectedEmp.department || '—'} · {selectedEmp.location || '—'}.
+                        </div>
+                      );
+                    }
+                    return pool.map(e => (
+                      <button key={e.id} type="button"
+                              onClick={() => { setSubstituteIds([...substituteIds, e.id]); setSubSearch(''); }}
+                              className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-black/[0.04] border-b border-black/5 last:border-0 text-left">
+                        <span style={{ color: '#1F1B16', fontWeight: 500 }}>{e.name}</span>
+                        <span className="text-xs" style={{ color: '#1F1B16', opacity: 0.5 }}>
+                          {e.id}
+                        </span>
+                      </button>
+                    ));
+                  })()}
+                </div>
+              </>
+            ) : (
+              <div className="text-xs" style={{ color: '#1F1B16', opacity: 0.6 }}>
+                Maximum of 3 substitutes reached — remove one to swap.
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Status message */}
         {msg && (
