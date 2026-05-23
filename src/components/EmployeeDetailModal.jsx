@@ -573,8 +573,14 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                     >
                       {type.name}
                     </div>
-                    {/* Number — big available + small /total */}
-                    <div className="flex items-baseline gap-0.5 font-mono" style={{ lineHeight: 1 }}>
+                    {/* Number — big available + small /total + inline
+                        carry-forward note when applicable. The note
+                        sits on the same line as the number; tile
+                        wrapping handles long strings naturally.
+                        Nadeem 2026-05-21: 'should be like this for
+                        easy understanding · 14/37 (7 Carry forward
+                        from 2025)'. */}
+                    <div className="flex items-baseline gap-0.5 font-mono flex-wrap" style={{ lineHeight: 1.15 }}>
                       <span style={{
                         fontSize: 18, fontWeight: 700,
                         color: exhausted ? 'var(--clay)' : '#1F1B16',
@@ -584,6 +590,14 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                       {!unlimited && (
                         <span style={{ fontSize: 11, color: '#0A0A0A', opacity: 0.5, fontWeight: 400 }}>
                           /{balance.total || 0}
+                        </span>
+                      )}
+                      {balance.carried > 0 && (
+                        <span style={{
+                          fontSize: 10, color: '#A16207', fontWeight: 500,
+                          marginLeft: 4,
+                        }}>
+                          ({balance.carried} Carry forward from {year - 1})
                         </span>
                       )}
                       {balance.pending > 0 && (
@@ -596,19 +610,6 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                         </span>
                       )}
                     </div>
-                    {/* Carry-forward indicator — visible whenever any
-                        portion of `total` comes from a prior year's
-                        unused balance. Amber matches the colour used
-                        in the Logbook + NewRequestModal callouts.
-                        Nadeem 2026-05-21. */}
-                    {balance.carried > 0 && (
-                      <div style={{
-                        fontSize: 9, color: '#A16207', fontWeight: 600,
-                        marginTop: 3, letterSpacing: '0.02em',
-                      }}>
-                        ↩ +{balance.carried} from {year - 1}
-                      </div>
-                    )}
                   </div>
                 );
               })}
