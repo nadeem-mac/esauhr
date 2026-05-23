@@ -402,6 +402,20 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
                     </strong>
                   </div>
                 )}
+                {/* Carry-forward callout — surfaces whenever there's
+                    a non-zero carry, with the prior year named so
+                    Bashaier sees where the extra days came from.
+                    Nadeem 2026-05-21. */}
+                {balance.carried > 0 && (
+                  <div className="mt-2 pt-2 border-t border-black/10 flex items-center gap-1.5 text-xs"
+                       style={{ color: '#A16207' }}>
+                    <span aria-hidden="true">↩</span>
+                    <span>
+                      Includes <strong>{balance.carried}</strong>
+                      {' '}{balance.carried === 1 ? 'day' : 'days'} carried forward from {new Date().getFullYear() - 1}
+                    </span>
+                  </div>
+                )}
                 {balance.adjustment_note && (
                   <div className="mt-1.5 text-[10px]" style={{ color: '#1F1B16', opacity: 0.55 }}>
                     Note: {balance.adjustment_note}

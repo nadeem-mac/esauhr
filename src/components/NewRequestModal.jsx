@@ -491,6 +491,20 @@ export default function NewRequestModal({ me, employees, leaveTypes, requests, b
                         accent={willExceedBalance ? 'var(--clay)' : 'var(--evergreen-500)'}/>
                 </div>
               )}
+
+              {/* Carry-forward callout — visible whenever any portion
+                  of ENTITLED comes from a prior year's unused balance.
+                  Nadeem 2026-05-21. */}
+              {currentBalance?.carried > 0 && (
+                <div className="flex items-center gap-1.5 text-xs"
+                     style={{ color: '#A16207' }}>
+                  <span aria-hidden="true">↩</span>
+                  <span>
+                    Includes <strong>{currentBalance.carried}</strong>
+                    {' '}{currentBalance.carried === 1 ? 'day' : 'days'} carried forward from {new Date().getFullYear() - 1}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
