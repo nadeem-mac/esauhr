@@ -539,36 +539,50 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
               {balByType.map(({ type, balance }) => {
-                const total = balance.total || 0;
-                const exhausted = balance.available <= 0 && total > 0;
-                const unlimited = type.accrual_method === 'unlimited' || (!total && balance.available === 0 && balance.used === 0);
-                // Tiles with carry-forward get a distinctive amber
-                // highlight — Bashaier needs to immediately spot
-                // which staff have prior-year balance still on the
-                // books. Nadeem 2026-05-21: 'a tile should appear
-                // with highlight'.
-                const hasCarry = balance.carried > 0;
+                const exhausted = balance.available <= 0 && (balance.total || 0) > 0;
+                const unlimited = type.accrual_method === 'unlimited' || (!balance.total && balance.available === 0 && balance.used === 0);
+
+                // The migration packed pre-portal 2026 usage into a
+                // negative `adjustment` so balance maths added up.
+                // For HR display, surface that as usage rather than
+                // a phantom total reduction — otherwise tiles read
+                // '13/13' instead of '13/30' and Bashaier can't see
+                // the 17 days that were taken before the portal.
+                // Positive adjustments (HR-granted bonus days) still
+                // expand the pool. Nadeem 2026-05-21: 'use proper
+                // audit to give the most correct information'.
+                const adjVal     = Number(balance.adjustment || 0);
+                const prePortal  = adjVal < 0 ? -adjVal : 0;
+                const bonus      = adjVal > 0 ?  adjVal : 0;
+                const dispTotal  = balance.entitlement + balance.carried + bonus;
+                const dispUsed   = balance.used + balance.pending + prePortal;
+                const dispAvail  = dispTotal - dispUsed;
+
+                const hasCarry      = balance.carried > 0;
+                const hasPrePortal  = prePortal > 0;
+                const isHighlighted = hasCarry || hasPrePortal;
                 return (
                   <div
                     key={type.id}
                     className="rounded-lg overflow-hidden relative"
                     style={{
-                      background: hasCarry ? '#FFFBEB' : '#FAFAF6',
+                      background: isHighlighted ? '#FFFBEB' : '#FAFAF6',
                       padding: '8px 10px 8px',
                       paddingTop: 10,
-                      border: hasCarry ? '1px solid #FCD34D' : '1px solid transparent',
-                      boxShadow: hasCarry ? '0 0 0 3px rgba(252, 211, 77, 0.15)' : 'none',
+                      border: isHighlighted ? '1px solid #FCD34D' : '1px solid transparent',
+                      boxShadow: isHighlighted ? '0 0 0 3px rgba(252, 211, 77, 0.15)' : 'none',
                     }}
                     title={
-                      hasCarry
+                      isHighlighted
                         ? `AUDIT BREAKDOWN\n` +
                           `Entitlement (${year}):  ${balance.entitlement}\n` +
-                          `Carried from ${year - 1}: +${balance.carried}\n` +
-                          `Adjustments:           ${balance.adjustment >= 0 ? '+' : ''}${balance.adjustment || 0}\n` +
-                          `── Total pool:         ${balance.total}\n` +
-                          `Used in ${year}:        −${balance.used}\n` +
+                          (hasCarry      ? `Carried from ${year - 1}: +${balance.carried}\n` : '') +
+                          (bonus     > 0 ? `Bonus / adjustment:    +${bonus}\n`              : '') +
+                          `── Total pool:         ${dispTotal}\n` +
+                          (hasPrePortal  ? `Used (pre-portal):     −${prePortal}\n` : '') +
+                          `Used in portal:        −${balance.used}\n` +
                           `Pending:               −${balance.pending}\n` +
-                          `── Available:          ${balance.available}`
+                          `── Available:          ${dispAvail}`
                         : `${balance.used} used · ${balance.pending} pending · ${balance.available} available`
                     }
                   >
@@ -589,6 +603,25 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                         CFWD {year - 1}
                       </div>
                     )}
+                    {/* Pre-portal usage ribbon — for staff whose 2026
+                        leaves were taken before the portal launched
+                        and were imported from the Excel tracker as a
+                        negative adjustment. */}
+                    {hasPrePortal && !hasCarry && (
+                      <div
+                        className="absolute"
+                        style={{
+                          top: 0, right: 0,
+                          background: '#9D6B53', color: '#FFFFFF',
+                          fontSize: 8, fontWeight: 700,
+                          padding: '2px 6px 2px 8px',
+                          letterSpacing: '0.06em',
+                          borderBottomLeftRadius: 6,
+                        }}
+                        title={`${prePortal} days taken before portal launch (Excel migration)`}>
+                        PRE-PORTAL
+                      </div>
+                    )}
                     {/* Color stripe */}
                     <div
                       style={{
@@ -605,7 +638,7 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                         fontWeight: 600,
                         opacity: 0.8,
                         marginBottom: 3,
-                        marginTop: hasCarry ? 8 : 0,
+                        marginTop: isHighlighted ? 8 : 0,
                       }}
                     >
                       {type.name}
@@ -617,11 +650,11 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                         fontSize: 18, fontWeight: 700,
                         color: exhausted ? 'var(--clay)' : '#1F1B16',
                       }}>
-                        {unlimited ? '∞' : balance.available}
+                        {unlimited ? '∞' : dispAvail}
                       </span>
                       {!unlimited && (
                         <span style={{ fontSize: 11, color: '#0A0A0A', opacity: 0.5, fontWeight: 400 }}>
-                          /{balance.total || 0}
+                          /{dispTotal}
                         </span>
                       )}
                       {hasCarry && (
@@ -642,15 +675,22 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                         </span>
                       )}
                     </div>
-                    {/* Audit breakdown when carry is present — gives
-                        Bashaier the full equation visible on the tile
-                        without needing to hover for the tooltip */}
-                    {hasCarry && (
+                    {/* Audit equation — full math line so Bashaier
+                        sees how the headline number was computed
+                        without hovering for the tooltip */}
+                    {isHighlighted && (
                       <div style={{
-                        fontSize: 8.5, color: '#1F1B16', opacity: 0.6,
+                        fontSize: 8.5, color: '#1F1B16', opacity: 0.7,
                         marginTop: 4, lineHeight: 1.4,
                       }}>
-                        {balance.entitlement} + {balance.carried} − {balance.used + balance.pending} = {balance.available}
+                        {balance.entitlement}
+                        {hasCarry && ` + ${balance.carried}`}
+                        {bonus > 0 && ` + ${bonus}`}
+                        {' − '}
+                        {dispUsed}
+                        {hasPrePortal && ` (incl ${prePortal} pre-portal)`}
+                        {' = '}
+                        {dispAvail}
                       </div>
                     )}
                   </div>
