@@ -48,8 +48,8 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { directGet, directPost } from '../supabaseClient.js';
-import { NotebookPen, Save, Loader2, Search, CheckCircle2, AlertCircle } from 'lucide-react';
-import { calculateRequestDays, fmtDate } from '../lib/leaveLogic.js';
+import { NotebookPen, Save, Loader2, Search, CheckCircle2, AlertCircle, Wallet } from 'lucide-react';
+import { calculateRequestDays, calculateBalance, fmtDate } from '../lib/leaveLogic.js';
 import LeaveApprovedModal from './LeaveApprovedModal.jsx';
 
 export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }) {
@@ -70,6 +70,11 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
   // weekends, which is how the legacy Excel tracker recorded leaves.
   const [daysOverride, setDaysOverride] = useState(null);
   const [savedModal, setSavedModal] = useState(null);
+  // Live balance for the picked employee + leave type. Fetched
+  // whenever empId or leaveType changes so Bashaier sees exactly
+  // what the staff has available BEFORE she records the entry.
+  const [balance, setBalance] = useState(null);
+  const [balanceLoading, setBalanceLoading] = useState(false);
 
   // ── Employee search ────────────────────────────────────────────────
   const empMatches = useMemo(() => {
@@ -120,6 +125,58 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
     loadRecent();
     return () => { cancelled = true; };
   }, [msg]);  // reload after each successful save
+
+  // ── Live balance for the selected employee + leave type ─────────────
+  // Fetches leave_balances + this employee's approved leave_requests
+  // for the current year, then runs calculateBalance to get the
+  // entitled/used/available figures. Re-runs when empId or leaveType
+  // changes (and after each save via `msg` dependency).
+  useEffect(() => {
+    if (!empId || !leaveType) { setBalance(null); return; }
+    let cancelled = false;
+    const year = new Date().getFullYear();
+    setBalanceLoading(true);
+    (async () => {
+      try {
+        const [reqs, bals] = await Promise.all([
+          directGet('leave_requests',
+            `select=id,employee_id,leave_type_id,start_date,end_date,days,stage,status`
+            + `&employee_id=eq.${encodeURIComponent(empId)}`
+            + `&leave_type_id=eq.${encodeURIComponent(leaveType)}`,
+            { timeoutMs: 8000 }),
+          directGet('leave_balances',
+            `select=carried_over,adjustment,adjustment_note`
+            + `&employee_id=eq.${encodeURIComponent(empId)}`
+            + `&leave_type_id=eq.${encodeURIComponent(leaveType)}`
+            + `&year=eq.${year}&limit=1`,
+            { timeoutMs: 8000 }),
+        ]);
+        if (cancelled) return;
+        const emp = (employees || []).find(e => e.id === empId);
+        const ltRow = (leaveTypes || []).find(t => t.id === leaveType);
+        if (!emp || !ltRow) { setBalance(null); return; }
+        const adj = bals?.[0] || {};
+        const result = calculateBalance({
+          employee: emp,
+          leaveType: ltRow,
+          year,
+          requests: reqs || [],
+          adjustments: {
+            carried_over: Number(adj.carried_over || 0),
+            adjustment:   Number(adj.adjustment   || 0),
+          },
+          asOf: new Date(),
+        });
+        if (!cancelled) setBalance({ ...result, adjustment_note: adj.adjustment_note });
+      } catch (e) {
+        console.warn('logbook balance fetch failed:', e?.message || e);
+        if (!cancelled) setBalance(null);
+      } finally {
+        if (!cancelled) setBalanceLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [empId, leaveType, employees, leaveTypes, msg]);
 
   // ── Submit ─────────────────────────────────────────────────────────
   const canSave = empId && leaveType && startDate && endDate && days > 0 && !busy;
@@ -261,6 +318,59 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
             </div>
           )}
         </div>
+
+        {/* Live balance for the selected employee + leave type.
+            Updates whenever Bashaier changes either dropdown, AND
+            after every save so she can confirm the deduction took
+            effect. */}
+        {selectedEmp && (
+          <div className="rounded border border-black/10 px-3 py-2"
+               style={{ background: 'rgba(15, 76, 42, 0.05)' }}>
+            <div className="flex items-center gap-2 mb-1.5">
+              <Wallet size={13} style={{ color: '#0F4C2A' }} />
+              <span className="text-xs font-semibold uppercase tracking-wide"
+                    style={{ color: '#0F4C2A' }}>
+                Current {leaveType} balance · {new Date().getFullYear()}
+              </span>
+              {balanceLoading && <Loader2 size={11} className="animate-spin" style={{ color: '#0F4C2A' }} />}
+            </div>
+            {balance ? (
+              <>
+                <div className="grid grid-cols-4 gap-2 text-center text-xs">
+                  <BalanceCell label="ENTITLED"  val={balance.entitlement} />
+                  <BalanceCell label="CARRIED"   val={balance.carried} />
+                  <BalanceCell label="USED+PEND" val={balance.used + balance.pending} />
+                  <BalanceCell label="AVAILABLE" val={balance.available}
+                               accent={balance.available < 0 ? '#B84A3E' : '#0F4C2A'} />
+                </div>
+                {/* After-this-request preview */}
+                {days > 0 && (
+                  <div className="mt-2 pt-2 border-t border-black/10 flex items-center justify-between text-xs"
+                       style={{ color: '#1F1B16' }}>
+                    <span style={{ opacity: 0.7 }}>
+                      After this {days}-day entry:
+                    </span>
+                    <strong style={{
+                      color: (balance.available - days) < 0 ? '#B84A3E' : '#0F4C2A'
+                    }}>
+                      {(balance.available - days).toFixed(1)} days
+                      {(balance.available - days) < 0 && ' (over)'}
+                    </strong>
+                  </div>
+                )}
+                {balance.adjustment_note && (
+                  <div className="mt-1.5 text-[10px]" style={{ color: '#1F1B16', opacity: 0.55 }}>
+                    Note: {balance.adjustment_note}
+                  </div>
+                )}
+              </>
+            ) : !balanceLoading && (
+              <p className="text-xs" style={{ color: '#1F1B16', opacity: 0.6 }}>
+                No balance row yet (defaults to entitlement only).
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Leave type */}
         <div className="space-y-1">
@@ -469,6 +579,23 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
           onClose={() => setSavedModal(null)}
         />
       )}
+    </div>
+  );
+}
+
+// Small balance-figure cell — label on top, value below. Used in the
+// 4-stat balance grid that appears once an employee is selected.
+function BalanceCell({ label, val, accent = '#0F4C2A' }) {
+  const num = typeof val === 'number' ? val : Number(val || 0);
+  return (
+    <div className="rounded bg-white px-2 py-1.5">
+      <div className="text-[9px] font-bold tracking-wider"
+           style={{ color: '#1F1B16', opacity: 0.55 }}>
+        {label}
+      </div>
+      <div className="text-sm font-bold" style={{ color: accent }}>
+        {num.toFixed(num % 1 === 0 ? 0 : 2)}
+      </div>
     </div>
   );
 }
