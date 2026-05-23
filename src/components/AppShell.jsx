@@ -1050,17 +1050,42 @@ export default function AppShell({ session, me, onRefreshMe }) {
 
         {/* Tabs */}
         <div className="max-w-7xl mx-auto px-3 sm:px-6 flex gap-1 overflow-x-auto">
-          {TABS.map(t => (
+          {TABS.map(t => {
+            const isLogbook = t.id === 'logbook';
+            const isActive  = tab === t.id;
+            return (
             <button key={t.id} onClick={() => setTabPersistent(t.id)}
               className="relative flex items-center gap-2 px-4 py-3 text-sm whitespace-nowrap transition-colors"
               style={{
-                color: tab === t.id ? 'var(--ink)' : 'var(--ink-soft)',
-                opacity: tab === t.id ? 1 : 0.65,
-                borderBottom: tab === t.id ? '2px solid var(--evergreen-500)' : '2px solid transparent',
+                // Logbook gets a distinctive amber treatment — both
+                // colour and weight — to mark it as Bashaier's special
+                // workspace. Nadeem 2026-05-21: 'highlight the LOGBOOK
+                // button to let it appear as special'.
+                color: isLogbook
+                  ? (isActive ? '#92400E' : '#A16207')
+                  : (isActive ? 'var(--ink)' : 'var(--ink-soft)'),
+                opacity: isActive ? 1 : (isLogbook ? 0.9 : 0.65),
+                fontWeight: isLogbook ? 700 : 400,
+                borderBottom: isActive
+                  ? (isLogbook ? '2px solid #A16207' : '2px solid var(--evergreen-500)')
+                  : '2px solid transparent',
+                background: isLogbook
+                  ? (isActive
+                      ? 'linear-gradient(to bottom, transparent, #FEF3C7 90%)'
+                      : 'linear-gradient(to bottom, transparent, rgba(254, 243, 199, 0.5) 90%)')
+                  : 'transparent',
                 marginBottom: '-1px',
               }}>
               <t.icon className="w-4 h-4" />
               {t.label}
+              {/* Logbook sparkle badge — 'PRIVATE' pill so Bashaier
+                  knows at a glance this is her dedicated workspace */}
+              {isLogbook && (
+                <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full font-bold tracking-wider"
+                      style={{ background: '#A16207', color: '#FFFFFF', letterSpacing: '0.05em' }}>
+                  PRIVATE
+                </span>
+              )}
               {t.id === 'requests' && pendingCount > 0 && (
                 <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full"
                   style={{ background: 'var(--clay)', color: 'var(--paper)' }}>
@@ -1104,7 +1129,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
                 </span>
               )}
             </button>
-          ))}
+          );})}
         </div>
       </header>
 

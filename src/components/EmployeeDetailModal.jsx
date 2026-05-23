@@ -542,17 +542,53 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                 const total = balance.total || 0;
                 const exhausted = balance.available <= 0 && total > 0;
                 const unlimited = type.accrual_method === 'unlimited' || (!total && balance.available === 0 && balance.used === 0);
+                // Tiles with carry-forward get a distinctive amber
+                // highlight — Bashaier needs to immediately spot
+                // which staff have prior-year balance still on the
+                // books. Nadeem 2026-05-21: 'a tile should appear
+                // with highlight'.
+                const hasCarry = balance.carried > 0;
                 return (
                   <div
                     key={type.id}
                     className="rounded-lg overflow-hidden relative"
                     style={{
-                      background: '#FAFAF6',
+                      background: hasCarry ? '#FFFBEB' : '#FAFAF6',
                       padding: '8px 10px 8px',
                       paddingTop: 10,
+                      border: hasCarry ? '1px solid #FCD34D' : '1px solid transparent',
+                      boxShadow: hasCarry ? '0 0 0 3px rgba(252, 211, 77, 0.15)' : 'none',
                     }}
-                    title={`${balance.used} used · ${balance.pending} pending · ${balance.available} available${balance.carried > 0 ? ` · ${balance.carried} carried from ${year - 1}` : ''}`}
+                    title={
+                      hasCarry
+                        ? `AUDIT BREAKDOWN\n` +
+                          `Entitlement (${year}):  ${balance.entitlement}\n` +
+                          `Carried from ${year - 1}: +${balance.carried}\n` +
+                          `Adjustments:           ${balance.adjustment >= 0 ? '+' : ''}${balance.adjustment || 0}\n` +
+                          `── Total pool:         ${balance.total}\n` +
+                          `Used in ${year}:        −${balance.used}\n` +
+                          `Pending:               −${balance.pending}\n` +
+                          `── Available:          ${balance.available}`
+                        : `${balance.used} used · ${balance.pending} pending · ${balance.available} available`
+                    }
                   >
+                    {/* CFWD ribbon badge in top-right when there's
+                        carry-forward — small but unmissable */}
+                    {hasCarry && (
+                      <div
+                        className="absolute"
+                        style={{
+                          top: 0, right: 0,
+                          background: '#A16207', color: '#FFFFFF',
+                          fontSize: 8, fontWeight: 700,
+                          padding: '2px 6px 2px 8px',
+                          letterSpacing: '0.06em',
+                          borderBottomLeftRadius: 6,
+                        }}
+                        title={`Includes ${balance.carried} days carried forward from ${year - 1}`}>
+                        CFWD {year - 1}
+                      </div>
+                    )}
                     {/* Color stripe */}
                     <div
                       style={{
@@ -569,17 +605,13 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                         fontWeight: 600,
                         opacity: 0.8,
                         marginBottom: 3,
+                        marginTop: hasCarry ? 8 : 0,
                       }}
                     >
                       {type.name}
                     </div>
                     {/* Number — big available + small /total + inline
-                        carry-forward note when applicable. The note
-                        sits on the same line as the number; tile
-                        wrapping handles long strings naturally.
-                        Nadeem 2026-05-21: 'should be like this for
-                        easy understanding · 14/37 (7 Carry forward
-                        from 2025)'. */}
+                        carry-forward note when applicable. */}
                     <div className="flex items-baseline gap-0.5 font-mono flex-wrap" style={{ lineHeight: 1.15 }}>
                       <span style={{
                         fontSize: 18, fontWeight: 700,
@@ -592,7 +624,7 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                           /{balance.total || 0}
                         </span>
                       )}
-                      {balance.carried > 0 && (
+                      {hasCarry && (
                         <span style={{
                           fontSize: 8.5, color: '#A16207', fontWeight: 600,
                           marginLeft: 4, letterSpacing: '0.02em',
@@ -610,6 +642,17 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                         </span>
                       )}
                     </div>
+                    {/* Audit breakdown when carry is present — gives
+                        Bashaier the full equation visible on the tile
+                        without needing to hover for the tooltip */}
+                    {hasCarry && (
+                      <div style={{
+                        fontSize: 8.5, color: '#1F1B16', opacity: 0.6,
+                        marginTop: 4, lineHeight: 1.4,
+                      }}>
+                        {balance.entitlement} + {balance.carried} − {balance.used + balance.pending} = {balance.available}
+                      </div>
+                    )}
                   </div>
                 );
               })}
