@@ -122,7 +122,7 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
       try {
         const rows = await directGet(
           'leave_requests',
-          `select=id,employee_id,leave_type_id,start_date,end_date,days,reason,hr_decided_at`
+          `select=id,employee_id,leave_type_id,start_date,end_date,days,reason,hr_decided_at,substitute_ids,substitute_decisions`
           + `&reason=ilike.Manual entry*`
           + `&order=hr_decided_at.desc&limit=10`,
           { timeoutMs: 10000 }
@@ -697,9 +697,16 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
                       const empMap = (employees || []).reduce((acc, x) => {
                         acc[x.id] = x; return acc;
                       }, {});
+                      // Hydrate the substitutes from the row's
+                      // substitute_ids so the email's 'Coverage during
+                      // your absence' line lists them (previously
+                      // empty here → email showed '• —').
+                      const subs = (r.substitute_ids || [])
+                        .map(psn => (employees || []).find(x => x.id === psn))
+                        .filter(Boolean);
                       setSavedModal({
                         request: r, employee: e, manager: mgr,
-                        hrApprover: me, empMap, substitutes: [],
+                        hrApprover: me, empMap, substitutes: subs,
                       });
                     }}
                     className="border-b border-black/5 last:border-0 cursor-pointer hover:bg-black/[0.02]"

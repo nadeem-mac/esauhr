@@ -448,28 +448,25 @@ function drawSubstitutes(pdf, y, subs = []) {
     });
     cx += colW[0];
 
-    // Substitute name + PSN. Long names like 'SYED NOMAN SADAQAT
-    // SYED SADAQAT ALI' previously bled into the signature box —
-    // now we splitTextToSize against the column width so the name
-    // wraps to a 2nd line if needed. Nadeem 2026-05-21.
-    const nameMaxW = colW[1] - 4;     // 2mm padding each side
-    const nameLines = pdf.splitTextToSize(s.name || '', nameMaxW);
+    // Substitute name + PSN. Keep the original single-line layout
+    // (y+7 name, y+11 PSN) so spacing matches the rest of the form,
+    // but auto-shrink the font when a name like 'SYED NOMAN SADAQAT
+    // SYED SADAQAT ALI' would overflow the 70mm column. Tries 9pt
+    // → 8 → 7 → 6 in 0.5mm-tolerance increments, falling back to
+    // the smallest readable size. Nadeem 2026-05-21.
+    const nameMaxW = colW[1] - 4;
+    const nameStr = s.name || '';
+    let nameSize = 9;
     pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(9);
-    pdf.setTextColor(...C.text);
-    // Two lines max — long enough for nearly every Saudi/Filipino
-    // full name. If a name still overflows after wrapping, the rest
-    // is silently dropped (rather than spilling into the next row).
-    pdf.text(nameLines[0] || '', cx + 2, y + 5);
-    if (nameLines.length > 1) {
-      pdf.text(nameLines[1], cx + 2, y + 9);
+    for (const candidate of [9, 8, 7, 6]) {
+      pdf.setFontSize(candidate);
+      if (pdf.getTextWidth(nameStr) <= nameMaxW) { nameSize = candidate; break; }
+      nameSize = candidate;  // worst case stays at 6
     }
-    // PSN below the name lines — y position adjusts based on whether
-    // the name needed one line or two.
-    if (s.psn) {
-      const psnY = nameLines.length > 1 ? y + 12.5 : y + 9;
-      drawText(pdf, s.psn, cx + 2, psnY, { size: 7, color: C.muted });
-    }
+    drawText(pdf, nameStr, cx + 2, y + 7, {
+      size: nameSize, color: C.text, style: 'bold',
+    });
+    if (s.psn) drawText(pdf, s.psn, cx + 2, y + 11, { size: 7, color: C.muted });
     cx += colW[1];
 
     // SIGNATURE BOX — bordered rectangle, EMPTY. The user explicitly asked
