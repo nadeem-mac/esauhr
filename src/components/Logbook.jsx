@@ -337,11 +337,16 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
             {balance ? (
               <>
                 <div className="grid grid-cols-4 gap-2 text-center text-xs">
-                  <BalanceCell label="ENTITLED"  val={balance.entitlement} />
-                  <BalanceCell label="CARRIED"   val={balance.carried} />
-                  <BalanceCell label="USED+PEND" val={balance.used + balance.pending} />
+                  <BalanceCell label="ENTITLED"  val={balance.entitlement}
+                               fg="#1D4ED8" bg="#DBEAFE" />
+                  <BalanceCell label="CARRIED"   val={balance.carried}
+                               fg="#A16207" bg="#FEF3C7" />
+                  <BalanceCell label="USED+PEND" val={balance.used + balance.pending}
+                               fg="#B84A3E" bg="#FEE2E2" />
                   <BalanceCell label="AVAILABLE" val={balance.available}
-                               accent={balance.available < 0 ? '#B84A3E' : '#0F4C2A'} />
+                               fg={balance.available < 0 ? '#B84A3E' : '#0F4C2A'}
+                               bg={balance.available < 0 ? '#FEE2E2' : '#D1FAE5'}
+                               emphasize />
                 </div>
                 {/* After-this-request preview */}
                 {days > 0 && (
@@ -583,17 +588,24 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
   );
 }
 
-// Small balance-figure cell — label on top, value below. Used in the
-// 4-stat balance grid that appears once an employee is selected.
-function BalanceCell({ label, val, accent = '#0F4C2A' }) {
+// Small balance-figure cell — coloured per metric so the four numbers
+// read at a glance: blue = entitled (fixed), amber = carried (rollover),
+// red = used (consumed), green = available (healthy). Available cell
+// is emphasised slightly larger since it's the actionable number.
+function BalanceCell({ label, val, fg = '#0F4C2A', bg = '#FFFFFF', emphasize = false }) {
   const num = typeof val === 'number' ? val : Number(val || 0);
   return (
-    <div className="rounded bg-white px-2 py-1.5">
+    <div className={`rounded px-2 py-1.5 ${emphasize ? 'ring-2' : ''}`}
+         style={{
+           background: bg,
+           ...(emphasize ? { '--tw-ring-color': fg, boxShadow: `inset 0 0 0 1.5px ${fg}40` } : {}),
+         }}>
       <div className="text-[9px] font-bold tracking-wider"
-           style={{ color: '#1F1B16', opacity: 0.55 }}>
+           style={{ color: fg, opacity: 0.8 }}>
         {label}
       </div>
-      <div className="text-sm font-bold" style={{ color: accent }}>
+      <div className={`font-bold ${emphasize ? 'text-base' : 'text-sm'}`}
+           style={{ color: fg }}>
         {num.toFixed(num % 1 === 0 ? 0 : 2)}
       </div>
     </div>
