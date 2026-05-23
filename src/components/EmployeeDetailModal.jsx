@@ -551,7 +551,7 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                       padding: '8px 10px 8px',
                       paddingTop: 10,
                     }}
-                    title={`${balance.used} used · ${balance.pending} pending · ${balance.available} available`}
+                    title={`${balance.used} used · ${balance.pending} pending · ${balance.available} available${balance.carried > 0 ? ` · ${balance.carried} carried from ${year - 1}` : ''}`}
                   >
                     {/* Color stripe */}
                     <div
@@ -596,6 +596,19 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                         </span>
                       )}
                     </div>
+                    {/* Carry-forward indicator — visible whenever any
+                        portion of `total` comes from a prior year's
+                        unused balance. Amber matches the colour used
+                        in the Logbook + NewRequestModal callouts.
+                        Nadeem 2026-05-21. */}
+                    {balance.carried > 0 && (
+                      <div style={{
+                        fontSize: 9, color: '#A16207', fontWeight: 600,
+                        marginTop: 3, letterSpacing: '0.02em',
+                      }}>
+                        ↩ +{balance.carried} from {year - 1}
+                      </div>
+                    )}
                   </div>
                 );
               })}
