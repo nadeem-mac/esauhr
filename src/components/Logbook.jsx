@@ -63,11 +63,12 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [recent, setRecent] = useState([]);
-  // After a successful save we open LeaveApprovedModal with the
-  // freshly-inserted row so Bashaier can (1) download the same PDF
-  // a regular approved leave would produce and (2) launch the
-  // pre-filled mailto: to send it. State holds the modal payload —
-  // see openApprovedModal() for what gets passed.
+  // Manual override for the day count. When null, the form uses the
+  // auto-calculated working-days figure (MOL Article 113). Bashaier
+  // can override when the paper application explicitly states a
+  // different number — e.g. calendar-day counts that include
+  // weekends, which is how the legacy Excel tracker recorded leaves.
+  const [daysOverride, setDaysOverride] = useState(null);
   const [savedModal, setSavedModal] = useState(null);
 
   // ── Employee search ────────────────────────────────────────────────
@@ -91,10 +92,13 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
     () => (leaveTypes || []).find(t => t.id === leaveType) || { id: 'annual' },
     [leaveType, leaveTypes]
   );
-  const days = useMemo(() => {
+  // Auto-calc (MOL Article 113 — working days, excludes Fri/Sat + public holidays)
+  const autoDays = useMemo(() => {
     if (!startDate || !endDate) return 0;
     return calculateRequestDays(startDate, endDate, lt, [], isHalfDay);
   }, [startDate, endDate, lt, isHalfDay]);
+  // Final days to insert — manual override takes precedence
+  const days = daysOverride != null && daysOverride !== '' ? Number(daysOverride) : autoDays;
 
   // ── Recent entries — last 10 manual entries Bashaier logged ────────
   useEffect(() => {
@@ -177,6 +181,7 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
       setEndDate('');
       setIsHalfDay(false);
       setReason('');
+      setDaysOverride(null);
       onSaved?.();
     } catch (err) {
       console.error('logbook save error:', err);
@@ -311,11 +316,41 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
           Half-day request
         </label>
 
-        {/* Day count preview */}
+        {/* Day count — auto from MOL working-day calc, but Bashaier can
+            override when the paper application uses calendar days */}
         {startDate && endDate && (
-          <div className="rounded bg-black/[0.03] px-3 py-2 text-sm" style={{ color: '#1F1B16' }}>
-            Duration: <strong>{days} {days === 1 ? 'day' : 'days'}</strong>
-            {' '}({fmtDate(new Date(startDate))} → {fmtDate(new Date(endDate))})
+          <div className="rounded bg-black/[0.03] px-3 py-2 space-y-2">
+            <div className="flex items-center gap-3 text-sm" style={{ color: '#1F1B16' }}>
+              <span>Duration:</span>
+              <input
+                type="number"
+                step="0.5"
+                min="0"
+                value={daysOverride != null ? daysOverride : autoDays}
+                onChange={(e) => setDaysOverride(e.target.value)}
+                className="w-20 text-sm rounded border border-black/15 bg-white px-2 py-1 outline-none font-semibold"
+              />
+              <span style={{ opacity: 0.7 }}>
+                {days === 1 ? 'day' : 'days'}
+              </span>
+              {daysOverride != null && Number(daysOverride) !== autoDays && (
+                <button
+                  onClick={() => setDaysOverride(null)}
+                  className="text-xs underline ml-auto"
+                  style={{ color: '#0F4C2A' }}>
+                  reset to auto ({autoDays})
+                </button>
+              )}
+            </div>
+            <div className="text-xs" style={{ color: '#1F1B16', opacity: 0.6 }}>
+              {fmtDate(new Date(startDate))} → {fmtDate(new Date(endDate))}
+              {' · '}
+              {daysOverride == null
+                ? `auto-computed working days (MOL Art. 113, excludes Fri+Sat + holidays)`
+                : Number(daysOverride) !== autoDays
+                  ? `manual override · auto was ${autoDays} working days`
+                  : `auto-computed working days (MOL Art. 113, excludes Fri+Sat + holidays)`}
+            </div>
           </div>
         )}
 
