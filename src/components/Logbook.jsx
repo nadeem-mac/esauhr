@@ -50,6 +50,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { directGet, directPost } from '../supabaseClient.js';
 import { NotebookPen, Save, Loader2, Search, CheckCircle2, AlertCircle } from 'lucide-react';
 import { calculateRequestDays, fmtDate } from '../lib/leaveLogic.js';
+import LeaveApprovedModal from './LeaveApprovedModal.jsx';
 
 export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }) {
   const [empQuery, setEmpQuery] = useState('');
@@ -62,6 +63,12 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [recent, setRecent] = useState([]);
+  // After a successful save we open LeaveApprovedModal with the
+  // freshly-inserted row so Bashaier can (1) download the same PDF
+  // a regular approved leave would produce and (2) launch the
+  // pre-filled mailto: to send it. State holds the modal payload —
+  // see openApprovedModal() for what gets passed.
+  const [savedModal, setSavedModal] = useState(null);
 
   // ── Employee search ────────────────────────────────────────────────
   const empMatches = useMemo(() => {
@@ -137,10 +144,34 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
         substitute_decisions: {},
         requested_by:        me?.id || null,
       };
-      await directPost('leave_requests', payload);
+      const inserted = await directPost('leave_requests', payload);
+      const newRow = Array.isArray(inserted) ? inserted[0] : inserted;
 
-      // Reset for next entry; show success message
-      setMsg({ kind: 'ok', text: `Logged ${days}d for ${selectedEmp?.name || empId}` });
+      // Resolve the context the LeaveApprovedModal expects: the
+      // employee, their manager (for CC + signature block), the HR
+      // approver (Bashaier = me), and a small empMap for sick-leave
+      // CC lookups. Annual leaves don't need badria/fahad so empMap
+      // can be sparse — modal handles missing entries gracefully.
+      const emp = (employees || []).find(e => e.id === empId);
+      const mgr = emp?.manager_id
+        ? (employees || []).find(e => e.id === emp.manager_id)
+        : null;
+      const empMap = (employees || []).reduce((acc, e) => {
+        acc[e.id] = e;
+        return acc;
+      }, {});
+
+      setSavedModal({
+        request:    newRow,
+        employee:   emp,
+        manager:    mgr,
+        hrApprover: me,
+        empMap,
+        substitutes: [],   // manual paper leaves don't go through online subs
+      });
+
+      setMsg({ kind: 'ok', text: `Logged ${days}d for ${emp?.name || empId}` });
+      // Clear form so the next entry starts fresh
       setEmpQuery('');
       setEmpId('');
       setStartDate('');
@@ -331,6 +362,11 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
       <div className="rounded-lg border border-black/10 bg-white p-4">
         <h3 className="text-sm font-semibold mb-2" style={{ color: '#1F1B16' }}>
           Recently logged ({recent.length})
+          {recent.length > 0 && (
+            <span className="ml-2 text-xs font-normal" style={{ opacity: 0.6 }}>
+              · click a row to re-open PDF / email
+            </span>
+          )}
         </h3>
         {recent.length === 0 ? (
           <p className="text-xs" style={{ color: '#1F1B16', opacity: 0.6 }}>
@@ -351,7 +387,24 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
               {recent.map(r => {
                 const e = (employees || []).find(x => x.id === r.employee_id);
                 return (
-                  <tr key={r.id} className="border-b border-black/5 last:border-0" style={{ color: '#1F1B16' }}>
+                  <tr
+                    key={r.id}
+                    onClick={() => {
+                      // Re-open the PDF/email modal for any earlier entry —
+                      // lets Bashaier resend if she missed it the first time.
+                      const mgr = e?.manager_id
+                        ? (employees || []).find(x => x.id === e.manager_id)
+                        : null;
+                      const empMap = (employees || []).reduce((acc, x) => {
+                        acc[x.id] = x; return acc;
+                      }, {});
+                      setSavedModal({
+                        request: r, employee: e, manager: mgr,
+                        hrApprover: me, empMap, substitutes: [],
+                      });
+                    }}
+                    className="border-b border-black/5 last:border-0 cursor-pointer hover:bg-black/[0.02]"
+                    style={{ color: '#1F1B16' }}>
                     <td className="py-2">{r.hr_decided_at ? new Date(r.hr_decided_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '—'}</td>
                     <td className="py-2">{e?.name || r.employee_id}</td>
                     <td className="py-2 capitalize">{r.leave_type_id}</td>
@@ -367,6 +420,21 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
           </table>
         )}
       </div>
+
+      {/* Post-save modal — same Download PDF + Open Email surface the
+          regular approval flow uses. Re-opens too when Bashaier clicks
+          any row in 'Recently logged'. */}
+      {savedModal && (
+        <LeaveApprovedModal
+          request={savedModal.request}
+          employee={savedModal.employee}
+          manager={savedModal.manager}
+          hrApprover={savedModal.hrApprover}
+          empMap={savedModal.empMap}
+          substitutes={savedModal.substitutes}
+          onClose={() => setSavedModal(null)}
+        />
+      )}
     </div>
   );
 }
