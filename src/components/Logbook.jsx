@@ -35,10 +35,10 @@
 //    requested_at:          now
 //    manager_decided_at:    now
 //    hr_decided_at:         now
-//    substitute_required:   false        (paper leaves don't go through
-//                                          the substitute-acceptance loop)
-//    substitute_ids:        []
-//    substitute_decisions:  {}
+//    substitute_ids:        []           (paper leaves don't go through
+//    substitute_decisions:  {}            the online substitute-acceptance
+//                                          loop — empty arrays/objects
+//                                          signal 'no subs' to the PDF)
 //    reason:                'Manual entry · ' + the source field
 //    requested_by:          me.id        (Bashaier as the entry agent)
 //
@@ -139,7 +139,6 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
         requested_at:        now,
         manager_decided_at:  now,
         hr_decided_at:       now,
-        substitute_required: false,
         substitute_ids:      [],
         substitute_decisions: {},
         requested_by:        me?.id || null,
