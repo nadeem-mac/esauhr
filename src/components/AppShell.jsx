@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState, useCallback, Suspense, lazy } from
 import {
   LayoutDashboard, ClipboardList, Users, Calendar as CalIcon, Settings,
   Plus, LogOut, Activity, ShieldCheck, RefreshCw
-, Clock , BarChart3, UserPlus, Database, Loader2 } from 'lucide-react';
+, Clock , BarChart3, UserPlus, Database, Loader2, NotebookPen } from 'lucide-react';
 import { supabase, directGet, directPatch, directPost } from '../supabaseClient.js';
 import { loadTemplates as loadEmailTemplates } from '../lib/emailTemplates.js';
 // EAGER — landing destinations, must paint immediately after sign-in.
@@ -44,6 +44,7 @@ const AttendanceView          = lazy(() => import('./AttendanceView.jsx'));
 const RefreshOverlay          = lazy(() => import('./RefreshOverlay.jsx'));
 const GovernmentDataSync      = lazy(() => import('./GovernmentDataSync.jsx'));
 const OrgChartView            = lazy(() => import('./OrgChartView.jsx'));
+const Logbook                 = lazy(() => import('./Logbook.jsx'));
 import { getBlockingDeclarations, getExtendableDeclaration } from '../lib/sickDeclaration.js';
 import { logAction } from '../lib/audit.js';
 import { fmtDate } from '../lib/leaveLogic.js';
@@ -64,6 +65,11 @@ function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, isHiringViewe
   //   Regular staff   → Dashboard, Requests, Calendar (no Employees, Settings, Diagnostics)
   //   Reviewer/Manager → adds Reviews + Attendance, hides Diagnostics
   //   Admin            → everything including Employees, Settings, Admin, Diagnostics
+  //
+  // Logbook tab is gated separately by exact PSN match — see further
+  // down for the constant and rationale.
+  const LOGBOOK_PSNS = ['H94830', 'H94152'];   // Bashaier + Nadeem
+
   const base = [
     { id: 'dashboard',  label: 'Dashboard', icon: LayoutDashboard },
     { id: 'requests',   label: 'Requests',  icon: ClipboardList },
@@ -98,6 +104,19 @@ function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, isHiringViewe
   // Insights — admin and HR reviewer (Bashaier) only — full reports + exports
   if (isAdmin || isHrReviewer) {
     base.push({ id: 'insights', label: 'Insights', icon: BarChart3 });
+  }
+
+  // Logbook — private manual-entry workspace. Hard-gated by PSN to
+  // Bashaier (H94830) and Nadeem (H94152) only. Bashaier uses this
+  // to record paper/email leave applications she's still receiving
+  // offline — entries write straight into leave_requests as approved.
+  // Nadeem 2026-05-21: 'a separate tab which stays exclusively for
+  // Bashaier where she can manually enter annual leaves by herself
+  // … the data when she enters it gets updated in the master'.
+  // No one else sees this tab. If access needs to expand later,
+  // add the PSN to LOGBOOK_PSNS below.
+  if (LOGBOOK_PSNS.includes(me?.id)) {
+    base.push({ id: 'logbook', label: 'Logbook', icon: NotebookPen });
   }
 
   // MOL · GOSI — government data sync. Admin (Nadeem) and HR reviewer
@@ -268,10 +287,6 @@ export default function AppShell({ session, me, onRefreshMe }) {
   //               has the access')
   const HIRING_VIEWER_PSNS = [];
   const HIRING_VIEWER_EMAILS = [];
-  const HIRING_VIEWER_EMAILS = [
-    'badria.alhassan@evergreen-shipping.com.sa',
-    'jaffar.aldarweash@evergreen-shipping.com.sa',
-  ];
   const isHiringViewer = Boolean(
     me && (
       HIRING_VIEWER_PSNS.includes(me.id) ||
@@ -1293,6 +1308,14 @@ export default function AppShell({ session, me, onRefreshMe }) {
         )}
         {tab === 'mol_sync' && (isAdmin || isHrReviewer) && (
           <GovernmentDataSync me={me} />
+        )}
+        {tab === 'logbook' && ['H94830', 'H94152'].includes(me?.id) && (
+          <Logbook
+            me={me}
+            employees={employees}
+            leaveTypes={leaveTypes}
+            onSaved={() => loadAll({ silent: true })}
+          />
         )}
         {tab === 'admin' && isAdmin && (
           <AdminPanel session={session} me={me} onRefreshMe={onRefreshMe} />
