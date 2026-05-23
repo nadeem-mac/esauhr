@@ -77,6 +77,12 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
   // current timestamp. Max 3, matching the regular flow's cap.
   const [substituteIds, setSubstituteIds] = useState([]);
   const [subSearch, setSubSearch] = useState('');
+  // When the staff's paper application names someone from a different
+  // department in the same location (common in small branches like JED
+  // where LOG + BIZ work hand-in-hand), Bashaier toggles this on to
+  // widen the eligibility pool. Defaults off so the strict same-dept
+  // rule of the main workflow stays the safer default.
+  const [widenSubPool, setWidenSubPool] = useState(false);
   const [balance, setBalance] = useState(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
 
@@ -136,6 +142,7 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
   useEffect(() => {
     setSubstituteIds([]);
     setSubSearch('');
+    setWidenSubPool(false);
   }, [empId]);
 
   // ── Live balance for the selected employee + leave type ─────────────
@@ -524,7 +531,9 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
             <label className="text-xs font-semibold uppercase" style={{ color: '#1F1B16' }}>
               Substitutes
               <span className="font-normal" style={{ opacity: 0.6 }}>
-                {' '}(pick up to 3 from {selectedEmp.department || '—'} · {selectedEmp.location || '—'})
+                {' '}(pick up to 3 from {widenSubPool
+                  ? `${selectedEmp.location || '—'} · any dept`
+                  : `${selectedEmp.department || '—'} · ${selectedEmp.location || '—'}`})
               </span>
             </label>
 
@@ -539,6 +548,9 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
                           style={{ background: '#D1FAE5', color: '#0F4C2A' }}>
                       <CheckCircle2 size={11} />
                       <span style={{ fontWeight: 500 }}>{e?.name || id}</span>
+                      {e?.department && e.department !== selectedEmp.department && (
+                        <span style={{ opacity: 0.7 }}>· {e.department}</span>
+                      )}
                       <button type="button"
                               onClick={() => setSubstituteIds(substituteIds.filter(x => x !== id))}
                               className="ml-1 hover:opacity-70"
@@ -563,17 +575,22 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
                   {(() => {
                     const pool = (employees || []).filter(e =>
                       e.id !== selectedEmp.id &&
-                      e.department === selectedEmp.department &&
+                      // Same location always required. Department match
+                      // required UNLESS Bashaier has widened the pool.
                       e.location === selectedEmp.location &&
+                      (widenSubPool || e.department === selectedEmp.department) &&
                       !substituteIds.includes(e.id) &&
                       (!subSearch ||
                         (e.name || '').toLowerCase().includes(subSearch.toLowerCase()) ||
                         e.id.toLowerCase().includes(subSearch.toLowerCase()))
-                    ).slice(0, 8);
+                    ).slice(0, 12);
                     if (pool.length === 0) {
                       return (
                         <div className="px-3 py-2 text-xs" style={{ color: '#1F1B16', opacity: 0.55 }}>
-                          No eligible colleagues from {selectedEmp.department || '—'} · {selectedEmp.location || '—'}.
+                          No eligible colleagues from {widenSubPool
+                            ? `${selectedEmp.location || '—'}`
+                            : `${selectedEmp.department || '—'} · ${selectedEmp.location || '—'}`}.
+                          {!widenSubPool && ' Try the toggle below to widen the pool.'}
                         </div>
                       );
                     }
@@ -584,11 +601,28 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
                         <span style={{ color: '#1F1B16', fontWeight: 500 }}>{e.name}</span>
                         <span className="text-xs" style={{ color: '#1F1B16', opacity: 0.5 }}>
                           {e.id}
+                          {e.department !== selectedEmp.department && ` · ${e.department}`}
                         </span>
                       </button>
                     ));
                   })()}
                 </div>
+                {/* Widen-pool toggle — opens to cross-department subs in
+                    the same location. Common when paper apps name someone
+                    from an adjacent team (e.g. LOG ↔ BIZ in Jeddah). */}
+                <label className="flex items-center gap-2 text-xs pt-1" style={{ color: '#1F1B16' }}>
+                  <input
+                    type="checkbox"
+                    checked={widenSubPool}
+                    onChange={(e) => setWidenSubPool(e.target.checked)}
+                  />
+                  Include all departments in {selectedEmp.location || '—'}
+                  {!widenSubPool && (
+                    <span style={{ opacity: 0.55 }}>
+                      · default is same dept only
+                    </span>
+                  )}
+                </label>
               </>
             ) : (
               <div className="text-xs" style={{ color: '#1F1B16', opacity: 0.6 }}>
