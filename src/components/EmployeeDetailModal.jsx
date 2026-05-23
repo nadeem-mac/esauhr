@@ -594,10 +594,10 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                       )}
                       {balance.carried > 0 && (
                         <span style={{
-                          fontSize: 10, color: '#A16207', fontWeight: 500,
-                          marginLeft: 4,
+                          fontSize: 8.5, color: '#A16207', fontWeight: 600,
+                          marginLeft: 4, letterSpacing: '0.02em',
                         }}>
-                          ({balance.carried} Carry forward from {year - 1})
+                          ({balance.carried} CFWD {year - 1})
                         </span>
                       )}
                       {balance.pending > 0 && (
