@@ -158,7 +158,7 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
     try {
       const XLSX = await import('xlsx');
       const sheet = [
-        ['PSN ID', 'Employee Name', 'Department', 'Date', 'Day',
+        ['PSN ID', 'Employee Name', 'Department', 'Location', 'Date', 'Day',
          'Sched In', 'Sched Out', 'Actual In', 'Actual Out',
          'Late (min)', 'Early Out (min)',
          'Expected Hrs', 'Worked Hrs', '% Worked', 'Status', 'Notes'],
@@ -168,6 +168,7 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
           r.shift.employee_id,
           r.employee?.name || '',
           r.employee?.department || '',
+          r.employee?.location || '',
           r.shift.shift_date,
           new Date(r.shift.shift_date).toLocaleDateString('en-GB', { weekday: 'long' }),
           fmtTime(r.shift.clock_in_time),
@@ -188,7 +189,7 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
       // Totals row
       sheet.push([]);
       sheet.push([
-        '', '', '', '', '', '', '', '', '', '', 'TOTAL',
+        '', '', '', '', '', '', '', '', '', '', '', 'TOTAL',
         summary.totalScheduled,
         summary.totalWorked,
         summary.totalScheduled > 0
@@ -294,7 +295,7 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
                         <Td>{fmtDayDate(r.shift.shift_date)}</Td>
                         <Td>
                           <div className="font-medium" style={{ color: '#1F1B16' }}>{r.employee?.name || r.shift.employee_id}</div>
-                          <div style={{ color: '#1F1B16', opacity: 0.55 }}>{r.shift.employee_id} · {r.employee?.department}</div>
+                          <div style={{ color: '#1F1B16', opacity: 0.55 }}>{r.shift.employee_id} · {r.employee?.department || ''}{r.employee?.location ? ' · ' + r.employee.location : ''}</div>
                         </Td>
                         <Td className="font-mono">
                           {fmtTime(r.shift.clock_in_time)}–{fmtTime(r.shift.clock_out_time)}
