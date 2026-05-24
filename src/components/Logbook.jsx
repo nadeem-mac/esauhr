@@ -134,7 +134,7 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
       try {
         const rows = await directGet(
           'leave_requests',
-          `select=id,employee_id,leave_type_id,start_date,end_date,days,reason,hr_decided_at,substitute_ids,substitute_decisions`
+          `select=id,employee_id,leave_type_id,start_date,end_date,days,reason,is_half_day,requested_at,manager_decided_at,hr_decided_at,substitute_ids,substitute_decisions`
           + `&reason=ilike.Manual entry*`
           + `&order=hr_decided_at.desc&limit=10`,
           { timeoutMs: 10000 }
