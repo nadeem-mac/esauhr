@@ -22,8 +22,9 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { directGet, directPost, directPatch } from '../supabaseClient.js';
 import {
   CalendarDays, Plus, Save, Loader2, Trash2, AlertCircle, CheckCircle2,
-  X, Clock, Users, Edit3, ChevronDown,
+  X, Clock, Users, Edit3, ChevronDown, FileSpreadsheet,
 } from 'lucide-react';
+import HolidayOtReport from './HolidayOtReport.jsx';
 
 const STATUS_STYLES = {
   pending:   { bg: '#FEF3C7', fg: '#854F0B', label: 'PENDING' },
@@ -53,6 +54,10 @@ export default function HolidayShifts({ me, employees = [] }) {
   // HR-only — filter by status so Bashaier can focus on pending. For
   // managers we default to showing everything (their list is smaller).
   const [statusFilter, setStatusFilter] = useState('all');
+  // Phase 6 — OT comparison report modal. Opens via the [Report] button
+  // in the header. Renders strict comparison of approved shifts vs
+  // attendance_daily punches + offers Excel export.
+  const [showReport, setShowReport]     = useState(false);
 
   // ── Load active periods ───────────────────────────────────────────
   useEffect(() => {
@@ -173,15 +178,35 @@ export default function HolidayShifts({ me, employees = [] }) {
             · OT nominations
           </span>
         </div>
-        {!showForm && !editing && selectedPeriod && (
-          <button
-            onClick={() => setShowForm(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded text-white"
-            style={{ background: '#0F4C2A' }}>
-            <Plus size={12} /> Add shift
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {selectedPeriod && shifts.some(s => s.status === 'approved') && (
+            <button
+              onClick={() => setShowReport(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded border"
+              style={{ borderColor: '#0F4C2A', color: '#0F4C2A', background: '#FFFFFF' }}>
+              <FileSpreadsheet size={12} /> OT Report
+            </button>
+          )}
+          {!showForm && !editing && selectedPeriod && (
+            <button
+              onClick={() => setShowForm(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded text-white"
+              style={{ background: '#0F4C2A' }}>
+              <Plus size={12} /> Add shift
+            </button>
+          )}
+        </div>
       </header>
+
+      {/* OT Report modal */}
+      {showReport && selectedPeriod && (
+        <HolidayOtReport
+          period={selectedPeriod}
+          employees={employees}
+          me={me}
+          onClose={() => setShowReport(false)}
+        />
+      )}
 
       {/* Period selector */}
       <div className="space-y-1">
