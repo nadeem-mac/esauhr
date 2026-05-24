@@ -868,9 +868,11 @@ export async function generateLogbookPdfBlob({
   y += isCompact ? 1 : 1.5;
 
   y = drawSectionHeader(pdf, y, 'LEAVE DETAILS');
-  const periodLabel = request.start_date === request.end_date
-    ? fmtDateMed(request.start_date)
-    : `${fmtDateMed(request.start_date)}  →  ${fmtDateMed(request.end_date)}`;
+  const periodLabel = request.start_date && request.end_date
+    ? (request.start_date === request.end_date
+        ? fmtDateLong(request.start_date)
+        : `${fmtDateShort(request.start_date)}${isCompact ? ' — ' : '  —  '}${fmtDateShort(request.end_date)}`)
+    : '—';
   const durLabel = `${request.days} day${request.days === 1 ? '' : 's'}${request.is_half_day ? ' (half day)' : ''}`;
   const noticeLabel = (() => {
     if (!request.requested_at || !request.start_date) return '—';
@@ -881,7 +883,7 @@ export async function generateLogbookPdfBlob({
     return days >= 14 ? `Planned (${days} days notice)` : `Urgent (${days} days notice)`;
   })();
   const submittedLabel = request.requested_at
-    ? `${fmtDateMed(request.requested_at)}  ·  ${new Date(request.requested_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`
+    ? `${fmtDateShort(request.requested_at)}  ·  ${new Date(request.requested_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`
     : '—';
   if (isCompact) {
     y = drawTwoColTable(pdf, y, [
