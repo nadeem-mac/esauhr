@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState, useCallback, Suspense, lazy } from
 import {
   LayoutDashboard, ClipboardList, Users, Calendar as CalIcon, Settings,
   Plus, LogOut, Activity, ShieldCheck, RefreshCw
-, Clock , BarChart3, UserPlus, Database, Loader2, NotebookPen } from 'lucide-react';
+, Clock , BarChart3, UserPlus, Database, Loader2, NotebookPen, CalendarDays } from 'lucide-react';
 import { supabase, directGet, directPatch, directPost } from '../supabaseClient.js';
 import { loadTemplates as loadEmailTemplates } from '../lib/emailTemplates.js';
 // EAGER — landing destinations, must paint immediately after sign-in.
@@ -45,6 +45,7 @@ const RefreshOverlay          = lazy(() => import('./RefreshOverlay.jsx'));
 const GovernmentDataSync      = lazy(() => import('./GovernmentDataSync.jsx'));
 const OrgChartView            = lazy(() => import('./OrgChartView.jsx'));
 const Logbook                 = lazy(() => import('./Logbook.jsx'));
+const HolidayShifts           = lazy(() => import('./HolidayShifts.jsx'));
 import { getBlockingDeclarations, getExtendableDeclaration } from '../lib/sickDeclaration.js';
 import { logAction } from '../lib/audit.js';
 import { fmtDate } from '../lib/leaveLogic.js';
@@ -160,6 +161,15 @@ function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, isHiringViewe
   // Reviews, Calendar).
   if (isManager && !isAdmin && !isHrReviewer) {
     base.splice(2, 0, { id: 'shifts', label: 'Shifts', icon: CalIcon });
+  }
+
+  // Holiday Shifts — Eid OT scheduling. Visible to managers, HR
+  // reviewer, and admin. Replaces the manager-emailed Excel that
+  // currently captures who works during Eid Al Adha / Eid Al Fitr /
+  // National Day. Phase 3 of the holiday-OT module. Nadeem
+  // 2026-05-21.
+  if (isManager || isAdmin || isHrReviewer) {
+    base.push({ id: 'holiday_shifts', label: 'Holiday Shifts', icon: CalendarDays });
   }
 
   // Attendance — visibility driven by can_view_attendance flag on the
@@ -1340,6 +1350,12 @@ export default function AppShell({ session, me, onRefreshMe }) {
             employees={employees}
             leaveTypes={leaveTypes}
             onSaved={() => loadAll({ silent: true })}
+          />
+        )}
+        {tab === 'holiday_shifts' && (isManager || isAdmin || isHrReviewer) && (
+          <HolidayShifts
+            me={me}
+            employees={employees}
           />
         )}
         {tab === 'admin' && isAdmin && (
