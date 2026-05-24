@@ -3,7 +3,7 @@ import { supabase, directGet, directPost, directPatch } from '../supabaseClient.
 import {
   Calendar, Clock, Plus, AlertTriangle, Sun, Sunrise, Sunset,
   CheckCircle2, XCircle, Loader2, Users, Plane, Mail, HeartPulse,
-  Shield, Award, Sparkles,
+  Shield, Award, Sparkles, CalendarDays,
 } from 'lucide-react';
 import {
   fmtDate, calculateBalance, fmtDateShort, getInitials, avatarColor,
@@ -50,6 +50,10 @@ export default function PersonalDashboard({
   // needs the staff's per-month violation list and the round-trip is
   // tiny (filtered to one employee, one month).
   const [monthViolations, setMonthViolations] = useState([]);
+  // Upcoming holiday-shift nominations (approved only, today onward).
+  // Powers the EID SHIFTS tile. Phase 5 of the holiday-OT module.
+  // Nadeem 2026-05-21.
+  const [upcomingHolidayShifts, setUpcomingHolidayShifts] = useState([]);
   const [loading,     setLoading]     = useState(true);
 
   // 2026-05-10 fix (Nadeem): the page-flicker-every-20s bug on staff
@@ -114,7 +118,7 @@ export default function PersonalDashboard({
       const { requestsProp: rp, permissionsProp: pp } = propsRef.current;
       const skipLeaves = Array.isArray(rp);
       const skipPerms  = Array.isArray(pp);
-      const [bal, reqs, perms, viols] = await Promise.all([
+      const [bal, reqs, perms, viols, holidayShifts] = await Promise.all([
         safe(directGet('leave_balances',     `select=*&employee_id=eq.${me.id}&year=eq.${year}&leave_type_id=eq.annual&limit=1`, { timeoutMs: 10000 })),
         skipLeaves ? Promise.resolve(null) :
           safe(directGet('leave_requests',     `select=*&employee_id=eq.${me.id}&order=start_date.desc&limit=20`, { timeoutMs: 10000 })),
@@ -127,11 +131,22 @@ export default function PersonalDashboard({
           `select=id,violation_type,violation_date,minutes_off,cleared_at`
           + `&employee_id=eq.${me.id}&violation_date=gte.${month}-01&cleared_at=is.null&order=violation_date.desc`,
           { timeoutMs: 10000 })),
+        // Approved holiday-shift nominations from today onward — drives
+        // the EID SHIFTS tile so the staff sees their upcoming OT
+        // assignment without needing to open another tab. Phase 5 of
+        // the holiday-OT module. Nadeem 2026-05-21.
+        safe(directGet('holiday_shifts',
+          `select=id,shift_date,clock_in_time,clock_out_time,expected_hours,status,notes`
+          + `&employee_id=eq.${me.id}&status=eq.approved`
+          + `&shift_date=gte.${new Date().toISOString().slice(0, 10)}`
+          + `&order=shift_date.asc&limit=10`,
+          { timeoutMs: 8000 })),
       ]);
       setAdjustments(Array.isArray(bal) && bal.length > 0 ? bal[0] : {});
       if (!skipLeaves) setLocalRequests(Array.isArray(reqs) ? reqs : []);
       if (!skipPerms)  setLocalPermissions(Array.isArray(perms) ? perms : []);
       setMonthViolations(Array.isArray(viols) ? viols : []);
+      setUpcomingHolidayShifts(Array.isArray(holidayShifts) ? holidayShifts : []);
     } catch (err) {
       console.warn('PersonalDashboard load failed:', err);
     } finally {
@@ -434,6 +449,31 @@ export default function PersonalDashboard({
           desc="Shared bucket with late arrivals this month."
           progress={Math.min(100, (earlyUsed/PERMISSION_QUOTA.monthlyHours)*100)}
         />
+        {/* EID SHIFTS — only renders when the staff has at least one
+            approved upcoming holiday-shift assignment. Avoids tile
+            clutter for staff who weren't nominated for any OT.
+            Amber accent (#A16207) ties the tile visually back to the
+            Holiday Shifts tab + Settings → Holiday periods card.
+            Phase 5 of the holiday-OT module. Nadeem 2026-05-21. */}
+        {upcomingHolidayShifts.length > 0 && (() => {
+          const next = upcomingHolidayShifts[0];
+          const nextLabel = new Date(next.shift_date).toLocaleDateString('en-GB', {
+            weekday: 'short', day: '2-digit', month: 'short',
+          });
+          const timeLabel = `${(next.clock_in_time || '').slice(0, 5)}–${(next.clock_out_time || '').slice(0, 5)}`;
+          const totalHours = upcomingHolidayShifts.reduce(
+            (sum, s) => sum + Number(s.expected_hours || 0), 0
+          );
+          return (
+            <ColorTile
+              accent="#A16207"
+              label="EID SHIFTS" icon={CalendarDays}
+              stat={upcomingHolidayShifts.length}
+              unit={upcomingHolidayShifts.length === 1 ? ' shift' : ' shifts'}
+              desc={`Next: ${nextLabel} · ${timeLabel} · ${totalHours.toFixed(1)}h total`}
+            />
+          );
+        })()}
         <TenureTile me={me} />
         <EvaluationStatusTile summary={evalSummary} zone={evalZone} />
         <RecentActivityTile leaves={requests} permissions={permissions} />
