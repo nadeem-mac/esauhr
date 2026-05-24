@@ -705,23 +705,15 @@ function ShiftForm({ initial, period, eligibleStaff, me, existingShifts, onCance
         </div>
       )}
 
-      {/* Notes — categorical dropdown rather than free text so the
-          OT report + audit log stay consistent. Nadeem 2026-05-21:
-          'NOTES (OPTIONAL) should have dropped down selection no
-          manual writing'. Categories cover the typical reasons
-          managers nominate during Eid:
-            • Customer service / counter staffing
-            • Operations / vessel arrival
-            • Business / documentation
-            • Customs / clearance
-            • Emergency / on-call standby
-            • Department coverage
-            • General OT coverage
-          The list is intentionally short and stable — adding
-          new categories should be a deliberate decision, not ad-hoc. */}
+      {/* Reason — pulled from the 'Work Description / Task Summary'
+          column of the SAJED Eid OT Excel. Canonical list, dropdown
+          only, no manual writing. Nadeem 2026-05-21: 'From Work
+          Description / Task Summary in excel make drop down'.
+          Variants in the source Excel (extra spaces, alternate slash
+          placement) collapsed into one entry per intent. */}
       <div className="space-y-1">
         <label className="text-xs font-semibold uppercase" style={{ color: '#1F1B16' }}>
-          Reason / coverage type <span style={{ opacity: 0.6 }}>(optional)</span>
+          Work description / Task summary <span style={{ opacity: 0.6 }}>(optional)</span>
         </label>
         <div className="relative">
           <select
@@ -729,13 +721,39 @@ function ShiftForm({ initial, period, eligibleStaff, me, existingShifts, onCance
             onChange={(e) => setNotes(e.target.value)}
             className="w-full text-sm rounded border border-black/15 bg-white pl-3 pr-9 py-2 outline-none appearance-none">
             <option value="">— none —</option>
-            <option value="Customer service coverage">Customer service coverage</option>
-            <option value="Operations / vessel arrival">Operations / vessel arrival</option>
-            <option value="Business / documentation">Business / documentation</option>
-            <option value="Customs / clearance">Customs / clearance</option>
-            <option value="Emergency / on-call standby">Emergency / on-call standby</option>
-            <option value="Department coverage">Department coverage</option>
-            <option value="General OT coverage">General OT coverage</option>
+            <option value="D/O Release Counter / Fasah Link / 24/7 MAWANI Requirements">
+              D/O Release Counter / Fasah Link / 24/7 MAWANI Requirements
+            </option>
+            <option value="D/O Release Counter / Fasah Link — Back Up / 24/7 MAWANI Requirements">
+              D/O Release Counter / Fasah Link — Back Up / 24/7 MAWANI Requirements
+            </option>
+            <option value="EQC ECRN Ext / Detention / Damage Invoice / 24/7 MAWANI Requirements">
+              EQC ECRN Ext / Detention / Damage Invoice / 24/7 MAWANI Requirements
+            </option>
+            <option value="CBF Submission / ALDS Data / OPS Tasks">
+              CBF Submission / ALDS Data / OPS Tasks
+            </option>
+            <option value="Export Issues & Inquiries / Booking / Preload & Data Quality Checks / 24/7 MAWANI Requirements">
+              Export Issues & Inquiries / Booking / Preload & Data Quality Checks / 24/7 MAWANI Requirements
+            </option>
+            <option value="Export Issues & Inquiries / Preload & Data Quality Checks">
+              Export Issues & Inquiries / Preload & Data Quality Checks
+            </option>
+            <option value="Import Manifest / Export Inquiries / Email Attendance">
+              Import Manifest / Export Inquiries / Email Attendance
+            </option>
+            <option value="Invoicing / ESAL / Offsetting / 24/7 MAWANI Requirements">
+              Invoicing / ESAL / Offsetting / 24/7 MAWANI Requirements
+            </option>
+            <option value="Office Work Monitoring & Other Tasks">
+              Office Work Monitoring & Other Tasks
+            </option>
+            <option value="CSD Export Tasks — 24/7 MAWANI Requirements">
+              CSD Export Tasks — 24/7 MAWANI Requirements
+            </option>
+            <option value="24/7 MAWANI Requirements Compliance">
+              24/7 MAWANI Requirements Compliance
+            </option>
           </select>
           <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
                        style={{ color: '#1F1B16', opacity: 0.5 }} />
