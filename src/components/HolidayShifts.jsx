@@ -49,17 +49,16 @@ export default function HolidayShifts({ me, employees = [] }) {
   const [shifts, setShifts]     = useState([]);
   const [loading, setLoading]   = useState(true);
   const [err, setErr]           = useState(null);
-  const [showForm, setShowForm] = useState(false);
+  // Single-entry [+ Add shift] flow retired 2026-05-21 per Nadeem
+  // ('remove single entry style'). New shifts always go through the
+  // bulk form — one staff × one date is just a bulk of 1. Editing
+  // an existing shift still uses ShiftForm via the `editing` state.
   const [editing, setEditing]   = useState(null);
-  // HR-only — filter by status so Bashaier can focus on pending. For
-  // managers we default to showing everything (their list is smaller).
+  // HR-only — filter by status so Bashaier can focus on pending.
   const [statusFilter, setStatusFilter] = useState('all');
   // Phase 6 — OT comparison report modal.
   const [showReport, setShowReport]     = useState(false);
-  // Bulk add — multi-staff × multi-date form for managers who need
-  // to assign the same time window to several people across several
-  // days. Nadeem 2026-05-21: 'Make it easy for managers to update
-  // instead of entering each staff one by one'.
+  // Bulk form — the ONLY add path now.
   const [showBulkForm, setShowBulkForm] = useState(false);
 
   // ── Load active periods ───────────────────────────────────────────
@@ -190,22 +189,14 @@ export default function HolidayShifts({ me, employees = [] }) {
               <FileSpreadsheet size={12} /> OT Report
             </button>
           )}
-          {!showForm && !editing && !showBulkForm && selectedPeriod && (
-            <>
-              <button
-                onClick={() => setShowBulkForm(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded border"
-                style={{ borderColor: '#A16207', color: '#A16207', background: '#FFFBEB' }}
-                title="Add same time window to multiple staff and dates at once">
-                <Users size={12} /> Bulk add
-              </button>
-              <button
-                onClick={() => setShowForm(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded text-white"
-                style={{ background: '#0F4C2A' }}>
-                <Plus size={12} /> Add shift
-              </button>
-            </>
+          {!editing && !showBulkForm && selectedPeriod && (
+            <button
+              onClick={() => setShowBulkForm(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded text-white"
+              style={{ background: '#0F4C2A' }}
+              title="Pick staff + dates + time window in one form">
+              <Plus size={12} /> Add shifts
+            </button>
           )}
         </div>
       </header>
@@ -247,16 +238,18 @@ export default function HolidayShifts({ me, employees = [] }) {
         </div>
       </div>
 
-      {/* Add / edit form */}
-      {(showForm || editing) && selectedPeriod && (
+      {/* Edit form — re-uses ShiftForm in single-row mode. Triggered
+          ONLY by clicking the pencil icon on an existing row. New
+          shifts go through BulkShiftForm regardless of count. */}
+      {editing && selectedPeriod && (
         <ShiftForm
           initial={editing}
           period={selectedPeriod}
           eligibleStaff={eligibleStaff}
           me={me}
           existingShifts={visibleShifts}
-          onCancel={() => { setShowForm(false); setEditing(null); }}
-          onSaved={() => { setShowForm(false); setEditing(null); loadShifts(); }}
+          onCancel={() => setEditing(null)}
+          onSaved={() => { setEditing(null); loadShifts(); }}
         />
       )}
 
@@ -344,7 +337,7 @@ export default function HolidayShifts({ me, employees = [] }) {
             No shifts yet for this period.
           </p>
           <p className="text-xs mt-1" style={{ color: '#1F1B16', opacity: 0.5 }}>
-            Click <strong>Add shift</strong> to nominate your first staff member.
+            Click <strong>Add shifts</strong> — pick staff, pick dates, set the time window once.
           </p>
         </div>
       ) : (
