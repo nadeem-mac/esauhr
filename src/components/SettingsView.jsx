@@ -1,12 +1,14 @@
 import React, { useState, useMemo } from 'react';
 import {
   Shield, UsersRound, ListTree, Database, BarChart3, Info, ChevronRight, PenLine,
+  CalendarDays,
 } from 'lucide-react';
 import { Card } from './Dashboard.jsx';
 import ReviewerPermissionsCard from './ReviewerPermissionsCard.jsx';
 import ManagerAssignmentsCard from './ManagerAssignmentsCard.jsx';
 import MigrationsPanel from './MigrationsPanel.jsx';
 import SignatoriesCard from './SignatoriesCard.jsx';
+import HolidayPeriodsCard from './HolidayPeriodsCard.jsx';
 
 // =============================================================================
 // SettingsView — admin configuration surface for Nadeem
@@ -99,6 +101,13 @@ const SECTIONS = [
         </div>
       </Card>
     ),
+  },
+  {
+    id: 'holidays',
+    label: 'Holiday periods',
+    icon: CalendarDays,
+    desc: 'Eid / National Day windows for OT scheduling',
+    body: ({ me }) => <HolidayPeriodsCard me={me} />,
   },
   {
     id: 'migrations',
