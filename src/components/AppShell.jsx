@@ -696,6 +696,32 @@ export default function AppShell({ session, me, onRefreshMe }) {
   // the mechanism. Nadeem 2026-05-21.
   useSessionGuard(me, signOut);
 
+  // Pending-holiday-shifts badge — HR + admin see a count of nominations
+  // awaiting their approval on the Holiday Shifts tab. Refreshes every
+  // 60s + after focus, so Bashaier doesn't need to manually re-open
+  // the tab to know there's new work. Nadeem 2026-05-21 Phase 4.
+  const [pendingHolidayShiftCount, setPendingHolidayShiftCount] = useState(0);
+  useEffect(() => {
+    if (!(isAdmin || isHrReviewer)) { setPendingHolidayShiftCount(0); return; }
+    let cancelled = false;
+    const fetchCount = async () => {
+      try {
+        const rows = await directGet('holiday_shifts',
+          'select=id&status=eq.pending&limit=500', { timeoutMs: 6000 });
+        if (!cancelled) setPendingHolidayShiftCount((rows || []).length);
+      } catch (_) { /* silent — the badge is a nice-to-have */ }
+    };
+    fetchCount();
+    const id = setInterval(fetchCount, 60 * 1000);
+    const onFocus = () => fetchCount();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [isAdmin, isHrReviewer]);
+
   const createRequest = async (payload) => {
     // CRITICAL — use directPost, not supabase.from().insert(). The
     // supabase-js builder chain silently wedges in this project (see
@@ -1124,6 +1150,15 @@ export default function AppShell({ session, me, onRefreshMe }) {
                   style={{ background: '#0F4C2A', color: '#FFFFFF', minWidth: '18px', textAlign: 'center' }}
                   title={`${calendarTodayCount} ${calendarTodayCount === 1 ? 'person has' : 'people have'} an event today`}>
                   {calendarTodayCount}
+                </span>
+              )}
+              {/* Holiday Shifts — amber pending count visible only to
+                  HR + admin. Reads as 'work for you to action'. */}
+              {t.id === 'holiday_shifts' && (isAdmin || isHrReviewer) && pendingHolidayShiftCount > 0 && (
+                <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full font-bold"
+                  style={{ background: '#A16207', color: '#FFFFFF', minWidth: '18px', textAlign: 'center' }}
+                  title={`${pendingHolidayShiftCount} holiday shift${pendingHolidayShiftCount === 1 ? '' : 's'} awaiting approval`}>
+                  {pendingHolidayShiftCount}
                 </span>
               )}
               {/* Settings — pending schema migrations badge. Red dot

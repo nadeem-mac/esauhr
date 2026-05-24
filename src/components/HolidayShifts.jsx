@@ -50,6 +50,9 @@ export default function HolidayShifts({ me, employees = [] }) {
   const [err, setErr]           = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing]   = useState(null);
+  // HR-only — filter by status so Bashaier can focus on pending. For
+  // managers we default to showing everything (their list is smaller).
+  const [statusFilter, setStatusFilter] = useState('all');
 
   // ── Load active periods ───────────────────────────────────────────
   useEffect(() => {
@@ -89,11 +92,24 @@ export default function HolidayShifts({ me, employees = [] }) {
   );
 
   // ── Visibility filter — managers only see what they assigned;
-  //    HR + admin see everything in the period.
+  //    HR + admin see everything in the period. Status filter is
+  //    overlaid on top for the HR review case.
   const visibleShifts = useMemo(() => {
-    if (isAdmin || isHrReviewer) return shifts;
-    return shifts.filter(s => s.assigned_by === me?.id);
-  }, [shifts, me, isAdmin, isHrReviewer]);
+    let scoped = (isAdmin || isHrReviewer)
+      ? shifts
+      : shifts.filter(s => s.assigned_by === me?.id);
+    if (statusFilter !== 'all') {
+      scoped = scoped.filter(s => s.status === statusFilter);
+    }
+    return scoped;
+  }, [shifts, me, isAdmin, isHrReviewer, statusFilter]);
+
+  // Pending count across ALL shifts for the badge (regardless of
+  // current filter) — Bashaier wants the total queue size.
+  const totalPending = useMemo(
+    () => shifts.filter(s => s.status === 'pending').length,
+    [shifts]
+  );
 
   // ── Group by date for the listing ─────────────────────────────────
   const shiftsByDate = useMemo(() => {
@@ -220,6 +236,56 @@ export default function HolidayShifts({ me, employees = [] }) {
         <StatsRow shifts={visibleShifts} />
       )}
 
+      {/* HR / admin status filter + bulk approve */}
+      {selectedPeriod && (isAdmin || isHrReviewer) && (
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10px] font-bold tracking-wider"
+                  style={{ color: '#1F1B16', opacity: 0.6 }}>FILTER:</span>
+            {['all', 'pending', 'approved', 'rejected', 'cancelled'].map(s => {
+              const isActive = statusFilter === s;
+              const style = STATUS_STYLES[s] || { bg: '#E5E7EB', fg: '#374151' };
+              return (
+                <button key={s}
+                  onClick={() => setStatusFilter(s)}
+                  className="text-[10px] px-2 py-1 rounded font-bold tracking-wide"
+                  style={{
+                    background: isActive ? style.bg : '#FAFAF6',
+                    color: isActive ? style.fg : '#1F1B16',
+                    opacity:    isActive ? 1     : 0.6,
+                    border: isActive ? `1px solid ${style.fg}30` : '1px solid rgba(0,0,0,0.08)',
+                  }}>
+                  {s.toUpperCase()}
+                </button>
+              );
+            })}
+          </div>
+          {totalPending > 0 && statusFilter === 'pending' && (
+            <button
+              onClick={async () => {
+                const pendingIds = visibleShifts.filter(s => s.status === 'pending').map(s => s.id);
+                if (pendingIds.length === 0) return;
+                if (!confirm(`Approve all ${pendingIds.length} pending shifts in this view?`)) return;
+                try {
+                  const now = new Date().toISOString();
+                  await Promise.all(pendingIds.map(id =>
+                    directPatch('holiday_shifts', 'id', id, {
+                      status: 'approved',
+                      approved_by: me?.id,
+                      approved_at: now,
+                    })
+                  ));
+                  loadShifts();
+                } catch (e) { setErr(e?.message || 'Bulk approve failed'); }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded text-white"
+              style={{ background: '#0F4C2A' }}>
+              <CheckCircle2 size={12} /> Approve all visible
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Shifts grouped by date */}
       {shiftsByDate.length === 0 ? (
         <div className="rounded border p-6 text-center"
@@ -244,6 +310,32 @@ export default function HolidayShifts({ me, employees = [] }) {
               isAdmin={isAdmin}
               isHrReviewer={isHrReviewer}
               onEdit={(s) => setEditing(s)}
+              onApprove={async (s) => {
+                try {
+                  await directPatch('holiday_shifts', 'id', s.id, {
+                    status: 'approved',
+                    approved_by: me?.id,
+                    approved_at: new Date().toISOString(),
+                  });
+                  loadShifts();
+                } catch (e) { setErr(e?.message || 'Approve failed'); }
+              }}
+              onReject={async (s) => {
+                const reason = prompt(
+                  `Reject this shift for ${employees.find(e => e.id === s.employee_id)?.name || s.employee_id} on ${fmtDayDate(s.shift_date)}?\n\nReason (will be visible to the manager who nominated):`,
+                  ''
+                );
+                if (reason === null) return;  // cancelled
+                try {
+                  await directPatch('holiday_shifts', 'id', s.id, {
+                    status: 'rejected',
+                    approved_by: me?.id,
+                    approved_at: new Date().toISOString(),
+                    rejection_reason: reason.trim() || 'No reason provided',
+                  });
+                  loadShifts();
+                } catch (e) { setErr(e?.message || 'Reject failed'); }
+              }}
               onCancel={async (s) => {
                 if (!confirm(`Cancel shift for ${employees.find(e => e.id === s.employee_id)?.name || s.employee_id} on ${fmtDayDate(s.shift_date)}?`)) return;
                 try {
@@ -294,7 +386,7 @@ function StatCell({ label, count, bg, fg, suffix = '' }) {
 
 
 // ── DateGroup ─────────────────────────────────────────────────────────
-function DateGroup({ date, shifts, employees, me, isAdmin, isHrReviewer, onEdit, onCancel }) {
+function DateGroup({ date, shifts, employees, me, isAdmin, isHrReviewer, onEdit, onApprove, onReject, onCancel }) {
   return (
     <div className="rounded-lg border bg-white" style={{ borderColor: 'rgba(0,0,0,0.08)' }}>
       <div className="px-3 py-2 border-b text-xs font-semibold tracking-wide"
@@ -305,7 +397,8 @@ function DateGroup({ date, shifts, employees, me, isAdmin, isHrReviewer, onEdit,
         {shifts.map(s => {
           const emp = employees.find(e => e.id === s.employee_id);
           const style = STATUS_STYLES[s.status] || STATUS_STYLES.pending;
-          const canEdit = isAdmin || isHrReviewer || s.assigned_by === me?.id;
+          const canEdit    = (isAdmin || isHrReviewer || s.assigned_by === me?.id) && s.status !== 'cancelled';
+          const canReview  = (isAdmin || isHrReviewer) && s.status === 'pending';
           return (
             <div key={s.id} className="flex items-center gap-3 px-3 py-2 text-sm"
                  style={{ borderTop: '1px solid rgba(0,0,0,0.05)' }}>
@@ -332,19 +425,49 @@ function DateGroup({ date, shifts, employees, me, isAdmin, isHrReviewer, onEdit,
                     {s.notes}
                   </p>
                 )}
+                {s.rejection_reason && (
+                  <p className="text-[11px] mt-1" style={{ color: '#991B1B' }}>
+                    Rejected: {s.rejection_reason}
+                  </p>
+                )}
+                {s.status === 'approved' && s.approved_at && (
+                  <p className="text-[10px] mt-1" style={{ color: '#065F46', opacity: 0.7 }}>
+                    Approved {new Date(s.approved_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                  </p>
+                )}
               </div>
-              {canEdit && s.status !== 'cancelled' && (
-                <div className="flex items-center gap-1">
-                  <button onClick={() => onEdit(s)}
-                          className="p-1.5 rounded hover:bg-black/[0.05]" title="Edit">
-                    <Edit3 size={12} style={{ color: '#1F1B16', opacity: 0.6 }} />
-                  </button>
-                  <button onClick={() => onCancel(s)}
-                          className="p-1.5 rounded hover:bg-red-50" title="Cancel">
-                    <Trash2 size={12} style={{ color: '#B84A3E' }} />
-                  </button>
-                </div>
-              )}
+              <div className="flex items-center gap-1">
+                {/* Approve / Reject — HR + admin on pending shifts only */}
+                {canReview && (
+                  <>
+                    <button onClick={() => onApprove(s)}
+                            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold text-white"
+                            style={{ background: '#0F4C2A' }}
+                            title="Approve">
+                      <CheckCircle2 size={11} /> Approve
+                    </button>
+                    <button onClick={() => onReject(s)}
+                            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold"
+                            style={{ background: '#FEE2E2', color: '#991B1B' }}
+                            title="Reject with reason">
+                      <X size={11} /> Reject
+                    </button>
+                  </>
+                )}
+                {/* Edit / Cancel — anyone with rights, hidden on cancelled */}
+                {canEdit && (
+                  <>
+                    <button onClick={() => onEdit(s)}
+                            className="p-1.5 rounded hover:bg-black/[0.05]" title="Edit">
+                      <Edit3 size={12} style={{ color: '#1F1B16', opacity: 0.6 }} />
+                    </button>
+                    <button onClick={() => onCancel(s)}
+                            className="p-1.5 rounded hover:bg-red-50" title="Cancel">
+                      <Trash2 size={12} style={{ color: '#B84A3E' }} />
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           );
         })}
