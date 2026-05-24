@@ -863,7 +863,9 @@ function BulkShiftForm({ period, eligibleStaff, me, existingShifts, onCancel, on
     if (!q) return eligibleStaff;
     return eligibleStaff.filter(e =>
       e.id?.toLowerCase().includes(q) ||
-      (e.name || '').toLowerCase().includes(q));
+      (e.name || '').toLowerCase().includes(q) ||
+      (e.department || '').toLowerCase().includes(q) ||
+      (e.location || '').toLowerCase().includes(q));
   }, [empQuery, eligibleStaff]);
 
   // Preview math — how many shifts will actually be inserted, and
@@ -975,58 +977,161 @@ function BulkShiftForm({ period, eligibleStaff, me, existingShifts, onCancel, on
         </button>
       </div>
 
-      {/* Staff multi-select */}
-      <div className="space-y-1">
-        <div className="flex items-center justify-between">
-          <label className="text-xs font-semibold uppercase" style={{ color: '#1F1B16' }}>
-            Staff <span style={{ opacity: 0.6 }}>({selectedStaff.size} selected)</span>
-          </label>
-          <div className="flex gap-2 text-[10px]">
-            <button onClick={selectAllVisibleStaff}
-                    className="underline" style={{ color: '#0F4C2A' }}>
-              select all visible
-            </button>
-            <button onClick={clearStaff}
-                    className="underline" style={{ color: '#B84A3E' }}>
-              clear
-            </button>
-          </div>
-        </div>
-        <input
-          value={empQuery}
-          onChange={(e) => setEmpQuery(e.target.value)}
-          placeholder="Filter by name or PSN…"
-          className="w-full text-sm rounded border border-black/15 bg-white px-3 py-1.5 outline-none"
-        />
-        <div className="rounded border max-h-48 overflow-y-auto bg-white"
-             style={{ borderColor: 'rgba(0,0,0,0.1)' }}>
-          {filteredStaff.length === 0 ? (
-            <p className="text-xs px-3 py-3" style={{ color: '#1F1B16', opacity: 0.55 }}>
-              No staff match.
-            </p>
-          ) : (
-            filteredStaff.map(e => {
-              const isSelected = selectedStaff.has(e.id);
-              return (
-                <label key={e.id}
-                       className="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-black/[0.03] border-b last:border-0"
-                       style={{ borderColor: 'rgba(0,0,0,0.05)' }}>
-                  <input type="checkbox" checked={isSelected}
-                         onChange={() => toggleStaff(e.id)} />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm truncate" style={{ color: '#1F1B16' }}>
-                      {e.name}
-                    </div>
-                    <div className="text-[10px]" style={{ color: '#1F1B16', opacity: 0.55 }}>
-                      {e.id} · {e.department} · {e.location}
-                    </div>
-                  </div>
-                </label>
-              );
+      {/* Staff multi-select — overhauled 2026-05-21 per Nadeem
+          ('More easier way instead of trying to find staff scrolling').
+          Three patterns layered for speed:
+            1. Quick-select chips at the top — 'My team', per-department
+               groupings. One click selects/deselects a whole group.
+            2. Selected staff chip bar — currently-selected people are
+               pinned visible with × to remove, so the manager always
+               sees the running selection without scrolling.
+            3. Compact denser list below for fine-grained adjustments. */}
+      {(() => {
+        // Direct reports of the current manager
+        const myTeam = eligibleStaff.filter(e => e.manager_id === me?.id);
+        // Department-location groupings derived from the eligibility list
+        const groups = (() => {
+          const m = new Map();
+          for (const e of eligibleStaff) {
+            const key = `${e.department}|${e.location}`;
+            if (!m.has(key)) m.set(key, []);
+            m.get(key).push(e);
+          }
+          return [...m.entries()]
+            .map(([key, members]) => {
+              const [dept, loc] = key.split('|');
+              return { dept, loc, members };
             })
-          )}
-        </div>
-      </div>
+            .sort((a, b) => b.members.length - a.members.length)
+            .slice(0, 6);  // cap the chip row at 6 groups for readability
+        })();
+        const selectGroup = (members) => setSelectedStaff(prev => {
+          const next = new Set(prev);
+          members.forEach(m => next.add(m.id));
+          return next;
+        });
+        const allInGroupSelected = (members) =>
+          members.length > 0 && members.every(m => selectedStaff.has(m.id));
+        const deselectGroup = (members) => setSelectedStaff(prev => {
+          const next = new Set(prev);
+          members.forEach(m => next.delete(m.id));
+          return next;
+        });
+        const toggleGroup = (members) =>
+          allInGroupSelected(members) ? deselectGroup(members) : selectGroup(members);
+        return (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold uppercase" style={{ color: '#1F1B16' }}>
+                Staff <span style={{ opacity: 0.6 }}>({selectedStaff.size} selected)</span>
+              </label>
+              {selectedStaff.size > 0 && (
+                <button onClick={clearStaff}
+                        className="text-[10px] underline" style={{ color: '#B84A3E' }}>
+                  clear all
+                </button>
+              )}
+            </div>
+
+            {/* Quick-select chip row */}
+            <div className="flex flex-wrap gap-1.5">
+              {myTeam.length > 0 && (
+                <button
+                  onClick={() => toggleGroup(myTeam)}
+                  className="text-[11px] px-2.5 py-1 rounded-full font-semibold border"
+                  style={{
+                    background:  allInGroupSelected(myTeam) ? '#0F4C2A' : '#FFFFFF',
+                    color:       allInGroupSelected(myTeam) ? '#FFFFFF' : '#0F4C2A',
+                    borderColor: '#0F4C2A',
+                  }}
+                  title={`Your direct reports (${myTeam.length})`}>
+                  👥 My team ({myTeam.length})
+                </button>
+              )}
+              {groups.map(g => {
+                const active = allInGroupSelected(g.members);
+                return (
+                  <button key={`${g.dept}|${g.loc}`}
+                    onClick={() => toggleGroup(g.members)}
+                    className="text-[11px] px-2.5 py-1 rounded-full font-semibold border"
+                    style={{
+                      background:  active ? '#A16207' : '#FFFFFF',
+                      color:       active ? '#FFFFFF' : '#A16207',
+                      borderColor: '#A16207',
+                    }}>
+                    {g.dept}/{g.loc} ({g.members.length})
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Selected staff chip bar — always visible, no scrolling */}
+            {selectedStaff.size > 0 && (
+              <div className="rounded border p-2 flex flex-wrap gap-1.5"
+                   style={{ background: '#F0FDF4', borderColor: '#86EFAC' }}>
+                {[...selectedStaff]
+                  .map(psn => eligibleStaff.find(e => e.id === psn))
+                  .filter(Boolean)
+                  .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                  .map(e => (
+                    <button key={e.id}
+                            onClick={() => toggleStaff(e.id)}
+                            className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-full font-semibold"
+                            style={{ background: '#0F4C2A', color: '#FFFFFF' }}
+                            title="Click to remove">
+                      {e.name}
+                      <X size={10} />
+                    </button>
+                  ))}
+              </div>
+            )}
+
+            {/* Fine-grained search for exceptions */}
+            <details className="rounded border" style={{ borderColor: 'rgba(0,0,0,0.1)' }}>
+              <summary className="text-xs px-3 py-2 cursor-pointer font-semibold"
+                       style={{ color: '#1F1B16' }}>
+                Pick individuals manually
+              </summary>
+              <div className="border-t p-2 space-y-2" style={{ borderColor: 'rgba(0,0,0,0.06)' }}>
+                <input
+                  value={empQuery}
+                  onChange={(e) => setEmpQuery(e.target.value)}
+                  placeholder="Filter by name, PSN, or dept…"
+                  className="w-full text-sm rounded border border-black/15 bg-white px-3 py-1.5 outline-none"
+                />
+                <div className="max-h-44 overflow-y-auto rounded border bg-white"
+                     style={{ borderColor: 'rgba(0,0,0,0.08)' }}>
+                  {filteredStaff.length === 0 ? (
+                    <p className="text-xs px-3 py-3" style={{ color: '#1F1B16', opacity: 0.55 }}>
+                      No staff match.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-0">
+                      {filteredStaff.map(e => {
+                        const isSelected = selectedStaff.has(e.id);
+                        return (
+                          <label key={e.id}
+                                 className="flex items-center gap-2 px-2 py-1 cursor-pointer hover:bg-black/[0.03] text-xs"
+                                 style={{ borderBottom: '1px solid rgba(0,0,0,0.04)' }}>
+                            <input type="checkbox" checked={isSelected}
+                                   onChange={() => toggleStaff(e.id)} />
+                            <span className="truncate" style={{ color: '#1F1B16' }}>
+                              {e.name}
+                            </span>
+                            <span className="text-[9px] ml-auto" style={{ color: '#1F1B16', opacity: 0.45 }}>
+                              {e.department}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </details>
+          </div>
+        );
+      })()}
 
       {/* Date multi-select */}
       <div className="space-y-1">
