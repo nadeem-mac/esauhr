@@ -25,6 +25,7 @@ import EvaluationExplainModal from './EvaluationExplainModal.jsx';
 import SilentAbsencesCard from './SilentAbsencesCard.jsx';
 import ShiftStaffAttendanceReportCard from './ShiftStaffAttendanceReportCard.jsx';
 import ShiftComplianceCard from './ShiftComplianceCard.jsx';
+import HolidayShiftDefaultersCard from './HolidayShiftDefaultersCard.jsx';
 
 // ─── Error Boundary for AttendanceView sections ───────────────────────
 // Without this, a render-time exception anywhere in the tree under
@@ -5723,6 +5724,16 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           empById={empById}
           onSaveAndClose={handleSaveAndClose}
           savingClose={reevalState.running}
+        />
+        {/* Holiday-shift defaulters — sits next to the existing
+            late/early/missed tiles when the viewed date falls inside
+            an active holiday period. Self-contained: own data fetch,
+            renders nothing on normal working days. Nadeem 2026-05-21:
+            'when the daily attendance is uploaded it should check
+            these cases and a tile for Holiday assigned staff'. */}
+        <HolidayShiftDefaultersCard
+          csvDate={csvDate}
+          empById={empById}
         />
         </>
       )}
