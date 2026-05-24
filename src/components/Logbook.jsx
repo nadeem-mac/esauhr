@@ -61,6 +61,11 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
   const [endDate, setEndDate] = useState('');
   const [isHalfDay, setIsHalfDay] = useState(false);
   const [reason, setReason] = useState('');
+  // Required — date the paper/email application was received from
+  // the staff member. Drives the 'Submitted' + 'Notice' rows on
+  // the printed form so the PDF reflects the actual application
+  // date, not when Bashaier happened to log it. Nadeem 2026-05-21.
+  const [applicationDate, setApplicationDate] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [recent, setRecent] = useState([]);
@@ -199,7 +204,12 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
   }, [empId, leaveType, employees, leaveTypes, msg]);
 
   // ── Submit ─────────────────────────────────────────────────────────
-  const canSave = empId && leaveType && startDate && endDate && days > 0 && !busy;
+  // applicationDate is REQUIRED — Bashaier must capture when the
+  // paper or email application was received. This date drives both
+  // the Submitted row and the Notice calculation (Planned vs Urgent)
+  // on the printed form, so it has to match the staff's actual
+  // submission moment, not the moment Bashaier logs the entry.
+  const canSave = empId && leaveType && startDate && endDate && days > 0 && applicationDate && !busy;
 
   const save = async () => {
     if (!canSave) return;
@@ -207,18 +217,23 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
     setMsg(null);
     try {
       const now = new Date().toISOString();
-      // Build substitute_decisions in the same shape PendingSubstitutionsCard
-      // writes when a sub accepts online: { decision: 'accepted', at: ISO }.
-      // This makes the PDF substitute table render the green 'Accepted
-      // online' stamp with Bashaier's logged timestamp as the acceptance
-      // moment. Sick leaves intentionally carry NO substitutes (matches
-      // main flow — sick goes straight to manager without sub layer).
+      // requested_at = noon on the application date (ISO). Noon avoids
+      // timezone surprises that could push the date backward when
+      // converted to GMT for storage.
+      const requestedAtIso = `${applicationDate}T12:00:00.000Z`;
+      const appDateLabel = new Date(applicationDate).toLocaleDateString('en-GB', {
+        day: '2-digit', month: 'short', year: 'numeric',
+      });
+      // Same shape PendingSubstitutionsCard writes on online accept.
       const isSick = leaveType === 'sick';
       const subIds = isSick ? [] : substituteIds;
       const subDecisions = {};
       subIds.forEach(psn => {
-        subDecisions[psn] = { decision: 'accepted', at: now };
+        // Substitute acceptance timestamp pinned to the application
+        // date too — keeps the paper trail internally consistent.
+        subDecisions[psn] = { decision: 'accepted', at: requestedAtIso };
       });
+      const sourceNote = reason.trim();
       const payload = {
         employee_id:         empId,
         leave_type_id:       leaveType,
@@ -226,12 +241,22 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
         end_date:            endDate,
         days,
         is_half_day:         isHalfDay || null,
-        reason:              `Manual entry · ${reason.trim() || 'paper/email'}`,
+        // Reason embeds the application date so the PDF's REASON
+        // section (a.k.a. remarks column) carries it visibly. Format:
+        //   'Manual entry · received DD MMM YYYY · <free notes>'
+        // when notes are provided; otherwise just the date prefix.
+        reason: sourceNote
+          ? `Manual entry · received ${appDateLabel} · ${sourceNote}`
+          : `Manual entry · received ${appDateLabel}`,
         stage:               'approved',
         status:              'approved',
-        requested_at:        now,
-        manager_decided_at:  now,
-        hr_decided_at:       now,
+        // requested_at = actual application date (not log time)
+        requested_at:        requestedAtIso,
+        // Manager / HR decisions also pinned to the application date
+        // so the form reads as if the workflow had completed on that
+        // day — consistent with how paper approvals work.
+        manager_decided_at:  requestedAtIso,
+        hr_decided_at:       requestedAtIso,
         substitute_ids:      subIds,
         substitute_decisions: subDecisions,
         requested_by:        me?.id || null,
@@ -275,6 +300,7 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
       setEndDate('');
       setIsHalfDay(false);
       setReason('');
+      setApplicationDate('');
       setDaysOverride(null);
       setSubstituteIds([]);
       setSubSearch('');
@@ -522,6 +548,34 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
           </div>
         )}
 
+        {/* Application received date — REQUIRED. Drives 'Submitted'
+            and 'Notice' rows on the printed form. Visually flagged so
+            Bashaier knows it isn't optional. */}
+        <div className="space-y-1">
+          <label className="text-xs font-semibold uppercase flex items-center gap-1.5" style={{ color: '#1F1B16' }}>
+            Application received date
+            <span className="text-[9px] px-1.5 py-0.5 rounded"
+                  style={{ background: '#FEF3C7', color: '#854F0B', fontWeight: 700 }}>
+              REQUIRED
+            </span>
+          </label>
+          <input
+            type="date"
+            value={applicationDate}
+            onChange={(e) => setApplicationDate(e.target.value)}
+            max={new Date().toISOString().slice(0, 10)}
+            className="w-full text-sm rounded border px-3 py-2 outline-none"
+            style={{
+              borderColor: applicationDate ? 'rgba(0,0,0,0.15)' : '#FCD34D',
+              background: applicationDate ? '#FFFFFF' : '#FFFBEB',
+            }}
+          />
+          <p className="text-[10px]" style={{ color: '#1F1B16', opacity: 0.6 }}>
+            Date the paper form was signed, or the email was received from the staff.
+            Used on the printed form's Submitted row and to compute Planned vs Urgent notice.
+          </p>
+        </div>
+
         {/* Reason / source */}
         <div className="space-y-1">
           <label className="text-xs font-semibold uppercase" style={{ color: '#1F1B16' }}>
@@ -530,7 +584,7 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
           <textarea
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            placeholder="e.g. Paper form received 21 May 2026 · approved by Sadakathullah"
+            placeholder="e.g. paper form received in person · approved by Sadakathullah"
             className="w-full text-sm rounded border border-black/15 bg-white px-3 py-2 outline-none min-h-[60px]"
           />
         </div>
