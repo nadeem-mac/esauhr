@@ -66,6 +66,12 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
   // the printed form so the PDF reflects the actual application
   // date, not when Bashaier happened to log it. Nadeem 2026-05-21.
   const [applicationDate, setApplicationDate] = useState('');
+  // Required — how the application arrived. Either 'email' (an
+  // email/forwarded message) or 'paper' (a physical signed form).
+  // Surfaces in the reason text → REASON / remarks column on the
+  // printed PDF so HR can later see how each historical entry
+  // originated. Nadeem 2026-05-21.
+  const [submissionMethod, setSubmissionMethod] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [recent, setRecent] = useState([]);
@@ -209,7 +215,7 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
   // the Submitted row and the Notice calculation (Planned vs Urgent)
   // on the printed form, so it has to match the staff's actual
   // submission moment, not the moment Bashaier logs the entry.
-  const canSave = empId && leaveType && startDate && endDate && days > 0 && applicationDate && !busy;
+  const canSave = empId && leaveType && startDate && endDate && days > 0 && applicationDate && submissionMethod && !busy;
 
   const save = async () => {
     if (!canSave) return;
@@ -234,6 +240,12 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
         subDecisions[psn] = { decision: 'accepted', at: requestedAtIso };
       });
       const sourceNote = reason.trim();
+      // 'paper application received' or 'email received' — concrete
+      // wording in the PDF remarks column shows how each historical
+      // entry was captured.
+      const methodPhrase = submissionMethod === 'paper'
+        ? `paper application received ${appDateLabel}`
+        : `email received ${appDateLabel}`;
       const payload = {
         employee_id:         empId,
         leave_type_id:       leaveType,
@@ -241,13 +253,15 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
         end_date:            endDate,
         days,
         is_half_day:         isHalfDay || null,
-        // Reason embeds the application date so the PDF's REASON
-        // section (a.k.a. remarks column) carries it visibly. Format:
-        //   'Manual entry · received DD MMM YYYY · <free notes>'
-        // when notes are provided; otherwise just the date prefix.
+        // Reason embeds the application method + date so the PDF's
+        // REASON section (a.k.a. remarks column) reads naturally:
+        //   'Manual entry · paper application received DD MMM YYYY · <notes>'
+        //   'Manual entry · email received DD MMM YYYY · <notes>'
+        // When the optional notes field is blank, the trailing
+        // separator is dropped so the line ends cleanly.
         reason: sourceNote
-          ? `Manual entry · received ${appDateLabel} · ${sourceNote}`
-          : `Manual entry · received ${appDateLabel}`,
+          ? `Manual entry · ${methodPhrase} · ${sourceNote}`
+          : `Manual entry · ${methodPhrase}`,
         stage:               'approved',
         status:              'approved',
         // requested_at = actual application date (not log time)
@@ -301,6 +315,7 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
       setIsHalfDay(false);
       setReason('');
       setApplicationDate('');
+      setSubmissionMethod('');
       setDaysOverride(null);
       setSubstituteIds([]);
       setSubSearch('');
@@ -548,33 +563,57 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
           </div>
         )}
 
-        {/* Application received date — REQUIRED. Drives 'Submitted'
-            and 'Notice' rows on the printed form. Visually flagged so
-            Bashaier knows it isn't optional. */}
-        <div className="space-y-1">
-          <label className="text-xs font-semibold uppercase flex items-center gap-1.5" style={{ color: '#1F1B16' }}>
-            Application received date
-            <span className="text-[9px] px-1.5 py-0.5 rounded"
-                  style={{ background: '#FEF3C7', color: '#854F0B', fontWeight: 700 }}>
-              REQUIRED
-            </span>
-          </label>
-          <input
-            type="date"
-            value={applicationDate}
-            onChange={(e) => setApplicationDate(e.target.value)}
-            max={new Date().toISOString().slice(0, 10)}
-            className="w-full text-sm rounded border px-3 py-2 outline-none"
-            style={{
-              borderColor: applicationDate ? 'rgba(0,0,0,0.15)' : '#FCD34D',
-              background: applicationDate ? '#FFFFFF' : '#FFFBEB',
-            }}
-          />
-          <p className="text-[10px]" style={{ color: '#1F1B16', opacity: 0.6 }}>
-            Date the paper form was signed, or the email was received from the staff.
-            Used on the printed form's Submitted row and to compute Planned vs Urgent notice.
-          </p>
+        {/* Application received: how + when. Both required.
+            Drive the 'Submitted' + 'Notice' rows on the printed
+            form, and surface in the REASON / remarks column so each
+            historical entry says how it was originally captured. */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <label className="text-xs font-semibold uppercase flex items-center gap-1.5" style={{ color: '#1F1B16' }}>
+              Received via
+              <span className="text-[9px] px-1.5 py-0.5 rounded"
+                    style={{ background: '#FEF3C7', color: '#854F0B', fontWeight: 700 }}>
+                REQUIRED
+              </span>
+            </label>
+            <select
+              value={submissionMethod}
+              onChange={(e) => setSubmissionMethod(e.target.value)}
+              className="w-full text-sm rounded border px-3 py-2 outline-none"
+              style={{
+                borderColor: submissionMethod ? 'rgba(0,0,0,0.15)' : '#FCD34D',
+                background: submissionMethod ? '#FFFFFF' : '#FFFBEB',
+              }}>
+              <option value="">— select —</option>
+              <option value="paper">📄 Paper application</option>
+              <option value="email">📧 Email</option>
+            </select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-semibold uppercase flex items-center gap-1.5" style={{ color: '#1F1B16' }}>
+              Received on
+              <span className="text-[9px] px-1.5 py-0.5 rounded"
+                    style={{ background: '#FEF3C7', color: '#854F0B', fontWeight: 700 }}>
+                REQUIRED
+              </span>
+            </label>
+            <input
+              type="date"
+              value={applicationDate}
+              onChange={(e) => setApplicationDate(e.target.value)}
+              max={new Date().toISOString().slice(0, 10)}
+              className="w-full text-sm rounded border px-3 py-2 outline-none"
+              style={{
+                borderColor: applicationDate ? 'rgba(0,0,0,0.15)' : '#FCD34D',
+                background: applicationDate ? '#FFFFFF' : '#FFFBEB',
+              }}
+            />
+          </div>
         </div>
+        <p className="text-[10px] -mt-1" style={{ color: '#1F1B16', opacity: 0.6 }}>
+          The date the {submissionMethod === 'paper' ? 'paper form was signed' : submissionMethod === 'email' ? 'email arrived' : 'application was received'} —
+          drives the printed form's <strong>Submitted</strong> row and the <strong>Planned vs Urgent</strong> notice computation.
+        </p>
 
         {/* Reason / source */}
         <div className="space-y-1">
