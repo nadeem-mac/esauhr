@@ -8,7 +8,7 @@
 //
 //  Access:
 //    • Manager → sees + edits shifts they assigned, can nominate from
---                their direct reports + same-dept employees
+//                 their direct reports + same-dept employees
 //    • HR      → sees all shifts across all departments
 //    • Admin   → sees everything + can override anything
 //    • Staff   → no access (read-only view comes in Phase 5 on their
