@@ -705,17 +705,41 @@ function ShiftForm({ initial, period, eligibleStaff, me, existingShifts, onCance
         </div>
       )}
 
-      {/* Notes */}
+      {/* Notes — categorical dropdown rather than free text so the
+          OT report + audit log stay consistent. Nadeem 2026-05-21:
+          'NOTES (OPTIONAL) should have dropped down selection no
+          manual writing'. Categories cover the typical reasons
+          managers nominate during Eid:
+            • Customer service / counter staffing
+            • Operations / vessel arrival
+            • Business / documentation
+            • Customs / clearance
+            • Emergency / on-call standby
+            • Department coverage
+            • General OT coverage
+          The list is intentionally short and stable — adding
+          new categories should be a deliberate decision, not ad-hoc. */}
       <div className="space-y-1">
         <label className="text-xs font-semibold uppercase" style={{ color: '#1F1B16' }}>
-          Notes <span style={{ opacity: 0.6 }}>(optional)</span>
+          Reason / coverage type <span style={{ opacity: 0.6 }}>(optional)</span>
         </label>
-        <input
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          placeholder="e.g. covering customer service line"
-          className="w-full text-sm rounded border border-black/15 bg-white px-3 py-2 outline-none"
-        />
+        <div className="relative">
+          <select
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            className="w-full text-sm rounded border border-black/15 bg-white pl-3 pr-9 py-2 outline-none appearance-none">
+            <option value="">— none —</option>
+            <option value="Customer service coverage">Customer service coverage</option>
+            <option value="Operations / vessel arrival">Operations / vessel arrival</option>
+            <option value="Business / documentation">Business / documentation</option>
+            <option value="Customs / clearance">Customs / clearance</option>
+            <option value="Emergency / on-call standby">Emergency / on-call standby</option>
+            <option value="Department coverage">Department coverage</option>
+            <option value="General OT coverage">General OT coverage</option>
+          </select>
+          <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                       style={{ color: '#1F1B16', opacity: 0.5 }} />
+        </div>
       </div>
 
       {err && (
