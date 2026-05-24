@@ -579,7 +579,7 @@ function ShiftForm({ initial, period, eligibleStaff, me, existingShifts, onCance
   }, [empId, shiftDate, existingShifts, initial]);
 
   const canSave = empId && shiftDate && clockIn && clockOut
-               && clockOut > clockIn && !duplicate && !busy;
+               && clockOut > clockIn && !duplicate && notes && !busy;
 
   const save = async () => {
     if (!canSave) return;
@@ -729,22 +729,29 @@ function ShiftForm({ initial, period, eligibleStaff, me, existingShifts, onCance
         </div>
       )}
 
-      {/* Reason — pulled from the 'Work Description / Task Summary'
-          column of the SAJED Eid OT Excel. Canonical list, dropdown
-          only, no manual writing. Nadeem 2026-05-21: 'From Work
-          Description / Task Summary in excel make drop down'.
-          Variants in the source Excel (extra spaces, alternate slash
-          placement) collapsed into one entry per intent. */}
+      {/* Work description — REQUIRED. Same canonical list as the
+          bulk form. Nadeem 2026-05-21: 'WORK DESCRIPTION / TASK
+          SUMMARY is mandatory not optional must select then can
+          save'. Amber border + tint when unselected so the
+          affordance is hard to miss. */}
       <div className="space-y-1">
-        <label className="text-xs font-semibold uppercase" style={{ color: '#1F1B16' }}>
-          Work description / Task summary <span style={{ opacity: 0.6 }}>(optional)</span>
+        <label className="text-xs font-semibold uppercase flex items-center gap-1.5" style={{ color: '#1F1B16' }}>
+          Work description / Task summary
+          <span className="text-[9px] px-1.5 py-0.5 rounded"
+                style={{ background: '#FEF3C7', color: '#854F0B', fontWeight: 700 }}>
+            REQUIRED
+          </span>
         </label>
         <div className="relative">
           <select
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            className="w-full text-sm rounded border border-black/15 bg-white pl-3 pr-9 py-2 outline-none appearance-none">
-            <option value="">— none —</option>
+            className="w-full text-sm rounded border pl-3 pr-9 py-2 outline-none appearance-none"
+            style={{
+              borderColor: notes ? 'rgba(0,0,0,0.15)' : '#FCD34D',
+              background:  notes ? '#FFFFFF' : '#FFFBEB',
+            }}>
+            <option value="">— select task —</option>
             <option value="D/O Release Counter / Fasah Link / 24/7 MAWANI Requirements">
               D/O Release Counter / Fasah Link / 24/7 MAWANI Requirements
             </option>
@@ -882,6 +889,7 @@ function BulkShiftForm({ period, eligibleStaff, me, existingShifts, onCancel, on
 
   const canSave = preview.willCreate > 0
                 && clockIn && clockOut && clockOut > clockIn
+                && notes
                 && !busy;
 
   const toggleStaff = (psn) => {
@@ -1083,17 +1091,26 @@ function BulkShiftForm({ period, eligibleStaff, me, existingShifts, onCancel, on
         </div>
       </div>
 
-      {/* Work description (same dropdown as single form) */}
+      {/* Work description (same list as single form) — REQUIRED in
+          bulk too. Nadeem 2026-05-21. */}
       <div className="space-y-1">
-        <label className="text-xs font-semibold uppercase" style={{ color: '#1F1B16' }}>
-          Work description / Task summary <span style={{ opacity: 0.6 }}>(optional)</span>
+        <label className="text-xs font-semibold uppercase flex items-center gap-1.5" style={{ color: '#1F1B16' }}>
+          Work description / Task summary
+          <span className="text-[9px] px-1.5 py-0.5 rounded"
+                style={{ background: '#FEF3C7', color: '#854F0B', fontWeight: 700 }}>
+            REQUIRED
+          </span>
         </label>
         <div className="relative">
           <select
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            className="w-full text-sm rounded border border-black/15 bg-white pl-3 pr-9 py-2 outline-none appearance-none">
-            <option value="">— none —</option>
+            className="w-full text-sm rounded border pl-3 pr-9 py-2 outline-none appearance-none"
+            style={{
+              borderColor: notes ? 'rgba(0,0,0,0.15)' : '#FCD34D',
+              background:  notes ? '#FFFFFF' : '#FFFBEB',
+            }}>
+            <option value="">— select task —</option>
             <option value="D/O Release Counter / Fasah Link / 24/7 MAWANI Requirements">D/O Release Counter / Fasah Link / 24/7 MAWANI Requirements</option>
             <option value="D/O Release Counter / Fasah Link — Back Up / 24/7 MAWANI Requirements">D/O Release Counter / Fasah Link — Back Up / 24/7 MAWANI Requirements</option>
             <option value="EQC ECRN Ext / Detention / Damage Invoice / 24/7 MAWANI Requirements">EQC ECRN Ext / Detention / Damage Invoice / 24/7 MAWANI Requirements</option>
