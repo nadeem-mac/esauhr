@@ -54,10 +54,13 @@ export default function HolidayShifts({ me, employees = [] }) {
   // HR-only — filter by status so Bashaier can focus on pending. For
   // managers we default to showing everything (their list is smaller).
   const [statusFilter, setStatusFilter] = useState('all');
-  // Phase 6 — OT comparison report modal. Opens via the [Report] button
-  // in the header. Renders strict comparison of approved shifts vs
-  // attendance_daily punches + offers Excel export.
+  // Phase 6 — OT comparison report modal.
   const [showReport, setShowReport]     = useState(false);
+  // Bulk add — multi-staff × multi-date form for managers who need
+  // to assign the same time window to several people across several
+  // days. Nadeem 2026-05-21: 'Make it easy for managers to update
+  // instead of entering each staff one by one'.
+  const [showBulkForm, setShowBulkForm] = useState(false);
 
   // ── Load active periods ───────────────────────────────────────────
   useEffect(() => {
@@ -187,13 +190,22 @@ export default function HolidayShifts({ me, employees = [] }) {
               <FileSpreadsheet size={12} /> OT Report
             </button>
           )}
-          {!showForm && !editing && selectedPeriod && (
-            <button
-              onClick={() => setShowForm(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded text-white"
-              style={{ background: '#0F4C2A' }}>
-              <Plus size={12} /> Add shift
-            </button>
+          {!showForm && !editing && !showBulkForm && selectedPeriod && (
+            <>
+              <button
+                onClick={() => setShowBulkForm(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded border"
+                style={{ borderColor: '#A16207', color: '#A16207', background: '#FFFBEB' }}
+                title="Add same time window to multiple staff and dates at once">
+                <Users size={12} /> Bulk add
+              </button>
+              <button
+                onClick={() => setShowForm(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded text-white"
+                style={{ background: '#0F4C2A' }}>
+                <Plus size={12} /> Add shift
+              </button>
+            </>
           )}
         </div>
       </header>
@@ -245,6 +257,18 @@ export default function HolidayShifts({ me, employees = [] }) {
           existingShifts={visibleShifts}
           onCancel={() => { setShowForm(false); setEditing(null); }}
           onSaved={() => { setShowForm(false); setEditing(null); loadShifts(); }}
+        />
+      )}
+
+      {/* Bulk add form — multi-staff × multi-date in one go */}
+      {showBulkForm && selectedPeriod && (
+        <BulkShiftForm
+          period={selectedPeriod}
+          eligibleStaff={eligibleStaff}
+          me={me}
+          existingShifts={shifts}
+          onCancel={() => setShowBulkForm(false)}
+          onSaved={() => { setShowBulkForm(false); loadShifts(); }}
         />
       )}
 
@@ -778,6 +802,368 @@ function ShiftForm({ initial, period, eligibleStaff, me, existingShifts, onCance
           style={{ background: '#0F4C2A' }}>
           {busy ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
           {busy ? 'Saving…' : isEdit ? 'Update shift' : 'Submit for approval'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+// ── BulkShiftForm — multi-staff × multi-date in one submission ────────
+//
+//  For managers who need to assign the same time window to several
+//  people across several dates of the holiday period. Nadeem 2026-05-21
+//  Bulk action with duplicate-skip:
+//    • UI shows live preview of how many shifts will be created
+//    • DB-level UNIQUE (employee_id, shift_date) is respected — duplicate
+//      pairs are skipped client-side before submit (saves round-trips)
+//    • Each shift inserted independently via Promise.all — partial
+//      failures don't roll back successful inserts
+//  Posts each row with status='pending', awaiting HR approval (same as
+//  the single-shift form path).
+//
+function BulkShiftForm({ period, eligibleStaff, me, existingShifts, onCancel, onSaved }) {
+  // Selection state
+  const [selectedStaff, setSelectedStaff] = useState(new Set());  // Set<psn>
+  const [selectedDates, setSelectedDates] = useState(new Set());  // Set<YYYY-MM-DD>
+  const [clockIn, setClockIn]   = useState('09:00');
+  const [clockOut, setClockOut] = useState('17:00');
+  const [notes, setNotes]       = useState('');
+  const [empQuery, setEmpQuery] = useState('');
+  const [busy, setBusy]         = useState(false);
+  const [err, setErr]           = useState(null);
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
+
+  // Date options inside the period
+  const dateOptions = useMemo(() => {
+    const out = [];
+    const start = new Date(period.start_date);
+    const end   = new Date(period.end_date);
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      out.push(d.toISOString().slice(0, 10));
+    }
+    return out;
+  }, [period.start_date, period.end_date]);
+
+  // Existing non-cancelled shifts as a Set of "psn|date" keys —
+  // used both for filtering the staff/date matrix preview and for
+  // skipping duplicates at submit time.
+  const existingPairs = useMemo(() => {
+    const s = new Set();
+    for (const sh of existingShifts) {
+      if (sh.status !== 'cancelled') s.add(`${sh.employee_id}|${sh.shift_date}`);
+    }
+    return s;
+  }, [existingShifts]);
+
+  // Filtered eligibility list — typeahead text + 'show only my
+  // direct reports' affordance for managers with large departments.
+  const filteredStaff = useMemo(() => {
+    const q = empQuery.trim().toLowerCase();
+    if (!q) return eligibleStaff;
+    return eligibleStaff.filter(e =>
+      e.id?.toLowerCase().includes(q) ||
+      (e.name || '').toLowerCase().includes(q));
+  }, [empQuery, eligibleStaff]);
+
+  // Preview math — how many shifts will actually be inserted, and
+  // how many will be skipped because of existing entries.
+  const preview = useMemo(() => {
+    let willCreate = 0;
+    let willSkip   = 0;
+    for (const psn of selectedStaff) {
+      for (const date of selectedDates) {
+        if (existingPairs.has(`${psn}|${date}`)) willSkip++;
+        else willCreate++;
+      }
+    }
+    return { willCreate, willSkip };
+  }, [selectedStaff, selectedDates, existingPairs]);
+
+  const canSave = preview.willCreate > 0
+                && clockIn && clockOut && clockOut > clockIn
+                && !busy;
+
+  const toggleStaff = (psn) => {
+    setSelectedStaff(prev => {
+      const next = new Set(prev);
+      if (next.has(psn)) next.delete(psn); else next.add(psn);
+      return next;
+    });
+  };
+  const toggleDate = (date) => {
+    setSelectedDates(prev => {
+      const next = new Set(prev);
+      if (next.has(date)) next.delete(date); else next.add(date);
+      return next;
+    });
+  };
+  const selectAllVisibleStaff = () => {
+    setSelectedStaff(prev => {
+      const next = new Set(prev);
+      filteredStaff.forEach(e => next.add(e.id));
+      return next;
+    });
+  };
+  const selectAllDates = () => setSelectedDates(new Set(dateOptions));
+  const clearStaff = () => setSelectedStaff(new Set());
+  const clearDates = () => setSelectedDates(new Set());
+
+  const save = async () => {
+    if (!canSave) return;
+    setBusy(true); setErr(null);
+    // Build the list of (psn, date) pairs that don't already exist.
+    const toInsert = [];
+    for (const psn of selectedStaff) {
+      for (const date of selectedDates) {
+        if (!existingPairs.has(`${psn}|${date}`)) {
+          toInsert.push({ psn, date });
+        }
+      }
+    }
+    setProgress({ done: 0, total: toInsert.length });
+    let okCount = 0;
+    let failCount = 0;
+    const errors = [];
+    // Sequential insert so progress counter is meaningful and we
+    // don't blast the API with 20+ concurrent requests. Slow path
+    // but predictable; bulk usage is once per Eid, not per minute.
+    for (let i = 0; i < toInsert.length; i++) {
+      const { psn, date } = toInsert[i];
+      try {
+        await directPost('holiday_shifts', {
+          holiday_period_id: period.id,
+          employee_id:       psn,
+          shift_date:        date,
+          clock_in_time:     clockIn  + ':00',
+          clock_out_time:    clockOut + ':00',
+          notes: notes || null,
+          assigned_by:       me?.id,
+          status:            'pending',
+        });
+        okCount++;
+      } catch (e) {
+        failCount++;
+        errors.push(`${psn} on ${date}: ${e?.message || 'unknown'}`);
+      }
+      setProgress({ done: i + 1, total: toInsert.length });
+    }
+    setBusy(false);
+    if (failCount > 0) {
+      setErr(`${okCount} created, ${failCount} failed.\n` + errors.slice(0, 3).join('\n'));
+      if (okCount > 0) onSaved?.();   // refresh so the partial wins show up
+    } else {
+      onSaved?.();
+    }
+  };
+
+  return (
+    <div className="rounded-lg border p-4 space-y-3"
+         style={{ background: '#FFFBEB', borderColor: '#A16207' }}>
+      <div className="flex items-center justify-between">
+        <div>
+          <h4 className="text-xs font-bold uppercase tracking-wider" style={{ color: '#92400E' }}>
+            Bulk add shifts · {period.name}
+          </h4>
+          <p className="text-[10px] mt-0.5" style={{ color: '#1F1B16', opacity: 0.6 }}>
+            Same clock-in/out applied to every selected staff × date combination.
+          </p>
+        </div>
+        <button onClick={onCancel} className="p-1 rounded hover:bg-black/[0.05]" title="Cancel">
+          <X size={14} style={{ color: '#1F1B16', opacity: 0.6 }} />
+        </button>
+      </div>
+
+      {/* Staff multi-select */}
+      <div className="space-y-1">
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-semibold uppercase" style={{ color: '#1F1B16' }}>
+            Staff <span style={{ opacity: 0.6 }}>({selectedStaff.size} selected)</span>
+          </label>
+          <div className="flex gap-2 text-[10px]">
+            <button onClick={selectAllVisibleStaff}
+                    className="underline" style={{ color: '#0F4C2A' }}>
+              select all visible
+            </button>
+            <button onClick={clearStaff}
+                    className="underline" style={{ color: '#B84A3E' }}>
+              clear
+            </button>
+          </div>
+        </div>
+        <input
+          value={empQuery}
+          onChange={(e) => setEmpQuery(e.target.value)}
+          placeholder="Filter by name or PSN…"
+          className="w-full text-sm rounded border border-black/15 bg-white px-3 py-1.5 outline-none"
+        />
+        <div className="rounded border max-h-48 overflow-y-auto bg-white"
+             style={{ borderColor: 'rgba(0,0,0,0.1)' }}>
+          {filteredStaff.length === 0 ? (
+            <p className="text-xs px-3 py-3" style={{ color: '#1F1B16', opacity: 0.55 }}>
+              No staff match.
+            </p>
+          ) : (
+            filteredStaff.map(e => {
+              const isSelected = selectedStaff.has(e.id);
+              return (
+                <label key={e.id}
+                       className="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-black/[0.03] border-b last:border-0"
+                       style={{ borderColor: 'rgba(0,0,0,0.05)' }}>
+                  <input type="checkbox" checked={isSelected}
+                         onChange={() => toggleStaff(e.id)} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm truncate" style={{ color: '#1F1B16' }}>
+                      {e.name}
+                    </div>
+                    <div className="text-[10px]" style={{ color: '#1F1B16', opacity: 0.55 }}>
+                      {e.id} · {e.department} · {e.location}
+                    </div>
+                  </div>
+                </label>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* Date multi-select */}
+      <div className="space-y-1">
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-semibold uppercase" style={{ color: '#1F1B16' }}>
+            Dates <span style={{ opacity: 0.6 }}>({selectedDates.size} selected)</span>
+          </label>
+          <div className="flex gap-2 text-[10px]">
+            <button onClick={selectAllDates}
+                    className="underline" style={{ color: '#0F4C2A' }}>
+              select all
+            </button>
+            <button onClick={clearDates}
+                    className="underline" style={{ color: '#B84A3E' }}>
+              clear
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {dateOptions.map(d => {
+            const isSelected = selectedDates.has(d);
+            return (
+              <button key={d}
+                onClick={() => toggleDate(d)}
+                className="px-2 py-1 text-[11px] font-semibold rounded border"
+                style={{
+                  background:  isSelected ? '#0F4C2A' : '#FFFFFF',
+                  color:       isSelected ? '#FFFFFF' : '#1F1B16',
+                  borderColor: isSelected ? '#0F4C2A' : 'rgba(0,0,0,0.15)',
+                }}>
+                {fmtDayDate(d)}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Time window */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <label className="text-xs font-semibold uppercase" style={{ color: '#1F1B16' }}>
+            Clock in
+          </label>
+          <input type="time" value={clockIn}
+                 onChange={(e) => setClockIn(e.target.value)}
+                 className="w-full text-sm rounded border border-black/15 bg-white px-3 py-2 outline-none" />
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-semibold uppercase" style={{ color: '#1F1B16' }}>
+            Clock out
+          </label>
+          <input type="time" value={clockOut} min={clockIn}
+                 onChange={(e) => setClockOut(e.target.value)}
+                 className="w-full text-sm rounded border border-black/15 bg-white px-3 py-2 outline-none" />
+        </div>
+      </div>
+
+      {/* Work description (same dropdown as single form) */}
+      <div className="space-y-1">
+        <label className="text-xs font-semibold uppercase" style={{ color: '#1F1B16' }}>
+          Work description / Task summary <span style={{ opacity: 0.6 }}>(optional)</span>
+        </label>
+        <div className="relative">
+          <select
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            className="w-full text-sm rounded border border-black/15 bg-white pl-3 pr-9 py-2 outline-none appearance-none">
+            <option value="">— none —</option>
+            <option value="D/O Release Counter / Fasah Link / 24/7 MAWANI Requirements">D/O Release Counter / Fasah Link / 24/7 MAWANI Requirements</option>
+            <option value="D/O Release Counter / Fasah Link — Back Up / 24/7 MAWANI Requirements">D/O Release Counter / Fasah Link — Back Up / 24/7 MAWANI Requirements</option>
+            <option value="EQC ECRN Ext / Detention / Damage Invoice / 24/7 MAWANI Requirements">EQC ECRN Ext / Detention / Damage Invoice / 24/7 MAWANI Requirements</option>
+            <option value="CBF Submission / ALDS Data / OPS Tasks">CBF Submission / ALDS Data / OPS Tasks</option>
+            <option value="Export Issues & Inquiries / Booking / Preload & Data Quality Checks / 24/7 MAWANI Requirements">Export Issues & Inquiries / Booking / Preload & Data Quality Checks / 24/7 MAWANI Requirements</option>
+            <option value="Export Issues & Inquiries / Preload & Data Quality Checks">Export Issues & Inquiries / Preload & Data Quality Checks</option>
+            <option value="Import Manifest / Export Inquiries / Email Attendance">Import Manifest / Export Inquiries / Email Attendance</option>
+            <option value="Invoicing / ESAL / Offsetting / 24/7 MAWANI Requirements">Invoicing / ESAL / Offsetting / 24/7 MAWANI Requirements</option>
+            <option value="Office Work Monitoring & Other Tasks">Office Work Monitoring & Other Tasks</option>
+            <option value="CSD Export Tasks — 24/7 MAWANI Requirements">CSD Export Tasks — 24/7 MAWANI Requirements</option>
+            <option value="24/7 MAWANI Requirements Compliance">24/7 MAWANI Requirements Compliance</option>
+          </select>
+          <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                       style={{ color: '#1F1B16', opacity: 0.5 }} />
+        </div>
+      </div>
+
+      {/* Preview banner */}
+      {(selectedStaff.size > 0 && selectedDates.size > 0) && (
+        <div className="rounded px-3 py-2 text-xs flex items-center justify-between"
+             style={{ background: '#DBEAFE', color: '#1D4ED8' }}>
+          <span>
+            Will create <strong>{preview.willCreate}</strong> shift{preview.willCreate === 1 ? '' : 's'}
+            {preview.willSkip > 0 && (
+              <> · skip <strong>{preview.willSkip}</strong> duplicate{preview.willSkip === 1 ? '' : 's'}</>
+            )}
+          </span>
+          {clockIn && clockOut && clockOut > clockIn && (() => {
+            const [h1, m1] = clockIn.split(':').map(Number);
+            const [h2, m2] = clockOut.split(':').map(Number);
+            const hours = ((h2 * 60 + m2) - (h1 * 60 + m1)) / 60;
+            return (
+              <span>
+                {(hours * preview.willCreate).toFixed(1)}h total
+              </span>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* Progress while inserting */}
+      {busy && progress.total > 0 && (
+        <div className="rounded px-3 py-2 text-xs"
+             style={{ background: '#FEF3C7', color: '#854F0B' }}>
+          Creating shifts… {progress.done} / {progress.total}
+        </div>
+      )}
+
+      {err && (
+        <div className="flex items-start gap-2 text-xs rounded px-3 py-2 whitespace-pre-line"
+             style={{ background: '#FEF2F2', color: '#991B1B' }}>
+          <AlertCircle size={12} className="mt-0.5 flex-shrink-0" /> {err}
+        </div>
+      )}
+
+      <div className="flex justify-end gap-2">
+        <button onClick={onCancel}
+          className="px-3 py-1.5 text-xs rounded border"
+          style={{ borderColor: 'rgba(0,0,0,0.15)', color: '#1F1B16' }}>
+          Cancel
+        </button>
+        <button onClick={save} disabled={!canSave}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded text-white disabled:opacity-50"
+          style={{ background: '#0F4C2A' }}>
+          {busy ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
+          {busy
+            ? 'Creating…'
+            : preview.willCreate > 0
+              ? `Submit ${preview.willCreate} shift${preview.willCreate === 1 ? '' : 's'} for approval`
+              : 'Select staff + dates'}
         </button>
       </div>
     </div>
