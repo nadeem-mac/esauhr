@@ -292,6 +292,17 @@ export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
     let shiftLate = 0;
     let shiftShort = 0;
     let shiftPresent = 0;
+    // Total hours — assigned (scheduled) vs worked (actual punches).
+    // Nadeem 2026-05-21: 'this report should also show total assigned
+    // hours, total worked hours'. Computed in minutes for precision,
+    // exported as decimal hours in the header.
+    let totalAssignedMinutes = 0;
+    let totalWorkedMinutes   = 0;
+    const toMins = (t) => {
+      if (!t) return null;
+      const [h, m] = String(t).split(':').map(Number);
+      return (h || 0) * 60 + (m || 0);
+    };
     for (const r of attRows) {
       counts[r.status] = (counts[r.status] || 0) + 1;
       if (r.status === 'late')  totalLateMinutes  += (r.late_minutes || 0);
@@ -313,6 +324,25 @@ export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
       const hasLast  = !!r.last_punch;
       if (!hasFirst && hasLast) missedInCount++;
       if (hasFirst && !hasLast) missedOutCount++;
+
+      // Hour totals — only count days that had a schedule (skip
+      // off-roster / off-day / leave rows where no work was expected).
+      // Assigned = expected window. Worked = actual punch window
+      // capped at the schedule on both ends so over-stays don't
+      // inflate the figure (mirror the strict OT formula).
+      const eStart = toMins(r.expected_start);
+      const eEnd   = toMins(r.expected_end);
+      if (eStart != null && eEnd != null && eEnd > eStart) {
+        totalAssignedMinutes += (eEnd - eStart);
+        const aIn  = toMins(r.first_punch);
+        const aOut = toMins(r.last_punch);
+        if (aIn != null && aOut != null && aOut > aIn) {
+          const workedThisDay = Math.max(0,
+            Math.min(aOut, eEnd) - Math.max(aIn, eStart)
+          );
+          totalWorkedMinutes += workedThisDay;
+        }
+      }
     }
 
     // Per-leave-type breakdown. Only requests with status='approved'
@@ -348,6 +378,8 @@ export default function EmployeeAttendanceDetailPanel({ employee, onClose }) {
       shiftLate,
       shiftShort,
       shiftPresent,
+      totalAssignedHours: Math.round((totalAssignedMinutes / 60) * 10) / 10,
+      totalWorkedHours:   Math.round((totalWorkedMinutes   / 60) * 10) / 10,
       leaveByType,
     };
   }, [attRows, leaveRows, leaveTypes]);
@@ -1591,7 +1623,16 @@ function statusLabelFor(s) {
 
 function exportAttendanceHtml(employee, range, monthly, summary, leaveRows, leaveTypeName) {
   const counts = summary || {};
-  const totalRecords = Object.values(counts).reduce((a, b) => a + b, 0);
+  // totalRecords previously summed Object.values(counts) which included
+  // the leaveByType Map and rendered '[object Map]' in the header.
+  // Fix: only sum numeric values, skipping Maps / nested objects.
+  const totalRecords = Object.values(counts)
+    .filter(v => typeof v === 'number' && Number.isFinite(v))
+    .reduce((a, b) => a + b, 0);
+  // Hour totals computed in the summary memo — render only when
+  // there's something to show (skips zeros + null cleanly).
+  const assignedHrs = Number(counts.totalAssignedHours || 0);
+  const workedHrs   = Number(counts.totalWorkedHours   || 0);
 
   // Tile renderer with optional sub-line for context (e.g. total
   // minutes under a Late count, or "3 requests" under a leave-type
@@ -1801,6 +1842,8 @@ function exportAttendanceHtml(employee, range, monthly, summary, leaveRows, leav
       <div class="meta">
         <span><strong>Range:</strong> ${esc(fmtRangeShort(range.from))} – ${esc(fmtRangeShort(range.to))}</span>
         <span><strong>Records:</strong> ${totalRecords}</span>
+        ${assignedHrs > 0 ? `<span><strong>Assigned:</strong> ${assignedHrs.toFixed(1)} h</span>` : ''}
+        ${workedHrs > 0   ? `<span><strong>Worked:</strong> ${workedHrs.toFixed(1)} h${assignedHrs > 0 ? ` (${Math.round((workedHrs / assignedHrs) * 100)}%)` : ''}</span>` : ''}
         <span><strong>Generated:</strong> ${esc(new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
       </div>
     </header>
