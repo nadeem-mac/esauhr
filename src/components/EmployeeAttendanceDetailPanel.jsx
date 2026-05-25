@@ -1762,6 +1762,13 @@ function exportAttendanceHtml(employee, range, monthly, summary, leaveRows, leav
 
   // Re-serialize per month — we need them as individual strings, not
   // one big concatenation, to distribute across pages.
+  // Helper: parse 'HH:MM:SS' → minutes-since-midnight. Mirrors the
+  // summary's toMins so per-row numbers reconcile with header totals.
+  const rowToMins = (t) => {
+    if (!t) return null;
+    const [h, m] = String(t).split(':').map(Number);
+    return (h || 0) * 60 + (m || 0);
+  };
   const renderMonth = (g) => {
     const rowsHtml = g.rows.map(r => {
       const hasFirst = !!r.first_punch;
@@ -1785,12 +1792,37 @@ function exportAttendanceHtml(employee, range, monthly, summary, leaveRows, leav
       const sched = (r.expected_start || r.expected_end)
         ? `${trimTime(r.expected_start) || '?'}–${trimTime(r.expected_end) || '?'}`
         : '—';
+
+      // Per-row assigned / worked — same logic as the header totals.
+      // Renders '—' when no schedule was planned for the day (off-roster,
+      // off-day, leave) so the column stays compact.
+      const eStart = rowToMins(r.expected_start);
+      const eEnd   = rowToMins(r.expected_end);
+      let assigned = '—';
+      let worked   = '—';
+      if (eStart != null && eEnd != null && eEnd > eStart) {
+        const assignedMins = eEnd - eStart;
+        assigned = `${(assignedMins / 60).toFixed(1)}h`;
+        const aIn  = rowToMins(r.first_punch);
+        const aOut = rowToMins(r.last_punch);
+        if (aIn != null && aOut != null && aOut > aIn) {
+          const workedMins = Math.max(0,
+            Math.min(aOut, eEnd) - Math.max(aIn, eStart)
+          );
+          worked = `${(workedMins / 60).toFixed(1)}h`;
+        } else if (!hasFirst && !hasLast) {
+          worked = '<span style="color:#991B1B">0.0h</span>';
+        }
+      }
+
       return `
         <tr>
           <td>${esc(fmtDate(r.attendance_date))}</td>
           <td><span class="chip ${esc(r.status)}">${esc(statusLabelFor(r.status))}</span></td>
           <td>${punch}</td>
           <td>${esc(sched)}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">${assigned}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">${worked}</td>
           <td>${detail}</td>
         </tr>
       `;
@@ -1801,10 +1833,12 @@ function exportAttendanceHtml(employee, range, monthly, summary, leaveRows, leav
         <table>
           <thead>
             <tr>
-              <th style="width:24%">Date</th>
-              <th style="width:14%">Status</th>
-              <th style="width:18%">Punches</th>
-              <th style="width:18%">Schedule</th>
+              <th style="width:20%">Date</th>
+              <th style="width:12%">Status</th>
+              <th style="width:16%">Punches</th>
+              <th style="width:14%">Schedule</th>
+              <th style="width:9%;text-align:right">Assigned</th>
+              <th style="width:9%;text-align:right">Worked</th>
               <th>Detail</th>
             </tr>
           </thead>
