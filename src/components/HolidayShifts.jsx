@@ -47,6 +47,13 @@ export default function HolidayShifts({ me, employees = [] }) {
   const [periods, setPeriods]   = useState([]);
   const [periodId, setPeriodId] = useState('');
   const [shifts, setShifts]     = useState([]);
+  // Map of "psn|date" → { first_punch, last_punch } so each shift
+  // card can show actual attendance alongside the scheduled window.
+  // Nadeem 2026-05-25: 'when I upload the daily attendance the Holiday
+  // Shifts · OT nominations screen should show the punch in punch out
+  // for assigned staff'. Loaded in parallel with shifts; auto-refreshes
+  // each time loadShifts() runs (post-add, post-approve, etc.).
+  const [punchMap, setPunchMap] = useState({});
   const [loading, setLoading]   = useState(true);
   const [err, setErr]           = useState(null);
   // Single-entry [+ Add shift] flow retired 2026-05-21 per Nadeem
@@ -80,12 +87,39 @@ export default function HolidayShifts({ me, employees = [] }) {
 
   // ── Load shifts for selected period ───────────────────────────────
   const loadShifts = async () => {
-    if (!periodId) { setShifts([]); return; }
+    if (!periodId) { setShifts([]); setPunchMap({}); return; }
     try {
       const rows = await directGet('holiday_shifts',
         `select=*&holiday_period_id=eq.${periodId}&order=shift_date.asc,employee_id.asc`,
         { timeoutMs: 10000 });
-      setShifts(rows || []);
+      const shiftRows = rows || [];
+      setShifts(shiftRows);
+      // Resolve current period from state for the attendance window
+      const p = (periods || []).find(x => x.id === periodId);
+      if (shiftRows.length > 0 && p) {
+        const psns = [...new Set(shiftRows.map(s => s.employee_id))]
+          .map(x => `"${x}"`).join(',');
+        try {
+          const att = await directGet('attendance_daily',
+            `select=employee_id,attendance_date,first_punch,last_punch`
+            + `&employee_id=in.(${psns})`
+            + `&attendance_date=gte.${p.start_date}`
+            + `&attendance_date=lte.${p.end_date}`
+            + `&limit=500`,
+            { timeoutMs: 10000 });
+          const m = {};
+          for (const a of (att || [])) {
+            m[`${a.employee_id}|${a.attendance_date}`] = a;
+          }
+          setPunchMap(m);
+        } catch {
+          // Attendance lookup is best-effort — if it fails the cards
+          // still render with shift info, just no actual punch column.
+          setPunchMap({});
+        }
+      } else {
+        setPunchMap({});
+      }
     } catch (e) {
       setErr(e?.message || 'Failed to load shifts');
     }
@@ -462,6 +496,61 @@ function DateGroup({ date, shifts, employees, me, isAdmin, isHrReviewer, onEdit,
                     <span style={{ opacity: 0.6 }}>· {emp.department}</span>
                   )}
                 </div>
+                {/* Actual-punch line — visible once attendance for this
+                    (PSN, date) has been uploaded. Strict-comparison
+                    pill shows on-time / deviation / no-show at a
+                    glance, matching the HolidayShiftDefaultersCard
+                    semantics so both surfaces agree. */}
+                {(() => {
+                  const att = punchMap[`${s.employee_id}|${s.shift_date}`];
+                  // Hide entirely if attendance hasn't been uploaded yet
+                  // for this date — avoids a flood of red 'no show'
+                  // labels on future Eid days before the holiday begins.
+                  const today = new Date().toISOString().slice(0, 10);
+                  if (!att && s.shift_date > today) return null;
+                  const toMins = (t) => {
+                    if (!t) return null;
+                    const [h, m] = String(t).split(':').map(Number);
+                    return (h || 0) * 60 + (m || 0);
+                  };
+                  const schedIn  = toMins(s.clock_in_time);
+                  const schedOut = toMins(s.clock_out_time);
+                  const actIn    = toMins(att?.first_punch);
+                  const actOut   = toMins(att?.last_punch);
+                  const noShow   = actIn == null;
+                  const late     = !noShow ? Math.max(0, actIn  - schedIn)   : 0;
+                  const earlyOut = !noShow && actOut != null
+                                    ? Math.max(0, schedOut - actOut) : 0;
+                  const status = noShow ? 'no_show'
+                              : (late === 0 && earlyOut === 0) ? 'on_time'
+                              : 'deviation';
+                  const pill = {
+                    on_time:   { bg: '#D1FAE5', fg: '#065F46', label: 'ON TIME' },
+                    deviation: { bg: '#FEF3C7', fg: '#854F0B', label: 'DEVIATION' },
+                    no_show:   { bg: '#FEE2E2', fg: '#991B1B', label: 'NO SHOW' },
+                  }[status];
+                  return (
+                    <div className="text-xs mt-0.5 flex items-center gap-2 font-mono"
+                         style={{ color: '#1F1B16', opacity: 0.85 }}>
+                      <span style={{ opacity: 0.55 }}>Actual:</span>
+                      {noShow ? (
+                        <span style={{ color: '#991B1B' }}>—</span>
+                      ) : (
+                        <span>{fmtTime(att.first_punch)} → {att.last_punch ? fmtTime(att.last_punch) : <span style={{ color: '#C026D3' }}>missing</span>}</span>
+                      )}
+                      {late > 0 && (
+                        <span style={{ color: '#B45309', fontWeight: 700 }}>LATE {late}m</span>
+                      )}
+                      {earlyOut > 0 && (
+                        <span style={{ color: '#B45309', fontWeight: 700 }}>EARLY {earlyOut}m</span>
+                      )}
+                      <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded font-bold"
+                            style={{ background: pill.bg, color: pill.fg, letterSpacing: '0.04em' }}>
+                        {pill.label}
+                      </span>
+                    </div>
+                  );
+                })()}
                 {s.notes && (
                   <p className="text-[11px] mt-1 italic" style={{ color: '#1F1B16', opacity: 0.55 }}>
                     {s.notes}
