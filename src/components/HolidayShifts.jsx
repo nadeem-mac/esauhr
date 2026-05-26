@@ -385,6 +385,7 @@ export default function HolidayShifts({ me, employees = [] }) {
               me={me}
               isAdmin={isAdmin}
               isHrReviewer={isHrReviewer}
+              punchMap={punchMap}
               onEdit={(s) => setEditing(s)}
               onApprove={async (s) => {
                 try {
@@ -462,7 +463,7 @@ function StatCell({ label, count, bg, fg, suffix = '' }) {
 
 
 // ── DateGroup ─────────────────────────────────────────────────────────
-function DateGroup({ date, shifts, employees, me, isAdmin, isHrReviewer, onEdit, onApprove, onReject, onCancel }) {
+function DateGroup({ date, shifts, employees, me, isAdmin, isHrReviewer, punchMap, onEdit, onApprove, onReject, onCancel }) {
   return (
     <div className="rounded-lg border bg-white" style={{ borderColor: 'rgba(0,0,0,0.08)' }}>
       <div className="px-3 py-2 border-b text-xs font-semibold tracking-wide"
