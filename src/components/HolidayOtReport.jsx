@@ -27,7 +27,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { directGet } from '../supabaseClient.js';
 import {
-  X, Download, Loader2, AlertCircle, Clock,
+  X, Download, Loader2, AlertCircle, Clock, FileText,
   CheckCircle2, AlertTriangle, MinusCircle,
 } from 'lucide-react';
 
@@ -212,6 +212,201 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
     }
   };
 
+  // ── HTML clean-style export ────────────────────────────────────────
+  //
+  //  Opens a print-ready report in a new browser tab. Same content
+  //  shape as the Excel — summary cards, full per-shift table — but
+  //  styled like the Staff Attendance Report (Calibri, neutral
+  //  palette, ESAU letterhead) so it prints cleanly for management
+  //  sign-off or PDF archival. Nadeem 2026-05-26: 'should also have
+  //  option for HTML clean style export'.
+  //
+  const exportHtml = () => {
+    try {
+      const esc = (s) => String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      const fmtDate = (d) => {
+        if (!d) return '—';
+        const dt = new Date(d);
+        return dt.toLocaleDateString('en-GB', {
+          weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
+        });
+      };
+      const statusPill = (s) => {
+        const map = {
+          on_time:   { bg: '#D1FAE5', fg: '#065F46', label: 'ON TIME' },
+          deviation: { bg: '#FEF3C7', fg: '#854F0B', label: 'DEVIATION' },
+          no_show:   { bg: '#FEE2E2', fg: '#991B1B', label: 'NO SHOW' },
+        };
+        const p = map[s] || map.on_time;
+        return `<span style="background:${p.bg};color:${p.fg};padding:2px 6px;border-radius:3px;font-size:9px;font-weight:700;letter-spacing:.04em">${p.label}</span>`;
+      };
+      // Group rows by date for cleaner section breaks per Eid day
+      const byDate = new Map();
+      for (const r of rows) {
+        if (!byDate.has(r.shift.shift_date)) byDate.set(r.shift.shift_date, []);
+        byDate.get(r.shift.shift_date).push(r);
+      }
+      const dateSections = [...byDate.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([date, dayRows]) => {
+          // Per-day totals
+          const dayScheduled = dayRows.reduce((s, r) => s + (r.expected_hours || 0), 0);
+          const dayWorked    = dayRows.reduce((s, r) => s + (r.worked_hours || 0), 0);
+          const dayNoShow    = dayRows.filter(r => r.status === 'no_show').length;
+          const dayDeviation = dayRows.filter(r => r.status === 'deviation').length;
+          const tableRows = dayRows
+            .sort((a, b) => (a.employee?.name || '').localeCompare(b.employee?.name || ''))
+            .map(r => `
+              <tr>
+                <td>${esc(r.employee?.name || r.shift.employee_id)}<br/>
+                  <span style="color:#666;font-size:10px">${esc(r.shift.employee_id)} · ${esc(r.employee?.department || '')}${r.employee?.location ? ' · ' + esc(r.employee.location) : ''}</span></td>
+                <td style="text-align:center">${esc(fmtTime(r.shift.clock_in_time))}–${esc(fmtTime(r.shift.clock_out_time))}</td>
+                <td style="text-align:center">${r.actual_in
+                  ? `${esc(fmtTime(r.actual_in))}–${r.actual_out ? esc(fmtTime(r.actual_out)) : '<span style="color:#991B1B">missing</span>'}`
+                  : '<span style="color:#991B1B">—</span>'}</td>
+                <td style="text-align:right;font-variant-numeric:tabular-nums">${r.late_minutes > 0 ? '<strong style="color:#B45309">' + r.late_minutes + 'm</strong>' : '—'}</td>
+                <td style="text-align:right;font-variant-numeric:tabular-nums">${r.early_minutes > 0 ? '<strong style="color:#B45309">' + r.early_minutes + 'm</strong>' : '—'}</td>
+                <td style="text-align:right;font-variant-numeric:tabular-nums">${Number(r.expected_hours).toFixed(1)}h</td>
+                <td style="text-align:right;font-variant-numeric:tabular-nums">${Number(r.worked_hours).toFixed(1)}h</td>
+                <td style="text-align:center">${statusPill(r.status)}</td>
+                <td style="font-size:10px;color:#555">${esc(r.shift.notes || '')}</td>
+              </tr>
+            `).join('');
+          return `
+            <section class="day">
+              <h3>${esc(fmtDate(date))}<span class="count">${dayRows.length} staff · ${dayScheduled.toFixed(1)}h sched · ${dayWorked.toFixed(1)}h worked${dayNoShow > 0 ? ' · ' + dayNoShow + ' no-show' : ''}${dayDeviation > 0 ? ' · ' + dayDeviation + ' deviation' : ''}</span></h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width:22%">Employee</th>
+                    <th style="width:11%">Scheduled</th>
+                    <th style="width:11%">Actual</th>
+                    <th style="width:7%;text-align:right">Late</th>
+                    <th style="width:7%;text-align:right">Early</th>
+                    <th style="width:8%;text-align:right">Sched Hrs</th>
+                    <th style="width:8%;text-align:right">Worked Hrs</th>
+                    <th style="width:8%;text-align:center">Status</th>
+                    <th>Task</th>
+                  </tr>
+                </thead>
+                <tbody>${tableRows}</tbody>
+              </table>
+            </section>
+          `;
+        }).join('');
+      const totalPct = summary.totalScheduled > 0
+        ? Math.round((summary.totalWorked / summary.totalScheduled) * 100)
+        : 0;
+      const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>OT Report — ${esc(period.name)}</title>
+<style>
+  @page { size: A4 landscape; margin: 14mm; }
+  * { box-sizing: border-box; }
+  body { font-family: 'Calibri', 'Segoe UI', sans-serif; color: #1F1B16; font-size: 11px; margin: 0; padding: 20px; background: #fff; }
+  .report-header { border-bottom: 2px solid #0F4C2A; padding-bottom: 12px; margin-bottom: 16px; }
+  .kicker { font-size: 9px; letter-spacing: .3em; color: #0F4C2A; font-weight: 700; text-transform: uppercase; }
+  h1 { font-size: 22px; margin: 4px 0 2px; color: #0A0A0A; }
+  .sub { font-size: 11px; color: #555; }
+  .meta { display: flex; gap: 18px; margin-top: 8px; font-size: 10px; color: #1F1B16; }
+  .meta strong { color: #0A0A0A; }
+  .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 16px; }
+  .card { border: 1px solid rgba(0,0,0,0.08); border-radius: 6px; padding: 8px 10px; }
+  .card .lbl { font-size: 9px; letter-spacing: .15em; color: #555; text-transform: uppercase; }
+  .card .val { font-size: 18px; font-weight: 700; margin-top: 2px; color: #0A0A0A; }
+  .card .sub-val { font-size: 10px; color: #666; margin-top: 1px; }
+  .card.bad   { border-color: #FCA5A5; background: #FEF2F2; }
+  .card.warn  { border-color: #FCD34D; background: #FFFBEB; }
+  .card.ok    { border-color: #A7F3D0; background: #F0FDF4; }
+  .card.info  { border-color: #BFDBFE; background: #EFF6FF; }
+  .lost-banner { background: #FEF2F2; border-left: 4px solid #DC2626; padding: 8px 12px; margin-bottom: 16px; font-size: 11px; }
+  section.day { page-break-inside: avoid; margin-bottom: 18px; }
+  section.day h3 { font-size: 13px; margin: 12px 0 6px; color: #0F4C2A; border-bottom: 1px solid #D1D5DB; padding-bottom: 4px; }
+  section.day h3 .count { font-size: 10px; color: #666; font-weight: 400; margin-left: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  th { background: #F3F4F6; padding: 6px 8px; text-align: left; border-bottom: 1px solid #D1D5DB; font-weight: 700; color: #0A0A0A; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
+  td { padding: 6px 8px; border-bottom: 1px solid #F3F4F6; vertical-align: top; }
+  tr:hover td { background: #FAFAFA; }
+  .footer { margin-top: 20px; padding-top: 10px; border-top: 1px solid #D1D5DB; font-size: 9px; color: #666; display: flex; justify-content: space-between; }
+  @media print { .no-print { display: none !important; } body { padding: 0; } }
+  .print-bar { position: sticky; top: 0; background: #fff; padding: 10px 0; margin-bottom: 10px; border-bottom: 1px solid #E5E7EB; }
+  .print-btn { background: #0F4C2A; color: #fff; padding: 6px 14px; border: 0; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600; }
+</style>
+</head>
+<body>
+  <div class="print-bar no-print">
+    <button class="print-btn" onclick="window.print()">Print / Save as PDF</button>
+  </div>
+  <header class="report-header">
+    <div class="kicker">Evergreen Shipping Agency Saudi Co. (L.L.C) · ESAU HR</div>
+    <h1>OT Report — ${esc(period.name)}</h1>
+    <div class="sub">Strict comparison · no grace period · ${esc(fmtDate(period.start_date))} → ${esc(fmtDate(period.end_date))}</div>
+    <div class="meta">
+      <span><strong>Generated:</strong> ${esc(new Date().toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span>
+      <span><strong>Shifts:</strong> ${rows.length}</span>
+      <span><strong>Unique staff:</strong> ${new Set(rows.map(r => r.shift.employee_id)).size}</span>
+    </div>
+  </header>
+
+  <div class="summary">
+    <div class="card ok">
+      <div class="lbl">On time</div>
+      <div class="val">${summary.onTime}</div>
+      <div class="sub-val">of ${rows.length} shifts</div>
+    </div>
+    <div class="card warn">
+      <div class="lbl">Deviation</div>
+      <div class="val">${summary.deviation}</div>
+      <div class="sub-val">late or early-out</div>
+    </div>
+    <div class="card bad">
+      <div class="lbl">No show</div>
+      <div class="val">${summary.noShow}</div>
+      <div class="sub-val">no punch recorded</div>
+    </div>
+    <div class="card info">
+      <div class="lbl">Worked / scheduled</div>
+      <div class="val">${summary.totalWorked.toFixed(1)}h / ${summary.totalScheduled.toFixed(1)}h</div>
+      <div class="sub-val">${totalPct}% of scheduled</div>
+    </div>
+  </div>
+
+  ${(summary.deviation + summary.noShow) > 0 && (summary.totalScheduled - summary.totalWorked) > 0 ? `
+  <div class="lost-banner">
+    <strong>Lost hours:</strong> ${(summary.totalScheduled - summary.totalWorked).toFixed(1)}h
+    (from deviation + no-show). Payroll-relevant figure.
+  </div>
+  ` : ''}
+
+  ${dateSections}
+
+  <div class="footer">
+    <span>OT Report · ${esc(period.name)} · generated from ESAU HR portal</span>
+    <span>Strict-comparison formula · matches OT Report Excel export</span>
+  </div>
+</body>
+</html>`;
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      const url  = URL.createObjectURL(blob);
+      const w    = window.open(url, '_blank');
+      if (!w) {
+        // Pop-up blocked — fall back to direct download
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `OT_${period.name.replace(/[^a-z0-9]+/gi, '_')}_${new Date().toISOString().slice(0, 10)}.html`;
+        a.click();
+      }
+      // Revoke the URL after the new tab has had a chance to load
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    } catch (e) {
+      setErr(e?.message || 'HTML export failed');
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-y-auto">
       <div className="rounded-xl bg-white w-full max-w-5xl shadow-2xl my-8">
@@ -226,6 +421,13 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={exportHtml} disabled={rows.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded border disabled:opacity-50"
+              style={{ borderColor: '#0F4C2A', color: '#0F4C2A', background: '#FFFFFF' }}
+              title="Open in a new tab — print or save as PDF">
+              <FileText size={12} /> Export HTML
+            </button>
             <button
               onClick={exportExcel} disabled={exporting || rows.length === 0}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded text-white disabled:opacity-50"
