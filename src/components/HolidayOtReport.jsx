@@ -197,6 +197,19 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
     return map;
   }, [rows]);
 
+  // Short caps remark describing how the staff diverged from the
+  // manager-assigned schedule. Nadeem 2026-05-26: 'use logic words
+  // like Not attended as per assigned schedule by manager (use short
+  // logical word in caps)'. Blank for on-schedule rows.
+  const remarkFor = (r) => {
+    if (r.no_show) return 'NOT ATTENDED';
+    if (r.actual_in && !r.actual_out) return 'NO CLOCK-OUT';
+    if (r.late_minutes > 0 && r.early_minutes > 0) return 'LATE + LEFT EARLY';
+    if (r.late_minutes > 0) return 'LATE ARRIVAL';
+    if (r.early_minutes > 0) return 'LEFT EARLY';
+    return '';
+  };
+
   // ── Excel export — styled to match the HTML report ────────────────
   //  Uses xlsx-js-style (drop-in fork of SheetJS with cell styling).
   //  Nadeem 2026-05-26: 'I want the same color styled when I export
@@ -236,13 +249,14 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
       const headers = ['PSN ID', 'Employee Name', 'Department', 'Location', 'Date', 'Day',
         'Sched In', 'Sched Out', 'Actual In', 'Actual Out',
         'Late (min)', 'Early Out (min)',
-        'Expected Hrs', 'Worked Hrs', 'Worked Time', '% Worked', 'Status', 'Notes'];
+        'Expected Hrs', 'Worked Hrs', 'Worked Time', '% Worked', 'Remarks', 'Status', 'Notes'];
 
       const aoa = [headers];
-      // Track which date each output row belongs to (for fill banding)
-      // and which rows deviated (for red Worked Hrs text).
+      // Track which date each output row belongs to (for fill banding),
+      // which rows deviated (red Worked Hrs), and which were late (red Late).
       const rowDate = [null];       // header row → no date
       const rowDeviation = [false];
+      const rowLate = [false];
       for (const r of sortedRows) {
         const statusLabel = r.status === 'no_show' ? 'NO SHOW'
           : r.status === 'deviation' ? 'DEVIATION' : 'ON TIME';
@@ -263,15 +277,17 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
           r.worked_hours,
           r.actual_hours,
           r.worked_pct,
+          remarkFor(r),
           statusLabel,
           r.shift.notes || '',
         ]);
         rowDate.push(r.shift.shift_date);
         rowDeviation.push(r.status === 'deviation');
+        rowLate.push(r.late_minutes > 0);
       }
       // Blank + totals row
       aoa.push([]);
-      rowDate.push(null); rowDeviation.push(false);
+      rowDate.push(null); rowDeviation.push(false); rowLate.push(false);
       aoa.push([
         'TOTAL', '', '', '', '', '', '', '', '', '', '', '',
         summary.totalScheduled,
@@ -280,16 +296,19 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
         summary.totalScheduled > 0
           ? Math.round((summary.totalWorked / summary.totalScheduled) * 100)
           : 0,
+        '',
         `${summary.onTime} on-time / ${summary.deviation} dev / ${summary.noShow} no-show`,
         '',
       ]);
-      rowDate.push(null); rowDeviation.push(false);
+      rowDate.push(null); rowDeviation.push(false); rowLate.push(false);
 
       const ws = XLSX.utils.aoa_to_sheet(aoa);
 
       // Apply styles cell-by-cell ---------------------------------------
       const range = XLSX.utils.decode_range(ws['!ref']);
-      const statusCol = 16; // 0-indexed 'Status' column
+      const statusCol = 17; // 0-indexed 'Status' (shifted +1 by Remarks col)
+      const remarksCol = 16;
+      const lateCol = 10;
       const totalRowIdx = aoa.length - 1;
       for (let R = range.s.r; R <= range.e.r; R++) {
         for (let C = range.s.c; C <= range.e.c; C++) {
@@ -315,7 +334,15 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
                   : (C >= 6 && C <= 9) ? 'center' : 'left' },
               ...(dateFill ? { fill: { fgColor: { rgb: dateFill } } } : {}),
             });
-            // Worked Hrs column (C===13) → red bold text on deviation rows
+            // Late (min) col → red bold when this row was late
+            if (C === lateCol && rowLate[R]) {
+              style = cell({
+                font: { bold: true, sz: 10, color: { rgb: 'DC2626' } },
+                alignment: { horizontal: 'right', vertical: 'center' },
+                ...(dateFill ? { fill: { fgColor: { rgb: dateFill } } } : {}),
+              });
+            }
+            // Worked Hrs col (13) → red bold on deviation rows
             if (C === 13 && rowDeviation[R]) {
               style = cell({
                 font: { bold: true, sz: 10, color: { rgb: 'DC2626' } },
@@ -323,7 +350,15 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
                 ...(dateFill ? { fill: { fgColor: { rgb: dateFill } } } : {}),
               });
             }
-            // Colour the Status cell to match the HTML pills (overrides date fill)
+            // Remarks col → dark-red bold caps (when non-empty)
+            if (C === remarksCol && ws[addr].v) {
+              style = cell({
+                font: { bold: true, sz: 9, color: { rgb: '991B1B' } },
+                alignment: { horizontal: 'left', vertical: 'center' },
+                ...(dateFill ? { fill: { fgColor: { rgb: dateFill } } } : {}),
+              });
+            }
+            // Status cell → pill colour (overrides date fill)
             if (C === statusCol) {
               const label = ws[addr].v;
               const sc = statusFill[label];
@@ -340,11 +375,11 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
         }
       }
 
-      // Column widths
+      // Column widths (added Remarks before Status)
       ws['!cols'] = [
         { wch: 9 },  { wch: 26 }, { wch: 12 }, { wch: 9 },  { wch: 11 }, { wch: 10 },
         { wch: 9 },  { wch: 9 },  { wch: 9 },  { wch: 10 }, { wch: 9 },  { wch: 12 },
-        { wch: 11 }, { wch: 10 }, { wch: 11 }, { wch: 9 },  { wch: 11 }, { wch: 40 },
+        { wch: 11 }, { wch: 10 }, { wch: 11 }, { wch: 9 },  { wch: 18 }, { wch: 11 }, { wch: 40 },
       ];
       // Freeze header row
       ws['!freeze'] = { xSplit: 0, ySplit: 1 };
@@ -413,11 +448,12 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
             <td style="text-align:center">${r.actual_in
               ? `${esc(fmtTime(r.actual_in))}–${r.actual_out ? esc(fmtTime(r.actual_out)) : '<span style="color:#991B1B">missing</span>'}`
               : '<span style="color:#991B1B">—</span>'}</td>
-            <td style="text-align:right;font-variant-numeric:tabular-nums">${r.late_minutes > 0 ? '<strong style="color:#B45309">' + r.late_minutes + 'm</strong>' : '—'}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">${r.late_minutes > 0 ? '<strong style="color:#DC2626">' + r.late_minutes + 'm</strong>' : '—'}</td>
             <td style="text-align:right;font-variant-numeric:tabular-nums">${r.early_minutes > 0 ? '<strong style="color:#B45309">' + r.early_minutes + 'm</strong>' : '—'}</td>
             <td style="text-align:right;font-variant-numeric:tabular-nums">${Number(r.expected_hours).toFixed(1)}h</td>
             <td style="text-align:right;font-variant-numeric:tabular-nums"><strong style="color:${workedColor}">${Number(r.worked_hours).toFixed(1)}h</strong></td>
             <td style="text-align:right;font-variant-numeric:tabular-nums">${r.no_show ? '<span style="color:#991B1B">—</span>' : Number(r.actual_hours).toFixed(1) + 'h'}</td>
+            <td style="font-size:9px;font-weight:700;color:#991B1B;letter-spacing:.03em">${esc(remarkFor(r)) || '<span style="color:#aaa;font-weight:400">—</span>'}</td>
             <td style="text-align:center">${statusPill(r.status)}</td>
             <td style="font-size:10px;color:#555">${esc(r.shift.notes || '')}</td>
           </tr>
@@ -438,6 +474,7 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
               <th style="width:8%;text-align:right">Sched Hrs</th>
               <th style="width:8%;text-align:right">Worked Hrs</th>
               <th style="width:8%;text-align:right">Worked Time</th>
+              <th style="width:11%">Remarks</th>
               <th style="width:8%;text-align:center">Status</th>
               <th>Task</th>
             </tr>
@@ -639,6 +676,7 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
                       <Th>Early</Th>
                       <Th>Worked</Th>
                       <Th>Worked Time</Th>
+                      <Th>Remarks</Th>
                       <Th>Status</Th>
                     </tr>
                   </thead>
@@ -663,7 +701,7 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
                         </Td>
                         <Td>
                           {r.late_minutes > 0
-                            ? <span style={{ color: '#B45309', fontWeight: 700 }}>{r.late_minutes}m</span>
+                            ? <span style={{ color: '#DC2626', fontWeight: 700 }}>{r.late_minutes}m</span>
                             : <span style={{ color: '#1F1B16', opacity: 0.4 }}>—</span>}
                         </Td>
                         <Td>
@@ -672,7 +710,6 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
                             : <span style={{ color: '#1F1B16', opacity: 0.4 }}>—</span>}
                         </Td>
                         <Td className="font-mono">
-                          {/* Red when this shift deviated (late/early-out) */}
                           <strong style={{ color: r.status === 'deviation' ? '#DC2626' : '#1F1B16' }}>
                             {r.worked_hours.toFixed(2)}h
                           </strong>
@@ -682,6 +719,13 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
                           {r.no_show
                             ? <span style={{ color: '#991B1B' }}>—</span>
                             : <span>{r.actual_hours.toFixed(2)}h</span>}
+                        </Td>
+                        <Td>
+                          {(() => {
+                            const rk = remarkFor(r);
+                            if (!rk) return <span style={{ color: '#1F1B16', opacity: 0.4 }}>—</span>;
+                            return <span style={{ color: '#991B1B', fontWeight: 700, fontSize: '10px', letterSpacing: '0.03em' }}>{rk}</span>;
+                          })()}
                         </Td>
                         <Td>
                           <StatusBadge status={r.status} />
