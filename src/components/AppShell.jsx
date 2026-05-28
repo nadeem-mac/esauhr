@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState, useCallback, Suspense, lazy } from
 import {
   LayoutDashboard, ClipboardList, Users, Calendar as CalIcon, Settings,
   Plus, LogOut, Activity, ShieldCheck, RefreshCw
-, Clock , BarChart3, UserPlus, Database, Loader2, NotebookPen, CalendarDays } from 'lucide-react';
+, Clock , BarChart3, UserPlus, Database, Loader2, NotebookPen, CalendarDays, Plane } from 'lucide-react';
 import { supabase, directGet, directPatch, directPost } from '../supabaseClient.js';
 import { loadTemplates as loadEmailTemplates } from '../lib/emailTemplates.js';
 // EAGER — landing destinations, must paint immediately after sign-in.
@@ -46,6 +46,7 @@ const GovernmentDataSync      = lazy(() => import('./GovernmentDataSync.jsx'));
 const OrgChartView            = lazy(() => import('./OrgChartView.jsx'));
 const Logbook                 = lazy(() => import('./Logbook.jsx'));
 const HolidayShifts           = lazy(() => import('./HolidayShifts.jsx'));
+const LeaveReport             = lazy(() => import('./LeaveReport.jsx'));
 import { getBlockingDeclarations, getExtendableDeclaration } from '../lib/sickDeclaration.js';
 import { logAction } from '../lib/audit.js';
 import { fmtDate } from '../lib/leaveLogic.js';
@@ -170,6 +171,16 @@ function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, isHiringViewe
   // 2026-05-21.
   if (isManager || isAdmin || isHrReviewer) {
     base.push({ id: 'holiday_shifts', label: 'Holiday Shifts', icon: CalendarDays });
+  }
+
+  // Leave Report — monthly who's-on-leave + permissions report. Visible
+  // to managers, HR reviewer, and admin (same gating as Holiday Shifts).
+  // Managers see their reports + dept/location; HR + admin see all staff.
+  // Nadeem 2026-05-29: 'A report showing which staffs are on leave
+  // during the respective month … who took late permission, early
+  // permission … main purpose is to know who is on leave'.
+  if (isManager || isAdmin || isHrReviewer) {
+    base.push({ id: 'leave_report', label: 'Leave Report', icon: Plane });
   }
 
   // Attendance — visibility driven by can_view_attendance flag on the
@@ -1391,6 +1402,17 @@ export default function AppShell({ session, me, onRefreshMe }) {
           <HolidayShifts
             me={me}
             employees={employees}
+          />
+        )}
+        {tab === 'leave_report' && (isManager || isAdmin || isHrReviewer) && (
+          <LeaveReport
+            me={me}
+            employees={employees}
+            leaveTypes={leaveTypes}
+            requests={requests}
+            permissions={permissions}
+            isAdmin={isAdmin}
+            isHrReviewer={isHrReviewer}
           />
         )}
         {tab === 'admin' && isAdmin && (
