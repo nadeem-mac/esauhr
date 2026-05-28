@@ -533,10 +533,6 @@ export default function LeaveReport({
       <th class="hd c-nm">Name</th><th class="hd c-id">PSN</th><th class="hd c-dp">Dept</th><th class="hd c-lc">Loc</th>${dayHead}
     </tr></thead>
     <tbody>${rowsHtml}</tbody>
-    <tfoot>
-      <tr><td class="c-nm" colspan="4" style="text-align:right;font-size:7px;color:#777;vertical-align:bottom;padding:0 4px">On leave / day →</td>${densCells}</tr>
-      <tr><td colspan="4"></td>${densNums}</tr>
-    </tfoot>
   </table>
   <div class="footer"><span>Leave Calendar · ${esc(periodLabel)} · ESAU HR portal</span><span>Approved leave overlapping the month · ${calendarStaff.length} staff</span></div>
 </body></html>`;
@@ -842,37 +838,6 @@ export default function LeaveReport({
                   </tr>
                 ))}
               </tbody>
-              <tfoot>
-                <tr style={{ borderTop: '2px solid #E5E7EB' }}>
-                  <td className="sticky left-0 z-10 bg-white px-2 text-right"
-                      style={{ minWidth: 170, maxWidth: 170, boxShadow: '2px 0 0 #E5E7EB', fontSize: 9, color: '#777', verticalAlign: 'bottom', paddingBottom: 2 }}>
-                    On leave / day →
-                  </td>
-                  {days.map((day, i) => {
-                    const c = dailyCounts[i];
-                    const h = Math.max(c ? 6 : 0, Math.round((c / maxDaily) * 100));
-                    return (
-                      <td key={day.iso} title={`${c} on leave`}
-                          style={{ width: 26, height: 30, padding: 0, verticalAlign: 'bottom',
-                                   background: day.weekend ? '#F3F4F6' : 'transparent' }}>
-                        {c > 0 && (
-                          <div style={{ width: '55%', margin: '0 auto', height: `${h}%`, minHeight: 4,
-                                        background: '#0F4C2A', borderRadius: '2px 2px 0 0' }} />
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-                <tr>
-                  <td></td>
-                  {days.map((day, i) => (
-                    <td key={day.iso} style={{ textAlign: 'center', fontSize: 8, color: '#999',
-                                               background: day.weekend ? '#F3F4F6' : 'transparent' }}>
-                      {dailyCounts[i] || ''}
-                    </td>
-                  ))}
-                </tr>
-              </tfoot>
             </table>
           </div>
         </div>
