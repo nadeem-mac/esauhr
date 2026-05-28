@@ -161,6 +161,38 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
     };
   }, [rows]);
 
+  // ── Sort + date colouring ─────────────────────────────────────────
+  //  Nadeem 2026-05-26: 'sorted by Location then by department … light
+  //  color for each date group'. Primary sort Location → Department →
+  //  Date → Name. Each distinct date gets a soft tint applied as the
+  //  row background wherever that date appears, so the date dimension
+  //  stays scannable even though rows are location/department-ordered.
+  const sortedRows = useMemo(() => {
+    const copy = [...rows];
+    copy.sort((a, b) => {
+      const la = (a.employee?.location || '').localeCompare(b.employee?.location || '');
+      if (la !== 0) return la;
+      const da = (a.employee?.department || '').localeCompare(b.employee?.department || '');
+      if (da !== 0) return da;
+      const dt = String(a.shift.shift_date).localeCompare(String(b.shift.shift_date));
+      if (dt !== 0) return dt;
+      return (a.employee?.name || '').localeCompare(b.employee?.name || '');
+    });
+    return copy;
+  }, [rows]);
+
+  // Soft tint palette keyed to each distinct shift_date (sorted).
+  // {hex} for HTML/CSS + {argb} (no #) for Excel fills.
+  const dateColors = useMemo(() => {
+    const palette = [
+      'EFF6FF', 'F0FDF4', 'FFFBEB', 'FDF4FF', 'FEF2F2', 'F0FDFA', 'FFF7ED', 'F5F3FF',
+    ];
+    const dates = [...new Set(rows.map(r => r.shift.shift_date))].sort();
+    const map = {};
+    dates.forEach((d, i) => { map[d] = palette[i % palette.length]; });
+    return map;
+  }, [rows]);
+
   // ── Excel export — styled to match the HTML report ────────────────
   //  Uses xlsx-js-style (drop-in fork of SheetJS with cell styling).
   //  Nadeem 2026-05-26: 'I want the same color styled when I export
@@ -203,7 +235,11 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
         'Expected Hrs', 'Worked Hrs', 'Worked Time', '% Worked', 'Status', 'Notes'];
 
       const aoa = [headers];
-      for (const r of rows) {
+      // Track which date each output row belongs to (for fill banding)
+      // and which rows deviated (for red Worked Hrs text).
+      const rowDate = [null];       // header row → no date
+      const rowDeviation = [false];
+      for (const r of sortedRows) {
         const statusLabel = r.status === 'no_show' ? 'NO SHOW'
           : r.status === 'deviation' ? 'DEVIATION' : 'ON TIME';
         aoa.push([
@@ -226,20 +262,24 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
           statusLabel,
           r.shift.notes || '',
         ]);
+        rowDate.push(r.shift.shift_date);
+        rowDeviation.push(r.status === 'deviation');
       }
       // Blank + totals row
       aoa.push([]);
+      rowDate.push(null); rowDeviation.push(false);
       aoa.push([
         'TOTAL', '', '', '', '', '', '', '', '', '', '', '',
         summary.totalScheduled,
         summary.totalWorked,
-        Math.round(rows.reduce((s, r) => s + (r.actual_hours || 0), 0) * 100) / 100,
+        Math.round(sortedRows.reduce((s, r) => s + (r.actual_hours || 0), 0) * 100) / 100,
         summary.totalScheduled > 0
           ? Math.round((summary.totalWorked / summary.totalScheduled) * 100)
           : 0,
         `${summary.onTime} on-time / ${summary.deviation} dev / ${summary.noShow} no-show`,
         '',
       ]);
+      rowDate.push(null); rowDeviation.push(false);
 
       const ws = XLSX.utils.aoa_to_sheet(aoa);
 
@@ -264,12 +304,22 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
           } else {
             // Body cell
             const numericRight = (C >= 10 && C <= 15);
+            const dateFill = rowDate[R] ? dateColors[rowDate[R]] : null;
             let style = cell({
               alignment: { vertical: 'center',
                 horizontal: numericRight ? 'right'
                   : (C >= 6 && C <= 9) ? 'center' : 'left' },
+              ...(dateFill ? { fill: { fgColor: { rgb: dateFill } } } : {}),
             });
-            // Colour the Status cell to match the HTML pills
+            // Worked Hrs column (C===13) → red bold text on deviation rows
+            if (C === 13 && rowDeviation[R]) {
+              style = cell({
+                font: { bold: true, sz: 10, color: { rgb: 'DC2626' } },
+                alignment: { horizontal: 'right', vertical: 'center' },
+                ...(dateFill ? { fill: { fgColor: { rgb: dateFill } } } : {}),
+              });
+            }
+            // Colour the Status cell to match the HTML pills (overrides date fill)
             if (C === statusCol) {
               const label = ws[addr].v;
               const sc = statusFill[label];
@@ -336,62 +386,61 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
         const p = map[s] || map.on_time;
         return `<span style="background:${p.bg};color:${p.fg};padding:2px 6px;border-radius:3px;font-size:9px;font-weight:700;letter-spacing:.04em">${p.label}</span>`;
       };
-      // Group rows by date for cleaner section breaks per Eid day
-      const byDate = new Map();
-      for (const r of rows) {
-        if (!byDate.has(r.shift.shift_date)) byDate.set(r.shift.shift_date, []);
-        byDate.get(r.shift.shift_date).push(r);
-      }
-      const dateSections = [...byDate.entries()]
+      // Date colour legend + flat table sorted Location → Dept → Date
+      // → Name. Each row tinted by its date so the date dimension stays
+      // visible despite the location/department ordering.
+      const dateLegend = Object.entries(dateColors)
         .sort(([a], [b]) => a.localeCompare(b))
-        .map(([date, dayRows]) => {
-          // Per-day totals
-          const dayScheduled = dayRows.reduce((s, r) => s + (r.expected_hours || 0), 0);
-          const dayWorked    = dayRows.reduce((s, r) => s + (r.worked_hours || 0), 0);
-          const dayNoShow    = dayRows.filter(r => r.status === 'no_show').length;
-          const dayDeviation = dayRows.filter(r => r.status === 'deviation').length;
-          const tableRows = dayRows
-            .sort((a, b) => (a.employee?.name || '').localeCompare(b.employee?.name || ''))
-            .map(r => `
-              <tr>
-                <td>${esc(r.employee?.name || r.shift.employee_id)}<br/>
-                  <span style="color:#666;font-size:10px">${esc(r.shift.employee_id)} · ${esc(r.employee?.department || '')}${r.employee?.location ? ' · ' + esc(r.employee.location) : ''}</span></td>
-                <td style="text-align:center">${esc(fmtTime(r.shift.clock_in_time))}–${esc(fmtTime(r.shift.clock_out_time))}</td>
-                <td style="text-align:center">${r.actual_in
-                  ? `${esc(fmtTime(r.actual_in))}–${r.actual_out ? esc(fmtTime(r.actual_out)) : '<span style="color:#991B1B">missing</span>'}`
-                  : '<span style="color:#991B1B">—</span>'}</td>
-                <td style="text-align:right;font-variant-numeric:tabular-nums">${r.late_minutes > 0 ? '<strong style="color:#B45309">' + r.late_minutes + 'm</strong>' : '—'}</td>
-                <td style="text-align:right;font-variant-numeric:tabular-nums">${r.early_minutes > 0 ? '<strong style="color:#B45309">' + r.early_minutes + 'm</strong>' : '—'}</td>
-                <td style="text-align:right;font-variant-numeric:tabular-nums">${Number(r.expected_hours).toFixed(1)}h</td>
-                <td style="text-align:right;font-variant-numeric:tabular-nums">${Number(r.worked_hours).toFixed(1)}h</td>
-                <td style="text-align:right;font-variant-numeric:tabular-nums">${r.no_show ? '<span style="color:#991B1B">—</span>' : Number(r.actual_hours).toFixed(1) + 'h'}</td>
-                <td style="text-align:center">${statusPill(r.status)}</td>
-                <td style="font-size:10px;color:#555">${esc(r.shift.notes || '')}</td>
-              </tr>
-            `).join('');
-          return `
-            <section class="day">
-              <h3>${esc(fmtDate(date))}<span class="count">${dayRows.length} staff · ${dayScheduled.toFixed(1)}h sched · ${dayWorked.toFixed(1)}h worked${dayNoShow > 0 ? ' · ' + dayNoShow + ' no-show' : ''}${dayDeviation > 0 ? ' · ' + dayDeviation + ' deviation' : ''}</span></h3>
-              <table>
-                <thead>
-                  <tr>
-                    <th style="width:20%">Employee</th>
-                    <th style="width:10%">Scheduled</th>
-                    <th style="width:10%">Actual</th>
-                    <th style="width:6%;text-align:right">Late</th>
-                    <th style="width:6%;text-align:right">Early</th>
-                    <th style="width:8%;text-align:right">Sched Hrs</th>
-                    <th style="width:8%;text-align:right">Worked Hrs</th>
-                    <th style="width:8%;text-align:right">Worked Time</th>
-                    <th style="width:8%;text-align:center">Status</th>
-                    <th>Task</th>
-                  </tr>
-                </thead>
-                <tbody>${tableRows}</tbody>
-              </table>
-            </section>
-          `;
-        }).join('');
+        .map(([d, hex]) =>
+          `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:12px">
+             <span style="width:12px;height:12px;border-radius:2px;background:#${hex};border:1px solid rgba(0,0,0,0.1)"></span>
+             ${esc(fmtDate(d))}
+           </span>`).join('');
+
+      const tableRows = sortedRows.map(r => {
+        const tint = dateColors[r.shift.shift_date] || 'FFFFFF';
+        const workedColor = r.status === 'deviation' ? '#DC2626' : '#1F1B16';
+        return `
+          <tr style="background:#${tint}">
+            <td>${esc(fmtDate(r.shift.shift_date))}</td>
+            <td>${esc(r.employee?.name || r.shift.employee_id)}<br/>
+              <span style="color:#555;font-size:10px">${esc(r.shift.employee_id)} · ${esc(r.employee?.department || '')}${r.employee?.location ? ' · ' + esc(r.employee.location) : ''}</span></td>
+            <td style="text-align:center">${esc(fmtTime(r.shift.clock_in_time))}–${esc(fmtTime(r.shift.clock_out_time))}</td>
+            <td style="text-align:center">${r.actual_in
+              ? `${esc(fmtTime(r.actual_in))}–${r.actual_out ? esc(fmtTime(r.actual_out)) : '<span style="color:#991B1B">missing</span>'}`
+              : '<span style="color:#991B1B">—</span>'}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">${r.late_minutes > 0 ? '<strong style="color:#B45309">' + r.late_minutes + 'm</strong>' : '—'}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">${r.early_minutes > 0 ? '<strong style="color:#B45309">' + r.early_minutes + 'm</strong>' : '—'}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">${Number(r.expected_hours).toFixed(1)}h</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums"><strong style="color:${workedColor}">${Number(r.worked_hours).toFixed(1)}h</strong></td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">${r.no_show ? '<span style="color:#991B1B">—</span>' : Number(r.actual_hours).toFixed(1) + 'h'}</td>
+            <td style="text-align:center">${statusPill(r.status)}</td>
+            <td style="font-size:10px;color:#555">${esc(r.shift.notes || '')}</td>
+          </tr>
+        `;
+      }).join('');
+
+      const dateSections = `
+        <div class="legend">Dates: ${dateLegend}</div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:10%">Date</th>
+              <th style="width:18%">Employee</th>
+              <th style="width:9%">Scheduled</th>
+              <th style="width:9%">Actual</th>
+              <th style="width:6%;text-align:right">Late</th>
+              <th style="width:6%;text-align:right">Early</th>
+              <th style="width:8%;text-align:right">Sched Hrs</th>
+              <th style="width:8%;text-align:right">Worked Hrs</th>
+              <th style="width:8%;text-align:right">Worked Time</th>
+              <th style="width:8%;text-align:center">Status</th>
+              <th>Task</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      `;
       const totalPct = summary.totalScheduled > 0
         ? Math.round((summary.totalWorked / summary.totalScheduled) * 100)
         : 0;
@@ -420,6 +469,7 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
   .card.ok    { border-color: #A7F3D0; background: #F0FDF4; }
   .card.info  { border-color: #BFDBFE; background: #EFF6FF; }
   .lost-banner { background: #FEF2F2; border-left: 4px solid #DC2626; padding: 8px 12px; margin-bottom: 16px; font-size: 11px; }
+  .legend { font-size: 10px; color: #444; margin-bottom: 10px; display: flex; flex-wrap: wrap; align-items: center; }
   section.day { page-break-inside: avoid; margin-bottom: 18px; }
   section.day h3 { font-size: 13px; margin: 12px 0 6px; color: #0F4C2A; border-bottom: 1px solid #D1D5DB; padding-bottom: 4px; }
   section.day h3 .count { font-size: 10px; color: #666; font-weight: 400; margin-left: 8px; }
@@ -589,8 +639,12 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((r, i) => (
-                      <tr key={i} className="border-t" style={{ borderColor: 'rgba(0,0,0,0.05)' }}>
+                    {sortedRows.map((r, i) => (
+                      <tr key={i} className="border-t"
+                          style={{
+                            borderColor: 'rgba(0,0,0,0.05)',
+                            background: `#${dateColors[r.shift.shift_date] || 'FFFFFF'}`,
+                          }}>
                         <Td>{fmtDayDate(r.shift.shift_date)}</Td>
                         <Td>
                           <div className="font-medium" style={{ color: '#1F1B16' }}>{r.employee?.name || r.shift.employee_id}</div>
@@ -614,7 +668,10 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
                             : <span style={{ color: '#1F1B16', opacity: 0.4 }}>—</span>}
                         </Td>
                         <Td className="font-mono">
-                          <strong>{r.worked_hours.toFixed(2)}h</strong>
+                          {/* Red when this shift deviated (late/early-out) */}
+                          <strong style={{ color: r.status === 'deviation' ? '#DC2626' : '#1F1B16' }}>
+                            {r.worked_hours.toFixed(2)}h
+                          </strong>
                           <span style={{ opacity: 0.5 }}> / {r.expected_hours.toFixed(1)}</span>
                         </Td>
                         <Td className="font-mono">
