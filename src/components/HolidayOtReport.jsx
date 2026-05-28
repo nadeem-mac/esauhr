@@ -116,6 +116,14 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
       const workedMins  = !noShow && actOut != null
                            ? Math.max(0, Math.min(actOut, schedOut) - Math.max(actIn, schedIn))
                            : 0;
+      // Raw presence time — full span from first to last punch,
+      // NOT capped to the schedule. Nadeem 2026-05-26: 'show the
+      // total time of worked as per check in / out time'. Useful
+      // when staff work beyond their assigned window (this figure
+      // can exceed Worked Hrs); managers see true time on site.
+      const actualMins  = !noShow && actOut != null
+                           ? Math.max(0, actOut - actIn)
+                           : 0;
       const expectedMins = schedOut - schedIn;
 
       return {
@@ -126,6 +134,7 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
         late_minutes:  late,
         early_minutes: earlyOut,
         worked_hours:  Math.round((workedMins / 60) * 100) / 100,
+        actual_hours:  Math.round((actualMins / 60) * 100) / 100,
         expected_hours: Math.round((expectedMins / 60) * 100) / 100,
         worked_pct: expectedMins > 0
                      ? Math.round((workedMins / expectedMins) * 100)
@@ -152,19 +161,52 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
     };
   }, [rows]);
 
-  // ── Excel export — matches SAJED template shape ───────────────────
+  // ── Excel export — styled to match the HTML report ────────────────
+  //  Uses xlsx-js-style (drop-in fork of SheetJS with cell styling).
+  //  Nadeem 2026-05-26: 'I want the same color styled when I export
+  //  in excel'. Brand-green header, status-coloured cells, tinted
+  //  totals — mirrors the HTML export's palette.
   const exportExcel = async () => {
     setExporting(true);
     try {
-      const XLSX = await import('xlsx');
-      const sheet = [
-        ['PSN ID', 'Employee Name', 'Department', 'Location', 'Date', 'Day',
-         'Sched In', 'Sched Out', 'Actual In', 'Actual Out',
-         'Late (min)', 'Early Out (min)',
-         'Expected Hrs', 'Worked Hrs', '% Worked', 'Status', 'Notes'],
-      ];
+      const XLSX = await import('xlsx-js-style');
+
+      // Style helpers ----------------------------------------------------
+      const GREEN = '0F4C2A';
+      const border = {
+        top:    { style: 'thin', color: { rgb: 'E5E7EB' } },
+        bottom: { style: 'thin', color: { rgb: 'E5E7EB' } },
+        left:   { style: 'thin', color: { rgb: 'E5E7EB' } },
+        right:  { style: 'thin', color: { rgb: 'E5E7EB' } },
+      };
+      const headerStyle = {
+        font:      { bold: true, color: { rgb: 'FFFFFF' }, sz: 10 },
+        fill:      { fgColor: { rgb: GREEN } },
+        alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+        border,
+      };
+      const cell = (extra = {}) => ({
+        font: { sz: 10, color: { rgb: '1F1B16' } },
+        alignment: { vertical: 'center' },
+        border,
+        ...extra,
+      });
+      const statusFill = {
+        'NO SHOW':   { bg: 'FEE2E2', fg: '991B1B' },
+        'DEVIATION': { bg: 'FEF3C7', fg: '854F0B' },
+        'ON TIME':   { bg: 'D1FAE5', fg: '065F46' },
+      };
+
+      const headers = ['PSN ID', 'Employee Name', 'Department', 'Location', 'Date', 'Day',
+        'Sched In', 'Sched Out', 'Actual In', 'Actual Out',
+        'Late (min)', 'Early Out (min)',
+        'Expected Hrs', 'Worked Hrs', 'Worked Time', '% Worked', 'Status', 'Notes'];
+
+      const aoa = [headers];
       for (const r of rows) {
-        sheet.push([
+        const statusLabel = r.status === 'no_show' ? 'NO SHOW'
+          : r.status === 'deviation' ? 'DEVIATION' : 'ON TIME';
+        aoa.push([
           r.shift.employee_id,
           r.employee?.name || '',
           r.employee?.department || '',
@@ -179,30 +221,82 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
           r.early_minutes,
           r.expected_hours,
           r.worked_hours,
+          r.actual_hours,
           r.worked_pct,
-          r.status === 'no_show'   ? 'NO SHOW'
-          : r.status === 'deviation' ? 'DEVIATION'
-          : 'ON TIME',
+          statusLabel,
           r.shift.notes || '',
         ]);
       }
-      // Totals row
-      sheet.push([]);
-      sheet.push([
-        '', '', '', '', '', '', '', '', '', '', '', 'TOTAL',
+      // Blank + totals row
+      aoa.push([]);
+      aoa.push([
+        'TOTAL', '', '', '', '', '', '', '', '', '', '', '',
         summary.totalScheduled,
         summary.totalWorked,
+        Math.round(rows.reduce((s, r) => s + (r.actual_hours || 0), 0) * 100) / 100,
         summary.totalScheduled > 0
           ? Math.round((summary.totalWorked / summary.totalScheduled) * 100)
           : 0,
-        `${summary.onTime} on-time / ${summary.deviation} deviation / ${summary.noShow} no-show`,
+        `${summary.onTime} on-time / ${summary.deviation} dev / ${summary.noShow} no-show`,
         '',
       ]);
 
-      const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.aoa_to_sheet(sheet);
-      XLSX.utils.book_append_sheet(wb, ws, period.name.slice(0, 31));
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
 
+      // Apply styles cell-by-cell ---------------------------------------
+      const range = XLSX.utils.decode_range(ws['!ref']);
+      const statusCol = 16; // 0-indexed 'Status' column
+      const totalRowIdx = aoa.length - 1;
+      for (let R = range.s.r; R <= range.e.r; R++) {
+        for (let C = range.s.c; C <= range.e.c; C++) {
+          const addr = XLSX.utils.encode_cell({ r: R, c: C });
+          if (!ws[addr]) continue;
+          if (R === 0) {
+            ws[addr].s = headerStyle;
+          } else if (R === totalRowIdx) {
+            // Totals row — bold, light-grey fill
+            ws[addr].s = cell({
+              font: { bold: true, sz: 10, color: { rgb: '0A0A0A' } },
+              fill: { fgColor: { rgb: 'F3F4F6' } },
+              alignment: { vertical: 'center',
+                horizontal: (C >= 12 && C <= 15) ? 'right' : 'left' },
+            });
+          } else {
+            // Body cell
+            const numericRight = (C >= 10 && C <= 15);
+            let style = cell({
+              alignment: { vertical: 'center',
+                horizontal: numericRight ? 'right'
+                  : (C >= 6 && C <= 9) ? 'center' : 'left' },
+            });
+            // Colour the Status cell to match the HTML pills
+            if (C === statusCol) {
+              const label = ws[addr].v;
+              const sc = statusFill[label];
+              if (sc) {
+                style = cell({
+                  font: { bold: true, sz: 10, color: { rgb: sc.fg } },
+                  fill: { fgColor: { rgb: sc.bg } },
+                  alignment: { horizontal: 'center', vertical: 'center' },
+                });
+              }
+            }
+            ws[addr].s = style;
+          }
+        }
+      }
+
+      // Column widths
+      ws['!cols'] = [
+        { wch: 9 },  { wch: 26 }, { wch: 12 }, { wch: 9 },  { wch: 11 }, { wch: 10 },
+        { wch: 9 },  { wch: 9 },  { wch: 9 },  { wch: 10 }, { wch: 9 },  { wch: 12 },
+        { wch: 11 }, { wch: 10 }, { wch: 11 }, { wch: 9 },  { wch: 11 }, { wch: 40 },
+      ];
+      // Freeze header row
+      ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, period.name.slice(0, 31));
       const fileName = `OT_${period.name.replace(/[^a-z0-9]+/gi, '_')}_${new Date().toISOString().slice(0, 10)}.xlsx`;
       XLSX.writeFile(wb, fileName);
     } catch (e) {
@@ -270,6 +364,7 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
                 <td style="text-align:right;font-variant-numeric:tabular-nums">${r.early_minutes > 0 ? '<strong style="color:#B45309">' + r.early_minutes + 'm</strong>' : '—'}</td>
                 <td style="text-align:right;font-variant-numeric:tabular-nums">${Number(r.expected_hours).toFixed(1)}h</td>
                 <td style="text-align:right;font-variant-numeric:tabular-nums">${Number(r.worked_hours).toFixed(1)}h</td>
+                <td style="text-align:right;font-variant-numeric:tabular-nums">${r.no_show ? '<span style="color:#991B1B">—</span>' : Number(r.actual_hours).toFixed(1) + 'h'}</td>
                 <td style="text-align:center">${statusPill(r.status)}</td>
                 <td style="font-size:10px;color:#555">${esc(r.shift.notes || '')}</td>
               </tr>
@@ -280,13 +375,14 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
               <table>
                 <thead>
                   <tr>
-                    <th style="width:22%">Employee</th>
-                    <th style="width:11%">Scheduled</th>
-                    <th style="width:11%">Actual</th>
-                    <th style="width:7%;text-align:right">Late</th>
-                    <th style="width:7%;text-align:right">Early</th>
+                    <th style="width:20%">Employee</th>
+                    <th style="width:10%">Scheduled</th>
+                    <th style="width:10%">Actual</th>
+                    <th style="width:6%;text-align:right">Late</th>
+                    <th style="width:6%;text-align:right">Early</th>
                     <th style="width:8%;text-align:right">Sched Hrs</th>
                     <th style="width:8%;text-align:right">Worked Hrs</th>
+                    <th style="width:8%;text-align:right">Worked Time</th>
                     <th style="width:8%;text-align:center">Status</th>
                     <th>Task</th>
                   </tr>
@@ -488,6 +584,7 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
                       <Th>Late</Th>
                       <Th>Early</Th>
                       <Th>Worked</Th>
+                      <Th>Worked Time</Th>
                       <Th>Status</Th>
                     </tr>
                   </thead>
@@ -520,6 +617,11 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
                           <strong>{r.worked_hours.toFixed(2)}h</strong>
                           <span style={{ opacity: 0.5 }}> / {r.expected_hours.toFixed(1)}</span>
                         </Td>
+                        <Td className="font-mono">
+                          {r.no_show
+                            ? <span style={{ color: '#991B1B' }}>—</span>
+                            : <span>{r.actual_hours.toFixed(2)}h</span>}
+                        </Td>
                         <Td>
                           <StatusBadge status={r.status} />
                         </Td>
@@ -529,8 +631,8 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
                 </table>
               </div>
               <p className="text-[10px]" style={{ color: '#1F1B16', opacity: 0.55 }}>
-                Worked hrs = max(0, min(actual_out, sched_out) − max(actual_in, sched_in)).
-                Strict, no grace. Late arrival AND early departure both reduce the figure.
+                Worked hrs = max(0, min(actual_out, sched_out) − max(actual_in, sched_in)) — strict, capped to schedule.
+                Worked Time = full span first → last punch (can exceed Worked hrs when staff stay beyond the window).
               </p>
             </>
           )}
