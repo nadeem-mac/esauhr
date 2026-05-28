@@ -420,6 +420,17 @@ export default function PersonalDashboard({
           during testing phase (HR is the source of truth on remaining
           balance). Tenure + evaluation tiles remain at the bottom. */}
       <section className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+        {/* ANNUAL LEAVE BALANCE — re-added 2026-05-29 per Nadeem: staff
+            were asking to see their own balance. Data was already loaded
+            + computed (bal/remaining/used); only the tile had been hidden
+            on 2026-05-18. Shows remaining of total, with used progress. */}
+        <ColorTile
+          accent="#0F4C2A"
+          label="ANNUAL LEAVE BALANCE" icon={CalendarDays}
+          stat={remaining} unit={`of ${totalEntitlement} days`}
+          desc={`${used} day${used === 1 ? '' : 's'} used this year · ${remaining} remaining`}
+          progress={usedPct}
+        />
         <ColorTile
           accent="#4F46E5"
           label="NEXT VACATION" icon={Plane}
