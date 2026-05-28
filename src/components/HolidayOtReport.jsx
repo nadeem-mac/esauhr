@@ -442,8 +442,10 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
         return `
           <tr style="background:#${tint}">
             <td>${esc(fmtDate(r.shift.shift_date))}</td>
-            <td>${esc(r.employee?.name || r.shift.employee_id)}<br/>
-              <span style="color:#555;font-size:10px">${esc(r.shift.employee_id)} · ${esc(r.employee?.department || '')}${r.employee?.location ? ' · ' + esc(r.employee.location) : ''}</span></td>
+            <td>${esc(r.shift.employee_id)}</td>
+            <td>${esc(r.employee?.name || r.shift.employee_id)}</td>
+            <td>${esc(r.employee?.department || '')}</td>
+            <td>${esc(r.employee?.location || '')}</td>
             <td style="text-align:center">${esc(fmtTime(r.shift.clock_in_time))}–${esc(fmtTime(r.shift.clock_out_time))}</td>
             <td style="text-align:center">${r.actual_in
               ? `${esc(fmtTime(r.actual_in))}–${r.actual_out ? esc(fmtTime(r.actual_out)) : '<span style="color:#991B1B">missing</span>'}`
@@ -465,17 +467,20 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
         <table>
           <thead>
             <tr>
-              <th style="width:10%">Date</th>
-              <th style="width:18%">Employee</th>
-              <th style="width:9%">Scheduled</th>
-              <th style="width:9%">Actual</th>
-              <th style="width:6%;text-align:right">Late</th>
-              <th style="width:6%;text-align:right">Early</th>
-              <th style="width:8%;text-align:right">Sched Hrs</th>
-              <th style="width:8%;text-align:right">Worked Hrs</th>
-              <th style="width:8%;text-align:right">Worked Time</th>
-              <th style="width:11%">Remarks</th>
-              <th style="width:8%;text-align:center">Status</th>
+              <th style="width:8%">Date</th>
+              <th style="width:6%">Staff ID</th>
+              <th style="width:16%">Name</th>
+              <th style="width:6%">Dept</th>
+              <th style="width:6%">Location</th>
+              <th style="width:8%">Scheduled</th>
+              <th style="width:8%">Actual</th>
+              <th style="width:5%;text-align:right">Late</th>
+              <th style="width:5%;text-align:right">Early</th>
+              <th style="width:6%;text-align:right">Sched Hrs</th>
+              <th style="width:6%;text-align:right">Worked Hrs</th>
+              <th style="width:6%;text-align:right">Worked Time</th>
+              <th style="width:10%">Remarks</th>
+              <th style="width:7%;text-align:center">Status</th>
               <th>Task</th>
             </tr>
           </thead>
