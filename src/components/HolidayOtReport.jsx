@@ -514,9 +514,10 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
   section.day { page-break-inside: avoid; margin-bottom: 18px; }
   section.day h3 { font-size: 13px; margin: 12px 0 6px; color: #0F4C2A; border-bottom: 1px solid #D1D5DB; padding-bottom: 4px; }
   section.day h3 .count { font-size: 10px; color: #666; font-weight: 400; margin-left: 8px; }
-  table { width: 100%; border-collapse: collapse; font-size: 11px; }
-  th { background: #F3F4F6; padding: 6px 8px; text-align: left; border-bottom: 1px solid #D1D5DB; font-weight: 700; color: #0A0A0A; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
-  td { padding: 6px 8px; border-bottom: 1px solid #F3F4F6; vertical-align: top; }
+  table { width: 100%; border-collapse: collapse; font-size: 10px; table-layout: auto; }
+  th { background: #F3F4F6; padding: 3px 6px; text-align: left; border-bottom: 1px solid #D1D5DB; font-weight: 700; color: #0A0A0A; font-size: 9px; letter-spacing: .03em; text-transform: uppercase; white-space: nowrap; }
+  td { padding: 2px 6px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; white-space: nowrap; }
+  td .sub-id { white-space: nowrap; }
   tr:hover td { background: #FAFAFA; }
   .footer { margin-top: 20px; padding-top: 10px; border-top: 1px solid #D1D5DB; font-size: 9px; color: #666; display: flex; justify-content: space-between; }
   @media print { .no-print { display: none !important; } body { padding: 0; } }
