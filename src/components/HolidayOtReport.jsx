@@ -162,21 +162,25 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
   }, [rows]);
 
   // ── Sort + date colouring ─────────────────────────────────────────
-  //  Nadeem 2026-05-26: 'sorted by Location then by department … light
-  //  color for each date group'. Primary sort Location → Department →
-  //  Date → Name. Each distinct date gets a soft tint applied as the
-  //  row background wherever that date appears, so the date dimension
-  //  stays scannable even though rows are location/department-ordered.
+  //  Nadeem 2026-05-26: 'sorted by date, then day, then by location
+  //  then by department, then by staff id'. Date is primary, so each
+  //  date's rows are contiguous and the per-date tint reads as a clean
+  //  band. (Day-of-week is derived from the date, so it's a no-op
+  //  tiebreaker after date — included to honour the stated order.)
   const sortedRows = useMemo(() => {
     const copy = [...rows];
+    const dow = (d) => new Date(d).getDay(); // 0=Sun … 6=Sat
     copy.sort((a, b) => {
-      const la = (a.employee?.location || '').localeCompare(b.employee?.location || '');
-      if (la !== 0) return la;
-      const da = (a.employee?.department || '').localeCompare(b.employee?.department || '');
-      if (da !== 0) return da;
       const dt = String(a.shift.shift_date).localeCompare(String(b.shift.shift_date));
       if (dt !== 0) return dt;
-      return (a.employee?.name || '').localeCompare(b.employee?.name || '');
+      const dy = dow(a.shift.shift_date) - dow(b.shift.shift_date);
+      if (dy !== 0) return dy;
+      const la = (a.employee?.location || '').localeCompare(b.employee?.location || '');
+      if (la !== 0) return la;
+      const de = (a.employee?.department || '').localeCompare(b.employee?.department || '');
+      if (de !== 0) return de;
+      return String(a.employee_id || a.shift.employee_id)
+        .localeCompare(String(b.employee_id || b.shift.employee_id));
     });
     return copy;
   }, [rows]);
