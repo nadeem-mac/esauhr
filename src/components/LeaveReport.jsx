@@ -77,6 +77,7 @@ export default function LeaveReport({
   const now = new Date();
   const [year, setYear]   = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth()); // 0-indexed
+  const [view, setView]   = useState('table');         // 'table' | 'calendar'
 
   // Month boundaries as YYYY-MM-DD
   const monthStart = ymd(new Date(year, month, 1));
@@ -207,6 +208,69 @@ export default function LeaveReport({
     return Object.values(m).sort((a, b) =>
       a.loc.localeCompare(b.loc) || a.dept.localeCompare(b.dept) || a.name.localeCompare(b.name));
   }, [leaveRows, permRows]);
+
+  // ── Calendar / timeline data ───────────────────────────────────────
+  const days = useMemo(() => {
+    const n = new Date(year, month + 1, 0).getDate();
+    const out = [];
+    for (let d = 1; d <= n; d++) {
+      const dt = new Date(year, month, d);
+      out.push({
+        d, iso: ymd(dt), dow: dt.getDay(),
+        weekend: dt.getDay() === 5 || dt.getDay() === 6,
+        today: ymd(dt) === todayStr,
+        wd: ['S','M','T','W','T','F','S'][dt.getDay()],
+      });
+    }
+    return out;
+  }, [year, month, todayStr]);
+
+  const calendarStaff = useMemo(() => {
+    const scoped = employees.filter(e => inScope(e.id));
+    scoped.sort((a, b) =>
+      (a.location || '').localeCompare(b.location || '') ||
+      (a.department || '').localeCompare(b.department || '') ||
+      (a.name || '').localeCompare(b.name || ''));
+    const byEmp = {};
+    for (const r of requests) {
+      const stage = r.stage || r.status;
+      if (stage !== 'approved') continue;
+      if (!r.start_date || !r.end_date) continue;
+      if (!(r.start_date <= monthEnd && r.end_date >= monthStart)) continue;
+      if (!inScope(r.employee_id)) continue;
+      (byEmp[r.employee_id] = byEmp[r.employee_id] || []).push(r);
+    }
+    return scoped.map(e => ({
+      psn: e.id, name: e.name || e.id,
+      dept: e.department || '', loc: e.location || '',
+      leaves: (byEmp[e.id] || []),
+    }));
+  }, [employees, requests, inScope, monthStart, monthEnd]);
+
+  const dailyCounts = useMemo(() => days.map(day => {
+    let c = 0;
+    for (const s of calendarStaff) {
+      if (s.leaves.some(l => l.start_date <= day.iso && l.end_date >= day.iso)) c++;
+    }
+    return c;
+  }), [days, calendarStaff]);
+  const maxDaily = Math.max(1, ...dailyCounts);
+
+  const segFor = (staff, day) => {
+    for (const l of staff.leaves) {
+      if (l.start_date <= day.iso && l.end_date >= day.iso) {
+        return {
+          typeId: l.leave_type_id,
+          isStart: l.start_date === day.iso,
+          isEnd: l.end_date === day.iso,
+          extendsLeft: l.start_date < monthStart && day.iso === monthStart,
+          extendsRight: l.end_date > monthEnd && day.iso === monthEnd,
+          isHalf: !!l.is_half_day && l.start_date === l.end_date,
+        };
+      }
+    }
+    return null;
+  };
 
   // ── Summary ────────────────────────────────────────────────────────
   const summary = useMemo(() => {
@@ -353,6 +417,108 @@ export default function LeaveReport({
     setTimeout(() => URL.revokeObjectURL(url), 30000);
   };
 
+  // ── Calendar HTML export (print/PDF timeline) ──────────────────────
+  const exportCalendarHtml = () => {
+    const esc = (s) => String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const dayHead = days.map(day =>
+      `<th class="day ${day.weekend ? 'we' : ''} ${day.today ? 'today' : ''}"><div class="dw">${day.wd}</div><div class="dn">${day.d}</div></th>`).join('');
+    const rowsHtml = calendarStaff.map(staff => {
+      const cells = days.map(day => {
+        const seg = segFor(staff, day);
+        if (!seg) return `<td class="cell ${day.weekend ? 'we' : ''} ${day.today ? 'today' : ''}"></td>`;
+        const cls = [
+          'bar',
+          seg.isStart && !seg.extendsLeft ? 'bs' : '',
+          seg.isEnd && !seg.extendsRight ? 'be' : '',
+          seg.isHalf ? 'half' : '',
+        ].join(' ');
+        const arrow = (seg.extendsLeft ? '<span class="ar">◂</span>' : '')
+                    + (seg.extendsRight ? '<span class="ar">▸</span>' : '');
+        return `<td class="cell ${day.weekend ? 'we' : ''} ${day.today ? 'today' : ''}"><div class="${cls}" style="background:${tintFor(seg.typeId)}">${arrow}</div></td>`;
+      }).join('');
+      return `<tr><td class="staff"><div class="nm">${esc(staff.name)}</div><div class="mt">${esc(staff.psn)} · ${esc(staff.dept)} · ${esc(staff.loc)}</div></td>${cells}</tr>`;
+    }).join('');
+    const densCells = days.map((day, i) => {
+      const c = dailyCounts[i];
+      const h = Math.max(c ? 6 : 0, Math.round((c / maxDaily) * 100));
+      return `<td class="cell ${day.weekend ? 'we' : ''}"><div class="dens" style="height:${h}%;background:${c ? '#0F4C2A' : 'transparent'}"></div></td>`;
+    }).join('');
+    const densNums = days.map((day, i) =>
+      `<td class="cell ${day.weekend ? 'we' : ''}" style="text-align:center;font-size:8px;color:#999">${dailyCounts[i] || ''}</td>`).join('');
+
+    const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<title>Leave Calendar — ${esc(periodLabel)}</title>
+<style>
+  @page { size: A4 landscape; margin: 10mm; }
+  * { box-sizing:border-box; }
+  body { font-family:'Calibri','Segoe UI',sans-serif; color:#1F1B16; font-size:10px; margin:0; padding:18px; }
+  .report-header { border-bottom:2px solid #0F4C2A; padding-bottom:10px; margin-bottom:12px; }
+  .kicker { font-size:9px; letter-spacing:.3em; color:#0F4C2A; font-weight:700; text-transform:uppercase; }
+  h1 { font-size:21px; margin:4px 0 2px; color:#0A0A0A; }
+  .sub { font-size:11px; color:#555; }
+  .legend { font-size:9px; color:#444; margin:8px 0; }
+  .lt { display:inline-block; width:10px; height:10px; border-radius:2px; margin:0 4px 0 12px; vertical-align:middle; }
+  table { border-collapse:collapse; width:100%; }
+  th.staff-h, td.staff { text-align:left; min-width:150px; max-width:150px; background:#fff; }
+  th.day { width:24px; padding:2px 0; text-align:center; background:#FAFAF9; border:1px solid #F1F1F0; }
+  th.day .dw { font-size:7px; color:#999; text-transform:uppercase; }
+  th.day .dn { font-size:10px; font-weight:700; color:#0A0A0A; }
+  th.day.we, td.cell.we { background:#F3F4F6; }
+  th.day.today { background:#0F4C2A; } th.day.today .dw, th.day.today .dn { color:#fff; }
+  td.cell { width:24px; height:24px; padding:0; border:1px solid #F6F6F5; }
+  td.staff { padding:3px 8px; border-bottom:1px solid #F1F1F0; }
+  td.staff .nm { font-size:10px; font-weight:600; white-space:nowrap; }
+  td.staff .mt { font-size:8px; color:#777; }
+  .bar { height:13px; margin:5px 0; opacity:.92; display:flex; align-items:center; justify-content:flex-end; }
+  .bar.bs { border-radius:7px 0 0 7px; margin-left:3px; }
+  .bar.be { border-radius:0 7px 7px 0; margin-right:3px; }
+  .bar.bs.be { border-radius:7px; }
+  .bar.half { width:50%; }
+  .ar { color:#fff; font-size:8px; padding:0 1px; }
+  .dens { width:55%; margin:0 auto; border-radius:2px 2px 0 0; }
+  tfoot td.cell { height:28px; vertical-align:bottom; }
+  .no-print {} @media print { .no-print { display:none !important; } body { padding:0; } }
+  .pbtn { background:#0F4C2A; color:#fff; padding:6px 14px; border:0; border-radius:4px; cursor:pointer; font-size:12px; font-weight:600; }
+  .footer { margin-top:16px; padding-top:8px; border-top:1px solid #D1D5DB; font-size:9px; color:#666; display:flex; justify-content:space-between; }
+</style></head><body>
+  <div class="no-print" style="margin-bottom:10px"><button class="pbtn" onclick="window.print()">Print / Save as PDF</button></div>
+  <header class="report-header">
+    <div class="kicker">Evergreen Shipping Agency Saudi Co. (L.L.C) · ESAU HR</div>
+    <h1>Leave Calendar — ${esc(periodLabel)}</h1>
+    <div class="sub">Team timeline · each bar is an approved leave · ◂ ▸ extend past this month</div>
+  </header>
+  <div class="legend">
+    <strong>Type:</strong>
+    <span class="lt" style="background:#3B82F6"></span>Annual
+    <span class="lt" style="background:#EF4444"></span>Sick
+    <span class="lt" style="background:#F59E0B"></span>Emergency
+    <span class="lt" style="background:#9CA3AF"></span>Unpaid
+    <span class="lt" style="background:#EC4899"></span>Maternity
+    &nbsp;|&nbsp; <span style="background:#F3F4F6;padding:1px 5px;border-radius:2px">weekend</span>
+    &nbsp;·&nbsp; Scope: ${esc(scopeLabel)} (${calendarStaff.length})
+  </div>
+  <table>
+    <thead><tr><th class="staff-h">Staff (${calendarStaff.length})</th>${dayHead}</tr></thead>
+    <tbody>${rowsHtml}</tbody>
+    <tfoot>
+      <tr><td class="staff" style="text-align:right;font-size:8px;color:#777;vertical-align:bottom">On leave / day →</td>${densCells}</tr>
+      <tr><td class="staff"></td>${densNums}</tr>
+    </tfoot>
+  </table>
+  <div class="footer"><span>Leave Calendar · ${esc(periodLabel)} · ESAU HR portal</span><span>Approved leave overlapping the month</span></div>
+</body></html>`;
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url, '_blank');
+    if (!w) {
+      const a = document.createElement('a');
+      a.href = url; a.download = `Leave_Calendar_${periodLabel.replace(/\s+/g, '_')}.html`; a.click();
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  };
+
   // ── Excel export ───────────────────────────────────────────────────
   const exportExcel = async () => {
     const XLSX = await import('xlsx-js-style');
@@ -412,12 +578,29 @@ export default function LeaveReport({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Table / Calendar view toggle */}
+          <div className="flex items-center rounded-lg border overflow-hidden" style={{ borderColor: 'rgba(0,0,0,0.12)' }}>
+            <button onClick={() => setView('table')}
+              className="px-3 py-1.5 text-xs font-semibold"
+              style={view === 'table'
+                ? { background: '#0F4C2A', color: '#fff' }
+                : { background: '#fff', color: '#1F1B16' }}>
+              Table
+            </button>
+            <button onClick={() => setView('calendar')}
+              className="px-3 py-1.5 text-xs font-semibold"
+              style={view === 'calendar'
+                ? { background: '#0F4C2A', color: '#fff' }
+                : { background: '#fff', color: '#1F1B16' }}>
+              Calendar
+            </button>
+          </div>
           <div className="flex items-center gap-1 rounded-lg border px-1" style={{ borderColor: 'rgba(0,0,0,0.12)' }}>
             <button onClick={prevMonth} className="p-1.5 rounded hover:bg-black/[0.05]"><ChevronLeft size={15} /></button>
             <span className="text-sm font-semibold px-2 min-w-[120px] text-center" style={{ color: '#0A0A0A' }}>{periodLabel}</span>
             <button onClick={nextMonth} className="p-1.5 rounded hover:bg-black/[0.05]"><ChevronRight size={15} /></button>
           </div>
-          <button onClick={exportHtml}
+          <button onClick={view === 'calendar' ? exportCalendarHtml : exportHtml}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded border"
             style={{ borderColor: '#0F4C2A', color: '#0F4C2A', background: '#FFFFFF' }}>
             <FileText size={12} /> HTML
@@ -440,6 +623,7 @@ export default function LeaveReport({
       </div>
 
       {/* Section 1 — On leave */}
+      {view === 'table' && (<>
       <Section title="Staff on leave this month" count={leaveRows.length} icon={Plane}>
         <table className="w-full text-xs">
           <thead>
@@ -546,6 +730,120 @@ export default function LeaveReport({
           </tbody>
         </table>
       </Section>
+      </>)}
+
+      {/* Calendar / timeline view */}
+      {view === 'calendar' && (
+        <div className="space-y-2">
+          {/* Legend */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px]" style={{ color: '#1F1B16' }}>
+            <span className="font-semibold">Type:</span>
+            {[['annual','Annual'],['sick','Sick'],['emergency','Emergency'],['unpaid','Unpaid'],['maternity','Maternity'],['hajj','Hajj']].map(([id, lbl]) => (
+              <span key={id} className="inline-flex items-center gap-1">
+                <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: tintFor(id) }}></span>{lbl}
+              </span>
+            ))}
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block w-4 h-2.5 rounded-sm" style={{ background: '#F3F4F6', border: '1px solid #E5E7EB' }}></span>weekend
+            </span>
+            <span style={{ opacity: 0.6 }}>◂ ▸ leave extends past this month</span>
+          </div>
+
+          <div className="rounded-xl border overflow-x-auto" style={{ borderColor: 'rgba(0,0,0,0.1)' }}>
+            <table className="border-collapse" style={{ minWidth: 900 }}>
+              <thead>
+                <tr>
+                  <th className="sticky left-0 z-10 bg-white text-left px-2 py-1 text-[10px] font-bold uppercase"
+                      style={{ minWidth: 170, maxWidth: 170, boxShadow: '2px 0 0 #E5E7EB', color: '#0A0A0A' }}>
+                    Staff ({calendarStaff.length})
+                  </th>
+                  {days.map(day => (
+                    <th key={day.iso} className="text-center"
+                        style={{
+                          width: 26, padding: '2px 0',
+                          background: day.today ? '#0F4C2A' : (day.weekend ? '#F3F4F6' : '#FAFAF9'),
+                        }}>
+                      <div style={{ fontSize: 8, color: day.today ? '#fff' : '#999', textTransform: 'uppercase' }}>{day.wd}</div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: day.today ? '#fff' : '#0A0A0A' }}>{day.d}</div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {calendarStaff.map(staff => (
+                  <tr key={staff.psn} style={{ borderTop: '1px solid #F1F1F0' }}>
+                    <td className="sticky left-0 z-10 bg-white px-2 py-1"
+                        style={{ minWidth: 170, maxWidth: 170, boxShadow: '2px 0 0 #E5E7EB' }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: '#1F1B16', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{staff.name}</div>
+                      <div style={{ fontSize: 9, color: '#777' }}>{staff.psn} · {staff.dept} · {staff.loc}</div>
+                    </td>
+                    {days.map(day => {
+                      const seg = segFor(staff, day);
+                      return (
+                        <td key={day.iso} style={{
+                          width: 26, height: 28, padding: 0, position: 'relative',
+                          background: day.today ? 'rgba(15,76,42,0.04)' : (day.weekend ? '#F3F4F6' : 'transparent'),
+                          borderRight: '1px solid #F6F6F5',
+                        }}>
+                          {seg && (
+                            <div style={{
+                              height: 15, margin: '6px 0',
+                              marginLeft: seg.isStart && !seg.extendsLeft ? 4 : 0,
+                              marginRight: seg.isEnd && !seg.extendsRight ? 4 : 0,
+                              background: tintFor(seg.typeId),
+                              opacity: 0.92,
+                              width: seg.isHalf ? '50%' : 'auto',
+                              borderTopLeftRadius: (seg.isStart && !seg.extendsLeft) ? 8 : 0,
+                              borderBottomLeftRadius: (seg.isStart && !seg.extendsLeft) ? 8 : 0,
+                              borderTopRightRadius: (seg.isEnd && !seg.extendsRight) ? 8 : 0,
+                              borderBottomRightRadius: (seg.isEnd && !seg.extendsRight) ? 8 : 0,
+                              display: 'flex', alignItems: 'center', justifyContent: seg.extendsLeft ? 'flex-start' : 'flex-end',
+                            }}>
+                              {seg.extendsLeft && <span style={{ color: '#fff', fontSize: 9, paddingLeft: 2 }}>◂</span>}
+                              {seg.extendsRight && <span style={{ color: '#fff', fontSize: 9, paddingRight: 2 }}>▸</span>}
+                            </div>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ borderTop: '2px solid #E5E7EB' }}>
+                  <td className="sticky left-0 z-10 bg-white px-2 text-right"
+                      style={{ minWidth: 170, maxWidth: 170, boxShadow: '2px 0 0 #E5E7EB', fontSize: 9, color: '#777', verticalAlign: 'bottom', paddingBottom: 2 }}>
+                    On leave / day →
+                  </td>
+                  {days.map((day, i) => {
+                    const c = dailyCounts[i];
+                    const h = Math.max(c ? 6 : 0, Math.round((c / maxDaily) * 100));
+                    return (
+                      <td key={day.iso} title={`${c} on leave`}
+                          style={{ width: 26, height: 30, padding: 0, verticalAlign: 'bottom',
+                                   background: day.weekend ? '#F3F4F6' : 'transparent' }}>
+                        {c > 0 && (
+                          <div style={{ width: '55%', margin: '0 auto', height: `${h}%`, minHeight: 4,
+                                        background: '#0F4C2A', borderRadius: '2px 2px 0 0' }} />
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+                <tr>
+                  <td></td>
+                  {days.map((day, i) => (
+                    <td key={day.iso} style={{ textAlign: 'center', fontSize: 8, color: '#999',
+                                               background: day.weekend ? '#F3F4F6' : 'transparent' }}>
+                      {dailyCounts[i] || ''}
+                    </td>
+                  ))}
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
