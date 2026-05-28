@@ -22,7 +22,7 @@ const DEPT_FULL_NAMES = {
   'SUP / CSD': 'Human Resources & Supervisory / Customer Service Department',
 };
 
-export default function EmployeeDetailModal({ employee, leaveTypes, requests, balances, typeMap, me, employees = [], empMap = {}, onSaved, onDeleted, onClose }) {
+export default function EmployeeDetailModal({ employee, leaveTypes, requests, balances, permissions = [], typeMap, me, employees = [], empMap = {}, onSaved, onDeleted, onClose }) {
   const year = new Date().getFullYear();
 
   // ─── Header PIN-reset state ──────────────────────────────────────
@@ -140,6 +140,168 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
       new Date(b.requested_at || b.created_at) - new Date(a.requested_at || a.created_at)
     );
   }, [requests]);
+
+  // ── Leave statement (shareable PDF) ────────────────────────────────
+  //  Nadeem 2026-05-29: when staff ask Bashaier for their details, she
+  //  needs to send a complete picture — balance + this-year history +
+  //  how many times they applied + last applied + permissions. One-click
+  //  printable statement she can save as PDF and email to the staff.
+  const buildStatement = () => {
+    const esc = (s) => String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const yr = new Date().getFullYear();
+    const d2 = (s) => {
+      if (!s) return '—';
+      const d = new Date(s + (String(s).length === 10 ? 'T00:00:00' : ''));
+      return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    };
+    const dayCount = (a, b) => {
+      if (!a || !b) return 0;
+      return Math.max(1, Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000) + 1);
+    };
+    const typeName = (id) => {
+      const t = (leaveTypes || []).find(x => x.id === id);
+      return t?.label || t?.name || (id ? id.charAt(0).toUpperCase() + id.slice(1) : '—');
+    };
+    const stageLabel = (r) => {
+      const s = r.stage || r.status || '';
+      if (s === 'approved') return 'Approved';
+      if (s.includes('reject')) return 'Rejected';
+      if (s.includes('cancel')) return 'Cancelled';
+      if (s.includes('pending')) return 'Pending';
+      return s ? s.charAt(0).toUpperCase() + s.slice(1) : '—';
+    };
+
+    // This-year requests (by requested_at, fallback to start_date year)
+    const thisYear = history.filter(r => {
+      const ry = new Date(r.requested_at || r.created_at || r.start_date).getFullYear();
+      return ry === yr;
+    });
+    const approvedThisYear = thisYear.filter(r => (r.stage || r.status) === 'approved');
+    const lastApplied = thisYear[0]; // history already sorted desc
+
+    // Balance rows (skip unlimited / empty types)
+    const balRows = balByType.filter(({ type, balance }) => {
+      const unlimited = type.accrual_method === 'unlimited';
+      const empty = !balance.total && balance.available === 0 && balance.used === 0;
+      return !unlimited && !empty;
+    }).map(({ type, balance }) => {
+      const bonus = Number(balance.bonus || 0);
+      const dispTotal = balance.entitlement + balance.carried + bonus;
+      return `<tr>
+        <td>${esc(type.label || type.name || type.id)}</td>
+        <td style="text-align:right">${dispTotal}</td>
+        <td style="text-align:right">${balance.used || 0}</td>
+        <td style="text-align:right;font-weight:700;color:${(balance.available||0) <= 0 ? '#991B1B' : '#065F46'}">${Math.max(0, balance.available || 0)}</td>
+      </tr>`;
+    }).join('');
+
+    // History table (this year)
+    const histRows = thisYear.map(r => `
+      <tr>
+        <td>${esc(d2(r.requested_at || r.created_at))}</td>
+        <td>${esc(typeName(r.leave_type_id))}</td>
+        <td>${esc(d2(r.start_date))} → ${esc(d2(r.end_date))}</td>
+        <td style="text-align:right">${dayCount(r.start_date, r.end_date)}${r.is_half_day ? ' (½)' : ''}</td>
+        <td>${esc(stageLabel(r))}</td>
+      </tr>`).join('');
+
+    // Permissions this year
+    const permsThisYear = (permissions || []).filter(p => {
+      const py = new Date(p.permission_date || p.requested_at).getFullYear();
+      return py === yr && (p.stage || p.status) === 'approved';
+    });
+    const lateN = permsThisYear.filter(p => (p.type || '').includes('late')).length;
+    const earlyN = permsThisYear.filter(p => (p.type || '').includes('early')).length;
+
+    const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<title>Leave Statement — ${esc(employee.name)}</title>
+<style>
+  @page { size: A4 portrait; margin: 16mm; }
+  * { box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  body { font-family:'Calibri','Segoe UI',sans-serif; color:#1F1B16; font-size:12px; margin:0; padding:24px; }
+  .report-header { border-bottom:2px solid #0F4C2A; padding-bottom:12px; margin-bottom:16px; }
+  .kicker { font-size:9px; letter-spacing:.3em; color:#0F4C2A; font-weight:700; text-transform:uppercase; }
+  h1 { font-size:22px; margin:4px 0 2px; color:#0A0A0A; }
+  .sub { font-size:11px; color:#555; }
+  .info { display:grid; grid-template-columns:1fr 1fr; gap:4px 24px; margin:14px 0 18px; font-size:11px; }
+  .info .row { display:flex; justify-content:space-between; border-bottom:1px dotted #E5E7EB; padding:3px 0; }
+  .info .row .k { color:#666; }
+  .info .row .v { font-weight:600; color:#0A0A0A; }
+  .cards { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:18px; }
+  .card { border:1px solid rgba(0,0,0,.08); border-radius:6px; padding:10px 12px; }
+  .card .lbl { font-size:9px; letter-spacing:.1em; color:#555; text-transform:uppercase; }
+  .card .val { font-size:24px; font-weight:700; color:#0A0A0A; margin-top:2px; }
+  .card .sv { font-size:10px; color:#666; }
+  h2 { font-size:13px; margin:18px 0 7px; color:#0F4C2A; }
+  table { width:100%; border-collapse:collapse; font-size:11px; margin-bottom:6px; }
+  th { background:#0F4C2A; color:#fff; padding:5px 8px; text-align:left; font-size:9px; text-transform:uppercase; letter-spacing:.03em; }
+  td { padding:4px 8px; border-bottom:1px solid #F3F4F6; }
+  .no-print {} @media print { .no-print { display:none !important; } body { padding:0; } }
+  .pbtn { background:#0F4C2A; color:#fff; padding:6px 14px; border:0; border-radius:4px; cursor:pointer; font-size:12px; font-weight:600; }
+  .footer { margin-top:24px; padding-top:10px; border-top:1px solid #D1D5DB; font-size:9px; color:#666; display:flex; justify-content:space-between; }
+</style></head><body>
+  <div class="no-print" style="margin-bottom:10px"><button class="pbtn" onclick="window.print()">Print / Save as PDF</button></div>
+  <header class="report-header">
+    <div class="kicker">Evergreen Shipping Agency Saudi Co. (L.L.C) · ESAU HR</div>
+    <h1>Leave Statement — ${esc(employee.name)}</h1>
+    <div class="sub">Balance &amp; leave activity for ${yr}</div>
+  </header>
+
+  <div class="info">
+    <div class="row"><span class="k">PSN ID</span><span class="v">${esc(employee.id)}</span></div>
+    <div class="row"><span class="k">Department</span><span class="v">${esc(employee.department || '—')}</span></div>
+    <div class="row"><span class="k">Designation</span><span class="v">${esc(employee.designation || '—')}</span></div>
+    <div class="row"><span class="k">Location</span><span class="v">${esc(employee.location || '—')}</span></div>
+    <div class="row"><span class="k">Date joined</span><span class="v">${esc(d2(employee.join_date))}</span></div>
+    <div class="row"><span class="k">Tenure</span><span class="v">${yos} yr${yos === 1 ? '' : 's'} ${mos} mo</span></div>
+  </div>
+
+  <div class="cards">
+    <div class="card" style="border-color:#A7F3D0;background:#F0FDF4">
+      <div class="lbl">Annual remaining</div>
+      <div class="val" style="color:#065F46">${Math.max(0, (balByType.find(b => b.type.id === 'annual')?.balance.available) || 0)}</div>
+      <div class="sv">of ${(() => { const b = balByType.find(x => x.type.id === 'annual')?.balance; return b ? (b.entitlement + b.carried + Number(b.bonus||0)) : 0; })()} days</div>
+    </div>
+    <div class="card" style="border-color:#BFDBFE;background:#EFF6FF">
+      <div class="lbl">Applications in ${yr}</div>
+      <div class="val">${thisYear.length}</div>
+      <div class="sv">${approvedThisYear.length} approved</div>
+    </div>
+    <div class="card" style="border-color:#FBCFE8;background:#FDF4FF">
+      <div class="lbl">Last applied</div>
+      <div class="val" style="font-size:16px;margin-top:6px">${lastApplied ? esc(d2(lastApplied.requested_at || lastApplied.created_at)) : '—'}</div>
+      <div class="sv">${lastApplied ? esc(typeName(lastApplied.leave_type_id)) : 'No applications this year'}</div>
+    </div>
+  </div>
+
+  <h2>Leave balance by type</h2>
+  <table><thead><tr><th>Leave Type</th><th style="text-align:right">Entitled</th><th style="text-align:right">Used</th><th style="text-align:right">Available</th></tr></thead>
+    <tbody>${balRows || '<tr><td colspan="4" style="padding:8px;color:#999;font-style:italic">No tracked balances.</td></tr>'}</tbody></table>
+
+  <h2>Leave applications in ${yr} (${thisYear.length})</h2>
+  <table><thead><tr><th>Date Applied</th><th>Type</th><th>Period</th><th style="text-align:right">Days</th><th>Status</th></tr></thead>
+    <tbody>${histRows || '<tr><td colspan="5" style="padding:8px;color:#999;font-style:italic">No leave applications this year.</td></tr>'}</tbody></table>
+
+  <h2>Permissions in ${yr}</h2>
+  <table><thead><tr><th>Late arrivals</th><th>Early departures</th><th>Total</th></tr></thead>
+    <tbody><tr><td>${lateN}</td><td>${earlyN}</td><td style="font-weight:700">${lateN + earlyN}</td></tr></tbody></table>
+
+  <div class="footer">
+    <span>Issued by ${esc(me?.name || 'ESAU HR')} · ${esc(new Date().toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }))}</span>
+    <span>ESAU HR portal · for ${esc(employee.name)}</span>
+  </div>
+</body></html>`;
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url, '_blank');
+    if (!w) {
+      const a = document.createElement('a');
+      a.href = url; a.download = `Leave_Statement_${esc(employee.name).replace(/\s+/g, '_')}.html`; a.click();
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  };
 
   const yos = yearsOfService(employee.join_date);
   const mos = monthsOfService(employee.join_date) % 12;
@@ -534,8 +696,16 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
               big mono number with /total subtle. ~130px tall for 8
               types — half the previous tile-grid footprint. */}
           <div>
-            <div className="text-[10px] tracking-[0.22em] mb-2" style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.7 }}>
-              LEAVE BALANCES · {year}
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-[10px] tracking-[0.22em]" style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.7 }}>
+                LEAVE BALANCES · {year}
+              </div>
+              <button onClick={buildStatement}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded text-white"
+                style={{ background: '#0F4C2A' }}
+                title="Generate a printable leave statement to send this staff member">
+                <FileText size={12} /> Leave Statement
+              </button>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
               {balByType.map(({ type, balance }) => {

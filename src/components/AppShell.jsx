@@ -1610,6 +1610,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
           leaveTypes={leaveTypes}
           requests={requests.filter(r => r.employee_id === selectedEmployee.id)}
           balances={balances.filter(b => b.employee_id === selectedEmployee.id)}
+          permissions={permissions.filter(p => p.employee_id === selectedEmployee.id)}
           typeMap={typeMap}
           me={me}
           // After Bashaier saves, refresh the directory so other tabs
