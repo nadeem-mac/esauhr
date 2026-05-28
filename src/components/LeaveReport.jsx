@@ -70,6 +70,15 @@ const LEAVE_TINT = {
 };
 const tintFor = (id) => LEAVE_TINT[id] || '#3B82F6';
 
+// Single-letter code per leave type — shown inside legend swatches and
+// at the start of each bar so the type is readable even in B&W print.
+// Nadeem 2026-05-29: 'each legend color represents its code in the box'.
+const LEAVE_CODE = {
+  annual: 'A', sick: 'S', emergency: 'E', hajj: 'H', maternity: 'M',
+  paternity: 'P', marriage: 'W', bereavement: 'B', unpaid: 'U',
+};
+const codeFor = (id) => LEAVE_CODE[id] || '•';
+
 export default function LeaveReport({
   me, employees = [], leaveTypes = [], requests = [], permissions = [],
   isAdmin = false, isHrReviewer = false,
@@ -418,6 +427,9 @@ export default function LeaveReport({
   };
 
   // ── Calendar HTML export (print/PDF timeline) ──────────────────────
+  //  Compact, one-page-fit. Slim padding, separate Name/PSN/Dept/Loc
+  //  columns on one line, leave-type code letter inside each bar +
+  //  legend swatch. Nadeem 2026-05-29.
   const exportCalendarHtml = () => {
     const esc = (s) => String(s == null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -434,11 +446,19 @@ export default function LeaveReport({
           seg.isEnd && !seg.extendsRight ? 'be' : '',
           seg.isHalf ? 'half' : '',
         ].join(' ');
-        const arrow = (seg.extendsLeft ? '<span class="ar">◂</span>' : '')
-                    + (seg.extendsRight ? '<span class="ar">▸</span>' : '');
-        return `<td class="cell ${day.weekend ? 'we' : ''} ${day.today ? 'today' : ''}"><div class="${cls}" style="background:${tintFor(seg.typeId)}">${arrow}</div></td>`;
+        // Show the code letter on the FIRST visible cell of the bar
+        const showCode = (seg.isStart || seg.extendsLeft);
+        const inner = seg.extendsLeft ? '◂'
+          : seg.extendsRight ? '▸'
+          : (showCode ? esc(codeFor(seg.typeId)) : '');
+        return `<td class="cell ${day.weekend ? 'we' : ''} ${day.today ? 'today' : ''}"><div class="${cls}" style="background:${tintFor(seg.typeId)}">${inner}</div></td>`;
       }).join('');
-      return `<tr><td class="staff"><div class="nm">${esc(staff.name)}</div><div class="mt">${esc(staff.psn)} · ${esc(staff.dept)} · ${esc(staff.loc)}</div></td>${cells}</tr>`;
+      return `<tr>
+        <td class="c-nm">${esc(staff.name)}</td>
+        <td class="c-id">${esc(staff.psn)}</td>
+        <td class="c-dp">${esc(staff.dept)}</td>
+        <td class="c-lc">${esc(staff.loc)}</td>
+        ${cells}</tr>`;
     }).join('');
     const densCells = days.map((day, i) => {
       const c = dailyCounts[i];
@@ -446,68 +466,79 @@ export default function LeaveReport({
       return `<td class="cell ${day.weekend ? 'we' : ''}"><div class="dens" style="height:${h}%;background:${c ? '#0F4C2A' : 'transparent'}"></div></td>`;
     }).join('');
     const densNums = days.map((day, i) =>
-      `<td class="cell ${day.weekend ? 'we' : ''}" style="text-align:center;font-size:8px;color:#999">${dailyCounts[i] || ''}</td>`).join('');
+      `<td class="cell ${day.weekend ? 'we' : ''}" style="text-align:center;font-size:6px;color:#999">${dailyCounts[i] || ''}</td>`).join('');
+    // Legend with code letters inside each swatch
+    const legendItems = [
+      ['annual','Annual'],['sick','Sick'],['emergency','Emergency'],
+      ['unpaid','Unpaid'],['maternity','Maternity'],['hajj','Hajj'],
+      ['paternity','Paternity'],['marriage','Marriage'],['bereavement','Bereavement'],
+    ].map(([id, lbl]) =>
+      `<span class="lg"><span class="sw" style="background:${tintFor(id)}">${codeFor(id)}</span>${lbl}</span>`).join('');
+
+    // Dynamic row height so up to ~60 rows still fit one A4 landscape page.
+    const n = calendarStaff.length;
+    const rowH = n > 50 ? 9 : n > 38 ? 11 : n > 26 ? 13 : 16;
+    const barH = Math.max(6, rowH - 4);
+    const fontBase = n > 50 ? 6 : 7;
 
     const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
 <title>Leave Calendar — ${esc(periodLabel)}</title>
 <style>
-  @page { size: A4 landscape; margin: 10mm; }
-  * { box-sizing:border-box; }
-  body { font-family:'Calibri','Segoe UI',sans-serif; color:#1F1B16; font-size:10px; margin:0; padding:18px; }
-  .report-header { border-bottom:2px solid #0F4C2A; padding-bottom:10px; margin-bottom:12px; }
-  .kicker { font-size:9px; letter-spacing:.3em; color:#0F4C2A; font-weight:700; text-transform:uppercase; }
-  h1 { font-size:21px; margin:4px 0 2px; color:#0A0A0A; }
-  .sub { font-size:11px; color:#555; }
-  .legend { font-size:9px; color:#444; margin:8px 0; }
-  .lt { display:inline-block; width:10px; height:10px; border-radius:2px; margin:0 4px 0 12px; vertical-align:middle; }
-  table { border-collapse:collapse; width:100%; }
-  th.staff-h, td.staff { text-align:left; min-width:150px; max-width:150px; background:#fff; }
-  th.day { width:24px; padding:2px 0; text-align:center; background:#FAFAF9; border:1px solid #F1F1F0; }
-  th.day .dw { font-size:7px; color:#999; text-transform:uppercase; }
-  th.day .dn { font-size:10px; font-weight:700; color:#0A0A0A; }
+  @page { size: A4 landscape; margin: 8mm; }
+  * { box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  body { font-family:'Calibri','Segoe UI',sans-serif; color:#1F1B16; font-size:${fontBase}px; margin:0; padding:14px; }
+  .report-header { border-bottom:2px solid #0F4C2A; padding-bottom:6px; margin-bottom:6px; }
+  .kicker { font-size:8px; letter-spacing:.3em; color:#0F4C2A; font-weight:700; text-transform:uppercase; }
+  h1 { font-size:16px; margin:2px 0 1px; color:#0A0A0A; }
+  .sub { font-size:9px; color:#555; }
+  .legend { font-size:8px; color:#444; margin:5px 0; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .lg { display:inline-flex; align-items:center; gap:3px; }
+  .sw { display:inline-flex; align-items:center; justify-content:center; width:12px; height:12px; border-radius:2px; color:#fff; font-size:8px; font-weight:700; }
+  table { border-collapse:collapse; width:100%; table-layout:fixed; }
+  th, td { border:1px solid #F1F1F0; }
+  th.c-nm,td.c-nm { width:88px; text-align:left; }
+  th.c-id,td.c-id { width:42px; text-align:left; }
+  th.c-dp,td.c-dp { width:30px; text-align:left; }
+  th.c-lc,td.c-lc { width:30px; text-align:left; }
+  th.hd { background:#0F4C2A; color:#fff; font-size:7px; padding:2px 4px; text-align:left; text-transform:uppercase; }
+  td.c-nm { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding:0 4px; }
+  td.c-id,td.c-dp,td.c-lc { color:#555; white-space:nowrap; padding:0 4px; }
+  th.day { width:17px; padding:1px 0; text-align:center; background:#FAFAF9; }
+  th.day .dw { font-size:6px; color:#999; text-transform:uppercase; line-height:1; }
+  th.day .dn { font-size:8px; font-weight:700; color:#0A0A0A; line-height:1.1; }
   th.day.we, td.cell.we { background:#F3F4F6; }
   th.day.today { background:#0F4C2A; } th.day.today .dw, th.day.today .dn { color:#fff; }
-  td.cell { width:24px; height:24px; padding:0; border:1px solid #F6F6F5; }
-  td.staff { padding:3px 8px; border-bottom:1px solid #F1F1F0; }
-  td.staff .nm { font-size:10px; font-weight:600; white-space:nowrap; }
-  td.staff .mt { font-size:8px; color:#777; }
-  .bar { height:13px; margin:5px 0; opacity:.92; display:flex; align-items:center; justify-content:flex-end; }
-  .bar.bs { border-radius:7px 0 0 7px; margin-left:3px; }
-  .bar.be { border-radius:0 7px 7px 0; margin-right:3px; }
-  .bar.bs.be { border-radius:7px; }
+  td.cell { width:17px; height:${rowH}px; padding:0; }
+  tr { height:${rowH}px; }
+  .bar { height:${barH}px; margin:2px 0; opacity:.95; display:flex; align-items:center; justify-content:center; color:#fff; font-size:${Math.max(5, barH - 3)}px; font-weight:700; }
+  .bar.bs { border-radius:${Math.round(barH/2)}px 0 0 ${Math.round(barH/2)}px; margin-left:2px; }
+  .bar.be { border-radius:0 ${Math.round(barH/2)}px ${Math.round(barH/2)}px 0; margin-right:2px; }
+  .bar.bs.be { border-radius:${Math.round(barH/2)}px; }
   .bar.half { width:50%; }
-  .ar { color:#fff; font-size:8px; padding:0 1px; }
-  .dens { width:55%; margin:0 auto; border-radius:2px 2px 0 0; }
-  tfoot td.cell { height:28px; vertical-align:bottom; }
+  .dens { width:55%; margin:0 auto; border-radius:1px 1px 0 0; }
+  tfoot td.cell { height:22px; vertical-align:bottom; }
   .no-print {} @media print { .no-print { display:none !important; } body { padding:0; } }
   .pbtn { background:#0F4C2A; color:#fff; padding:6px 14px; border:0; border-radius:4px; cursor:pointer; font-size:12px; font-weight:600; }
-  .footer { margin-top:16px; padding-top:8px; border-top:1px solid #D1D5DB; font-size:9px; color:#666; display:flex; justify-content:space-between; }
+  .footer { margin-top:8px; padding-top:5px; border-top:1px solid #D1D5DB; font-size:8px; color:#666; display:flex; justify-content:space-between; }
 </style></head><body>
-  <div class="no-print" style="margin-bottom:10px"><button class="pbtn" onclick="window.print()">Print / Save as PDF</button></div>
+  <div class="no-print" style="margin-bottom:8px"><button class="pbtn" onclick="window.print()">Print / Save as PDF</button></div>
   <header class="report-header">
     <div class="kicker">Evergreen Shipping Agency Saudi Co. (L.L.C) · ESAU HR</div>
     <h1>Leave Calendar — ${esc(periodLabel)}</h1>
-    <div class="sub">Team timeline · each bar is an approved leave · ◂ ▸ extend past this month</div>
+    <div class="sub">Approved-leave timeline · letter in each bar = type · ◂ ▸ extend past month · Scope: ${esc(scopeLabel)} (${calendarStaff.length})</div>
   </header>
-  <div class="legend">
-    <strong>Type:</strong>
-    <span class="lt" style="background:#3B82F6"></span>Annual
-    <span class="lt" style="background:#EF4444"></span>Sick
-    <span class="lt" style="background:#F59E0B"></span>Emergency
-    <span class="lt" style="background:#9CA3AF"></span>Unpaid
-    <span class="lt" style="background:#EC4899"></span>Maternity
-    &nbsp;|&nbsp; <span style="background:#F3F4F6;padding:1px 5px;border-radius:2px">weekend</span>
-    &nbsp;·&nbsp; Scope: ${esc(scopeLabel)} (${calendarStaff.length})
-  </div>
+  <div class="legend">${legendItems}<span style="margin-left:6px"><span style="display:inline-block;width:14px;height:10px;border-radius:2px;background:#F3F4F6;border:1px solid #E5E7EB;vertical-align:middle"></span> weekend</span></div>
   <table>
-    <thead><tr><th class="staff-h">Staff (${calendarStaff.length})</th>${dayHead}</tr></thead>
+    <thead><tr>
+      <th class="hd c-nm">Name</th><th class="hd c-id">PSN</th><th class="hd c-dp">Dept</th><th class="hd c-lc">Loc</th>${dayHead}
+    </tr></thead>
     <tbody>${rowsHtml}</tbody>
     <tfoot>
-      <tr><td class="staff" style="text-align:right;font-size:8px;color:#777;vertical-align:bottom">On leave / day →</td>${densCells}</tr>
-      <tr><td class="staff"></td>${densNums}</tr>
+      <tr><td class="c-nm" colspan="4" style="text-align:right;font-size:7px;color:#777;vertical-align:bottom;padding:0 4px">On leave / day →</td>${densCells}</tr>
+      <tr><td colspan="4"></td>${densNums}</tr>
     </tfoot>
   </table>
-  <div class="footer"><span>Leave Calendar · ${esc(periodLabel)} · ESAU HR portal</span><span>Approved leave overlapping the month</span></div>
+  <div class="footer"><span>Leave Calendar · ${esc(periodLabel)} · ESAU HR portal</span><span>Approved leave overlapping the month · ${calendarStaff.length} staff</span></div>
 </body></html>`;
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -740,7 +771,8 @@ export default function LeaveReport({
             <span className="font-semibold">Type:</span>
             {[['annual','Annual'],['sick','Sick'],['emergency','Emergency'],['unpaid','Unpaid'],['maternity','Maternity'],['hajj','Hajj']].map(([id, lbl]) => (
               <span key={id} className="inline-flex items-center gap-1">
-                <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: tintFor(id) }}></span>{lbl}
+                <span className="inline-flex items-center justify-center rounded-sm text-white font-bold"
+                      style={{ background: tintFor(id), width: 13, height: 13, fontSize: 8 }}>{codeFor(id)}</span>{lbl}
               </span>
             ))}
             <span className="inline-flex items-center gap-1">
@@ -797,10 +829,11 @@ export default function LeaveReport({
                               borderBottomLeftRadius: (seg.isStart && !seg.extendsLeft) ? 8 : 0,
                               borderTopRightRadius: (seg.isEnd && !seg.extendsRight) ? 8 : 0,
                               borderBottomRightRadius: (seg.isEnd && !seg.extendsRight) ? 8 : 0,
-                              display: 'flex', alignItems: 'center', justifyContent: seg.extendsLeft ? 'flex-start' : 'flex-end',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              color: '#fff', fontSize: 9, fontWeight: 700,
                             }}>
-                              {seg.extendsLeft && <span style={{ color: '#fff', fontSize: 9, paddingLeft: 2 }}>◂</span>}
-                              {seg.extendsRight && <span style={{ color: '#fff', fontSize: 9, paddingRight: 2 }}>▸</span>}
+                              {seg.extendsLeft ? '◂' : seg.extendsRight ? '▸'
+                                : (seg.isStart ? codeFor(seg.typeId) : '')}
                             </div>
                           )}
                         </td>
