@@ -460,13 +460,6 @@ export default function LeaveReport({
         <td class="c-lc">${esc(staff.loc)}</td>
         ${cells}</tr>`;
     }).join('');
-    const densCells = days.map((day, i) => {
-      const c = dailyCounts[i];
-      const h = Math.max(c ? 6 : 0, Math.round((c / maxDaily) * 100));
-      return `<td class="cell ${day.weekend ? 'we' : ''}"><div class="dens" style="height:${h}%;background:${c ? '#0F4C2A' : 'transparent'}"></div></td>`;
-    }).join('');
-    const densNums = days.map((day, i) =>
-      `<td class="cell ${day.weekend ? 'we' : ''}" style="text-align:center;font-size:6px;color:#999">${dailyCounts[i] || ''}</td>`).join('');
     // Legend with code letters inside each swatch
     const legendItems = [
       ['annual','Annual'],['sick','Sick'],['emergency','Emergency'],
@@ -475,11 +468,14 @@ export default function LeaveReport({
     ].map(([id, lbl]) =>
       `<span class="lg"><span class="sw" style="background:${tintFor(id)}">${codeFor(id)}</span>${lbl}</span>`).join('');
 
-    // Dynamic row height so up to ~60 rows still fit one A4 landscape page.
+    // Relaxed sizing that fills one A4 landscape page. Row height fills
+    // the vertical space for the staff count (capped so few-staff months
+    // don't look stretched), day columns widened to fill the page width.
     const n = calendarStaff.length;
-    const rowH = n > 50 ? 9 : n > 38 ? 11 : n > 26 ? 13 : 16;
-    const barH = Math.max(6, rowH - 4);
-    const fontBase = n > 50 ? 6 : 7;
+    const rowH = Math.max(11, Math.min(22, Math.floor(540 / Math.max(1, n))));
+    const barH = Math.max(8, rowH - 5);
+    const fontBase = rowH < 13 ? 7 : 8;
+    const dayW = 25;   // 31 days × 25 + ~250px staff cols ≈ A4 landscape width
 
     const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
 <title>Leave Calendar — ${esc(periodLabel)}</title>
@@ -491,32 +487,31 @@ export default function LeaveReport({
   .kicker { font-size:8px; letter-spacing:.3em; color:#0F4C2A; font-weight:700; text-transform:uppercase; }
   h1 { font-size:16px; margin:2px 0 1px; color:#0A0A0A; }
   .sub { font-size:9px; color:#555; }
-  .legend { font-size:8px; color:#444; margin:5px 0; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
-  .lg { display:inline-flex; align-items:center; gap:3px; }
-  .sw { display:inline-flex; align-items:center; justify-content:center; width:12px; height:12px; border-radius:2px; color:#fff; font-size:8px; font-weight:700; }
+  .legend { font-size:9px; color:#444; margin:8px 0; display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; }
+  .lg { display:inline-flex; align-items:center; gap:4px; border:1px solid #E5E7EB; border-radius:4px; padding:2px 7px 2px 4px; }
+  .sw { display:inline-flex; align-items:center; justify-content:center; width:14px; height:14px; border-radius:3px; color:#fff; font-size:9px; font-weight:700; border:1px solid rgba(0,0,0,.18); }
   table { border-collapse:collapse; width:100%; table-layout:fixed; }
-  th, td { border:1px solid #F1F1F0; }
-  th.c-nm,td.c-nm { width:88px; text-align:left; }
-  th.c-id,td.c-id { width:42px; text-align:left; }
-  th.c-dp,td.c-dp { width:30px; text-align:left; }
-  th.c-lc,td.c-lc { width:30px; text-align:left; }
-  th.hd { background:#0F4C2A; color:#fff; font-size:7px; padding:2px 4px; text-align:left; text-transform:uppercase; }
-  td.c-nm { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding:0 4px; }
-  td.c-id,td.c-dp,td.c-lc { color:#555; white-space:nowrap; padding:0 4px; }
-  th.day { width:17px; padding:1px 0; text-align:center; background:#FAFAF9; }
-  th.day .dw { font-size:6px; color:#999; text-transform:uppercase; line-height:1; }
-  th.day .dn { font-size:8px; font-weight:700; color:#0A0A0A; line-height:1.1; }
+  th, td { border:1px solid #ECECEB; }
+  th.c-nm,td.c-nm { width:120px; text-align:left; }
+  th.c-id,td.c-id { width:48px; text-align:left; }
+  th.c-dp,td.c-dp { width:42px; text-align:left; }
+  th.c-lc,td.c-lc { width:42px; text-align:left; }
+  th.hd { background:#0F4C2A; color:#fff; font-size:8px; padding:4px 6px; text-align:left; text-transform:uppercase; }
+  td.c-nm { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding:0 6px; }
+  td.c-id,td.c-dp,td.c-lc { color:#555; white-space:nowrap; padding:0 6px; }
+  th.day { width:${dayW}px; padding:2px 0; text-align:center; background:#FAFAF9; }
+  th.day .dw { font-size:7px; color:#999; text-transform:uppercase; line-height:1; }
+  th.day .dn { font-size:9px; font-weight:700; color:#0A0A0A; line-height:1.2; }
   th.day.we, td.cell.we { background:#F3F4F6; }
   th.day.today { background:#0F4C2A; } th.day.today .dw, th.day.today .dn { color:#fff; }
-  td.cell { width:17px; height:${rowH}px; padding:0; }
+  td.cell { width:${dayW}px; height:${rowH}px; padding:0; }
   tr { height:${rowH}px; }
-  .bar { height:${barH}px; margin:2px 0; opacity:.95; display:flex; align-items:center; justify-content:center; color:#fff; font-size:${Math.max(5, barH - 3)}px; font-weight:700; }
-  .bar.bs { border-radius:${Math.round(barH/2)}px 0 0 ${Math.round(barH/2)}px; margin-left:2px; }
-  .bar.be { border-radius:0 ${Math.round(barH/2)}px ${Math.round(barH/2)}px 0; margin-right:2px; }
+  .bar { height:${barH}px; margin:${Math.round((rowH-barH)/2)}px 0; opacity:.95; display:flex; align-items:center; justify-content:center; color:#fff; font-size:${Math.max(6, barH - 3)}px; font-weight:700; }
+  .bar.bs { border-radius:${Math.round(barH/2)}px 0 0 ${Math.round(barH/2)}px; margin-left:3px; }
+  .bar.be { border-radius:0 ${Math.round(barH/2)}px ${Math.round(barH/2)}px 0; margin-right:3px; }
   .bar.bs.be { border-radius:${Math.round(barH/2)}px; }
   .bar.half { width:50%; }
-  .dens { width:55%; margin:0 auto; border-radius:1px 1px 0 0; }
-  tfoot td.cell { height:22px; vertical-align:bottom; }
+  .dens-row td { border-top:2px solid #D1D5DB; height:18px; }
   .no-print {} @media print { .no-print { display:none !important; } body { padding:0; } }
   .pbtn { background:#0F4C2A; color:#fff; padding:6px 14px; border:0; border-radius:4px; cursor:pointer; font-size:12px; font-weight:600; }
   .footer { margin-top:8px; padding-top:5px; border-top:1px solid #D1D5DB; font-size:8px; color:#666; display:flex; justify-content:space-between; }
@@ -533,6 +528,12 @@ export default function LeaveReport({
       <th class="hd c-nm">Name</th><th class="hd c-id">PSN</th><th class="hd c-dp">Dept</th><th class="hd c-lc">Loc</th>${dayHead}
     </tr></thead>
     <tbody>${rowsHtml}</tbody>
+    <tfoot>
+      <tr class="dens-row">
+        <td colspan="4" style="text-align:right;font-size:8px;font-weight:700;color:#444;padding:2px 6px">On leave / day →</td>
+        ${days.map((day, i) => `<td class="cell ${day.weekend ? 'we' : ''}" style="text-align:center;font-size:9px;font-weight:700;color:${dailyCounts[i] ? '#0F4C2A' : '#CCC'}">${dailyCounts[i] || '·'}</td>`).join('')}
+      </tr>
+    </tfoot>
   </table>
   <div class="footer"><span>Leave Calendar · ${esc(periodLabel)} · ESAU HR portal</span><span>Approved leave overlapping the month · ${calendarStaff.length} staff</span></div>
 </body></html>`;
@@ -763,16 +764,16 @@ export default function LeaveReport({
       {view === 'calendar' && (
         <div className="space-y-2">
           {/* Legend */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px]" style={{ color: '#1F1B16' }}>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[10px]" style={{ color: '#1F1B16' }}>
             <span className="font-semibold">Type:</span>
             {[['annual','Annual'],['sick','Sick'],['emergency','Emergency'],['unpaid','Unpaid'],['maternity','Maternity'],['hajj','Hajj']].map(([id, lbl]) => (
-              <span key={id} className="inline-flex items-center gap-1">
+              <span key={id} className="inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5" style={{ borderColor: '#E5E7EB' }}>
                 <span className="inline-flex items-center justify-center rounded-sm text-white font-bold"
-                      style={{ background: tintFor(id), width: 13, height: 13, fontSize: 8 }}>{codeFor(id)}</span>{lbl}
+                      style={{ background: tintFor(id), width: 14, height: 14, fontSize: 9, border: '1px solid rgba(0,0,0,0.18)' }}>{codeFor(id)}</span>{lbl}
               </span>
             ))}
-            <span className="inline-flex items-center gap-1">
-              <span className="inline-block w-4 h-2.5 rounded-sm" style={{ background: '#F3F4F6', border: '1px solid #E5E7EB' }}></span>weekend
+            <span className="inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5" style={{ borderColor: '#E5E7EB' }}>
+              <span className="inline-block w-4 h-3 rounded-sm" style={{ background: '#F3F4F6', border: '1px solid #E5E7EB' }}></span>weekend
             </span>
             <span style={{ opacity: 0.6 }}>◂ ▸ leave extends past this month</span>
           </div>
@@ -838,6 +839,21 @@ export default function LeaveReport({
                   </tr>
                 ))}
               </tbody>
+              <tfoot>
+                <tr style={{ borderTop: '2px solid #D1D5DB' }}>
+                  <td className="sticky left-0 z-10 bg-white px-2 text-right"
+                      style={{ minWidth: 170, maxWidth: 170, boxShadow: '2px 0 0 #E5E7EB', fontSize: 10, fontWeight: 700, color: '#444', paddingTop: 4, paddingBottom: 4 }}>
+                    On leave / day →
+                  </td>
+                  {days.map((day, i) => (
+                    <td key={day.iso} style={{ width: 26, textAlign: 'center', fontSize: 11, fontWeight: 700,
+                                               color: dailyCounts[i] ? '#0F4C2A' : '#CCC',
+                                               background: day.weekend ? '#F3F4F6' : 'transparent' }}>
+                      {dailyCounts[i] || '·'}
+                    </td>
+                  ))}
+                </tr>
+              </tfoot>
             </table>
           </div>
         </div>
