@@ -34,7 +34,8 @@ const SickLeaveModal          = lazy(() => import('./SickLeaveModal.jsx'));
 const PermissionRequestModal  = lazy(() => import('./PermissionRequestModal.jsx'));
 const EmployeeDetailModal     = lazy(() => import('./EmployeeDetailModal.jsx'));
 const ShiftAcknowledgmentModal = lazy(() => import('./ShiftAcknowledgmentModal.jsx'));
-const InsightsView            = lazy(() => import('./InsightsView.jsx'));
+// InsightsView unrouted 2026-05-29 (tab removed); file kept on disk.
+// const InsightsView            = lazy(() => import('./InsightsView.jsx'));
 const AdminPanel              = lazy(() => import('./AdminPanel.jsx'));
 const HiringView              = lazy(() => import('./HiringView.jsx'));
 const ReviewerPanel           = lazy(() => import('./ReviewerPanel.jsx'));
@@ -103,10 +104,7 @@ function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, isHiringViewe
     base.push({ id: 'settings', label: 'Settings', icon: Settings });
   }
 
-  // Insights — admin and HR reviewer (Bashaier) only — full reports + exports
-  if (isAdmin || isHrReviewer) {
-    base.push({ id: 'insights', label: 'Insights', icon: BarChart3 });
-  }
+  // Insights tab removed 2026-05-29 — superseded by the Leave Report tab.
 
   // Logbook — private manual-entry workspace. Hard-gated by PSN to
   // Bashaier (H94830) and Nadeem (H94152) only. Bashaier uses this
@@ -1373,17 +1371,11 @@ export default function AppShell({ session, me, onRefreshMe }) {
             onMigrationsChanged={refreshMigrationCount}
           />
         )}
-        {tab === 'insights' && (isAdmin || isHrReviewer) && (
-          <InsightsView
-            me={me}
-            employees={employees}
-            leaveTypes={leaveTypes}
-            requests={requests}
-            balances={balances}
-            permissions={permissions}
-            empMap={empMap}
-          />
-        )}
+        {/* Insights tab removed 2026-05-29 per Nadeem — its Leave +
+            Permissions views are now covered by the Leave Report tab,
+            and the reviewer-turnaround analytics was dropped as not
+            needed. InsightsView.jsx is kept on disk (unrouted) so it
+            can be re-enabled if ever wanted. */}
         {tab === 'diagnostics' && isAdmin && (
           <ConnectivityTest />
         )}
