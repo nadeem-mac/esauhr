@@ -453,8 +453,13 @@ export default function LeaveReport({
           : (showCode ? esc(codeFor(seg.typeId)) : '');
         return `<td class="cell ${day.weekend ? 'we' : ''} ${day.today ? 'today' : ''}"><div class="${cls}" style="background:${tintFor(seg.typeId)}">${inner}</div></td>`;
       }).join('');
+      // Shrink the name font just enough that the full name fits the
+      // column on one line (no ellipsis). Nadeem 2026-05-29: 'names
+      // should appear in full, you can shrink to fit'. ~0.52 char-width
+      // ratio for Calibri caps; clamp 5–9px.
+      const nf = Math.max(5, Math.min(9, Math.floor(140 / (Math.max(1, (staff.name || '').length) * 0.52))));
       return `<tr>
-        <td class="c-nm">${esc(staff.name)}</td>
+        <td class="c-nm" style="font-size:${nf}px">${esc(staff.name)}</td>
         <td class="c-id">${esc(staff.psn)}</td>
         <td class="c-dp">${esc(staff.dept)}</td>
         <td class="c-lc">${esc(staff.loc)}</td>
@@ -481,8 +486,7 @@ export default function LeaveReport({
     const rowH = Math.max(8, Math.min(24, Math.floor(ROW_BUDGET / Math.max(1, n))));
     const barH = Math.max(7, rowH - 4);
     const fontBase = rowH < 12 ? 7 : 8;
-    const nameFont = rowH < 11 ? 8 : 9;
-    const dayW = 25;   // 31×25 + ~252px staff cols ≈ A4 landscape width
+    const dayW = 24;   // 31×24 + ~266px staff cols ≈ A4 landscape width
 
     const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
 <title>Leave Calendar — ${esc(periodLabel)}</title>
@@ -501,12 +505,12 @@ export default function LeaveReport({
   tr { page-break-inside:avoid; page-break-after:auto; }
   thead { display:table-header-group; }
   th, td { border:1px solid #ECECEB; }
-  th.c-nm,td.c-nm { width:120px; text-align:left; }
-  th.c-id,td.c-id { width:48px; text-align:left; }
-  th.c-dp,td.c-dp { width:42px; text-align:left; }
-  th.c-lc,td.c-lc { width:42px; text-align:left; }
+  th.c-nm,td.c-nm { width:140px; text-align:left; }
+  th.c-id,td.c-id { width:46px; text-align:left; }
+  th.c-dp,td.c-dp { width:40px; text-align:left; }
+  th.c-lc,td.c-lc { width:40px; text-align:left; }
   th.hd { background:#0F4C2A; color:#fff; font-size:8px; padding:3px 6px; text-align:left; text-transform:uppercase; }
-  td.c-nm { font-weight:600; font-size:${nameFont}px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding:0 6px; }
+  td.c-nm { font-weight:600; white-space:nowrap; padding:0 6px; }
   td.c-id,td.c-dp,td.c-lc { color:#555; white-space:nowrap; padding:0 6px; }
   th.day { width:${dayW}px; padding:1px 0; text-align:center; background:#FAFAF9; }
   th.day .dw { font-size:7px; color:#999; text-transform:uppercase; line-height:1; }
@@ -812,7 +816,10 @@ export default function LeaveReport({
                   <tr key={staff.psn} style={{ borderTop: '1px solid #F1F1F0' }}>
                     <td className="sticky left-0 z-10 bg-white px-2 py-1"
                         style={{ minWidth: 170, maxWidth: 170, boxShadow: '2px 0 0 #E5E7EB' }}>
-                      <div style={{ fontSize: 11, fontWeight: 600, color: '#1F1B16', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{staff.name}</div>
+                      <div style={{
+                        fontWeight: 600, color: '#1F1B16', whiteSpace: 'nowrap',
+                        fontSize: Math.max(8, Math.min(11, Math.floor(160 / (Math.max(1, (staff.name || '').length) * 0.52)))),
+                      }}>{staff.name}</div>
                       <div style={{ fontSize: 9, color: '#777' }}>{staff.psn} · {staff.dept} · {staff.loc}</div>
                     </td>
                     {days.map(day => {
