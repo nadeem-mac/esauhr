@@ -468,53 +468,62 @@ export default function LeaveReport({
     ].map(([id, lbl]) =>
       `<span class="lg"><span class="sw" style="background:${tintFor(id)}">${codeFor(id)}</span>${lbl}</span>`).join('');
 
-    // Relaxed sizing that fills one A4 landscape page. Row height fills
-    // the vertical space for the staff count (capped so few-staff months
-    // don't look stretched), day columns widened to fill the page width.
+    // ── One-page guarantee ──────────────────────────────────────────
+    //  A4 landscape usable height ≈ 720px at 96dpi (6mm margins).
+    //  Reserve ~170px for chrome (squeezed header + legend + table head
+    //  + density row + footer). The remaining ~550px is divided across
+    //  the staff rows, so N × rowH can never exceed the budget → the
+    //  table always fits one page. Nadeem 2026-05-29: 'content will only
+    //  fit in a4 page … does not go in another page, u can squeeze
+    //  header'.
     const n = calendarStaff.length;
-    const rowH = Math.max(11, Math.min(22, Math.floor(540 / Math.max(1, n))));
-    const barH = Math.max(8, rowH - 5);
-    const fontBase = rowH < 13 ? 7 : 8;
-    const dayW = 25;   // 31 days × 25 + ~250px staff cols ≈ A4 landscape width
+    const ROW_BUDGET = 550;
+    const rowH = Math.max(8, Math.min(24, Math.floor(ROW_BUDGET / Math.max(1, n))));
+    const barH = Math.max(7, rowH - 4);
+    const fontBase = rowH < 12 ? 7 : 8;
+    const nameFont = rowH < 11 ? 8 : 9;
+    const dayW = 25;   // 31×25 + ~252px staff cols ≈ A4 landscape width
 
     const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
 <title>Leave Calendar — ${esc(periodLabel)}</title>
 <style>
-  @page { size: A4 landscape; margin: 8mm; }
+  @page { size: A4 landscape; margin: 6mm; }
   * { box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-  body { font-family:'Calibri','Segoe UI',sans-serif; color:#1F1B16; font-size:${fontBase}px; margin:0; padding:14px; }
-  .report-header { border-bottom:2px solid #0F4C2A; padding-bottom:6px; margin-bottom:6px; }
-  .kicker { font-size:8px; letter-spacing:.3em; color:#0F4C2A; font-weight:700; text-transform:uppercase; }
-  h1 { font-size:16px; margin:2px 0 1px; color:#0A0A0A; }
-  .sub { font-size:9px; color:#555; }
-  .legend { font-size:9px; color:#444; margin:8px 0; display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; }
-  .lg { display:inline-flex; align-items:center; gap:4px; border:1px solid #E5E7EB; border-radius:4px; padding:2px 7px 2px 4px; }
-  .sw { display:inline-flex; align-items:center; justify-content:center; width:14px; height:14px; border-radius:3px; color:#fff; font-size:9px; font-weight:700; border:1px solid rgba(0,0,0,.18); }
-  table { border-collapse:collapse; width:100%; table-layout:fixed; }
+  body { font-family:'Calibri','Segoe UI',sans-serif; color:#1F1B16; font-size:${fontBase}px; margin:0; padding:8px; }
+  .report-header { border-bottom:1.5px solid #0F4C2A; padding-bottom:3px; margin-bottom:3px; }
+  .kicker { font-size:7px; letter-spacing:.25em; color:#0F4C2A; font-weight:700; text-transform:uppercase; }
+  h1 { font-size:14px; margin:1px 0 0; color:#0A0A0A; }
+  .sub { font-size:8px; color:#555; }
+  .legend { font-size:8px; color:#444; margin:4px 0; display:flex; flex-wrap:wrap; gap:3px 6px; align-items:center; }
+  .lg { display:inline-flex; align-items:center; gap:3px; border:1px solid #E5E7EB; border-radius:3px; padding:1px 5px 1px 3px; }
+  .sw { display:inline-flex; align-items:center; justify-content:center; width:12px; height:12px; border-radius:2px; color:#fff; font-size:8px; font-weight:700; border:1px solid rgba(0,0,0,.18); }
+  table { border-collapse:collapse; width:100%; table-layout:fixed; page-break-inside:auto; }
+  tr { page-break-inside:avoid; page-break-after:auto; }
+  thead { display:table-header-group; }
   th, td { border:1px solid #ECECEB; }
   th.c-nm,td.c-nm { width:120px; text-align:left; }
   th.c-id,td.c-id { width:48px; text-align:left; }
   th.c-dp,td.c-dp { width:42px; text-align:left; }
   th.c-lc,td.c-lc { width:42px; text-align:left; }
-  th.hd { background:#0F4C2A; color:#fff; font-size:8px; padding:4px 6px; text-align:left; text-transform:uppercase; }
-  td.c-nm { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding:0 6px; }
+  th.hd { background:#0F4C2A; color:#fff; font-size:8px; padding:3px 6px; text-align:left; text-transform:uppercase; }
+  td.c-nm { font-weight:600; font-size:${nameFont}px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding:0 6px; }
   td.c-id,td.c-dp,td.c-lc { color:#555; white-space:nowrap; padding:0 6px; }
-  th.day { width:${dayW}px; padding:2px 0; text-align:center; background:#FAFAF9; }
+  th.day { width:${dayW}px; padding:1px 0; text-align:center; background:#FAFAF9; }
   th.day .dw { font-size:7px; color:#999; text-transform:uppercase; line-height:1; }
-  th.day .dn { font-size:9px; font-weight:700; color:#0A0A0A; line-height:1.2; }
+  th.day .dn { font-size:9px; font-weight:700; color:#0A0A0A; line-height:1.15; }
   th.day.we, td.cell.we { background:#F3F4F6; }
   th.day.today { background:#0F4C2A; } th.day.today .dw, th.day.today .dn { color:#fff; }
   td.cell { width:${dayW}px; height:${rowH}px; padding:0; }
   tr { height:${rowH}px; }
-  .bar { height:${barH}px; margin:${Math.round((rowH-barH)/2)}px 0; opacity:.95; display:flex; align-items:center; justify-content:center; color:#fff; font-size:${Math.max(6, barH - 3)}px; font-weight:700; }
+  .bar { height:${barH}px; margin:${Math.max(1, Math.round((rowH-barH)/2))}px 0; opacity:.95; display:flex; align-items:center; justify-content:center; color:#fff; font-size:${Math.max(6, barH - 3)}px; font-weight:700; }
   .bar.bs { border-radius:${Math.round(barH/2)}px 0 0 ${Math.round(barH/2)}px; margin-left:3px; }
   .bar.be { border-radius:0 ${Math.round(barH/2)}px ${Math.round(barH/2)}px 0; margin-right:3px; }
   .bar.bs.be { border-radius:${Math.round(barH/2)}px; }
   .bar.half { width:50%; }
-  .dens-row td { border-top:2px solid #D1D5DB; height:18px; }
+  .dens-row td { border-top:2px solid #D1D5DB; height:16px; }
   .no-print {} @media print { .no-print { display:none !important; } body { padding:0; } }
   .pbtn { background:#0F4C2A; color:#fff; padding:6px 14px; border:0; border-radius:4px; cursor:pointer; font-size:12px; font-weight:600; }
-  .footer { margin-top:8px; padding-top:5px; border-top:1px solid #D1D5DB; font-size:8px; color:#666; display:flex; justify-content:space-between; }
+  .footer { margin-top:4px; padding-top:3px; border-top:1px solid #D1D5DB; font-size:8px; color:#666; display:flex; justify-content:space-between; }
 </style></head><body>
   <div class="no-print" style="margin-bottom:8px"><button class="pbtn" onclick="window.print()">Print / Save as PDF</button></div>
   <header class="report-header">
