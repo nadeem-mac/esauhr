@@ -1590,6 +1590,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // right under the Upload Time Card button when open. Closed by
   // default so the page chrome stays clean for the daily upload flow.
   const [shiftReportOpen, setShiftReportOpen] = useState(false);
+  const [hqExportOpen, setHqExportOpen] = useState(false);
   // Pending-EOD-review tracker. Populated from attendance_review_log on
   // mount and after each file-load mode-log. Each entry: { review_date,
   // morning_at, eod_at }. eod_at is null by definition for everything
@@ -6215,6 +6216,30 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             >
               📄 Export report
             </button>
+            {/* HQ Report — special-styled button (gradient + glow) for
+                the Evergreen HQ annual attendance workbook. Last in the
+                row, Bashaier + Nadeem only. Toggles the export card
+                (with its fiscal-year selector) open. */}
+            {['H94830', 'H94152'].includes(me?.id) && (
+              <button
+                type="button"
+                onClick={() => setHqExportOpen(v => !v)}
+                className="text-[11px] px-3.5 py-1.5 rounded-full flex items-center gap-1.5"
+                style={{
+                  background: hqExportOpen
+                    ? 'linear-gradient(135deg, #0F4C2A 0%, #14663a 60%, #B8860B 130%)'
+                    : 'linear-gradient(135deg, #0F4C2A 0%, #1a7a47 55%, #C8A024 120%)',
+                  color: '#FFFFFF',
+                  border: '1px solid rgba(200,160,36,0.55)',
+                  fontWeight: 700,
+                  letterSpacing: '0.02em',
+                  boxShadow: '0 1px 2px rgba(15,76,42,0.35), inset 0 1px 0 rgba(255,255,255,0.18)',
+                }}
+                title="Evergreen HQ annual attendance summary (Sep→Aug), working days only, in HQ's bilingual format. Bashaier & Nadeem only."
+              >
+                <span style={{ filter: 'saturate(1.3)' }}>✦</span> HQ Report{hqExportOpen ? '  ·  hide' : ''}
+              </button>
+            )}
         </div>
         </AttendanceErrorBoundary>
         {shiftReportOpen && (
@@ -6228,11 +6253,9 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
 
         {/* HQ annual attendance export — Evergreen Taiwan HQ summary
             workbook (Sep→Aug). Restricted to Bashaier (H94830) and
-            Nadeem (H94152) only — per Nadeem 2026-05-29, this report is
-            theirs alone, and it lives under Attendance (not the
-            dashboard). The Attendance feature is already allowlisted to
-            these two PSNs; the explicit gate here is defense-in-depth. */}
-        {['H94830', 'H94152'].includes(me?.id) && (
+            Nadeem (H94152), toggled by the special HQ Report button
+            above. Working days only; HQ bilingual format. */}
+        {hqExportOpen && ['H94830', 'H94152'].includes(me?.id) && (
           <AttendanceErrorBoundary label="HQ attendance export">
             <HQAttendanceExportCard me={me} employees={employees} />
           </AttendanceErrorBoundary>

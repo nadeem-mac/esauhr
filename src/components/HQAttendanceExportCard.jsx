@@ -357,6 +357,28 @@ export default function HQAttendanceExportCard({ me, employees = [] }) {
         ]);
       }
 
+      // ── Bilingual footer notes (English + 中文) ─────────────────────
+      //  Nadeem 2026-05-29: after the staff rows, spell out exactly what
+      //  the report shows and what it deliberately excludes — in English
+      //  and Chinese for HQ.
+      const noteLines = [
+        '',
+        ['NOTES / 附註'],
+        [`Reporting period / 統計期間:  01 Sep ${fromYear} – 31 Aug ${fromYear + 1} (${yearLabel}).`],
+        ['This report summarises each employee\u2019s attendance: personal leave, sick leave (with / without pay), '
+          + 'annual leave, lateness, early leave, forgotten sign-on / sign-off, and unapproved absence.'],
+        ['本報表彙總每位員工的出勤狀況：事假、病假（有薪／無薪）、特休、遲到、早退、忘刷上／下班卡，以及曠職。'],
+        ['Counts WORKING DAYS ONLY. The following are excluded and NOT counted: '
+          + 'the whole month of Ramadan, weekends (Friday & Saturday), and public holidays.'],
+        ['僅計算「工作日」。以下不列入計算：整個齋戒月（Ramadan）、週末（週五與週六）、以及國定假日。'],
+        [`Leave hours are derived from working days × ${C.workdayHours}h. Times = number of occurrences; `
+          + 'Minutes = total minutes; Days = total working days.'],
+        [`請假時數以工作日 × ${C.workdayHours} 小時計算。次數＝發生次數；分鐘＝總分鐘數；天數＝工作日總天數。`],
+        [`Prepared by / 製表人:  ${me?.name || 'ESAU HR'}  ·  ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`],
+      ];
+      const firstNoteRow = aoa.length;     // 0-based row index where notes start
+      for (const ln of noteLines) aoa.push(ln);
+
       // ── Style + write ──────────────────────────────────────────────
       const ws = XLSX.utils.aoa_to_sheet(aoa);
       const GREEN = '0F4C2A';
@@ -369,6 +391,25 @@ export default function HQAttendanceExportCard({ me, employees = [] }) {
           alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
         };
       }
+      // Style the footer-note rows: merge across all columns, small grey
+      // italic text, the NOTES header in brand green bold.
+      const lastCol = HQ_HEADERS.length - 1;
+      ws['!merges'] = ws['!merges'] || [];
+      for (let i = 0; i < noteLines.length; i++) {
+        const R = firstNoteRow + i;
+        if (!noteLines[i].length) continue;        // blank spacer row
+        ws['!merges'].push({ s: { r: R, c: 0 }, e: { r: R, c: lastCol } });
+        const addr = XLSX.utils.encode_cell({ r: R, c: 0 });
+        const isHeader = i === 1;                  // 'NOTES / 附註'
+        if (ws[addr]) ws[addr].s = {
+          font: {
+            bold: isHeader, italic: !isHeader, sz: isHeader ? 10 : 9,
+            color: { rgb: isHeader ? GREEN : '444444' },
+          },
+          alignment: { horizontal: 'left', vertical: 'center', wrapText: true },
+        };
+      }
+
       ws['!cols'] = HQ_HEADERS.map((_, i) => ({ wch: i === 1 ? 34 : i === 3 ? 12 : 11 }));
       ws['!rows'] = [{ hpt: 56 }];
 
