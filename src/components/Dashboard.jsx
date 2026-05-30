@@ -8,6 +8,7 @@ import { salutationFor } from '../lib/salutations.js';
 import BashaierTasksCard from './BashaierTasksCard.jsx';
 import PendingShiftApprovalsCard from './PendingShiftApprovalsCard.jsx';
 import HrShiftMonthCard from './HrShiftMonthCard.jsx';
+import HQAttendanceExportCard from './HQAttendanceExportCard.jsx';
 import HrLandingCard from './HrLandingCard.jsx';
 import QuickActionsCard from './QuickActionsCard.jsx';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
@@ -755,6 +756,13 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           for monitoring; managers go to the Shifts tab to assign. */}
       {(me?.is_admin || me?.is_hr_reviewer) && (
         <HrShiftMonthCard me={me} employees={employees} />
+      )}
+
+      {/* HQ Attendance Export — annual attendance summary workbook for
+          Evergreen Taiwan HQ (Sep→Aug fiscal year), in HQ's bilingual
+          column layout. Admin / HR reviewer only. */}
+      {(me?.is_admin || me?.is_hr_reviewer) && (
+        <HQAttendanceExportCard me={me} employees={employees} />
       )}
 
       {/* PIN Requests — moved to modal triggered by the PIN REQUESTS badge.
