@@ -32,6 +32,7 @@ const CONFIG = {
     attendanceDaily: 'attendance_daily',   // per-day punch + status rows
     leaveRequests:   'leave_requests',      // formal leave (day-based)
     employees:       'employees',           // roster + name/dept/location
+    publicHolidays:  'public_holidays',     // official holiday dates
   },
 
   // ── attendance_daily columns ──────────────────────────────────────
@@ -96,23 +97,48 @@ const CONFIG = {
   //  same factor. A half-day counts as 0.5 day. Adjust workdayHours if
   //  HQ expects a different standard day.
   workdayHours: 8,
+
+  // ── Working-days-only filter ──────────────────────────────────────
+  //  Nadeem 2026-05-29: the report must count ONLY working days — it
+  //  must NOT count the whole month of Ramadan, weekends, or public
+  //  holidays. Every counter (lateness, early-leave, absence, missed
+  //  punches, and leave day/hour totals) is computed over working days
+  //  only. Toggle individual exclusions here.
+  exclude: {
+    weekends: true,            // KSA weekend = Friday + Saturday
+    publicHolidays: true,      // dates in the public_holidays table
+    ramadan: true,             // the entire Hijri month of Ramadan
+  },
+  weekendWeekdays: [5, 6],     // JS getDay(): 5=Fri, 6=Sat
+  holidayDateColumn: 'date',   // public_holidays date column
+  ramadanHijriMonth: 9,        // Ramadan = 9th month of the Hijri year
 };
 
 // ── helpers ─────────────────────────────────────────────────────────
 const isApprovedLeave = (r) =>
   (r[CONFIG.leave.stage] || r[CONFIG.leave.status]) === CONFIG.leave.approvedValue;
 
-const leaveDays = (r) => {
-  const d = Number(r[CONFIG.leave.days] || 0);
-  if (d > 0) return d;
-  // fallback: inclusive calendar-day span
-  const a = r[CONFIG.leave.startDate], b = r[CONFIG.leave.endDate];
-  if (!a || !b) return 0;
-  const span = Math.round((new Date(b) - new Date(a)) / 86400000) + 1;
-  return r[CONFIG.leave.isHalfDay] ? 0.5 : Math.max(1, span);
-};
-
 const round1 = (n) => Math.round(n * 10) / 10;
+
+// Hijri month for a Gregorian date via the Umm al-Qura calendar (the
+// official KSA calendar) — used to detect Ramadan. Returns 1–12 or null
+// if the runtime lacks the islamic-umalqura calendar.
+function hijriMonth(dateStr) {
+  try {
+    return Number(new Intl.DateTimeFormat('en-u-ca-islamic-umalqura',
+      { month: 'numeric', timeZone: 'UTC' }).format(new Date(dateStr + 'T12:00:00Z')));
+  } catch { return null; }
+}
+
+// Iterate each YYYY-MM-DD between two dates (inclusive).
+function eachDay(fromStr, toStr, fn) {
+  const d = new Date(fromStr + 'T00:00:00Z');
+  const end = new Date(toStr + 'T00:00:00Z');
+  while (d <= end) {
+    fn(d.toISOString().slice(0, 10), d.getUTCDay());
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+}
 
 // HQ column layout — byte-exact bilingual headers copied verbatim from
 // HQ's own "ESAU HQ REPORT" template, so the workbook re-imports cleanly
@@ -187,6 +213,34 @@ export default function HQAttendanceExportCard({ me, employees = [] }) {
         { timeoutMs: 20000 }
       );
 
+      // ── Pull public holidays for the fiscal year ───────────────────
+      let holidays = [];
+      if (C.exclude.publicHolidays) {
+        holidays = await directGet(
+          C.tables.publicHolidays,
+          `select=${C.holidayDateColumn}`
+          + `&${C.holidayDateColumn}=gte.${periodFrom}`
+          + `&${C.holidayDateColumn}=lte.${periodTo}`,
+          { timeoutMs: 15000 }
+        ) || [];
+      }
+      const holidaySet = new Set(
+        holidays.map(h => String(h[C.holidayDateColumn]).slice(0, 10))
+      );
+
+      // ── Non-working days for the whole fiscal year ─────────────────
+      //  Working days only: exclude weekends (Fri+Sat), public holidays,
+      //  and the entire Hijri month of Ramadan. Built once as a Set so
+      //  every counter can do an O(1) membership test.
+      const nonWorking = new Set();
+      eachDay(periodFrom, periodTo, (iso, dow) => {
+        const isWeekend = C.exclude.weekends && C.weekendWeekdays.includes(dow);
+        const isHoliday = C.exclude.publicHolidays && holidaySet.has(iso);
+        const isRamadan = C.exclude.ramadan && hijriMonth(iso) === C.ramadanHijriMonth;
+        if (isWeekend || isHoliday || isRamadan) nonWorking.add(iso);
+      });
+      const isWorkingDay = (iso) => !nonWorking.has(String(iso).slice(0, 10));
+
       // ── Aggregate per employee ─────────────────────────────────────
       const agg = {}; // psn -> counters
       const blank = () => ({
@@ -201,10 +255,11 @@ export default function HQAttendanceExportCard({ me, employees = [] }) {
       });
       const get = (psn) => (agg[psn] = agg[psn] || blank());
 
-      // Attendance-derived counters
+      // Attendance-derived counters (working days only)
       for (const r of (att || [])) {
         const psn = r[C.attendance.employeeId];
         if (!psn) continue;
+        if (!isWorkingDay(r[C.attendance.date])) continue;   // skip Ramadan/weekend/holiday
         const a = get(psn);
         const st = r[C.attendance.status];
         const lateMin  = Number(r[C.attendance.lateMinutes] || 0);
@@ -230,19 +285,33 @@ export default function HQAttendanceExportCard({ me, employees = [] }) {
         }
       }
 
-      // Leave-derived counters
+      // Leave-derived counters (working days only, clamped to the FY)
       const catOf = (typeId) => {
         for (const [cat, ids] of Object.entries(C.leaveCategory)) {
           if (ids.includes(typeId)) return cat;
         }
         return null;
       };
+      // Count the working days of a leave that fall inside the fiscal
+      // year — excludes Ramadan/weekends/holidays. A half-day single-day
+      // leave counts 0.5 (only if that day is a working day).
+      const workingLeaveDays = (r) => {
+        const s = r[C.leave.startDate], e = r[C.leave.endDate];
+        if (!s || !e) return 0;
+        const from = s < periodFrom ? periodFrom : s;
+        const to   = e > periodTo   ? periodTo   : e;
+        let n = 0;
+        eachDay(from, to, (iso) => { if (isWorkingDay(iso)) n += 1; });
+        if (r[C.leave.isHalfDay] && s === e && n === 1) n = 0.5;
+        return n;
+      };
       for (const r of (lv || [])) {
         if (!isApprovedLeave(r)) continue;
         const psn = r[C.leave.employeeId];
         if (!psn) continue;
+        const days = workingLeaveDays(r);
+        if (days <= 0) continue;                // leave fell entirely on non-working days
         const a = get(psn);
-        const days = leaveDays(r);
         const cat = catOf(r[C.leave.typeId]);
         if (cat === 'personal')   { a.personalTimes += 1; a.personalHours += days * C.workdayHours; }
         else if (cat === 'sickPaid')   { a.sickPaidTimes += 1; a.sickPaidHours += days * C.workdayHours; }
@@ -250,23 +319,28 @@ export default function HQAttendanceExportCard({ me, employees = [] }) {
         else if (cat === 'sickUnpaid') { a.sickUnpaidTimes += 1; a.sickUnpaidHours += days * C.workdayHours; }
       }
 
-      // ── Build rows (one per employee that has any activity OR exists
-      //    in the roster). We include every active employee so HQ gets a
-      //    complete sheet; zero-activity rows are all zeros. ───────────
+      // ── Build rows, SORTED BY COMPANY ──────────────────────────────
+      //  Nadeem 2026-05-29: report sorted by Company (location-dept,
+      //  e.g. DMM-BIZ). Every rostered employee gets a row so HQ gets a
+      //  complete sheet; zero-activity rows are all zeros.
       const psnPrefix = C.employee.psnPrefix;
       const stripPrefix = (id) => (psnPrefix && String(id).startsWith(psnPrefix))
         ? String(id).slice(psnPrefix.length) : String(id);
+      const companyOf = (e) => [e?.[C.employee.location], e?.[C.employee.department]]
+        .filter(Boolean).join('-');
 
-      const rowsFor = employees.length
-        ? employees.map(e => e[C.employee.id])
-        : Object.keys(agg);
+      const rowEmps = (employees.length
+        ? [...employees]
+        : Object.keys(agg).map(psn => empById[psn] || { [C.employee.id]: psn }));
+      rowEmps.sort((a, b) =>
+        companyOf(a).localeCompare(companyOf(b)) ||
+        String(a[C.employee.name] || '').localeCompare(String(b[C.employee.name] || '')));
 
       const aoa = [HQ_HEADERS];
-      for (const psn of rowsFor) {
-        const e = empById[psn] || {};
+      for (const e of rowEmps) {
+        const psn = e[C.employee.id];
         const a = agg[psn] || blank();
-        const company = [e[C.employee.location], e[C.employee.department]]
-          .filter(Boolean).join('-');
+        const company = companyOf(e);
         aoa.push([
           yearLabel,
           e[C.employee.name] || psn,
@@ -349,8 +423,8 @@ export default function HQAttendanceExportCard({ me, employees = [] }) {
             <p className="text-xs mt-2" style={{ color: '#B83A2E' }}>{err}</p>
           )}
           <p className="text-[11px] mt-2" style={{ color: '#1F1B16' }}>
-            Period: {periodFrom} → {periodTo}. Leave hours = days × {CONFIG.workdayHours}.
-            Personal = emergency leave; Sick w/ pay = sick; Annual = annual; Sick w/o pay = unpaid.
+            Period: {periodFrom} → {periodTo}. Working days only — excludes Ramadan,
+            weekends (Fri/Sat) and public holidays. Sorted by Company. Leave hours = days × {CONFIG.workdayHours}.
           </p>
         </div>
       </div>
