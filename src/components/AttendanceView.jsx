@@ -26,6 +26,7 @@ import SilentAbsencesCard from './SilentAbsencesCard.jsx';
 import ShiftStaffAttendanceReportCard from './ShiftStaffAttendanceReportCard.jsx';
 import ShiftComplianceCard from './ShiftComplianceCard.jsx';
 import HolidayShiftDefaultersCard from './HolidayShiftDefaultersCard.jsx';
+import HQAttendanceExportCard from './HQAttendanceExportCard.jsx';
 
 // ─── Error Boundary for AttendanceView sections ───────────────────────
 // Without this, a render-time exception anywhere in the tree under
@@ -6222,6 +6223,18 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
               employees={employees}
               me={me}
             />
+          </AttendanceErrorBoundary>
+        )}
+
+        {/* HQ annual attendance export — Evergreen Taiwan HQ summary
+            workbook (Sep→Aug). Restricted to Bashaier (H94830) and
+            Nadeem (H94152) only — per Nadeem 2026-05-29, this report is
+            theirs alone, and it lives under Attendance (not the
+            dashboard). The Attendance feature is already allowlisted to
+            these two PSNs; the explicit gate here is defense-in-depth. */}
+        {['H94830', 'H94152'].includes(me?.id) && (
+          <AttendanceErrorBoundary label="HQ attendance export">
+            <HQAttendanceExportCard me={me} employees={employees} />
           </AttendanceErrorBoundary>
         )}
 
