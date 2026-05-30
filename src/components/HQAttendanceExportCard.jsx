@@ -114,28 +114,30 @@ const leaveDays = (r) => {
 
 const round1 = (n) => Math.round(n * 10) / 10;
 
-// HQ column layout — exact bilingual headers, in order.
+// HQ column layout — byte-exact bilingual headers copied verbatim from
+// HQ's own "ESAU HQ REPORT" template, so the workbook re-imports cleanly
+// on their side. Order is fixed; do not reorder.
 const HQ_HEADERS = [
-  '勤惰所屬年度\nYear',
-  'name',
-  '人事代號\nPSN No.',
-  '公司代碼\nCompany',
-  '事假次數\n整數位3碼\nPersonal Leave (Times)',
-  '事假時數\n整數位4碼 小數位1碼\nPersonal Leave (Hours)',
-  '病假次數\n整數位3碼\nSick Leave w/ Pay (Times)',
-  '病假時數\n整數位4碼 小數位1碼\nSick Leave w/ Pay (Hours)',
-  '遲到次數\n整數位3碼\nLateness (Times)',
-  '遲到分數\n整數位4碼\nLateness (Minutes)',
-  '早退次數\n整數位3碼\nEarly Leave (Times)',
-  '早退分數\n整數位3碼\nEarly Leave (Minutes)',
-  '忘刷上班卡次數\n整數位3碼\nForget to sign-on (Times)',
-  '忘刷下班卡次數\n整數位3碼\nForget to sign-off (Times)',
-  '曠職次數\n整數位3碼\nAbsence w/o Approval (Times)',
-  '曠職時數\n整數位3碼 小數位1碼\nAbsence w/o Approval (Hours)',
-  '特休次數\n整數位3碼\nAnnual Leave (Times)',
-  '特休天數\n整數位2碼 小數位1碼\nAnnual Leave (Days)',
-  '無給住院病假次數\n整數位3碼\nSick Leave w/o Pay (Times)',
-  '無給住院病假時數\n整數位4碼 小數位1碼\nSick Leave w/o Pay (Hours)',
+  "勤惰所屬年度 Year",
+  "name",
+  "人事代號 \nPSN No.",
+  "公司代碼 Company",
+  "事假次數 整數位3碼  Personal Leave (Times)",
+  "事假時數\n整數位4碼\n小數位1碼 Personal Leave\n(Hours)",
+  "病假次數\n整數位3碼 Sick Leave w/ Pay\n(Times)",
+  "病假時數\n整數位4碼\n小數位1碼 Sick Leave w/ Pay\n(Hours)",
+  "遲到次數\n整數位3碼 Lateness\n(Times)",
+  "遲到分數\n整數位4碼 Lateness\n(Minutes)",
+  "早退次數\n整數位3碼\nEarly Leave\n(Times) ",
+  "早退分數\n整數位3碼Early Leave\n(Minutes)",
+  "忘刷上班卡次數\n整數位3碼\nForget to sign-on\n(Times) ",
+  "忘刷下班卡次數\n整數位3碼\nForget to sign-off\n(Times) ",
+  "曠職次數\n整數位3碼 Absence w/o Approval\n(Times) ",
+  "曠職時數\n整數位3碼\n小數位1碼 / Absence w/o Approval\n(Hours)",
+  "特休次數\n整數位3碼 Annual Leave\n(Times) ",
+  "特休天數\n整數位2碼\n小數位1碼Annual Leave\n(Days)",
+  "無給住院病假次數\n整數位3碼\nSick Leave w/o Pay\n(Times)",
+  "無給住院病假時數\n整數位4碼\n小數位1碼\nSick Leave w/o Pay\n(Hours)",
 ];
 
 export default function HQAttendanceExportCard({ me, employees = [] }) {
