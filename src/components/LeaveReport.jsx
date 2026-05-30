@@ -414,7 +414,7 @@ export default function LeaveReport({
   <h2>Per-staff summary (${rollup.length})</h2>
   <table><thead><tr><th>Staff ID</th><th>Name</th><th>Dept</th><th>Loc</th><th style="text-align:right">Leave Days</th><th style="text-align:right">Leave Reqs</th><th style="text-align:right">Permissions</th></tr></thead>
     <tbody>${rollupTbody || '<tr><td colspan="7" style="padding:8px;color:#999;font-style:italic">No activity this month.</td></tr>'}</tbody></table>
-  <div class="footer"><span>Leave &amp; Availability · ${esc(periodLabel)} · ESAU HR portal</span><span>Approved leave overlapping the month · calendar days</span></div>
+  <div class="footer"><span>Leave &amp; Availability · ${esc(periodLabel)} · Report prepared by <strong style="color:#DC2626">${esc(me?.name || 'ESAU HR')}</strong></span><span>Approved leave overlapping the month · calendar days</span></div>
 </body></html>`;
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -549,7 +549,7 @@ export default function LeaveReport({
       </tr>
     </tfoot>
   </table>
-  <div class="footer"><span>Leave Calendar · ${esc(periodLabel)} · ESAU HR portal</span><span>Approved leave overlapping the month · ${calendarStaff.length} staff</span></div>
+  <div class="footer"><span>Leave Calendar · ${esc(periodLabel)} · Report prepared by <strong style="color:#DC2626">${esc(me?.name || 'ESAU HR')}</strong></span><span>Approved leave overlapping the month · ${calendarStaff.length} staff</span></div>
 </body></html>`;
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
