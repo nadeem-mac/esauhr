@@ -453,11 +453,12 @@ export default function LeaveReport({
           : (showCode ? esc(codeFor(seg.typeId)) : '');
         return `<td class="cell ${day.weekend ? 'we' : ''} ${day.today ? 'today' : ''}"><div class="${cls}" style="background:${tintFor(seg.typeId)}">${inner}</div></td>`;
       }).join('');
-      // Shrink the name font just enough that the full name fits the
-      // column on one line (no ellipsis). Nadeem 2026-05-29: 'names
-      // should appear in full, you can shrink to fit'. ~0.52 char-width
-      // ratio for Calibri caps; clamp 5–9px.
-      const nf = Math.max(5, Math.min(9, Math.floor(140 / (Math.max(1, (staff.name || '').length) * 0.52))));
+      // Conservative shrink-to-fit so the FULL name fits the column on
+      // one line without spilling into the PSN column. Usable width =
+      // 140 − 12px padding = 128px; bold Calibri caps ≈ 0.58 px/char.
+      // Nadeem 2026-05-29: names were overlapping in the printed PDF.
+      const nlen = Math.max(1, (staff.name || '').length);
+      const nf = Math.max(4, Math.min(9, Math.floor(128 / (nlen * 0.58))));
       return `<tr>
         <td class="c-nm" style="font-size:${nf}px">${esc(staff.name)}</td>
         <td class="c-id">${esc(staff.psn)}</td>
@@ -510,8 +511,8 @@ export default function LeaveReport({
   th.c-dp,td.c-dp { width:40px; text-align:left; }
   th.c-lc,td.c-lc { width:40px; text-align:left; }
   th.hd { background:#0F4C2A; color:#fff; font-size:8px; padding:3px 6px; text-align:left; text-transform:uppercase; }
-  td.c-nm { font-weight:600; white-space:nowrap; padding:0 6px; }
-  td.c-id,td.c-dp,td.c-lc { color:#555; white-space:nowrap; padding:0 6px; }
+  td.c-nm { font-weight:600; white-space:nowrap; overflow:hidden; line-height:1; padding:0 6px; }
+  td.c-id,td.c-dp,td.c-lc { color:#555; white-space:nowrap; overflow:hidden; padding:0 6px; }
   th.day { width:${dayW}px; padding:1px 0; text-align:center; background:#FAFAF9; }
   th.day .dw { font-size:7px; color:#999; text-transform:uppercase; line-height:1; }
   th.day .dn { font-size:9px; font-weight:700; color:#0A0A0A; line-height:1.15; }
@@ -818,7 +819,8 @@ export default function LeaveReport({
                         style={{ minWidth: 170, maxWidth: 170, boxShadow: '2px 0 0 #E5E7EB' }}>
                       <div style={{
                         fontWeight: 600, color: '#1F1B16', whiteSpace: 'nowrap',
-                        fontSize: Math.max(8, Math.min(11, Math.floor(160 / (Math.max(1, (staff.name || '').length) * 0.52)))),
+                        overflow: 'hidden', lineHeight: 1.1,
+                        fontSize: Math.max(5, Math.min(11, Math.floor(150 / (Math.max(1, (staff.name || '').length) * 0.58)))),
                       }}>{staff.name}</div>
                       <div style={{ fontSize: 9, color: '#777' }}>{staff.psn} · {staff.dept} · {staff.loc}</div>
                     </td>
