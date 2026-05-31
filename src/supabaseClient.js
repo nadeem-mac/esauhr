@@ -148,6 +148,31 @@ export async function directGet(table, queryString, options = {}) {
   } finally { clearTimeout(timer); }
 }
 
+// Paginating wrapper over directGet. PostgREST caps a single response at
+// 1000 rows, so any full-table / wide-range read (a month or year of
+// attendance, all leave requests, etc.) silently truncates without this.
+// Pages with limit/offset until a short page returns, accumulating all
+// rows. IMPORTANT: the caller's queryString should include a STABLE
+// `order=` (ideally with a unique tiebreaker like a date + employee_id,
+// or id) so offset paging doesn't skip/duplicate rows at page edges.
+// Do NOT put limit/offset in the caller's queryString — this adds them.
+export async function directGetAll(table, queryString, options = {}) {
+  const PAGE = options.pageSize || 1000;
+  const MAX  = options.maxRows || 100000; // hard safety stop
+  let all = [];
+  let offset = 0;
+  for (;;) {
+    const q = `${queryString}&limit=${PAGE}&offset=${offset}`;
+    const page = await directGet(table, q, options);
+    const arr = Array.isArray(page) ? page : [];
+    all = all.concat(arr);
+    if (arr.length < PAGE) break;
+    offset += PAGE;
+    if (offset >= MAX) break;
+  }
+  return all;
+}
+
 // Quick connectivity probe used by the Diagnostics screen
 // POST counterpart of directPatch — performs a direct INSERT to PostgREST.
 // Set options.upsert = true to use ON CONFLICT DO UPDATE semantics

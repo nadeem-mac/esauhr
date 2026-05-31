@@ -29,7 +29,7 @@
 // =============================================================================
 
 import { parseTimeCardXlsx } from './timeCard.js';
-import { directPost, directGet, directPatchQuery } from '../supabaseClient.js';
+import { directPost, directGet, directGetAll, directPatchQuery } from '../supabaseClient.js';
 import { addDaysIso as addDaysIsoCentral } from './dateUtils.js';
 
 // Local YYYY-MM-DD without timezone surprises.
@@ -1125,14 +1125,19 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
   const dateFilter =
     (options?.startDate ? `&attendance_date=gte.${options.startDate}` : '') +
     (options?.endDate   ? `&attendance_date=lte.${options.endDate}`   : '');
-  const existing = await directGet(
+  const existing = await directGetAll(
     'attendance_daily',
     'select=id,employee_id,attendance_date,first_punch,last_punch,status,' +
     'late_minutes,early_leave_minutes,expected_start,expected_end,punch_count,' +
     'leave_request_id,recorded_by,source' +
     sourceFilter +
     dateFilter +
-    '&order=attendance_date.asc',
+    // Stable order (date + employee_id) so offset pagination doesn't
+    // skip/duplicate rows. Was order=attendance_date.asc with a single
+    // un-paginated directGet, which capped the scan at 1000 rows —
+    // a full-table or wide-range re-eval silently ignored everything
+    // past the first 1000. Nadeem 2026-05-31.
+    '&order=attendance_date.asc,employee_id.asc',
     { timeoutMs: 45000 }
   ) || [];
 

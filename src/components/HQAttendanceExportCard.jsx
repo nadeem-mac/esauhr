@@ -18,7 +18,7 @@
 
 import React, { useState } from 'react';
 import { Download, Loader2, FileSpreadsheet } from 'lucide-react';
-import { directGet } from '../supabaseClient.js';
+import { directGet, directGetAll } from '../supabaseClient.js';
 
 // ════════════════════════════════════════════════════════════════════
 //  CONFIG — table + column names matched to the REAL Supabase schema
@@ -192,24 +192,30 @@ export default function HQAttendanceExportCard({ me, employees = [] }) {
       const XLSX = await import('xlsx-js-style');
 
       // ── Pull attendance_daily for the fiscal year ──────────────────
-      const att = await directGet(
+      //  A full year × ~60 staff is ~15k rows — far over PostgREST's
+      //  1000-row cap — so this MUST paginate or the totals would be
+      //  computed from only the first 1000 rows. Stable order required
+      //  for offset paging. Nadeem 2026-05-31.
+      const att = await directGetAll(
         C.tables.attendanceDaily,
         `select=${C.attendance.employeeId},${C.attendance.date},${C.attendance.status},`
         + `${C.attendance.firstPunch},${C.attendance.lastPunch},${C.attendance.punchCount},`
         + `${C.attendance.lateMinutes},${C.attendance.earlyLeaveMinutes}`
         + `&${C.attendance.date}=gte.${periodFrom}`
-        + `&${C.attendance.date}=lte.${periodTo}`,
+        + `&${C.attendance.date}=lte.${periodTo}`
+        + `&order=${C.attendance.date}.asc,${C.attendance.employeeId}.asc`,
         { timeoutMs: 20000 }
       );
 
       // ── Pull approved leave overlapping the fiscal year ────────────
-      const lv = await directGet(
+      const lv = await directGetAll(
         C.tables.leaveRequests,
         `select=${C.leave.employeeId},${C.leave.typeId},${C.leave.startDate},`
         + `${C.leave.endDate},${C.leave.days},${C.leave.isHalfDay},`
         + `${C.leave.stage},${C.leave.status}`
         + `&${C.leave.startDate}=lte.${periodTo}`
-        + `&${C.leave.endDate}=gte.${periodFrom}`,
+        + `&${C.leave.endDate}=gte.${periodFrom}`
+        + `&order=${C.leave.employeeId}.asc,${C.leave.startDate}.asc`,
         { timeoutMs: 20000 }
       );
 
