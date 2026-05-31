@@ -253,16 +253,46 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
 
       const aoa = [headers];
       // Track which date each output row belongs to (for fill banding),
-      // which rows deviated (red Worked Hrs), and which were late (red Late).
+      // which rows deviated (red Worked Hrs), late, early, and incomplete.
+      // rowKind drives styling: header | data | datetotal | blank | grandtotal.
       const rowDate = [null];       // header row → no date
       const rowDeviation = [false];
       const rowLate = [false];
       const rowEarly = [false];
-      // Rows where ACTUAL HRS (biometric span) fell short of the
-      // scheduled/expected shift — i.e. the staff did not complete the
-      // assigned hours. Flagged red on the ACTUAL HRS cell. Nadeem.
       const rowIncomplete = [false];
+      const rowKind = ['header'];
+
+      const r2 = (n) => Math.round((n || 0) * 100) / 100;
+
+      // Per-date accumulator → emits a DATE TOTAL row at each date
+      // boundary, spelling out the locations and departments that
+      // worked that day plus the summed hours. Nadeem 2026-05-31.
+      let acc = null;
+      const flushDate = () => {
+        if (!acc) return;
+        aoa.push([
+          'DATE TOTAL',
+          `${acc.count} staff`,
+          [...acc.depts].sort().join(', '),
+          [...acc.locs].sort().join(', '),
+          acc.date,
+          new Date(acc.date).toLocaleDateString('en-GB', { weekday: 'long' }),
+          '', '', '', '', '', '',
+          r2(acc.exp), r2(acc.assigned), r2(acc.actual),
+          acc.exp > 0 ? Math.round((acc.assigned / acc.exp) * 100) : 0,
+          '', '', '',
+        ]);
+        rowDate.push(acc.date);
+        rowDeviation.push(false); rowLate.push(false); rowEarly.push(false); rowIncomplete.push(false);
+        rowKind.push('datetotal');
+        acc = null;
+      };
+
       for (const r of sortedRows) {
+        const d = r.shift.shift_date;
+        if (acc && acc.date !== d) flushDate();      // close out previous date
+        if (!acc) acc = { date: d, count: 0, exp: 0, assigned: 0, actual: 0, depts: new Set(), locs: new Set() };
+
         const statusLabel = r.status === 'no_show' ? 'NO SHOW'
           : r.status === 'deviation' ? 'DEVIATION' : 'ON TIME';
         aoa.push([
@@ -291,15 +321,25 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
         rowLate.push(r.late_minutes > 0);
         rowEarly.push(r.early_minutes > 0);
         rowIncomplete.push(r.expected_hours > 0 && r.actual_hours < r.expected_hours);
+        rowKind.push('data');
+
+        acc.count += 1;
+        acc.exp += r.expected_hours || 0;
+        acc.assigned += r.worked_hours || 0;
+        acc.actual += r.actual_hours || 0;
+        if (r.employee?.department) acc.depts.add(r.employee.department);
+        if (r.employee?.location)   acc.locs.add(r.employee.location);
       }
-      // Blank + totals row
+      flushDate();   // close out the final date
+
+      // Blank spacer + grand total
       aoa.push([]);
-      rowDate.push(null); rowDeviation.push(false); rowLate.push(false); rowEarly.push(false); rowIncomplete.push(false);
+      rowDate.push(null); rowDeviation.push(false); rowLate.push(false); rowEarly.push(false); rowIncomplete.push(false); rowKind.push('blank');
       aoa.push([
-        'TOTAL', '', '', '', '', '', '', '', '', '', '', '',
-        summary.totalScheduled,
-        summary.totalWorked,
-        Math.round(sortedRows.reduce((s, r) => s + (r.actual_hours || 0), 0) * 100) / 100,
+        'GRAND TOTAL', `${sortedRows.length} shifts`, '', '', '', '', '', '', '', '', '', '',
+        r2(summary.totalScheduled),
+        r2(summary.totalWorked),
+        r2(sortedRows.reduce((s, r) => s + (r.actual_hours || 0), 0)),
         summary.totalScheduled > 0
           ? Math.round((summary.totalWorked / summary.totalScheduled) * 100)
           : 0,
@@ -307,7 +347,7 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
         `${summary.onTime} on-time / ${summary.deviation} dev / ${summary.noShow} no-show`,
         '',
       ]);
-      rowDate.push(null); rowDeviation.push(false); rowLate.push(false); rowEarly.push(false); rowIncomplete.push(false);
+      rowDate.push(null); rowDeviation.push(false); rowLate.push(false); rowEarly.push(false); rowIncomplete.push(false); rowKind.push('grandtotal');
 
       const ws = XLSX.utils.aoa_to_sheet(aoa);
 
@@ -316,21 +356,38 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
       const statusCol = 17; // 0-indexed 'Status' (shifted +1 by Remarks col)
       const remarksCol = 16;
       const lateCol = 10;
-      const totalRowIdx = aoa.length - 1;
+      const medBorder = {
+        top:    { style: 'medium', color: { rgb: '9CA3AF' } },
+        bottom: { style: 'thin',   color: { rgb: 'E5E7EB' } },
+        left:   { style: 'thin',   color: { rgb: 'E5E7EB' } },
+        right:  { style: 'thin',   color: { rgb: 'E5E7EB' } },
+      };
       for (let R = range.s.r; R <= range.e.r; R++) {
         for (let C = range.s.c; C <= range.e.c; C++) {
           const addr = XLSX.utils.encode_cell({ r: R, c: C });
           if (!ws[addr]) continue;
-          if (R === 0) {
+          if (rowKind[R] === 'header') {
             ws[addr].s = headerStyle;
-          } else if (R === totalRowIdx) {
-            // Totals row — bold, light-grey fill
+          } else if (rowKind[R] === 'grandtotal') {
+            // Grand total — bold, light-grey fill
             ws[addr].s = cell({
               font: { bold: true, sz: 10, color: { rgb: '0A0A0A' } },
               fill: { fgColor: { rgb: 'F3F4F6' } },
               alignment: { vertical: 'center',
                 horizontal: (C >= 12 && C <= 15) ? 'right' : 'left' },
             });
+          } else if (rowKind[R] === 'datetotal') {
+            // Per-date subtotal — bold, the date's tint, medium top
+            // border to separate each day's block. Departments and
+            // locations that worked that day appear in their columns.
+            const tint = rowDate[R] ? dateColors[rowDate[R]] : 'EEF2F7';
+            ws[addr].s = {
+              font: { bold: true, sz: 10, color: { rgb: '0A0A0A' } },
+              fill: { fgColor: { rgb: tint || 'EEF2F7' } },
+              alignment: { vertical: 'center', wrapText: (C === 2 || C === 3),
+                horizontal: (C >= 12 && C <= 15) ? 'right' : 'left' },
+              border: medBorder,
+            };
           } else {
             // Body cell
             const numericRight = (C >= 10 && C <= 15);
@@ -465,11 +522,35 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
              ${esc(fmtDate(d))}
            </span>`).join('');
 
-      const tableRows = sortedRows.map(r => {
+      const r1 = (n) => Number(n || 0).toFixed(1);
+      const rowsHtml = [];
+      let g = null;
+      const flushHtmlDate = () => {
+        if (!g) return;
+        rowsHtml.push(`
+          <tr style="background:#EEF2F7;font-weight:700;border-top:2px solid #9CA3AF">
+            <td>${esc(fmtDate(g.date))}</td>
+            <td></td>
+            <td>${g.count} staff</td>
+            <td>${esc([...g.depts].sort().join(', '))}</td>
+            <td>${esc([...g.locs].sort().join(', '))}</td>
+            <td></td><td></td><td></td><td></td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">${r1(g.exp)}h</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">${r1(g.assigned)}h</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums">${r1(g.actual)}h</td>
+            <td style="font-size:9px;letter-spacing:.03em;color:#374151">DATE TOTAL</td>
+            <td></td><td></td>
+          </tr>`);
+        g = null;
+      };
+      for (const r of sortedRows) {
+        const d = r.shift.shift_date;
+        if (g && g.date !== d) flushHtmlDate();
+        if (!g) g = { date: d, count: 0, exp: 0, assigned: 0, actual: 0, depts: new Set(), locs: new Set() };
         const tint = dateColors[r.shift.shift_date] || 'FFFFFF';
         const workedColor = r.status === 'deviation' ? '#DC2626' : '#1F1B16';
         const incomplete = r.expected_hours > 0 && r.actual_hours < r.expected_hours;
-        return `
+        rowsHtml.push(`
           <tr style="background:#${tint}">
             <td>${esc(fmtDate(r.shift.shift_date))}</td>
             <td>${esc(r.shift.employee_id)}</td>
@@ -491,8 +572,28 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
             <td style="text-align:center">${statusPill(r.status)}</td>
             <td style="font-size:10px;color:#555">${esc(r.shift.notes || '')}</td>
           </tr>
-        `;
-      }).join('');
+        `);
+        g.count += 1;
+        g.exp += r.expected_hours || 0;
+        g.assigned += r.worked_hours || 0;
+        g.actual += r.actual_hours || 0;
+        if (r.employee?.department) g.depts.add(r.employee.department);
+        if (r.employee?.location)   g.locs.add(r.employee.location);
+      }
+      flushHtmlDate();
+      rowsHtml.push(`
+        <tr style="background:#E5E7EB;font-weight:700;border-top:2px solid #6B7280">
+          <td>GRAND TOTAL</td>
+          <td></td>
+          <td>${sortedRows.length} shifts</td>
+          <td></td><td></td><td></td><td></td><td></td><td></td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">${r1(summary.totalScheduled)}h</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">${r1(summary.totalWorked)}h</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">${r1(sortedRows.reduce((s, r) => s + (r.actual_hours || 0), 0))}h</td>
+          <td style="font-size:9px;color:#374151">${summary.onTime} on-time / ${summary.deviation} dev / ${summary.noShow} no-show</td>
+          <td></td><td></td>
+        </tr>`);
+      const tableRows = rowsHtml.join('');
 
       const dateSections = `
         <div class="legend">Dates: ${dateLegend}</div>
