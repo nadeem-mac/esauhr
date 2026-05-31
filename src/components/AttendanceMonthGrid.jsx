@@ -511,10 +511,9 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
       ) : lastCount != null && (
         <div className="text-[11px] mb-2" style={{ color: '#0A0A0A', opacity: 0.7 }}>
           {lastCount} record{lastCount === 1 ? '' : 's'} loaded for {ymd(firstDay)} → {ymd(lastDay)}
-          {recordDiag && (
-            <span style={{ color: recordDiag.matched === 0 && recordDiag.total > 0 ? '#991B1B' : 'inherit' }}>
-              {' · '}{recordDiag.matched}/{recordDiag.total} match a known employee
-              {' · sample: '}{recordDiag.sampleId} / {recordDiag.sampleDate} / {recordDiag.sampleStatus}
+          {recordDiag && recordDiag.matched === 0 && recordDiag.total > 0 && (
+            <span style={{ color: '#991B1B', fontWeight: 600 }}>
+              {' · '}none of the loaded records match a known employee — check the PSN format in the upload
             </span>
           )}
         </div>
