@@ -490,18 +490,28 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
       setExportingMonth(true);
       const XLSX = await import('xlsx-js-style');
       const GREEN = '0F4C2A';
+      // Same abbreviation + sort as the PDF: strip trailing "OFFICE",
+      // map cities to codes, group by Location -> Dept -> Name.
+      const cityMap = { JEDDAH: 'JED', DAMMAM: 'DMM', RIYADH: 'RYD', JED: 'JED', DMM: 'DMM', RYD: 'RYD' };
+      const abbr = (v) => { const t = String(v || '').replace(/\s*office\s*$/i, '').trim().toUpperCase(); return cityMap[t] || t; };
+      const locOf = (e) => abbr(e.location || '');
+      const deptOf = (e) => abbr(e.department || '');
+      const rows = [...tracked].sort((a, b) =>
+        locOf(a).localeCompare(locOf(b)) ||
+        deptOf(a).localeCompare(deptOf(b)) ||
+        (a.name || a.id).localeCompare(b.name || b.id));
       const dayHdr = days.map(d => `${d.getDate()}\n${['Su','Mo','Tu','We','Th','Fr','Sa'][d.getDay()]}`);
-      const headers = ['PSN', 'Employee', 'Department', 'Location', ...dayHdr, 'P', 'LT', 'SH', 'AB', 'LV'];
+      const headers = ['#', 'PSN', 'Employee', 'Loc', 'Dept', ...dayHdr, 'P', 'LT', 'SH', 'AB', 'LV'];
       const aoa = [[`MONTHLY ATTENDANCE \u2014 ${monthLabel}`], [], headers];
       const kind = ['title', 'blank', 'header'];
-      tracked.forEach(emp => {
+      rows.forEach((emp, i) => {
         const s = statsByEmp.get(emp.id) || {};
         const cells = days.map(d => {
           const r = recordIndex.get(`${emp.id}|${ymd(d)}`);
           if (!r) return '';
           return styleForStatus(r.status, r.notes).label.replace('✓', 'P');
         });
-        aoa.push([emp.id, emp.name || emp.id, emp.department || '', emp.location || '',
+        aoa.push([i + 1, emp.id, emp.name || emp.id, locOf(emp), deptOf(emp),
           ...cells, s.present || 0, s.late || 0, s.short || 0, s.absent || 0, s.leave || 0]);
         kind.push('data');
       });
@@ -510,7 +520,9 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
       kind.push('blank'); kind.push('note');
 
       const ws = XLSX.utils.aoa_to_sheet(aoa);
-      const dayStart = 4, dayEnd = 4 + days.length - 1;
+      const LABEL_COLS = 5;                 // #, PSN, Employee, Loc, Dept
+      const dayStart = LABEL_COLS, dayEnd = LABEL_COLS + days.length - 1;
+      const leftAlign = (C) => C === 1 || C === 2 || C === 3 || C === 4;   // PSN/Employee/Loc/Dept
       const isWknd = (C) => C >= dayStart && C <= dayEnd && [5, 6].includes(days[C - dayStart].getDay());
       const border = { top: { style: 'thin', color: { rgb: 'E5E7EB' } }, bottom: { style: 'thin', color: { rgb: 'E5E7EB' } }, left: { style: 'thin', color: { rgb: 'E5E7EB' } }, right: { style: 'thin', color: { rgb: 'E5E7EB' } } };
       const range = XLSX.utils.decode_range(ws['!ref']);
@@ -519,12 +531,12 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
         const k = kind[R];
         if (k === 'title') ws[a].s = { font: { bold: true, sz: 14, color: { rgb: GREEN } } };
         else if (k === 'note') ws[a].s = { font: { sz: 10, color: { rgb: '0A0A0A' } }, alignment: { wrapText: true } };
-        else if (k === 'header') ws[a].s = { font: { bold: true, sz: 9, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: isWknd(C) ? '0A3A20' : GREEN } }, alignment: { horizontal: C >= 2 ? 'center' : 'left', vertical: 'center', wrapText: true }, border };
-        else if (k === 'data') ws[a].s = { font: { sz: 9, color: { rgb: '0A0A0A' } }, fill: isWknd(C) ? { fgColor: { rgb: 'F3F4F6' } } : undefined, alignment: { horizontal: C >= 4 ? 'center' : 'left', vertical: 'center' }, border };
+        else if (k === 'header') ws[a].s = { font: { bold: true, sz: 9, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: isWknd(C) ? '0A3A20' : GREEN } }, alignment: { horizontal: leftAlign(C) ? 'left' : 'center', vertical: 'center', wrapText: true }, border };
+        else if (k === 'data') ws[a].s = { font: { sz: 9, color: { rgb: '0A0A0A' } }, fill: isWknd(C) ? { fgColor: { rgb: 'F3F4F6' } } : undefined, alignment: { horizontal: leftAlign(C) ? 'left' : 'center', vertical: 'center' }, border };
       }
-      ws['!cols'] = [{ wch: 10 }, { wch: 22 }, { wch: 12 }, { wch: 8 }, ...days.map(() => ({ wch: 4.5 })), { wch: 4 }, { wch: 4 }, { wch: 4 }, { wch: 4 }, { wch: 4 }];
+      ws['!cols'] = [{ wch: 4 }, { wch: 10 }, { wch: 22 }, { wch: 7 }, { wch: 8 }, ...days.map(() => ({ wch: 4.5 })), { wch: 4 }, { wch: 4 }, { wch: 4 }, { wch: 4 }, { wch: 4 }];
       ws['!rows'] = [{ hpt: 20 }, {}, { hpt: 26 }];
-      ws['!freeze'] = { xSplit: 2, ySplit: 3 };
+      ws['!freeze'] = { xSplit: LABEL_COLS, ySplit: 3 };
       ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } }];
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, monthLabel.slice(0, 31));
