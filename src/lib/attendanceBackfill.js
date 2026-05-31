@@ -1262,6 +1262,16 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
     // date anymore (leave was rescinded), we fall through to the
     // normal classification path so the row gets re-evaluated
     // against punches.
+    // Mutable classification outputs for this row. Declared HERE (top of
+    // the loop body, before the leave-coverage branch). They were
+    // previously declared ~90 lines further down, which put them in the
+    // temporal dead zone for the `if (leaveCoverage)` branch above — so
+    // any row covered by approved leave threw "Cannot access 'newStatus'
+    // before initialization" and aborted the whole re-evaluation (and,
+    // via the same shape in the recorder, blocked attendance writes).
+    // Nadeem 2026-05-31: surfaced during Eid week when staff were on
+    // leave, leaving the grid empty.
+    let newStatus, newLate, newEarly, newExpStart, newExpEnd, newNote;
     const leaveCoverage = findLeaveCoverage(empId, r.attendance_date, leavesByEmp);
     if (leaveCoverage) {
       // Special leave types get their own attendance status so the
@@ -1353,7 +1363,6 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
     const isMissedIn  = !hasFirst && hasLast;
     const isMissedOut = hasFirst && !hasLast;
 
-    let newStatus, newLate, newEarly, newExpStart, newExpEnd, newNote;
     if (isMawaniDay) {
       newStatus    = 'present';
       newLate      = 0;
