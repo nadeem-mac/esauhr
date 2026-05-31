@@ -1327,6 +1327,13 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
           early_leave_minutes: newEarly,
           leave_request_id:   leaveCoverage.leave_request_id,
           notes:              newNote,
+          // recorded_at MUST be present here too: PostgREST bulk upsert
+          // rejects a batch whose objects don't all share the same keys
+          // (PGRST102 "All object keys must match"). The normal-path and
+          // seeding pushes include recorded_at, so a mixed batch (some
+          // rows leave-covered, some not — e.g. Eid week) 400'd without
+          // this. Nadeem 2026-05-31.
+          recorded_at:        new Date().toISOString(),
           recorded_by:        r.recorded_by || 'reeval',
           source:             r.source || 'backfill',
         });
