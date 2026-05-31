@@ -249,7 +249,7 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
       const headers = ['PSN ID', 'Employee Name', 'Department', 'Location', 'Date', 'Day',
         'Sched In', 'Sched Out', 'Actual In', 'Actual Out',
         'Late (min)', 'Early Out (min)',
-        'Expected Hrs', 'Worked Hrs', 'Worked Time', '% Worked', 'Remarks', 'Status', 'Notes'];
+        'Expected Hrs', 'ASSIGNED HRS', 'ACTUAL HRS', '% Worked', 'Remarks', 'Status', 'Notes'];
 
       const aoa = [headers];
       // Track which date each output row belongs to (for fill banding),
@@ -477,8 +477,8 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
               <th style="width:5%;text-align:right">Late</th>
               <th style="width:5%;text-align:right">Early</th>
               <th style="width:6%;text-align:right">Sched Hrs</th>
-              <th style="width:6%;text-align:right">Worked Hrs</th>
-              <th style="width:6%;text-align:right">Worked Time</th>
+              <th style="width:6%;text-align:right">ASSIGNED HRS</th>
+              <th style="width:6%;text-align:right">ACTUAL HRS</th>
               <th style="width:10%">Remarks</th>
               <th style="width:7%;text-align:center">Status</th>
               <th>Task</th>
@@ -680,8 +680,8 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
                       <Th>Actual</Th>
                       <Th>Late</Th>
                       <Th>Early</Th>
-                      <Th>Worked</Th>
-                      <Th>Worked Time</Th>
+                      <Th>ASSIGNED HRS</Th>
+                      <Th>ACTUAL HRS</Th>
                       <Th>Remarks</Th>
                       <Th>Status</Th>
                     </tr>
@@ -742,8 +742,8 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
                 </table>
               </div>
               <p className="text-[10px]" style={{ color: '#1F1B16', opacity: 0.55 }}>
-                Worked hrs = max(0, min(actual_out, sched_out) − max(actual_in, sched_in)) — strict, capped to schedule.
-                Worked Time = full span first → last punch (can exceed Worked hrs when staff stay beyond the window).
+                Assigned Hrs = hours worked within the assigned shift: max(0, min(actual_out, sched_out) − max(actual_in, sched_in)) — capped to schedule.
+                Actual Hrs = full span first → last punch (biometric); can exceed Assigned Hrs when staff stay beyond the window.
               </p>
             </>
           )}
