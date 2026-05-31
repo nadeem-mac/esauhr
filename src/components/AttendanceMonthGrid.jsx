@@ -812,6 +812,24 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
               </span>
             );
           })}
+          {/* Single-punch marker — dashed border + "1" badge. Clickable. */}
+          <span className="inline-flex items-center gap-1" style={{ flex: '0 0 auto' }}>
+            <span style={{
+              position: 'relative',
+              background: '#FFFFFF',
+              color: '#7C2D12',
+              border: '1px dashed #C026D3',
+              borderRadius: 3,
+              fontSize: 9,
+              padding: '1px 5px',
+              fontWeight: 700,
+              letterSpacing: '0.04em',
+            }}>
+              SH
+              <span aria-hidden style={{ position: 'absolute', top: -6, right: -6, minWidth: 12, height: 12, padding: '0 2px', borderRadius: 999, background: '#C026D3', color: '#FFFFFF', fontSize: 7, fontWeight: 800, lineHeight: '12px', textAlign: 'center' }}>1</span>
+            </span>
+            <span style={{ fontSize: 10, color: '#0A0A0A' }}>Single punch — click to fix</span>
+          </span>
         </div>
         <div style={{ overflowX: 'visible', overflowY: 'auto', maxHeight: '72vh', maxWidth: '100%', boxSizing: 'border-box' }}>
           <div style={{
@@ -984,7 +1002,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
                             position: 'relative',
                             background: sty.bg,
                             color: sty.fg,
-                            border: `1px solid ${sty.border}`,
+                            border: missedPunch ? '1px dashed #C026D3' : `1px solid ${sty.border}`,
                             borderRadius: 4,
                             width: '100%',
                             minHeight: 28,
@@ -1014,17 +1032,24 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
                           {missedPunch && (
                             <span
                               aria-hidden
+                              title="Single punch only"
                               style={{
                                 position: 'absolute',
-                                top: 1,
-                                right: 1,
-                                width: 6,
-                                height: 6,
+                                top: -5,
+                                right: -5,
+                                minWidth: 13,
+                                height: 13,
+                                padding: '0 2px',
                                 borderRadius: 999,
                                 background: '#C026D3',
+                                color: '#FFFFFF',
+                                fontSize: 8,
+                                fontWeight: 800,
+                                lineHeight: '13px',
+                                textAlign: 'center',
                                 boxShadow: '0 0 0 1.5px ' + sty.bg,
                               }}
-                            />
+                            >1</span>
                           )}
                         </div>
                       </div>
