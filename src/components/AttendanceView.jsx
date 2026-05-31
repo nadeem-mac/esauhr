@@ -5552,7 +5552,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           is empty (caught up or fresh user), the banner vanishes
           entirely so it's not a permanent fixture; its presence
           carries meaning. */}
-      {pendingEodDates.length > 0 && (
+      {/* EOD-pending banner hidden per Nadeem 2026-05-31. The pending-EOD
+          reminder is suppressed; pendingEodDates is still computed (cheap)
+          but never rendered. Flip `false` back to show it again. */}
+      {false && pendingEodDates.length > 0 && (
         <div className="rounded-2xl border-2 p-4 sm:p-5 flex gap-3 sm:gap-4"
              style={{ background: '#FFFBEB', borderColor: '#92400E' }}>
           <div className="flex-shrink-0 w-11 h-11 rounded-full flex items-center justify-center"
@@ -6066,6 +6069,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
               return `${Math.floor(hrs / 24)}d`;
             };
             return (
+              <>
               <div className="inline-flex items-center gap-1.5 text-[11px]"
                 style={{ color: '#0A0A0A', fontWeight: 500 }}
                 title={[
@@ -6078,23 +6082,18 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
                   {reevalMs != null && <span style={{ opacity: 0.6 }}> · re-eval {fmt(reevalMs)}</span>}
                 </span>
                 {reevalState.error && (
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => {
-                      try {
-                        window.dispatchEvent(new CustomEvent('esauhr_toast', { detail: {
-                          kind: 'error',
-                          title: 'Re-evaluation error',
-                          body: String(reevalState.error),
-                        }}));
-                      } catch {}
-                    }}
-                    title={`Re-evaluation error (tap for details):\n${reevalState.error}`}
-                    style={{ color: '#991B1B', marginLeft: 4, cursor: 'pointer', textDecoration: 'underline dotted' }}
-                  >· failed (tap)</span>
+                  <span style={{ color: '#991B1B', marginLeft: 4 }}>· failed</span>
                 )}
               </div>
+              {/* Full re-eval error shown inline (no tap needed) so the
+                  exact failure is always visible. Nadeem 2026-05-31. */}
+              {reevalState.error && (
+                <div className="text-[11px] mt-1 px-2 py-1 rounded"
+                     style={{ background: '#FEF2F2', color: '#991B1B', border: '1px solid #FCA5A5', maxWidth: 560, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                  Re-evaluation error: {String(reevalState.error)}
+                </div>
+              )}
+              </>
             );
           })()}
             <button
