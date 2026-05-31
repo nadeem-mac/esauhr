@@ -161,9 +161,29 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
   const [month, setMonth] = useState(today.getMonth());
   const [records, setRecords] = useState([]);
   const recordsRef = useRef([]);   // last-good records, for transient-error guard in refetch
+  const [loading, setLoading] = useState(false);
+  const [fetchErr, setFetchErr] = useState(null);   // surfaced on-screen
+  const [lastCount, setLastCount] = useState(null);  // rows from last fetch
+  const [hoverTip, setHoverTip] = useState(null);
+  // Search filter — Bashaier types a name fragment / PSN / dept and
+  // the grid narrows to matching staff. Empty string = no filter.
+  // Match is case-insensitive, substring across name, id, department,
+  // location, designation — whichever fields the employees row carries.
+  const [search, setSearch] = useState('');
+
+  const firstDay = useMemo(() => new Date(year, month, 1), [year, month]);
+  const lastDay  = useMemo(() => new Date(year, month + 1, 0), [year, month]);
+  const days = useMemo(() => {
+    const arr = [];
+    const total = lastDay.getDate();
+    for (let d = 1; d <= total; d++) arr.push(new Date(year, month, d));
+    return arr;
+  }, [year, month, lastDay]);
+
   // Public / government holidays for the visible month (date -> name).
-  // Used to tint those columns distinctly and to exclude them from the
-  // "missing working days" coverage check. Nadeem 2026-05-31.
+  // Declared after firstDay/lastDay so the fetch effect can reference
+  // them without hitting the temporal dead zone. Used to tint those
+  // columns and to exclude them from the coverage check. Nadeem.
   const [holidayMap, setHolidayMap] = useState(() => new Map());
   useEffect(() => {
     let cancelled = false;
@@ -184,24 +204,6 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
     })();
     return () => { cancelled = true; };
   }, [firstDay, lastDay]);
-  const [loading, setLoading] = useState(false);
-  const [fetchErr, setFetchErr] = useState(null);   // surfaced on-screen
-  const [lastCount, setLastCount] = useState(null);  // rows from last fetch
-  const [hoverTip, setHoverTip] = useState(null);
-  // Search filter — Bashaier types a name fragment / PSN / dept and
-  // the grid narrows to matching staff. Empty string = no filter.
-  // Match is case-insensitive, substring across name, id, department,
-  // location, designation — whichever fields the employees row carries.
-  const [search, setSearch] = useState('');
-
-  const firstDay = useMemo(() => new Date(year, month, 1), [year, month]);
-  const lastDay  = useMemo(() => new Date(year, month + 1, 0), [year, month]);
-  const days = useMemo(() => {
-    const arr = [];
-    const total = lastDay.getDate();
-    for (let d = 1; d <= total; d++) arr.push(new Date(year, month, d));
-    return arr;
-  }, [year, month, lastDay]);
 
   const refetch = useCallback(async () => {
     setLoading(true);
