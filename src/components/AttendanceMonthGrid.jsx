@@ -34,8 +34,8 @@
 // =============================================================================
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, RefreshCcw, Loader2, Search, X } from 'lucide-react';
-import { directGet, supabase } from '../supabaseClient.js';
+import { ChevronLeft, ChevronRight, RefreshCcw, Loader2, Search, X, Download, AlertTriangle } from 'lucide-react';
+import { directGet, directPatch, supabase } from '../supabaseClient.js';
 
 // Auto-fit text helper — CSS-only. No hooks. Uses container queries
 // + clamp on font-size based on text length to shrink long names so
@@ -75,6 +75,8 @@ function ymd(d) {
 }
 
 function todayYmd() { return ymd(new Date()); }
+// 'YYYY-MM-DD' → 'DD/MM' for compact anomaly listing
+function fmtShort(s) { const p = String(s).split('-'); return p.length === 3 ? `${p[2]}/${p[1]}` : s; }
 
 // ─── Status → visual style mapping ───────────────────────────────────
 // Each entry returns the chip style + a 2-3 char label. Returning
@@ -352,6 +354,69 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
     };
   }, [records, days, todayStr]);
 
+  // ── Anomaly list ───────────────────────────────────────────────
+  // Surfaces exactly what HR should review/correct this month, drawn
+  // from the loaded records: single-punch days (ambiguous — sign-on vs
+  // sign-off), unapproved absences, and chronically late staff.
+  const anomalies = useMemo(() => {
+    const empById = new Map((employees || []).map(e => [String(e.id), e]));
+    const singlePunch = [];     // { emp, dateStr, r }
+    const absences = [];        // { emp, dateStr }
+    const lateByEmp = new Map();
+    for (const r of records) {
+      const st = r.status;
+      if (typeof st === 'string' && (st.includes('leave') || st === 'off_day' || st === 'off_roster')) continue;
+      const hasF = !!r.first_punch, hasL = !!r.last_punch;
+      if ((hasF && !hasL) || (!hasF && hasL)) {
+        singlePunch.push({ emp: empById.get(String(r.employee_id)), id: r.employee_id, dateStr: r.attendance_date, r });
+      }
+      if (st === 'absent') absences.push({ emp: empById.get(String(r.employee_id)), id: r.employee_id, dateStr: r.attendance_date });
+      if (st === 'late') lateByEmp.set(r.employee_id, (lateByEmp.get(r.employee_id) || 0) + 1);
+    }
+    const chronicLate = [...lateByEmp.entries()]
+      .filter(([, n]) => n >= 3)
+      .map(([id, n]) => ({ emp: empById.get(String(id)), id, count: n }))
+      .sort((a, b) => b.count - a.count);
+    singlePunch.sort((a, b) => a.dateStr.localeCompare(b.dateStr));
+    absences.sort((a, b) => a.dateStr.localeCompare(b.dateStr));
+    return { singlePunch, absences, chronicLate,
+      total: singlePunch.length + absences.length + chronicLate.length };
+  }, [records, employees]);
+  const [showAnomalies, setShowAnomalies] = useState(false);
+
+  // ── Single-punch HR override ───────────────────────────────────
+  // A single-punch day is ambiguous: the device stream doesn't label
+  // in vs out. This lets HR mark which it was; the row's punch fields
+  // and status are corrected and `manual_override` is set so the
+  // re-evaluation leaves the row alone. Nadeem 2026-05-31.
+  const [overrideCell, setOverrideCell] = useState(null);   // { id(rowId), empId, dateStr, x, y } or null
+  const [savingOverride, setSavingOverride] = useState(false);
+  const applyOverride = useCallback(async (rowId, kind) => {
+    // kind: 'sign_in' (the punch was a clock-IN, sign-off missing) or
+    //       'sign_out' (the punch was a clock-OUT, sign-on missing)
+    const rec = records.find(r => r.id === rowId);
+    if (!rec) { setOverrideCell(null); return; }
+    const onlyPunch = rec.first_punch || rec.last_punch || null;
+    setSavingOverride(true);
+    try {
+      const patch = kind === 'sign_in'
+        ? { first_punch: onlyPunch, last_punch: null, status: 'short' }     // in only → forgot sign-off
+        : { first_punch: null, last_punch: onlyPunch, status: 'late' };     // out only → forgot sign-on
+      // Always correct the punch/status (works regardless of schema).
+      await directPatch('attendance_daily', 'id', rowId, patch, { timeoutMs: 10000 });
+      // Best-effort: flag manual_override so re-eval skips it. If the
+      // column isn't there yet (migration not run), this no-ops.
+      try { await directPatch('attendance_daily', 'id', rowId, { manual_override: true }, { timeoutMs: 8000 }); }
+      catch { /* column may not exist yet — correction above still applied */ }
+      setOverrideCell(null);
+      await refetch();
+    } catch (e) {
+      console.warn('override failed:', e);
+    } finally {
+      setSavingOverride(false);
+    }
+  }, [records, refetch]);
+
   // ─── Row stats — present/absent/leave counts per employee ────────
   const statsByEmp = useMemo(() => {
     const m = new Map();
@@ -381,6 +446,62 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
     });
   }, []);
   const handleLeave = useCallback(() => setHoverTip(null), []);
+
+  // ── Monthly attendance export ──────────────────────────────────
+  // The on-screen grid as an Excel sheet: rows = staff, columns = each
+  // day with the status code, plus per-employee summary counts. For
+  // records / MOL. Nadeem 2026-05-31.
+  const [exportingMonth, setExportingMonth] = useState(false);
+  const exportMonth = useCallback(async () => {
+    try {
+      setExportingMonth(true);
+      const XLSX = await import('xlsx-js-style');
+      const GREEN = '0F4C2A';
+      const dayHdr = days.map(d => `${d.getDate()}\n${['Su','Mo','Tu','We','Th','Fr','Sa'][d.getDay()]}`);
+      const headers = ['PSN', 'Employee', 'Department', 'Location', ...dayHdr, 'P', 'LT', 'SH', 'AB', 'LV'];
+      const aoa = [[`MONTHLY ATTENDANCE \u2014 ${monthLabel}`], [], headers];
+      const kind = ['title', 'blank', 'header'];
+      tracked.forEach(emp => {
+        const s = statsByEmp.get(emp.id) || {};
+        const cells = days.map(d => {
+          const r = recordIndex.get(`${emp.id}|${ymd(d)}`);
+          if (!r) return '';
+          return styleForStatus(r.status, r.notes).label.replace('✓', 'P');
+        });
+        aoa.push([emp.id, emp.name || emp.id, emp.department || '', emp.location || '',
+          ...cells, s.present || 0, s.late || 0, s.short || 0, s.absent || 0, s.leave || 0]);
+        kind.push('data');
+      });
+      aoa.push([]);
+      aoa.push([`Working days only count toward totals. Coverage: ${coverage.loadedCount}/${coverage.expectedCount} working days loaded${coverage.missing.length ? ` (missing ${coverage.missing.map(d => d.getDate()).join(', ')})` : ''}.`]);
+      kind.push('blank'); kind.push('note');
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      const dayStart = 4, dayEnd = 4 + days.length - 1;
+      const isWknd = (C) => C >= dayStart && C <= dayEnd && [5, 6].includes(days[C - dayStart].getDay());
+      const border = { top: { style: 'thin', color: { rgb: 'E5E7EB' } }, bottom: { style: 'thin', color: { rgb: 'E5E7EB' } }, left: { style: 'thin', color: { rgb: 'E5E7EB' } }, right: { style: 'thin', color: { rgb: 'E5E7EB' } } };
+      const range = XLSX.utils.decode_range(ws['!ref']);
+      for (let R = range.s.r; R <= range.e.r; R++) for (let C = range.s.c; C <= range.e.c; C++) {
+        const a = XLSX.utils.encode_cell({ r: R, c: C }); if (!ws[a]) continue;
+        const k = kind[R];
+        if (k === 'title') ws[a].s = { font: { bold: true, sz: 14, color: { rgb: GREEN } } };
+        else if (k === 'note') ws[a].s = { font: { sz: 10, color: { rgb: '0A0A0A' } }, alignment: { wrapText: true } };
+        else if (k === 'header') ws[a].s = { font: { bold: true, sz: 9, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: isWknd(C) ? '0A3A20' : GREEN } }, alignment: { horizontal: C >= 2 ? 'center' : 'left', vertical: 'center', wrapText: true }, border };
+        else if (k === 'data') ws[a].s = { font: { sz: 9, color: { rgb: '0A0A0A' } }, fill: isWknd(C) ? { fgColor: { rgb: 'F3F4F6' } } : undefined, alignment: { horizontal: C >= 4 ? 'center' : 'left', vertical: 'center' }, border };
+      }
+      ws['!cols'] = [{ wch: 10 }, { wch: 22 }, { wch: 12 }, { wch: 8 }, ...days.map(() => ({ wch: 4.5 })), { wch: 4 }, { wch: 4 }, { wch: 4 }, { wch: 4 }, { wch: 4 }];
+      ws['!rows'] = [{ hpt: 20 }, {}, { hpt: 26 }];
+      ws['!freeze'] = { xSplit: 2, ySplit: 3 };
+      ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, monthLabel.slice(0, 31));
+      XLSX.writeFile(wb, `ATTENDANCE_${monthLabel.replace(/[^a-z0-9]+/gi, '_')}.xlsx`);
+    } catch (e) {
+      console.error('Monthly export failed:', e);
+    } finally {
+      setExportingMonth(false);
+    }
+  }, [days, tracked, statsByEmp, recordIndex, monthLabel, coverage]);
 
   return (
     <div className="rounded-2xl border bg-white p-3 sm:px-4 sm:py-3" style={{ borderColor: '#D4D4D4' }}>
@@ -498,6 +619,25 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
           >
             <ChevronRight className="w-4 h-4" />
           </button>
+          {anomalies.total > 0 && (
+            <button
+              onClick={() => setShowAnomalies(v => !v)}
+              className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded-full"
+              style={{ border: '1px solid #FDE68A', background: showAnomalies ? '#FEF3C7' : '#FFFBEB', color: '#92400E', cursor: 'pointer', fontWeight: 700, whiteSpace: 'nowrap' }}
+              title="Review attendance issues to correct"
+            >
+              <AlertTriangle className="w-3.5 h-3.5" /> {anomalies.total} to review
+            </button>
+          )}
+          <button
+            onClick={exportMonth}
+            disabled={exportingMonth || (lastCount || 0) === 0}
+            className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded-full disabled:opacity-50"
+            style={{ border: '1px solid #0F4C2A', background: '#0F4C2A', color: '#FFFFFF', cursor: 'pointer', fontWeight: 700, whiteSpace: 'nowrap' }}
+            title="Export this month to Excel"
+          >
+            {exportingMonth ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Export
+          </button>
           <button
             onClick={refetch}
             className="w-8 h-8 rounded-full inline-flex items-center justify-center"
@@ -553,6 +693,45 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
             </span>
           )}
           <span style={{ opacity: 0.55, marginLeft: 'auto' }}>weekends &amp; future dates excluded</span>
+        </div>
+      )}
+
+      {/* Anomaly review panel — what HR should check/correct this month. */}
+      {showAnomalies && anomalies.total > 0 && (
+        <div className="text-[11px] mb-2 px-3 py-2.5 rounded" style={{ background: '#FFFBEB', border: '1px solid #FDE68A', color: '#0A0A0A' }}>
+          <div style={{ fontWeight: 700, color: '#92400E', marginBottom: 4 }}>Needs review</div>
+          {anomalies.singlePunch.length > 0 && (
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ fontWeight: 600 }}>Single-punch days ({anomalies.singlePunch.length}) — only one punch; tap the chip in the grid to mark sign-on vs sign-off:</div>
+              <div style={{ opacity: 0.85 }}>
+                {anomalies.singlePunch.slice(0, 12).map((a, i) => (
+                  <span key={i}>{i > 0 ? ' · ' : ''}{(a.emp?.name || a.id)} {fmtShort(a.dateStr)}</span>
+                ))}
+                {anomalies.singlePunch.length > 12 && <span> · +{anomalies.singlePunch.length - 12} more</span>}
+              </div>
+            </div>
+          )}
+          {anomalies.absences.length > 0 && (
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ fontWeight: 600, color: '#991B1B' }}>Unapproved absences ({anomalies.absences.length}):</div>
+              <div style={{ opacity: 0.85 }}>
+                {anomalies.absences.slice(0, 12).map((a, i) => (
+                  <span key={i}>{i > 0 ? ' · ' : ''}{(a.emp?.name || a.id)} {fmtShort(a.dateStr)}</span>
+                ))}
+                {anomalies.absences.length > 12 && <span> · +{anomalies.absences.length - 12} more</span>}
+              </div>
+            </div>
+          )}
+          {anomalies.chronicLate.length > 0 && (
+            <div>
+              <div style={{ fontWeight: 600, color: '#854F0B' }}>Chronic lateness (3+ late days):</div>
+              <div style={{ opacity: 0.85 }}>
+                {anomalies.chronicLate.map((a, i) => (
+                  <span key={i}>{i > 0 ? ' · ' : ''}{(a.emp?.name || a.id)} ({a.count})</span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -795,6 +974,12 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
                         onMouseLeave={handleLeave}
                       >
                         <div
+                          onClick={missedPunch ? (e) => {
+                            e.stopPropagation();
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            setOverrideCell({ id: r.id, empId: emp.id, name: emp.name || emp.id, dateStr: dStr, x: rect.left, y: rect.bottom });
+                          } : undefined}
+                          title={missedPunch ? 'Single punch — click to mark sign-on or sign-off' : undefined}
                           style={{
                             position: 'relative',
                             background: sty.bg,
@@ -811,7 +996,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
                             justifyContent: 'center',
                             gap: 2,
                             letterSpacing: '0.02em',
-                            cursor: 'default',
+                            cursor: missedPunch ? 'pointer' : 'default',
                           }}
                         >
                           {sty.label}
@@ -855,6 +1040,55 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
 
       {/* Hover tooltip */}
       {hoverTip && <HoverTooltip {...hoverTip} />}
+
+      {/* Single-punch override popover */}
+      {overrideCell && (
+        <>
+          <div onClick={() => !savingOverride && setOverrideCell(null)}
+               style={{ position: 'fixed', inset: 0, zIndex: 60 }} />
+          <div style={{
+            position: 'fixed',
+            left: Math.min(overrideCell.x, (typeof window !== 'undefined' ? window.innerWidth : 1000) - 280),
+            top: overrideCell.y + 6,
+            zIndex: 61,
+            width: 268,
+            background: '#FFFFFF',
+            border: '1px solid #D4D4D4',
+            borderRadius: 10,
+            boxShadow: '0 8px 28px rgba(0,0,0,0.18)',
+            padding: 12,
+          }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#0A0A0A' }}>{overrideCell.name}</div>
+            <div style={{ fontSize: 11, color: '#0A0A0A', opacity: 0.7, marginBottom: 8 }}>
+              {fmtShort(overrideCell.dateStr)} · only one punch recorded. What was it?
+            </div>
+            <button
+              onClick={() => applyOverride(overrideCell.id, 'sign_in')}
+              disabled={savingOverride}
+              className="w-full text-left text-[12px] px-2.5 py-2 rounded mb-1.5 disabled:opacity-50"
+              style={{ border: '1px solid #FB923C', background: '#FFF7ED', color: '#7C2D12', cursor: 'pointer', fontWeight: 600 }}
+            >
+              Clock-IN — they forgot to sign off <span style={{ opacity: 0.7, fontWeight: 400 }}>(marks Short)</span>
+            </button>
+            <button
+              onClick={() => applyOverride(overrideCell.id, 'sign_out')}
+              disabled={savingOverride}
+              className="w-full text-left text-[12px] px-2.5 py-2 rounded disabled:opacity-50"
+              style={{ border: '1px solid #FCD34D', background: '#FEF9C3', color: '#854F0B', cursor: 'pointer', fontWeight: 600 }}
+            >
+              Clock-OUT — they forgot to sign on <span style={{ opacity: 0.7, fontWeight: 400 }}>(marks Late)</span>
+            </button>
+            <button
+              onClick={() => setOverrideCell(null)}
+              disabled={savingOverride}
+              className="w-full text-[11px] mt-2 px-2 py-1 rounded disabled:opacity-50"
+              style={{ border: '1px solid #D4D4D4', background: '#FFFFFF', color: '#0A0A0A', cursor: 'pointer' }}
+            >
+              {savingOverride ? 'Saving…' : 'Cancel'}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

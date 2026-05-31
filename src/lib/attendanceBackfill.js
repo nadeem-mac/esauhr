@@ -1130,9 +1130,10 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
     (options?.endDate   ? `&attendance_date=lte.${options.endDate}`   : '');
   const existing = await directGetAll(
     'attendance_daily',
-    'select=id,employee_id,attendance_date,first_punch,last_punch,status,' +
-    'late_minutes,early_leave_minutes,expected_start,expected_end,punch_count,' +
-    'leave_request_id,recorded_by,source' +
+    // select=* so an HR override column (manual_override) is included
+    // when present, and the read never 400s if the column doesn't exist
+    // yet (migration not run). Nadeem 2026-05-31.
+    'select=*' +
     sourceFilter +
     dateFilter +
     // Stable order (date + employee_id) so offset pagination doesn't
@@ -1223,6 +1224,9 @@ export async function reevaluateBackfillRows(onProgress, options = {}) {
   let mawaniDayCount = 0;
 
   for (const r of existing) {
+    // HR manually resolved this ambiguous single-punch day — leave it
+    // exactly as set. Skips re-classification + upsert. Nadeem 2026-05-31.
+    if (r.manual_override) continue;
     const empId = r.employee_id;
     const emp = empById.get(empId);
     const policy = policyFor(emp);
