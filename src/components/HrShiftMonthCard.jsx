@@ -19,6 +19,7 @@ export default function HrShiftMonthCard({ me, employees, onSelectEmployee }) {
       groupByLocation={true}
       hideEmptyRows={true}
       onEmployeeClick={onSelectEmployee || null}
+      exportable={true}
       kicker="ALL STAFF SHIFTS"
       title="Shift assignments this month"
       subtitle="Grouped by location. Updates in realtime as managers dispatch shifts and you (SUP) approve them."

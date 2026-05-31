@@ -104,11 +104,13 @@ export default function ShiftMonthGrid({
   kicker = 'SHIFTS',
   actionSlot = null,    // JSX rendered top-right (e.g. "Set new shifts" link)
   hideEmptyRows = false, // if true, employees with no shift this month are hidden
+  exportable = false,    // if true, show an "Export" button (HR / Bashaier view)
 }) {
   const today = useMemo(() => new Date(), []);
   const [year, setYear]   = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth()); // 0-indexed
   const [shifts, setShifts] = useState([]);
+  const [exporting, setExporting] = useState(false);
   // Off-pattern map: employeeId → Set<weekday-number 0-6>. Built from
   // monthly_shift_plans rows for the visible month. Used by the
   // calendar render to show OFF cells with a distinct blue tint on
@@ -302,6 +304,126 @@ export default function ShiftMonthGrid({
 
   const totalShiftsThisMonth = shifts.length;
 
+  // Export the visible month's shift assignments to Excel, grouped by
+  // location — a manager-facing schedule Bashaier can send out so each
+  // manager reviews their staff's shifts and updates the next month in
+  // the same layout. Rows = staff (Location, PSN, Name), columns = days
+  // of the month, each cell the assigned shift (HH:MM-HH:MM, → for
+  // overnight) or OFF per the manager's off-pattern. Nadeem 2026-05-31.
+  const exportMonthXlsx = async () => {
+    try {
+      setExporting(true);
+      const XLSX = await import('xlsx-js-style');
+      const GREEN = '0F4C2A';
+
+      const cellLabel = (s) => {
+        if (!s) return '';
+        const st = String(s.start_time || '').slice(0, 5);
+        const en = String(s.end_time || '').slice(0, 5);
+        if (!st || !en) return '';
+        return st > en ? `${st}\u2192${en}` : `${st}-${en}`;
+      };
+
+      const dayHdr = days.map(d =>
+        `${d.getDate()}\n${d.toLocaleDateString('en-GB', { weekday: 'short' })}`);
+      const headers = ['Location', 'PSN', 'Employee', ...dayHdr, 'Shifts'];
+
+      const aoa = [
+        [`STAFF SHIFT SCHEDULE \u2014 ${monthLabel}`],
+        [],
+        headers,
+      ];
+      const rowKind = ['title', 'blank', 'header'];
+
+      grouped.forEach(({ location, employees: rows }) => {
+        rows.forEach(emp => {
+          const offSet = offPatternByEmp.get(emp.id);
+          let count = 0;
+          const dayCells = days.map(d => {
+            const s = shiftIndex.get(`${emp.id}|${ymd(d)}`);
+            if (s) { count += 1; return cellLabel(s); }
+            if (offSet && offSet.has(d.getDay())) return 'OFF';
+            return '';
+          });
+          aoa.push([location || '\u2014', emp.id, emp.name || emp.id, ...dayCells, count]);
+          rowKind.push('data');
+        });
+      });
+
+      aoa.push([]);
+      aoa.push(['Please review your staff and update their shifts for the next month in this same format.']);
+      rowKind.push('blank'); rowKind.push('note');
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      const lastCol = headers.length - 1;
+      const dayStart = 3;                 // first day column index
+      const dayEnd = 3 + days.length - 1; // last day column index
+      const isWeekendCol = (C) => {
+        if (C < dayStart || C > dayEnd) return false;
+        const wd = days[C - dayStart].getDay();
+        return wd === 5 || wd === 6;      // Fri / Sat
+      };
+      const border = {
+        top: { style: 'thin', color: { rgb: 'E5E7EB' } },
+        bottom: { style: 'thin', color: { rgb: 'E5E7EB' } },
+        left: { style: 'thin', color: { rgb: 'E5E7EB' } },
+        right: { style: 'thin', color: { rgb: 'E5E7EB' } },
+      };
+
+      const range = XLSX.utils.decode_range(ws['!ref']);
+      for (let R = range.s.r; R <= range.e.r; R++) {
+        for (let C = range.s.c; C <= range.e.c; C++) {
+          const addr = XLSX.utils.encode_cell({ r: R, c: C });
+          if (!ws[addr]) continue;
+          const kind = rowKind[R];
+          if (kind === 'title') {
+            ws[addr].s = { font: { bold: true, sz: 14, color: { rgb: GREEN } } };
+          } else if (kind === 'note') {
+            ws[addr].s = { font: { italic: false, sz: 10, color: { rgb: '0A0A0A' } } };
+          } else if (kind === 'header') {
+            ws[addr].s = {
+              font: { bold: true, sz: 9, color: { rgb: 'FFFFFF' } },
+              fill: { fgColor: { rgb: isWeekendCol(C) ? '0A3A20' : GREEN } },
+              alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+              border,
+            };
+          } else if (kind === 'data') {
+            const v = ws[addr].v;
+            const isDay = C >= dayStart && C <= dayEnd;
+            ws[addr].s = {
+              font: { sz: 9, color: { rgb: v === 'OFF' ? '1D4ED8' : '0A0A0A' },
+                bold: isDay && v && v !== 'OFF' },
+              fill: v === 'OFF' ? { fgColor: { rgb: 'DBEAFE' } }
+                : isWeekendCol(C) ? { fgColor: { rgb: 'F3F4F6' } } : undefined,
+              alignment: { horizontal: (C <= 1 || C >= 2) && C < dayStart ? 'left' : 'center',
+                vertical: 'center' },
+              border,
+            };
+          }
+        }
+      }
+
+      ws['!cols'] = [
+        { wch: 12 }, { wch: 9 }, { wch: 24 },
+        ...days.map(() => ({ wch: 7 })),
+        { wch: 7 },
+      ];
+      ws['!rows'] = [{ hpt: 20 }, {}, { hpt: 28 }];
+      ws['!freeze'] = { xSplit: 3, ySplit: 3 };
+      // Merge the title across all columns
+      ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: lastCol } }];
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, monthLabel.slice(0, 31));
+      const fname = `STAFF_SHIFTS_${monthLabel.replace(/[^a-z0-9]+/gi, '_')}.xlsx`;
+      XLSX.writeFile(wb, fname);
+    } catch (e) {
+      console.error('Shift schedule export failed:', e);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // Header column count = day count (matches days.length). Day-cell width
   // is a fixed 32px so the grid is predictably wide; the wrapping
   // overflow-x: auto handles narrow viewports.
@@ -329,6 +451,19 @@ export default function ShiftMonthGrid({
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {actionSlot}
+          {exportable && (
+            <button
+              onClick={exportMonthXlsx}
+              disabled={exporting || totalShiftsThisMonth === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded text-white disabled:opacity-50"
+              style={{ background: '#0F4C2A' }}
+              title={`Export ${monthLabel} shift schedule (grouped by location)`}
+              type="button"
+            >
+              {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CalIcon className="w-3.5 h-3.5" />}
+              Export schedule
+            </button>
+          )}
           <div className="flex items-center gap-1 rounded-lg border" style={{ borderColor: 'var(--border, #E5E5E5)' }}>
             <button onClick={goPrev}
               className="p-1.5 hover:opacity-70 transition-opacity"
