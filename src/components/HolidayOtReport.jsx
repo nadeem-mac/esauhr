@@ -273,8 +273,8 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
         aoa.push([
           'DATE TOTAL',
           `${acc.count} staff`,
-          [...acc.depts].sort().join(', '),
-          [...acc.locs].sort().join(', '),
+          '',
+          '',
           acc.date,
           new Date(acc.date).toLocaleDateString('en-GB', { weekday: 'long' }),
           '', '', '', '',
@@ -541,8 +541,8 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
             <td>${esc(fmtDate(g.date))}</td>
             <td></td>
             <td>${g.count} staff</td>
-            <td>${esc([...g.depts].sort().join(', '))}</td>
-            <td>${esc([...g.locs].sort().join(', '))}</td>
+            <td></td>
+            <td></td>
             <td></td><td></td>
             <td style="text-align:right;font-variant-numeric:tabular-nums;color:#DC2626">${g.late > 0 ? g.late + 'm' : ''}</td>
             <td style="text-align:right;font-variant-numeric:tabular-nums;color:#DC2626">${g.early > 0 ? g.early + 'm' : ''}</td>
