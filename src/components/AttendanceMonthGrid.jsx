@@ -603,32 +603,33 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
   @page { size: A4 landscape; margin: 0; }
   * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   html, body { margin: 0; padding: 0; }
-  .page { width: 297mm; height: 210mm; padding: 7mm; overflow: hidden; display: flex; flex-direction: column; }
-  h1 { font: 700 14px/1.15 Arial, sans-serif; color: #0F4C2A; margin: 0; }
-  .sub { font: 400 9px/1.2 Arial, sans-serif; color: #475569; margin: 1px 0 6px; }
+  .page { width: 297mm; height: 210mm; padding: 8mm; overflow: hidden; display: flex; flex-direction: column; }
+  h1 { font: 700 14px/1.2 Arial, sans-serif; color: #0F4C2A; margin: 0; }
+  .sub { font: 400 9px/1.3 Arial, sans-serif; color: #475569; margin: 1px 0 0; }
+  .legend { display: flex; flex-wrap: wrap; gap: 5px 14px; margin: 7px 0 8px; font: 400 8px/1.5 Arial, sans-serif; color: #0A0A0A; flex: 0 0 auto; }
+  .lg { display: inline-flex; align-items: center; gap: 4px; }
+  .lg b { display: inline-block; min-width: 14px; text-align: center; font-size: 7px; font-weight: 800; padding: 1.5px 5px; border-radius: 3px; }
   .tablewrap { flex: 1 1 auto; min-height: 0; overflow: hidden; position: relative; }
-  .tbl { width: 100%; transform-origin: top left; }
+  .tbl { width: 100%; transform-origin: top center; }
   table { border-collapse: collapse; font-family: Arial, sans-serif; width: 100%; table-layout: fixed; }
-  col.psn { width: 4.4%; } col.nm { width: 13.5%; } col.sum { width: 2.6%; }
-  th, td { border: 1px solid #E5EAF0; text-align: center; vertical-align: middle; font-size: 7px; padding: 2px 2px; white-space: nowrap; overflow: hidden; }
+  col.psn { width: 4.6%; } col.nm { width: 14%; } col.sum { width: 2.7%; }
+  th, td { border: 1px solid #EAEEF3; text-align: center; vertical-align: middle; font-size: 8px; line-height: 1.5; padding: 3px 3px; white-space: nowrap; overflow: hidden; }
   th { background: #0F4C2A; color: #fff; font-weight: 700; letter-spacing: .02em; }
   th.wknd { background: #0A3A20; } th.hol { background: #5B21B6; }
-  th.d .dw { font-size: 6px; opacity: .9; } th.d .hh { font-size: 5.5px; font-weight: 800; }
-  td.psn, th.psn { text-align: left; font-size: 6.5px; padding-left: 4px; color: #334155; }
-  td.nm, th.nm { text-align: left; font-weight: 600; padding-left: 4px; text-overflow: ellipsis; }
+  th.d .dw { font-size: 6.5px; opacity: .9; } th.d .hh { font-size: 6px; font-weight: 800; }
+  td.psn, th.psn { text-align: left; font-size: 7px; padding-left: 5px; color: #334155; }
+  td.nm, th.nm { text-align: left; font-weight: 600; padding-left: 5px; text-overflow: ellipsis; }
   td.d { font-weight: 700; }
   /* Month-total columns: dark header (readable) + tinted body */
   th.sum { background: #334155; color: #FFFFFF; }
   td.sum { background: #EEF2F7; color: #0A0A0A; font-weight: 800; }
-  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font: 400 8px/1.45 Arial, sans-serif; color: #0A0A0A; flex: 0 0 auto; }
-  .lg { display: inline-flex; align-items: center; gap: 4px; }
-  .lg b { display: inline-block; min-width: 13px; text-align: center; font-size: 7px; font-weight: 800; padding: 1px 4px; border-radius: 3px; }
-  .ftr { font: 400 7.5px/1.35 Arial, sans-serif; color: #475569; margin-top: 5px; flex: 0 0 auto; }
+  .ftr { font: 400 7.5px/1.4 Arial, sans-serif; color: #475569; margin-top: 6px; flex: 0 0 auto; }
 </style></head>
 <body>
   <div class="page">
     <h1>MONTHLY ATTENDANCE — ${esc(monthLabel)}</h1>
     <div class="sub">Evergreen Shipping Agency Saudi Co. · ESAU SADMN SUP / HR Dept</div>
+    <div class="legend">${legend}</div>
     <div class="tablewrap">
       <div class="tbl">
         <table>
@@ -638,24 +639,21 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
         </table>
       </div>
     </div>
-    <div class="legend">${legend}</div>
     <div class="ftr">${esc(note)}</div>
   </div>
   <script>
     (function () {
-      // Table fills the page WIDTH (width:100% + table-layout fixed).
-      // To fill the HEIGHT without pushing into the legend/footer (which
-      // are reserved below by flexbox), scale the table block vertically
-      // so it exactly fills the remaining area — fits any roster size on
-      // one page, no overlap. Nadeem 2026-06-01.
+      // Relaxed, undistorted layout: the table fills the page WIDTH
+      // (width:100%). If the roster is taller than the space left below
+      // the legend, scale the whole table block down PROPORTIONALLY
+      // (same x and y — no stretching) and centre it so it sits on one
+      // page. If it already fits, leave it natural. Nadeem 2026-06-01.
       var wrap = document.querySelector('.tablewrap');
       var tbl = document.querySelector('.tbl');
       tbl.style.transform = 'none';
-      var natH = tbl.offsetHeight;
-      var availH = wrap.clientHeight;
-      if (natH > 0 && availH > 0) {
-        tbl.style.transform = 'scaleY(' + (availH / natH) + ')';
-      }
+      var sy = wrap.clientHeight / tbl.offsetHeight;
+      var s = Math.min(1, sy);                 // shrink only, never stretch
+      if (s < 1) tbl.style.transform = 'scale(' + s + ')';
       setTimeout(function () { window.focus(); window.print(); }, 250);
     })();
   </script>
