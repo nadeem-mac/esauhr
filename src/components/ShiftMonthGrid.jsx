@@ -356,18 +356,22 @@ export default function ShiftMonthGrid({
       const aoa = [[`STAFF SHIFT SCHEDULE \u2014 ${monthLabel}`], []];
       const kind = ['title', 'blank'];
       const remarkRows = [];   // 0-based sheet rows that get the dropdown
+      const subtotalRange = new Map();  // subtotal row idx → {first,last} data rows
       const locs = [...new Set(flat.map(r => r.loc))].sort();
       locs.forEach(loc => {
         aoa.push([`${loc} OFFICE`]); kind.push('loc');
         aoa.push(['PSN', 'Employee', 'Date', 'Day', 'Shift', 'Hrs', 'Remark']); kind.push('header');
         const lr = flat.filter(r => r.loc === loc);
+        const firstData = aoa.length;     // 0-based row of first data row
         lr.forEach(r => {
           aoa.push([r.psn, r.name, dFmt(r.date), dName(r.date), sl(r.st, r.en), hoursOf(r.st, r.en), '']);
           remarkRows.push(aoa.length - 1);
           kind.push('data');
         });
+        const lastData = aoa.length - 1;
         const tot = Math.round(lr.reduce((s, r) => s + hoursOf(r.st, r.en), 0) * 10) / 10;
         aoa.push(['', '', `${lr.length} shifts`, '', 'TOTAL', tot, '']); kind.push('subtotal');
+        subtotalRange.set(aoa.length - 1, { first: firstData, last: lastData });
         aoa.push([]); kind.push('blank');
       });
       aoa.push(['Please review your staff and submit the next month in this same format. Use the Remark dropdown to mark Mawani Requirement or Night Shift.']);
@@ -400,9 +404,22 @@ export default function ShiftMonthGrid({
           } else if (k === 'subtotal') {
             ws[addr].s = { font: { bold: true, sz: 10, color: { rgb: '0A0A0A' } },
               fill: { fgColor: { rgb: 'F3F4F6' } }, alignment: { horizontal: ctr ? 'center' : 'left', vertical: 'center' }, border };
+            // TOTAL Hrs (col F) → live SUM of the block's Hrs cells.
+            if (C === 5) {
+              const rng = subtotalRange.get(R);
+              if (rng) ws[addr].f = `SUM(F${rng.first + 1}:F${rng.last + 1})`;
+            }
           } else if (k === 'data') {
             ws[addr].s = { font: { sz: 10, color: { rgb: '0A0A0A' } },
               alignment: { horizontal: ctr ? 'center' : 'left', vertical: 'center' }, border };
+            // Hrs (col F) → derived live from the Shift cell (col E) so it
+            // recalculates whenever a manager edits the shift. Times are
+            // HH:MM-HH:MM (or HH:MM->HH:MM); LEFT/RIGHT(,5) grabs each end
+            // and MOD handles overnight automatically (e.g. 16:00->00:00 = 8).
+            if (C === 5) {
+              const er = R + 1;   // Excel row number
+              ws[addr].f = `IFERROR(ROUND(MOD(TIMEVALUE(RIGHT(E${er},5))-TIMEVALUE(LEFT(E${er},5)),1)*24,1),"")`;
+            }
           }
         }
       }
