@@ -118,6 +118,14 @@ const CONFIG = {
     lateCutoff:     '08:15:00',
     endStandard:    '16:15:00',
     endSupFourPm:   '16:00:00',
+    // The device exports a raw punch stream with no in/out labels, so a
+    // day with only ONE punch is ambiguous. We disambiguate by time of
+    // day: a punch before midday is treated as the clock-IN (so the day
+    // is "forgot to sign off"); a punch at/after midday is treated as
+    // the clock-OUT (so the day is "forgot to sign on"). Without this,
+    // every single-punch day collapses to "forgot sign-off" and a lone
+    // afternoon punch is wrongly scored as hours late. Nadeem 2026-05-31.
+    middayCutoff:   '12:00:00',
   },
   //  Staff whose day ends at 16:00. Primary signal: employees.
   //  working_hours_group === 'sup_team' (fetched fresh at run time).
@@ -321,6 +329,7 @@ export default function HQAttendanceExportCard({ me, employees = [] }) {
       const lateCutMin   = toMin(C.hq.lateCutoff);       // 08:15
       const endStdMin    = toMin(C.hq.endStandard);      // 16:15
       const endFourPmMin  = toMin(C.hq.endSupFourPm);    // 16:00
+      const middayMin     = toMin(C.hq.middayCutoff);    // 12:00
 
       // Attendance-derived counters (working days only). Late / early are
       // computed from the raw punches per HQ criteria, NOT from the
@@ -346,24 +355,30 @@ export default function HQAttendanceExportCard({ me, employees = [] }) {
         const lp = toMin(r[C.attendance.lastPunch]);
         const endMin = fourPmSet.has(String(psn).toUpperCase()) ? endFourPmMin : endStdMin;
 
-        // Clock-in: missing → forgot to sign on; else late if strictly
-        // after 08:15 (minutes measured from the 08:00 scheduled start).
-        if (fp == null) {
-          a.forgetOn += 1;
-        } else if (fp > lateCutMin) {
-          a.lateTimes += 1;
-          a.lateMinutes += Math.max(0, Math.round(fp - startMin));
+        if (fp != null && lp != null) {
+          // Both punches present — straightforward.
+          if (fp > lateCutMin) {
+            a.lateTimes += 1;
+            a.lateMinutes += Math.max(0, Math.round(fp - startMin));
+          }
+          if (lp < endMin) {
+            a.earlyTimes += 1;
+            a.earlyMinutes += Math.max(0, Math.round(endMin - lp));
+          }
+        } else if (fp != null || lp != null) {
+          // Exactly ONE punch — the device stream doesn't label in vs
+          // out, so we can't reliably score both lateness and early
+          // leave from it. Disambiguate by time of day for the missed-
+          // punch tally only: a punch before midday is treated as the
+          // clock-IN (forgot to sign OFF); a punch at/after midday as
+          // the clock-OUT (forgot to sign ON). No late/early minutes
+          // are charged on single-punch days — those come only from
+          // complete (both-punch) days, to avoid speculative figures.
+          const only = fp != null ? fp : lp;
+          if (only < middayMin) a.forgetOff += 1;   // in only, no out
+          else                  a.forgetOn  += 1;   // out only, no in
         }
-
-        // Clock-out: missing → forgot to sign off; else early if strictly
-        // before the applicable end (16:00 for SUP/4-PM staff, else
-        // 16:15); minutes measured from that end.
-        if (lp == null) {
-          a.forgetOff += 1;
-        } else if (lp < endMin) {
-          a.earlyTimes += 1;
-          a.earlyMinutes += Math.max(0, Math.round(endMin - lp));
-        }
+        // (no punches at all on a worked-status row: nothing to score)
       }
 
       // Leave-derived counters (working days only, clamped to the FY)
@@ -444,21 +459,15 @@ export default function HQAttendanceExportCard({ me, employees = [] }) {
       //  and Chinese for HQ.
       const noteLines = [
         '',
-        ['NOTES / 附註'],
-        [`Reporting period / 統計期間:  01 Sep ${fromYear} – 31 Aug ${fromYear + 1} (${yearLabel}).`],
-        ['This report summarises each employee\u2019s attendance: personal leave, sick leave (with / without pay), '
-          + 'annual leave, lateness, early leave, forgotten sign-on / sign-off, and unapproved absence.'],
-        ['本報表彙總每位員工的出勤狀況：事假、病假（有薪／無薪）、特休、遲到、早退、忘刷上／下班卡，以及曠職。'],
-        ['Counts WORKING DAYS ONLY. The following are excluded and NOT counted: '
-          + 'the whole month of Ramadan, weekends (Friday & Saturday), and public holidays.'],
-        ['僅計算「工作日」。以下不列入計算：整個齋戒月（Ramadan）、週末（週五與週六）、以及國定假日。'],
-        ['Lateness = clock-in after 08:15 (minutes from 08:00). Early leave = clock-out before 16:15 '
-          + '(before 16:00 for SUP / 4 PM staff, who are due out at 16:00 and are not counted early for a 16:00 departure).'],
-        ['遲到＝上班打卡晚於 08:15（分鐘自 08:00 起算）。早退＝下班打卡早於 16:15（SUP／4 PM 人員為 16:00，於 16:00 下班不算早退）。'],
-        [`Leave hours are derived from working days × ${C.workdayHours}h. Times = number of occurrences; `
-          + 'Minutes = total minutes; Days = total working days.'],
-        [`請假時數以工作日 × ${C.workdayHours} 小時計算。次數＝發生次數；分鐘＝總分鐘數；天數＝工作日總天數。`],
-        [`Prepared by / 製表人:  ${me?.name || 'ESAU HR'}  ·  ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`],
+        ['NOTES'],
+        [`\u2022 Reporting period: 01 Sep ${fromYear} \u2013 31 Aug ${fromYear + 1} (${yearLabel}).`],
+        ['\u2022 Working days only \u2014 excludes Ramadan, weekends (Fri & Sat), and public holidays.'],
+        ['\u2022 Late: clock-in after 08:15 (minutes from 08:00).'],
+        ['\u2022 Early leave: clock-out before 16:15 \u2014 before 16:00 for SUP / 4 PM staff (16:00 departure not counted early).'],
+        ['\u2022 Forgot sign-on / sign-off: a worked day missing the clock-in or clock-out.'],
+        ['\u2022 Single-punch day: a morning punch counts as sign-in (missing sign-off); a midday/afternoon punch as sign-out (missing sign-on).'],
+        [`\u2022 Times = occurrences; Minutes = total minutes; Days = working days; leave hours = days \u00d7 ${C.workdayHours}.`],
+        [`\u2022 Prepared by: ${me?.name || 'ESAU HR'}  \u00b7  ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`],
       ];
       const firstNoteRow = aoa.length;     // 0-based row index where notes start
       for (const ln of noteLines) aoa.push(ln);
@@ -475,8 +484,8 @@ export default function HQAttendanceExportCard({ me, employees = [] }) {
           alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
         };
       }
-      // Style the footer-note rows: merge across all columns, small grey
-      // italic text, the NOTES header in brand green bold.
+      // Style the footer-note rows: merge across all columns, small
+      // near-black text (no italic), the NOTES header in brand green bold.
       const lastCol = HQ_HEADERS.length - 1;
       ws['!merges'] = ws['!merges'] || [];
       for (let i = 0; i < noteLines.length; i++) {
@@ -484,11 +493,11 @@ export default function HQAttendanceExportCard({ me, employees = [] }) {
         if (!noteLines[i].length) continue;        // blank spacer row
         ws['!merges'].push({ s: { r: R, c: 0 }, e: { r: R, c: lastCol } });
         const addr = XLSX.utils.encode_cell({ r: R, c: 0 });
-        const isHeader = i === 1;                  // 'NOTES / 附註'
+        const isHeader = i === 1;                  // 'NOTES'
         if (ws[addr]) ws[addr].s = {
           font: {
-            bold: isHeader, italic: !isHeader, sz: isHeader ? 10 : 9,
-            color: { rgb: isHeader ? GREEN : '444444' },
+            bold: isHeader, italic: false, sz: isHeader ? 10 : 9,
+            color: { rgb: isHeader ? GREEN : '0A0A0A' },
           },
           alignment: { horizontal: 'left', vertical: 'center', wrapText: true },
         };
