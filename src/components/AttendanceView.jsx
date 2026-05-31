@@ -6077,7 +6077,21 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
                   {reevalMs != null && <span style={{ opacity: 0.6 }}> · re-eval {fmt(reevalMs)}</span>}
                 </span>
                 {reevalState.error && (
-                  <span style={{ color: '#991B1B', marginLeft: 4 }}>· failed</span>
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      try {
+                        window.dispatchEvent(new CustomEvent('esauhr_toast', { detail: {
+                          kind: 'error',
+                          title: 'Re-evaluation error',
+                          body: String(reevalState.error),
+                        }}));
+                      } catch {}
+                    }}
+                    title={`Re-evaluation error (tap for details):\n${reevalState.error}`}
+                    style={{ color: '#991B1B', marginLeft: 4, cursor: 'pointer', textDecoration: 'underline dotted' }}
+                  >· failed (tap)</span>
                 )}
               </div>
             );
