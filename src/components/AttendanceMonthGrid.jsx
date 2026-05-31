@@ -545,8 +545,6 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
         </div>
       )}
 
-          state so Bashaier doesn't see a blank canvas. The "no records
-          this month" empty state below handles the unfiltered case. */}
       {trackedTotalCount > 0 && tracked.length === 0 && search ? (
         <div className="text-center py-8" style={{ color: '#0A0A0A', opacity: 0.55 }}>
           <div style={{ fontSize: 13, fontWeight: 600 }}>No staff match &ldquo;{search}&rdquo;.</div>
@@ -625,7 +623,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
             );
           })}
         </div>
-        <div style={{ overflowX: 'visible', maxWidth: '100%', boxSizing: 'border-box' }}>
+        <div style={{ overflowX: 'visible', overflowY: 'auto', maxHeight: '72vh', maxWidth: '100%', boxSizing: 'border-box' }}>
           <div style={{
             display: 'grid',
             gridTemplateColumns: `190px repeat(${days.length}, minmax(0, 1fr))`,
@@ -633,8 +631,9 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
             width: '100%',
             boxSizing: 'border-box',
           }}>
-            {/* Header */}
-            <div style={{ background: '#FAFAFA', padding: '6px 8px', fontSize: 10, fontWeight: 700, color: '#0A0A0A', letterSpacing: '0.05em' }}>
+            {/* Header — sticky so the day/date row stays visible while
+                scrolling down the employee list. Nadeem 2026-05-31. */}
+            <div style={{ position: 'sticky', top: 0, zIndex: 3, background: '#FAFAFA', padding: '6px 8px', fontSize: 10, fontWeight: 700, color: '#0A0A0A', letterSpacing: '0.05em' }}>
               EMPLOYEE
             </div>
             {days.map(d => {
@@ -650,8 +649,11 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
                   key={dStr}
                   title={noData ? 'No attendance data loaded for this date' : undefined}
                   style={{
+                    position: 'sticky',
+                    top: 0,
+                    zIndex: 2,
                     background: isToday
-                      ? 'rgba(15,76,42,0.10)'
+                      ? '#E3EDE7'   // opaque so scrolled rows don't show through
                       : isWeekend
                         ? '#FEF3C7'  // amber-50 — clearly distinguishable from working days
                         : noData
