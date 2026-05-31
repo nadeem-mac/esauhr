@@ -277,7 +277,29 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
     };
   }, [records, employees]);
 
-  // Include ALL active staff — not just those with records this
+  // ── Coverage ───────────────────────────────────────────────────
+  // Which calendar dates in the visible month actually have attendance
+  // data loaded. Empty cells otherwise look identical to a real day
+  // off, so without this you can't tell "no shift" from "not uploaded
+  // yet". We treat working days (Sun–Thu) up to today as expected;
+  // weekends and future dates aren't flagged. Public holidays may also
+  // be legitimately empty — noted in the label. Nadeem 2026-05-31.
+  const coverage = useMemo(() => {
+    const covered = new Set(records.map(r => r.attendance_date));
+    const expected = days.filter(d => ymd(d) <= todayStr);
+    const workExpected = expected.filter(d => { const w = d.getDay(); return w !== 5 && w !== 6; });
+    const missing = workExpected.filter(d => !covered.has(ymd(d)));
+    return {
+      coveredSet: covered,
+      expectedCount: workExpected.length,
+      loadedCount: workExpected.length - missing.length,
+      missing,                          // array of Date (working days, ≤ today, no data)
+      complete: workExpected.length > 0 && missing.length === 0,
+      anyExpected: workExpected.length > 0,
+    };
+  }, [records, days, todayStr]);
+
+
   // month. Staff on long-term leave or new hires who haven't been
   // in any time-card upload yet would otherwise disappear from the
   // grid, making the count diverge from the directory and from the
@@ -497,8 +519,32 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
         </div>
       )}
 
+      {/* Coverage indicator — at a glance, is this month's attendance
+          actually loaded? Green when every working day up to today has
+          data; amber listing the dates still missing otherwise. */}
+      {!fetchErr && coverage.anyExpected && (
+        <div className="text-[11px] mb-2 px-2.5 py-1.5 rounded flex items-start gap-2 flex-wrap"
+             style={{
+               background: coverage.complete ? '#ECFDF5' : '#FFFBEB',
+               border: `1px solid ${coverage.complete ? '#A7F3D0' : '#FDE68A'}`,
+               color: '#0A0A0A',
+             }}>
+          <span style={{ fontWeight: 700, color: coverage.complete ? '#065F46' : '#92400E' }}>
+            {coverage.complete ? '✓ Data loaded' : 'Data incomplete'}
+          </span>
+          <span style={{ fontWeight: 600 }}>
+            {coverage.loadedCount} / {coverage.expectedCount} working days
+          </span>
+          {!coverage.complete && coverage.missing.length > 0 && (
+            <span style={{ color: '#92400E' }}>
+              · Missing: {coverage.missing.map(d => d.getDate()).join(', ')}
+              <span style={{ opacity: 0.7 }}> (upload these dates, or ignore if a public holiday)</span>
+            </span>
+          )}
+          <span style={{ opacity: 0.55, marginLeft: 'auto' }}>weekends &amp; future dates excluded</span>
+        </div>
+      )}
 
-      {/* When search filters out everything, show a dedicated empty
           state so Bashaier doesn't see a blank canvas. The "no records
           this month" empty state below handles the unfiltered case. */}
       {trackedTotalCount > 0 && tracked.length === 0 && search ? (
@@ -596,28 +642,35 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
               const dow = d.getDay();
               const isWeekend = dow === 5 || dow === 6;
               const isToday = dStr === todayStr;
+              // Working day, on/before today, with no attendance loaded:
+              // flag the column so a gap in the upload is obvious.
+              const noData = !isWeekend && dStr <= todayStr && !coverage.coveredSet.has(dStr);
               return (
                 <div
                   key={dStr}
+                  title={noData ? 'No attendance data loaded for this date' : undefined}
                   style={{
                     background: isToday
                       ? 'rgba(15,76,42,0.10)'
                       : isWeekend
                         ? '#FEF3C7'  // amber-50 — clearly distinguishable from working days
-                        : '#FAFAFA',
+                        : noData
+                          ? '#FEECEC'  // light red — no data loaded for this working day
+                          : '#FAFAFA',
                     padding: '4px 0',
                     fontSize: 9,
                     fontWeight: 700,
-                    color: isWeekend ? '#854F0B' : '#0A0A0A',
+                    color: isWeekend ? '#854F0B' : (noData ? '#B91C1C' : '#0A0A0A'),
                     textAlign: 'center',
-                    borderTop: isToday ? '2px solid #0F4C2A' : (isWeekend ? '2px solid #FCD34D' : '1px solid transparent'),
-                    borderBottom: isWeekend ? '1px solid #FCD34D' : 'none',
+                    borderTop: isToday ? '2px solid #0F4C2A' : (isWeekend ? '2px solid #FCD34D' : (noData ? '2px solid #FCA5A5' : '1px solid transparent')),
+                    borderBottom: isWeekend ? '1px solid #FCD34D' : (noData ? '1px solid #FCA5A5' : 'none'),
                   }}
                 >
                   <div style={{ fontSize: 8, opacity: isWeekend ? 0.95 : 0.6, fontWeight: isWeekend ? 700 : 600, letterSpacing: isWeekend ? '0.05em' : 0 }}>
                     {['Su','Mo','Tu','We','Th','Fr','Sa'][dow]}
                   </div>
                   <div>{d.getDate()}</div>
+                  {noData && <div style={{ fontSize: 7, lineHeight: 1, marginTop: 1 }}>•</div>}
                 </div>
               );
             })}

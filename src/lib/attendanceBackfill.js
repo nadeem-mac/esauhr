@@ -575,6 +575,7 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
   let parsed = 0;
   let skipped = 0;
   let unmatched = 0;
+  const unmatchedPsns = new Set();   // raw PSNs not found in the directory (likely roster typos)
   let lateCount = 0;
   let shortCount = 0;
   let presentCount = 0;
@@ -686,7 +687,7 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
     const emp = empById.get(psn) ||
                 empByDigits.get(psn.replace(/^H/, ''));
     const empId = emp?.id || psn;
-    if (!emp) unmatched++;
+    if (!emp) { unmatched++; if (psn) unmatchedPsns.add(psn); }
 
     // Skip rows with no usable punch data — both punches missing
     // means the row is purely informational and tells us nothing
@@ -947,10 +948,12 @@ export function buildBackfillRows({ parsedRows, employees, recordedBy, shiftEmpl
       parsed,
       skipped,
       unmatched,
+      unmatchedPsns: [...unmatchedPsns].sort(),
       rows: rows.length,
       employees: touchedEmployees,
       minDate,
       maxDate,
+      distinctDates: new Set(rows.map(r => r.attendance_date)).size,
       // Evaluation breakdown — surfaced in the preview UI so the
       // user sees what the imported rows will look like before
       // committing. Late + short are bucketed against the standard

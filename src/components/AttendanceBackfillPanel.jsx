@@ -53,7 +53,7 @@ import {
   reevaluateBackfillRows,
 } from '../lib/attendanceBackfill.js';
 import { TimeCardParseError } from '../lib/timeCard.js';
-import { directGet } from '../supabaseClient.js';
+import { directGet, directGetAll } from '../supabaseClient.js';
 
 // ─── Inline keyframes ────────────────────────────────────────────────
 // Plain ease transitions — bounces removed per Nadeem's feedback.
@@ -185,11 +185,12 @@ export default function AttendanceBackfillPanel({ me, employees, embedded = fals
         const minD = preview.summary?.minDate;
         const maxD = preview.summary?.maxDate;
         if (minD && maxD) {
-          const back = await directGet(
+          const back = await directGetAll(
             'attendance_daily',
             `select=employee_id,attendance_date` +
-            `&attendance_date=gte.${minD}&attendance_date=lte.${maxD}`,
-            { timeoutMs: 12000 }
+            `&attendance_date=gte.${minD}&attendance_date=lte.${maxD}` +
+            `&order=attendance_date.asc,employee_id.asc`,
+            { timeoutMs: 20000 }
           );
           verified = Array.isArray(back) ? back.length : null;
         }
@@ -774,6 +775,40 @@ export default function AttendanceBackfillPanel({ me, employees, embedded = fals
                     {done.verified === 0 && ' — the write reported success but nothing persisted. Tell HR/dev: likely a row-level-security or date issue.'}
                   </div>
                 )}
+
+                {/* ── Upload summary — quality check on what was parsed
+                    vs. written, so bad rows are caught at the door. */}
+                <div className="text-[11px] mt-2 px-2.5 py-2 rounded" style={{ background: '#FFFFFF', border: '1px solid #A7F3D0', color: '#0A0A0A' }}>
+                  <div style={{ fontWeight: 700, color: '#065F46', marginBottom: 3 }}>Upload summary</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 14px' }}>
+                    <span><strong>{(done.summary.parsed ?? done.written).toLocaleString()}</strong> rows read from file</span>
+                    <span><strong>{done.written.toLocaleString()}</strong> written</span>
+                    <span><strong>{done.summary.distinctDates ?? '—'}</strong> dates covered</span>
+                    <span><strong>{done.summary.employees.size}</strong> staff</span>
+                  </div>
+                  {done.summary.skipped > 0 && (
+                    <div style={{ marginTop: 3, color: '#92400E' }}>
+                      <strong>{done.summary.skipped}</strong> row{done.summary.skipped === 1 ? '' : 's'} skipped (missing PSN/date or no punches).
+                    </div>
+                  )}
+                  {done.summary.unmatched > 0 && (
+                    <div style={{ marginTop: 3, color: '#991B1B' }}>
+                      <strong>{done.summary.unmatched}</strong> row{done.summary.unmatched === 1 ? '' : 's'} had a PSN not in the directory
+                      {done.summary.unmatchedPsns?.length
+                        ? <> — likely a roster typo: <strong>{done.summary.unmatchedPsns.join(', ')}</strong></>
+                        : null}. These were stored under the raw PSN; please verify the master list.
+                    </div>
+                  )}
+                  {(done.summary.missedInCount > 0 || done.summary.missedOutCount > 0) && (
+                    <div style={{ marginTop: 3, color: '#92400E' }}>
+                      Single-punch days: <strong>{done.summary.missedInCount}</strong> missing sign-on · <strong>{done.summary.missedOutCount}</strong> missing sign-off.
+                    </div>
+                  )}
+                  {done.summary.skipped === 0 && done.summary.unmatched === 0 && (
+                    <div style={{ marginTop: 3, color: '#065F46' }}>✓ No unknown PSNs or skipped rows — clean import.</div>
+                  )}
+                </div>
+
                 <button
                   onClick={reset}
                   className="text-[11px] mt-2.5 px-3 py-1.5 rounded-full transition-all"
