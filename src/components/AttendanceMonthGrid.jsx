@@ -583,40 +583,47 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
   @page { size: A4 landscape; margin: 0; }
   * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   html, body { margin: 0; padding: 0; }
-  .page { width: 297mm; height: 210mm; padding: 7mm; overflow: hidden; }
-  .scaler { transform-origin: top left; }
-  h1 { font: 700 16px/1.2 Arial, sans-serif; color: #0F4C2A; margin: 0 0 2px; }
-  .sub { font: 400 10px/1.2 Arial, sans-serif; color: #0A0A0A; margin: 0 0 6px; }
-  table { border-collapse: collapse; font-family: Arial, sans-serif; }
-  th, td { border: 1px solid #E5E7EB; text-align: center; font-size: 8px; padding: 2px 1px; white-space: nowrap; }
+  .page { width: 297mm; height: 210mm; padding: 6mm; overflow: hidden; display: flex; flex-direction: column; }
+  h1 { font: 700 15px/1.15 Arial, sans-serif; color: #0F4C2A; margin: 0; }
+  .sub { font: 400 9px/1.2 Arial, sans-serif; color: #0A0A0A; margin: 1px 0 4px; }
+  .tablewrap { flex: 1 1 auto; min-height: 0; }
+  table { border-collapse: collapse; font-family: Arial, sans-serif; width: 100%; height: 100%; table-layout: fixed; }
+  col.psn { width: 4.2%; } col.nm { width: 13%; } col.sum { width: 2.5%; }
+  th, td { border: 1px solid #D9DEE5; text-align: center; vertical-align: middle; font-size: 8px; padding: 0 1px; white-space: nowrap; overflow: hidden; }
   th { background: #0F4C2A; color: #fff; font-weight: 700; }
   th.wknd { background: #0A3A20; } th.hol { background: #5B21B6; }
   th.d .dw { font-size: 6.5px; opacity: .9; } th.d .hh { font-size: 6px; font-weight: 800; }
-  td.psn, th.psn { text-align: left; font-size: 7.5px; }
-  td.nm, th.nm { text-align: left; font-weight: 600; max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
-  td.d { font-weight: 700; min-width: 14px; }
+  td.psn, th.psn { text-align: left; font-size: 7.5px; padding-left: 3px; }
+  td.nm, th.nm { text-align: left; font-weight: 600; padding-left: 3px; text-overflow: ellipsis; }
+  td.d { font-weight: 700; }
   td.sum, th.sum { font-weight: 700; background: #F3F4F6; }
-  .ftr { font: 400 8px/1.3 Arial, sans-serif; color: #0A0A0A; margin-top: 5px; }
+  .ftr { font: 400 8px/1.3 Arial, sans-serif; color: #0A0A0A; margin-top: 4px; flex: 0 0 auto; }
 </style></head>
 <body>
   <div class="page">
-    <div class="scaler" id="sc">
-      <h1>MONTHLY ATTENDANCE — ${esc(monthLabel)}</h1>
-      <div class="sub">Evergreen Shipping Agency Saudi Co. · ESAU SADMN SUP / HR Dept</div>
-      <table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
-      <div class="ftr">${esc(note)}</div>
+    <h1>MONTHLY ATTENDANCE — ${esc(monthLabel)}</h1>
+    <div class="sub">Evergreen Shipping Agency Saudi Co. · ESAU SADMN SUP / HR Dept</div>
+    <div class="tablewrap">
+      <table>
+        <colgroup><col class="psn"><col class="nm">${days.map(() => '<col class="d">').join('')}${'<col class="sum">'.repeat(5)}</colgroup>
+        <thead><tr>${head}</tr></thead>
+        <tbody>${body}</tbody>
+      </table>
     </div>
+    <div class="ftr">${esc(note)}</div>
   </div>
   <script>
     (function () {
+      // Layout already fills the full A4 width (table 100%, fixed) and
+      // height (table height:100% distributes rows). Guard only against
+      // an unusually long roster spilling onto a 2nd page by shrinking
+      // to fit if the content genuinely overflows. Nadeem 2026-06-01.
       var page = document.querySelector('.page');
-      var sc = document.getElementById('sc');
-      var padPx = page.clientWidth * (7 / 297);            // 7mm padding in px
-      var availW = page.clientWidth - padPx * 2;
-      var availH = page.clientHeight - padPx * 2;
-      var tw = sc.scrollWidth, th = sc.scrollHeight;
-      var scale = Math.min(availW / tw, availH / th);       // fill the page (up- or down-scale)
-      sc.style.transform = 'scale(' + scale + ')';
+      if (page.scrollHeight > page.clientHeight + 2) {
+        var s = page.clientHeight / page.scrollHeight;
+        page.style.transformOrigin = 'top left';
+        page.style.transform = 'scale(' + s + ')';
+      }
       setTimeout(function () { window.focus(); window.print(); }, 250);
     })();
   </script>
