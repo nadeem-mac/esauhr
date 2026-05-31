@@ -159,6 +159,8 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
   const [month, setMonth] = useState(today.getMonth());
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [fetchErr, setFetchErr] = useState(null);   // surfaced on-screen
+  const [lastCount, setLastCount] = useState(null);  // rows from last fetch
   const [hoverTip, setHoverTip] = useState(null);
   // Search filter — Bashaier types a name fragment / PSN / dept and
   // the grid narrows to matching staff. Empty string = no filter.
@@ -178,19 +180,25 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
   const refetch = useCallback(async () => {
     setLoading(true);
     try {
+      // select=* (not a fixed column list) so a drifted/renamed column
+      // in the live table can never 400 the read and silently blank the
+      // grid. Missing optional columns just come back undefined.
       const data = await directGet(
         'attendance_daily',
-        `select=employee_id,attendance_date,status,first_punch,last_punch,` +
-        `expected_start,expected_end,late_minutes,early_leave_minutes,notes` +
+        `select=*` +
         `&attendance_date=gte.${ymd(firstDay)}` +
         `&attendance_date=lte.${ymd(lastDay)}` +
         `&order=attendance_date.asc`,
         { timeoutMs: 9000 }
       );
       setRecords(data || []);
+      setLastCount(Array.isArray(data) ? data.length : 0);
+      setFetchErr(null);
     } catch (e) {
       console.warn('attendance_daily fetch failed:', e);
       setRecords([]);
+      setLastCount(null);
+      setFetchErr(e?.message || String(e) || 'fetch failed');
     } finally {
       setLoading(false);
     }
@@ -435,7 +443,21 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
         </div>
       </div>
 
-      {/* Old standalone search row removed — now lives in the title bar above. */}
+      {/* Fetch diagnostic — surfaces what the attendance_daily read
+          actually returned so an empty grid is never a silent mystery.
+          Shows the error in red if the read failed, otherwise the row
+          count + the exact date range queried. */}
+      {fetchErr ? (
+        <div className="text-[11px] mb-2 px-2 py-1 rounded"
+             style={{ background: '#FEF2F2', color: '#991B1B', border: '1px solid #FCA5A5' }}>
+          Couldn’t load attendance for {ymd(firstDay)} → {ymd(lastDay)}: {fetchErr}
+        </div>
+      ) : lastCount != null && (
+        <div className="text-[11px] mb-2" style={{ color: '#0A0A0A', opacity: 0.7 }}>
+          {lastCount} record{lastCount === 1 ? '' : 's'} loaded for {ymd(firstDay)} → {ymd(lastDay)}
+        </div>
+      )}
+
 
       {/* When search filters out everything, show a dedicated empty
           state so Bashaier doesn't see a blank canvas. The "no records
