@@ -173,7 +173,28 @@ export default function AttendanceBackfillPanel({ me, employees, embedded = fals
     setProgress({ written: 0, total: preview.rows.length });
     try {
       const { written } = await recordBackfillRows(preview.rows, (p) => setProgress(p));
-      setDone({ written, summary: preview.summary });
+      // Verify the rows actually landed: read back the count straight
+      // from attendance_daily for the exact date range we just wrote.
+      // 'written' is optimistic (counts rows sent); this confirms what
+      // PostgREST actually persisted. If verified is 0 while written is
+      // non-zero, the POST 2xx'd but nothing stuck (RLS / trigger / date
+      // mismatch) — surfaced in the complete message so it's not silent.
+      // Nadeem 2026-05-31.
+      let verified = null;
+      try {
+        const minD = preview.summary?.minDate;
+        const maxD = preview.summary?.maxDate;
+        if (minD && maxD) {
+          const back = await directGet(
+            'attendance_daily',
+            `select=employee_id,attendance_date` +
+            `&attendance_date=gte.${minD}&attendance_date=lte.${maxD}`,
+            { timeoutMs: 12000 }
+          );
+          verified = Array.isArray(back) ? back.length : null;
+        }
+      } catch { /* verification is best-effort */ }
+      setDone({ written, verified, summary: preview.summary });
       setPreview(null);
     } catch (e) {
       setParseErr(`Import failed: ${e?.message || e}`);
@@ -742,6 +763,17 @@ export default function AttendanceBackfillPanel({ me, employees, embedded = fals
                   <strong>{formatDate(done.summary.minDate)}</strong> to{' '}
                   <strong>{formatDate(done.summary.maxDate)}</strong>. The Monthly Overview above has refreshed.
                 </div>
+                {done.verified != null && (
+                  <div className="text-[12px] mt-1.5 px-2 py-1 rounded"
+                       style={{
+                         background: done.verified > 0 ? '#ECFDF5' : '#FEF2F2',
+                         color: done.verified > 0 ? '#065F46' : '#991B1B',
+                         border: `1px solid ${done.verified > 0 ? '#6EE7B7' : '#FCA5A5'}`,
+                       }}>
+                    Verified in database: <strong>{done.verified.toLocaleString()}</strong> row{done.verified === 1 ? '' : 's'} now present for {formatDate(done.summary.minDate)} → {formatDate(done.summary.maxDate)}.
+                    {done.verified === 0 && ' — the write reported success but nothing persisted. Tell HR/dev: likely a row-level-security or date issue.'}
+                  </div>
+                )}
                 <button
                   onClick={reset}
                   className="text-[11px] mt-2.5 px-3 py-1.5 rounded-full transition-all"
