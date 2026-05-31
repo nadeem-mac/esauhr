@@ -98,6 +98,34 @@ const CONFIG = {
   //  HQ expects a different standard day.
   workdayHours: 8,
 
+  // ── HQ late / early-leave criteria (THIS REPORT ONLY) ─────────────
+  //  Nadeem 2026-05-31: for the HQ report, lateness and early-leave are
+  //  computed straight from the uploaded punch history (first_punch /
+  //  last_punch) using HQ's own thresholds — NOT from the stored
+  //  status / late_minutes (which the daily pipeline derived with a
+  //  different, 17:00 standard end). This keeps the HQ definition fixed
+  //  and independent of how each row was originally classified.
+  //    • Late      = clock-in strictly AFTER 08:15. Minutes measured
+  //                  from the scheduled start (08:00), mirroring the
+  //                  app's own late-minute convention.
+  //    • Early     = clock-out strictly BEFORE the applicable end.
+  //                  Minutes measured from that end.
+  //        - Standard staff end 16:15.
+  //        - SUP team / "safe leaving at 4 PM" staff end 16:00, so a
+  //          16:00 departure is NOT early for them.
+  hq: {
+    scheduledStart: '08:00:00',
+    lateCutoff:     '08:15:00',
+    endStandard:    '16:15:00',
+    endSupFourPm:   '16:00:00',
+  },
+  //  Staff whose day ends at 16:00. Primary signal: employees.
+  //  working_hours_group === 'sup_team' (fetched fresh at run time).
+  //  fourPmExtraPsns is a fallback for any 4-PM staff not tagged
+  //  sup_team — edit here if HQ flags more people as safe-at-4-PM.
+  supGroupValue: 'sup_team',
+  fourPmExtraPsns: ['H94830', 'H94458', 'H94330', 'H94712'],
+
   // ── Working-days-only filter ──────────────────────────────────────
   //  Nadeem 2026-05-29: the report must count ONLY working days — it
   //  must NOT count the whole month of Ramadan, weekends, or public
@@ -119,6 +147,16 @@ const isApprovedLeave = (r) =>
   (r[CONFIG.leave.stage] || r[CONFIG.leave.status]) === CONFIG.leave.approvedValue;
 
 const round1 = (n) => Math.round(n * 10) / 10;
+
+// 'HH:MM:SS' (or 'HH:MM') → minutes since midnight, seconds included as
+// a fraction so rounding is accurate. Returns null for empty/bad input.
+function toMin(t) {
+  if (!t) return null;
+  const parts = String(t).split(':').map(Number);
+  if (!parts.length || Number.isNaN(parts[0])) return null;
+  const [h, m = 0, s = 0] = parts;
+  return h * 60 + m + s / 60;
+}
 
 // Hijri month for a Gregorian date via the Umm al-Qura calendar (the
 // official KSA calendar) — used to detect Ramadan. Returns 1–12 or null
@@ -261,33 +299,70 @@ export default function HQAttendanceExportCard({ me, employees = [] }) {
       });
       const get = (psn) => (agg[psn] = agg[psn] || blank());
 
-      // Attendance-derived counters (working days only)
+      // Staff whose day ends at 16:00 ("safe leaving at 4 PM"): SUP team
+      // (working_hours_group === 'sup_team', fetched fresh) plus any
+      // configured fallback PSNs. A 16:00 departure is NOT early for them.
+      const fourPmSet = new Set(C.fourPmExtraPsns.map(p => String(p).toUpperCase()));
+      try {
+        const emps = await directGet('employees', 'select=id,working_hours_group', { timeoutMs: 12000 });
+        for (const e of (emps || [])) {
+          if (e?.id && e.working_hours_group === C.supGroupValue) {
+            fourPmSet.add(String(e.id).toUpperCase());
+          }
+        }
+      } catch { /* fall back to the configured PSN set */ }
+
+      // Leave / off statuses carry no late / early / missed-punch meaning.
+      const isLeaveOrOff = (st) =>
+        typeof st === 'string' &&
+        (st.includes('leave') || st === 'off_day' || st === 'off_roster');
+
+      const startMin    = toMin(C.hq.scheduledStart);   // 08:00
+      const lateCutMin   = toMin(C.hq.lateCutoff);       // 08:15
+      const endStdMin    = toMin(C.hq.endStandard);      // 16:15
+      const endFourPmMin  = toMin(C.hq.endSupFourPm);    // 16:00
+
+      // Attendance-derived counters (working days only). Late / early are
+      // computed from the raw punches per HQ criteria, NOT from the
+      // stored status / minutes — see CONFIG.hq.
       for (const r of (att || [])) {
         const psn = r[C.attendance.employeeId];
         if (!psn) continue;
         if (!isWorkingDay(r[C.attendance.date])) continue;   // skip Ramadan/weekend/holiday
         const a = get(psn);
         const st = r[C.attendance.status];
-        const lateMin  = Number(r[C.attendance.lateMinutes] || 0);
-        const earlyMin = Number(r[C.attendance.earlyLeaveMinutes] || 0);
 
-        if (st === C.attendance.statusLate || lateMin > 0) {
-          a.lateTimes += 1; a.lateMinutes += lateMin;
-        }
-        if (earlyMin > 0) {
-          a.earlyTimes += 1; a.earlyMinutes += earlyMin;
-        }
+        // Unapproved absence — counted, then nothing else applies.
         if (st === C.attendance.statusAbsent) {
           a.absenceTimes += 1;
           a.absenceHours += C.workdayHours;
+          continue;
         }
-        // Missed punches: a worked day with one side of the punch pair
-        // missing. Only meaningful on days the person was expected in
-        // (present/late/short), not on leave/off rows.
-        const worked = [C.attendance.statusPresent, C.attendance.statusLate, C.attendance.statusShort].includes(st);
-        if (worked) {
-          if (!r[C.attendance.firstPunch]) a.forgetOn += 1;
-          if (!r[C.attendance.lastPunch])  a.forgetOff += 1;
+        // Leave / off days — not late, not early, not a missed punch.
+        if (isLeaveOrOff(st)) continue;
+
+        // Worked day: evaluate the actual punches against HQ thresholds.
+        const fp = toMin(r[C.attendance.firstPunch]);
+        const lp = toMin(r[C.attendance.lastPunch]);
+        const endMin = fourPmSet.has(String(psn).toUpperCase()) ? endFourPmMin : endStdMin;
+
+        // Clock-in: missing → forgot to sign on; else late if strictly
+        // after 08:15 (minutes measured from the 08:00 scheduled start).
+        if (fp == null) {
+          a.forgetOn += 1;
+        } else if (fp > lateCutMin) {
+          a.lateTimes += 1;
+          a.lateMinutes += Math.max(0, Math.round(fp - startMin));
+        }
+
+        // Clock-out: missing → forgot to sign off; else early if strictly
+        // before the applicable end (16:00 for SUP/4-PM staff, else
+        // 16:15); minutes measured from that end.
+        if (lp == null) {
+          a.forgetOff += 1;
+        } else if (lp < endMin) {
+          a.earlyTimes += 1;
+          a.earlyMinutes += Math.max(0, Math.round(endMin - lp));
         }
       }
 
@@ -377,6 +452,9 @@ export default function HQAttendanceExportCard({ me, employees = [] }) {
         ['Counts WORKING DAYS ONLY. The following are excluded and NOT counted: '
           + 'the whole month of Ramadan, weekends (Friday & Saturday), and public holidays.'],
         ['僅計算「工作日」。以下不列入計算：整個齋戒月（Ramadan）、週末（週五與週六）、以及國定假日。'],
+        ['Lateness = clock-in after 08:15 (minutes from 08:00). Early leave = clock-out before 16:15 '
+          + '(before 16:00 for SUP / 4 PM staff, who are due out at 16:00 and are not counted early for a 16:00 departure).'],
+        ['遲到＝上班打卡晚於 08:15（分鐘自 08:00 起算）。早退＝下班打卡早於 16:15（SUP／4 PM 人員為 16:00，於 16:00 下班不算早退）。'],
         [`Leave hours are derived from working days × ${C.workdayHours}h. Times = number of occurrences; `
           + 'Minutes = total minutes; Days = total working days.'],
         [`請假時數以工作日 × ${C.workdayHours} 小時計算。次數＝發生次數；分鐘＝總分鐘數；天數＝工作日總天數。`],
