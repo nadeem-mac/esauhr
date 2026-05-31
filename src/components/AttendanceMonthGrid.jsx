@@ -545,8 +545,24 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
   const exportPdf = useCallback(() => {
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
     const dowLbl = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+    // Abbreviate office/location to save width: strip a trailing
+    // "OFFICE" and map full city names to 3-letter codes (RYD OFFICE ->
+    // RYD, Jeddah -> JED). Nadeem 2026-06-01.
+    const cityMap = { JEDDAH: 'JED', DAMMAM: 'DMM', RIYADH: 'RYD', JED: 'JED', DMM: 'DMM', RYD: 'RYD' };
+    const abbr = (v) => {
+      const t = String(v || '').replace(/\s*office\s*$/i, '').trim().toUpperCase();
+      return cityMap[t] || t;
+    };
+    const locOf = (e) => abbr(e.location || '');
+    const deptOf = (e) => abbr(e.department || '');
+    // Sort: Employee Name, then Location, then Department.
+    const rows = [...tracked].sort((a, b) =>
+      (a.name || a.id).localeCompare(b.name || b.id) ||
+      locOf(a).localeCompare(locOf(b)) ||
+      deptOf(a).localeCompare(deptOf(b))
+    );
     // Column headers
-    let head = '<th class="psn">PSN</th><th class="nm">Employee</th>';
+    let head = '<th class="sl">#</th><th class="psn">PSN</th><th class="nm">Employee</th><th class="loc">Loc</th><th class="dept">Dept</th>';
     days.forEach(d => {
       const w = d.getDay();
       const isWknd = w === 5 || w === 6;
@@ -557,9 +573,9 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
     head += '<th class="sum">P</th><th class="sum">LT</th><th class="sum">SH</th><th class="sum">AB</th><th class="sum">LV</th>';
     // Body
     let body = '';
-    tracked.forEach(emp => {
+    rows.forEach((emp, i) => {
       const s = statsByEmp.get(emp.id) || {};
-      let row = `<td class="psn">${esc(emp.id)}</td><td class="nm">${esc(emp.name || emp.id)}</td>`;
+      let row = `<td class="sl">${i + 1}</td><td class="psn">${esc(emp.id)}</td><td class="nm">${esc(emp.name || emp.id)}</td><td class="loc">${esc(locOf(emp))}</td><td class="dept">${esc(deptOf(emp))}</td>`;
       days.forEach(d => {
         const w = d.getDay();
         const isWknd = w === 5 || w === 6;
@@ -615,13 +631,18 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
      stretch to fill the page down — fills the sheet both ways with no
      scaling/distortion. Font kept compact so all staff fit. */
   table { border-collapse: collapse; font-family: Arial, sans-serif; width: 100%; height: 100%; table-layout: fixed; }
-  col.psn { width: 4.6%; } col.nm { width: 14%; } col.sum { width: 2.7%; }
+  col.sl { width: 2.6%; } col.psn { width: 5%; } col.nm { width: 12.5%; } col.loc { width: 3.6%; } col.dept { width: 3.6%; } col.sum { width: 2.5%; }
   th, td { border: 1px solid #EAEEF3; text-align: center; vertical-align: middle; font-size: 7px; line-height: 1.2; padding: 1px 2px; white-space: nowrap; overflow: hidden; }
   th { background: #0F4C2A; color: #fff; font-weight: 700; letter-spacing: .02em; }
   th.wknd { background: #0A3A20; } th.hol { background: #5B21B6; }
   th.d .dw { font-size: 5.5px; opacity: .9; } th.d .hh { font-size: 5.5px; font-weight: 800; }
-  td.psn, th.psn { text-align: left; font-size: 6.5px; padding-left: 4px; color: #334155; }
-  td.nm, th.nm { text-align: left; font-weight: 600; padding-left: 4px; text-overflow: ellipsis; }
+  td.sl, th.sl { font-size: 6.5px; color: #334155; }
+  th.sl { color: #fff; }
+  td.psn { text-align: left; font-size: 6.5px; padding-left: 4px; color: #334155; }
+  th.psn { text-align: left; }
+  td.nm { text-align: left; font-weight: 600; padding-left: 4px; text-overflow: ellipsis; }
+  th.nm { text-align: left; }
+  td.loc, td.dept { font-size: 6.5px; font-weight: 700; color: #1F2937; }
   td.d { font-weight: 700; }
   /* Month-total columns: dark header (readable) + tinted body */
   th.sum { background: #334155; color: #FFFFFF; }
@@ -636,7 +657,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
     <div class="tablewrap">
       <div class="tbl">
         <table>
-          <colgroup><col class="psn"><col class="nm">${days.map(() => '<col class="d">').join('')}${'<col class="sum">'.repeat(5)}</colgroup>
+          <colgroup><col class="sl"><col class="psn"><col class="nm"><col class="loc"><col class="dept">${days.map(() => '<col class="d">').join('')}${'<col class="sum">'.repeat(5)}</colgroup>
           <thead><tr>${head}</tr></thead>
           <tbody>${body}</tbody>
         </table>
