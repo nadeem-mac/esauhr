@@ -9,6 +9,7 @@ import ManagerAssignmentsCard from './ManagerAssignmentsCard.jsx';
 import MigrationsPanel from './MigrationsPanel.jsx';
 import SignatoriesCard from './SignatoriesCard.jsx';
 import HolidayPeriodsCard from './HolidayPeriodsCard.jsx';
+import PublicHolidaysCard from './PublicHolidaysCard.jsx';
 
 // =============================================================================
 // SettingsView — admin configuration surface for Nadeem
@@ -108,6 +109,13 @@ const SECTIONS = [
     icon: CalendarDays,
     desc: 'Eid / National Day windows for OT scheduling',
     body: ({ me }) => <HolidayPeriodsCard me={me} />,
+  },
+  {
+    id: 'public_holidays',
+    label: 'Public holidays',
+    icon: CalendarDays,
+    desc: 'Official holiday dates (tints attendance, excluded from working days)',
+    body: ({ me }) => <PublicHolidaysCard me={me} />,
   },
   {
     id: 'migrations',
