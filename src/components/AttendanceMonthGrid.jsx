@@ -536,6 +536,97 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
     }
   }, [days, tracked, statsByEmp, recordIndex, monthLabel, coverage]);
 
+  // ── Monthly PDF export ─────────────────────────────────────────
+  // The same on-screen grid, scaled to fill exactly one A4 landscape
+  // page (open a print window with an A4 @page and a scale-to-fit
+  // wrapper, then print -> Save as PDF). Mirrors the grid's weekend /
+  // holiday / status colours. Nadeem 2026-06-01.
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const exportPdf = useCallback(() => {
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    const dowLbl = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+    // Column headers
+    let head = '<th class="psn">PSN</th><th class="nm">Employee</th>';
+    days.forEach(d => {
+      const w = d.getDay();
+      const isWknd = w === 5 || w === 6;
+      const isHol = holidayMap.has(ymd(d));
+      const cls = isHol ? 'hol' : (isWknd ? 'wknd' : '');
+      head += `<th class="d ${cls}"><div class="dw">${dowLbl[w]}</div><div>${d.getDate()}</div>${isHol ? '<div class="hh">H</div>' : ''}</th>`;
+    });
+    head += '<th class="sum">P</th><th class="sum">LT</th><th class="sum">SH</th><th class="sum">AB</th><th class="sum">LV</th>';
+    // Body
+    let body = '';
+    tracked.forEach(emp => {
+      const s = statsByEmp.get(emp.id) || {};
+      let row = `<td class="psn">${esc(emp.id)}</td><td class="nm">${esc(emp.name || emp.id)}</td>`;
+      days.forEach(d => {
+        const w = d.getDay();
+        const isWknd = w === 5 || w === 6;
+        const isHol = holidayMap.has(ymd(d));
+        const r = recordIndex.get(`${emp.id}|${ymd(d)}`);
+        if (r) {
+          const st = styleForStatus(r.status, r.notes);
+          const label = st.label.replace('✓', 'P');
+          row += `<td class="d" style="background:${st.bg};color:${st.fg};border-color:${st.border}">${esc(label)}</td>`;
+        } else {
+          const bg = isHol ? '#F5F3FF' : (isWknd ? '#FEF8E1' : '#FFFFFF');
+          row += `<td class="d" style="background:${bg}"></td>`;
+        }
+      });
+      row += `<td class="sum">${s.present || 0}</td><td class="sum">${s.late || 0}</td><td class="sum">${s.short || 0}</td><td class="sum">${s.absent || 0}</td><td class="sum">${s.leave || 0}</td>`;
+      body += `<tr>${row}</tr>`;
+    });
+    const note = `Working days only count toward totals. Coverage: ${coverage.loadedCount}/${coverage.expectedCount} working days loaded${coverage.missing.length ? ` (missing ${coverage.missing.map(d => d.getDate()).join(', ')})` : ''}.`;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Attendance ${esc(monthLabel)}</title>
+<style>
+  @page { size: A4 landscape; margin: 0; }
+  * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  html, body { margin: 0; padding: 0; }
+  .page { width: 297mm; height: 210mm; padding: 7mm; overflow: hidden; }
+  .scaler { transform-origin: top left; }
+  h1 { font: 700 16px/1.2 Arial, sans-serif; color: #0F4C2A; margin: 0 0 2px; }
+  .sub { font: 400 10px/1.2 Arial, sans-serif; color: #0A0A0A; margin: 0 0 6px; }
+  table { border-collapse: collapse; font-family: Arial, sans-serif; }
+  th, td { border: 1px solid #E5E7EB; text-align: center; font-size: 8px; padding: 2px 1px; white-space: nowrap; }
+  th { background: #0F4C2A; color: #fff; font-weight: 700; }
+  th.wknd { background: #0A3A20; } th.hol { background: #5B21B6; }
+  th.d .dw { font-size: 6.5px; opacity: .9; } th.d .hh { font-size: 6px; font-weight: 800; }
+  td.psn, th.psn { text-align: left; font-size: 7.5px; }
+  td.nm, th.nm { text-align: left; font-weight: 600; max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
+  td.d { font-weight: 700; min-width: 14px; }
+  td.sum, th.sum { font-weight: 700; background: #F3F4F6; }
+  .ftr { font: 400 8px/1.3 Arial, sans-serif; color: #0A0A0A; margin-top: 5px; }
+</style></head>
+<body>
+  <div class="page">
+    <div class="scaler" id="sc">
+      <h1>MONTHLY ATTENDANCE — ${esc(monthLabel)}</h1>
+      <div class="sub">Evergreen Shipping Agency Saudi Co. · ESAU SADMN SUP / HR Dept</div>
+      <table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
+      <div class="ftr">${esc(note)}</div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var page = document.querySelector('.page');
+      var sc = document.getElementById('sc');
+      var padPx = page.clientWidth * (7 / 297);            // 7mm padding in px
+      var availW = page.clientWidth - padPx * 2;
+      var availH = page.clientHeight - padPx * 2;
+      var tw = sc.scrollWidth, th = sc.scrollHeight;
+      var scale = Math.min(availW / tw, availH / th);       // fill the page (up- or down-scale)
+      sc.style.transform = 'scale(' + scale + ')';
+      setTimeout(function () { window.focus(); window.print(); }, 250);
+    })();
+  </script>
+</body></html>`;
+    const w = window.open('', '_blank');
+    if (!w) { alert('Please allow pop-ups to export the PDF.'); return; }
+    w.document.open(); w.document.write(html); w.document.close();
+    setShowExportMenu(false);
+  }, [days, tracked, statsByEmp, recordIndex, monthLabel, coverage, holidayMap]);
+
   return (
     <div className="rounded-2xl border bg-white p-3 sm:px-4 sm:py-3" style={{ borderColor: '#D4D4D4' }}>
       <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
@@ -662,15 +753,38 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
               <AlertTriangle className="w-3.5 h-3.5" /> {anomalies.total} to review
             </button>
           )}
-          <button
-            onClick={exportMonth}
-            disabled={exportingMonth || (lastCount || 0) === 0}
-            className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded-full disabled:opacity-50"
-            style={{ border: '1px solid #0F4C2A', background: '#0F4C2A', color: '#FFFFFF', cursor: 'pointer', fontWeight: 700, whiteSpace: 'nowrap' }}
-            title="Export this month to Excel"
-          >
-            {exportingMonth ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Export
-          </button>
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={() => setShowExportMenu(v => !v)}
+              disabled={exportingMonth || (lastCount || 0) === 0}
+              className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded-full disabled:opacity-50"
+              style={{ border: '1px solid #0F4C2A', background: '#0F4C2A', color: '#FFFFFF', cursor: 'pointer', fontWeight: 700, whiteSpace: 'nowrap' }}
+              title="Export this month"
+            >
+              {exportingMonth ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Export
+            </button>
+            {showExportMenu && (
+              <>
+                <div onClick={() => setShowExportMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 60 }} />
+                <div style={{ position: 'absolute', right: 0, top: '110%', zIndex: 61, width: 168, background: '#FFFFFF', border: '1px solid #D4D4D4', borderRadius: 10, boxShadow: '0 8px 28px rgba(0,0,0,0.18)', padding: 6 }}>
+                  <button
+                    onClick={() => { setShowExportMenu(false); exportMonth(); }}
+                    className="w-full text-left text-[12px] px-2.5 py-2 rounded"
+                    style={{ background: '#FFFFFF', color: '#0A0A0A', cursor: 'pointer', fontWeight: 600 }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#F3F4F6'}
+                    onMouseLeave={e => e.currentTarget.style.background = '#FFFFFF'}
+                  >Excel (.xlsx)</button>
+                  <button
+                    onClick={exportPdf}
+                    className="w-full text-left text-[12px] px-2.5 py-2 rounded"
+                    style={{ background: '#FFFFFF', color: '#0A0A0A', cursor: 'pointer', fontWeight: 600 }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#F3F4F6'}
+                    onMouseLeave={e => e.currentTarget.style.background = '#FFFFFF'}
+                  >PDF — one A4 page</button>
+                </div>
+              </>
+            )}
+          </div>
           <button
             onClick={refetch}
             className="w-8 h-8 rounded-full inline-flex items-center justify-center"
