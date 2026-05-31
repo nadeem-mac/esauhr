@@ -277,29 +277,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
     };
   }, [records, employees]);
 
-  // ── Coverage ───────────────────────────────────────────────────
-  // Which calendar dates in the visible month actually have attendance
-  // data loaded. Empty cells otherwise look identical to a real day
-  // off, so without this you can't tell "no shift" from "not uploaded
-  // yet". We treat working days (Sun–Thu) up to today as expected;
-  // weekends and future dates aren't flagged. Public holidays may also
-  // be legitimately empty — noted in the label. Nadeem 2026-05-31.
-  const coverage = useMemo(() => {
-    const covered = new Set(records.map(r => r.attendance_date));
-    const expected = days.filter(d => ymd(d) <= todayStr);
-    const workExpected = expected.filter(d => { const w = d.getDay(); return w !== 5 && w !== 6; });
-    const missing = workExpected.filter(d => !covered.has(ymd(d)));
-    return {
-      coveredSet: covered,
-      expectedCount: workExpected.length,
-      loadedCount: workExpected.length - missing.length,
-      missing,                          // array of Date (working days, ≤ today, no data)
-      complete: workExpected.length > 0 && missing.length === 0,
-      anyExpected: workExpected.length > 0,
-    };
-  }, [records, days, todayStr]);
-
-
+  // Include ALL active staff — not just those with records this
   // month. Staff on long-term leave or new hires who haven't been
   // in any time-card upload yet would otherwise disappear from the
   // grid, making the count diverge from the directory and from the
@@ -339,6 +317,29 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
 
   const monthLabel = firstDay.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
   const todayStr = todayYmd();
+
+  // ── Coverage ───────────────────────────────────────────────────
+  // Which calendar dates in the visible month actually have attendance
+  // data loaded. Empty cells otherwise look identical to a real day
+  // off, so without this you can't tell "no shift" from "not uploaded
+  // yet". Working days (Sun–Thu) up to today are expected; weekends and
+  // future dates aren't flagged. A public holiday may also be
+  // legitimately empty — noted in the label. Declared after todayStr so
+  // the memo never reads it before initialization. Nadeem 2026-05-31.
+  const coverage = useMemo(() => {
+    const covered = new Set(records.map(r => r.attendance_date));
+    const expected = days.filter(d => ymd(d) <= todayStr);
+    const workExpected = expected.filter(d => { const w = d.getDay(); return w !== 5 && w !== 6; });
+    const missing = workExpected.filter(d => !covered.has(ymd(d)));
+    return {
+      coveredSet: covered,
+      expectedCount: workExpected.length,
+      loadedCount: workExpected.length - missing.length,
+      missing,
+      complete: workExpected.length > 0 && missing.length === 0,
+      anyExpected: workExpected.length > 0,
+    };
+  }, [records, days, todayStr]);
 
   // ─── Row stats — present/absent/leave counts per employee ────────
   const statsByEmp = useMemo(() => {
