@@ -1093,8 +1093,10 @@ export default function AppShell({ session, me, onRefreshMe }) {
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 flex gap-1 overflow-x-auto">
+        {/* Tabs — span the full page width so all tabs are visible; the
+            horizontal scroller only kicks in once there are more tabs
+            than fit across the page. Nadeem 2026-05-31. */}
+        <div className="w-full px-3 sm:px-6 flex gap-1 overflow-x-auto">
           {TABS.map(t => {
             const isLogbook = t.id === 'logbook';
             const isActive  = tab === t.id;
