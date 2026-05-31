@@ -304,119 +304,134 @@ export default function ShiftMonthGrid({
 
   const totalShiftsThisMonth = shifts.length;
 
-  // Export the visible month's shift assignments to Excel, grouped by
-  // location — a manager-facing schedule Bashaier can send out so each
-  // manager reviews their staff's shifts and updates the next month in
-  // the same layout. Rows = staff (Location, PSN, Name), columns = days
-  // of the month, each cell the assigned shift (HH:MM-HH:MM, → for
-  // overnight) or OFF per the manager's off-pattern. Nadeem 2026-05-31.
+  // Export the visible month's shift assignments to Excel — a simple,
+  // portrait, manager-facing list grouped by location. Bashaier (SUP)
+  // sends it out so each manager reviews their staff's shifts and
+  // submits the next month in the same format. One row per assigned
+  // shift (PSN, Employee, Date, Day, Shift, Hrs) with a per-location
+  // total, plus a Remark column carrying a dropdown — Mawani
+  // Requirement / Night Shift. xlsx-js-style can't write data
+  // validation or page orientation, so we post-process the file's XML
+  // with JSZip to inject both. Nadeem 2026-05-31.
   const exportMonthXlsx = async () => {
     try {
       setExporting(true);
       const XLSX = await import('xlsx-js-style');
+      const JSZipMod = await import('jszip');
+      const JSZip = JSZipMod.default || JSZipMod;
       const GREEN = '0F4C2A';
 
-      const cellLabel = (s) => {
-        if (!s) return '';
-        const st = String(s.start_time || '').slice(0, 5);
-        const en = String(s.end_time || '').slice(0, 5);
-        if (!st || !en) return '';
-        return st > en ? `${st}\u2192${en}` : `${st}-${en}`;
+      const sl = (st, en) => {
+        const a = String(st || '').slice(0, 5), b = String(en || '').slice(0, 5);
+        if (!a || !b) return '';
+        return a > b ? `${a}\u2192${b}` : `${a}-${b}`;
       };
+      const hoursOf = (st, en) => {
+        const a = String(st || '').slice(0, 5), b = String(en || '').slice(0, 5);
+        if (!a || !b) return 0;
+        const [h1, m1] = a.split(':').map(Number), [h2, m2] = b.split(':').map(Number);
+        let s = h1 * 60 + m1, t = h2 * 60 + m2;
+        if (t <= s) t += 1440;   // overnight
+        return Math.round((t - s) / 6) / 10;
+      };
+      const dFmt = (d) => d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+      const dName = (d) => d.toLocaleDateString('en-GB', { weekday: 'short' });
 
-      const dayHdr = days.map(d =>
-        `${d.getDate()}\n${d.toLocaleDateString('en-GB', { weekday: 'short' })}`);
-      const headers = ['Location', 'PSN', 'Employee', ...dayHdr, 'Shifts'];
-
-      const aoa = [
-        [`STAFF SHIFT SCHEDULE \u2014 ${monthLabel}`],
-        [],
-        headers,
-      ];
-      const rowKind = ['title', 'blank', 'header'];
-
-      grouped.forEach(({ location, employees: rows }) => {
-        rows.forEach(emp => {
-          const offSet = offPatternByEmp.get(emp.id);
-          let count = 0;
-          const dayCells = days.map(d => {
+      // Flatten this month's shifts to rows, sorted location → name → date.
+      const flat = [];
+      grouped.forEach(({ location, employees: emps }) => {
+        emps.forEach(emp => {
+          days.forEach(d => {
             const s = shiftIndex.get(`${emp.id}|${ymd(d)}`);
-            if (s) { count += 1; return cellLabel(s); }
-            if (offSet && offSet.has(d.getDay())) return 'OFF';
-            return '';
+            if (s) flat.push({
+              loc: location || '\u2014', psn: emp.id, name: emp.name || emp.id,
+              date: d, st: s.start_time, en: s.end_time,
+            });
           });
-          aoa.push([location || '\u2014', emp.id, emp.name || emp.id, ...dayCells, count]);
-          rowKind.push('data');
         });
       });
+      flat.sort((a, b) =>
+        a.loc.localeCompare(b.loc) || a.name.localeCompare(b.name) || (a.date - b.date));
 
-      aoa.push([]);
-      aoa.push(['Please review your staff and update their shifts for the next month in this same format.']);
-      rowKind.push('blank'); rowKind.push('note');
+      const aoa = [[`STAFF SHIFT SCHEDULE \u2014 ${monthLabel}`], []];
+      const kind = ['title', 'blank'];
+      const remarkRows = [];   // 0-based sheet rows that get the dropdown
+      const locs = [...new Set(flat.map(r => r.loc))].sort();
+      locs.forEach(loc => {
+        aoa.push([`${loc} OFFICE`]); kind.push('loc');
+        aoa.push(['PSN', 'Employee', 'Date', 'Day', 'Shift', 'Hrs', 'Remark']); kind.push('header');
+        const lr = flat.filter(r => r.loc === loc);
+        lr.forEach(r => {
+          aoa.push([r.psn, r.name, dFmt(r.date), dName(r.date), sl(r.st, r.en), hoursOf(r.st, r.en), '']);
+          remarkRows.push(aoa.length - 1);
+          kind.push('data');
+        });
+        const tot = Math.round(lr.reduce((s, r) => s + hoursOf(r.st, r.en), 0) * 10) / 10;
+        aoa.push(['', '', `${lr.length} shifts`, '', 'TOTAL', tot, '']); kind.push('subtotal');
+        aoa.push([]); kind.push('blank');
+      });
+      aoa.push(['Please review your staff and submit the next month in this same format. Use the Remark dropdown to mark Mawani Requirement or Night Shift.']);
+      kind.push('note');
 
       const ws = XLSX.utils.aoa_to_sheet(aoa);
-      const lastCol = headers.length - 1;
-      const dayStart = 3;                 // first day column index
-      const dayEnd = 3 + days.length - 1; // last day column index
-      const isWeekendCol = (C) => {
-        if (C < dayStart || C > dayEnd) return false;
-        const wd = days[C - dayStart].getDay();
-        return wd === 5 || wd === 6;      // Fri / Sat
-      };
       const border = {
         top: { style: 'thin', color: { rgb: 'E5E7EB' } },
         bottom: { style: 'thin', color: { rgb: 'E5E7EB' } },
         left: { style: 'thin', color: { rgb: 'E5E7EB' } },
         right: { style: 'thin', color: { rgb: 'E5E7EB' } },
       };
-
       const range = XLSX.utils.decode_range(ws['!ref']);
       for (let R = range.s.r; R <= range.e.r; R++) {
         for (let C = range.s.c; C <= range.e.c; C++) {
           const addr = XLSX.utils.encode_cell({ r: R, c: C });
           if (!ws[addr]) continue;
-          const kind = rowKind[R];
-          if (kind === 'title') {
+          const k = kind[R];
+          const ctr = (C >= 2 && C <= 5);   // Date..Hrs centered
+          if (k === 'title') {
             ws[addr].s = { font: { bold: true, sz: 14, color: { rgb: GREEN } } };
-          } else if (kind === 'note') {
-            ws[addr].s = { font: { italic: false, sz: 10, color: { rgb: '0A0A0A' } } };
-          } else if (kind === 'header') {
-            ws[addr].s = {
-              font: { bold: true, sz: 9, color: { rgb: 'FFFFFF' } },
-              fill: { fgColor: { rgb: isWeekendCol(C) ? '0A3A20' : GREEN } },
-              alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
-              border,
-            };
-          } else if (kind === 'data') {
-            const v = ws[addr].v;
-            const isDay = C >= dayStart && C <= dayEnd;
-            ws[addr].s = {
-              font: { sz: 9, color: { rgb: v === 'OFF' ? '1D4ED8' : '0A0A0A' },
-                bold: isDay && v && v !== 'OFF' },
-              fill: v === 'OFF' ? { fgColor: { rgb: 'DBEAFE' } }
-                : isWeekendCol(C) ? { fgColor: { rgb: 'F3F4F6' } } : undefined,
-              alignment: { horizontal: (C <= 1 || C >= 2) && C < dayStart ? 'left' : 'center',
-                vertical: 'center' },
-              border,
-            };
+          } else if (k === 'note') {
+            ws[addr].s = { font: { sz: 10, color: { rgb: '0A0A0A' } }, alignment: { wrapText: true } };
+          } else if (k === 'loc') {
+            ws[addr].s = { font: { bold: true, sz: 11, color: { rgb: 'FFFFFF' } },
+              fill: { fgColor: { rgb: GREEN } }, alignment: { horizontal: 'left', vertical: 'center' } };
+          } else if (k === 'header') {
+            ws[addr].s = { font: { bold: true, sz: 10, color: { rgb: '0A0A0A' } },
+              fill: { fgColor: { rgb: 'EEF2F7' } }, alignment: { horizontal: ctr ? 'center' : 'left', vertical: 'center' }, border };
+          } else if (k === 'subtotal') {
+            ws[addr].s = { font: { bold: true, sz: 10, color: { rgb: '0A0A0A' } },
+              fill: { fgColor: { rgb: 'F3F4F6' } }, alignment: { horizontal: ctr ? 'center' : 'left', vertical: 'center' }, border };
+          } else if (k === 'data') {
+            ws[addr].s = { font: { sz: 10, color: { rgb: '0A0A0A' } },
+              alignment: { horizontal: ctr ? 'center' : 'left', vertical: 'center' }, border };
           }
         }
       }
+      ws['!cols'] = [{ wch: 10 }, { wch: 24 }, { wch: 11 }, { wch: 7 }, { wch: 13 }, { wch: 6 }, { wch: 20 }];
+      ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }];
+      ws['!margins'] = { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 };
 
-      ws['!cols'] = [
-        { wch: 12 }, { wch: 9 }, { wch: 24 },
-        ...days.map(() => ({ wch: 7 })),
-        { wch: 7 },
-      ];
-      ws['!rows'] = [{ hpt: 20 }, {}, { hpt: 28 }];
-      ws['!freeze'] = { xSplit: 3, ySplit: 3 };
-      // Merge the title across all columns
-      ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: lastCol } }];
-
+      // Write, then inject the Remark dropdown + portrait page setup
+      // (neither is supported by xlsx-js-style on write).
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, monthLabel.slice(0, 31));
-      const fname = `STAFF_SHIFTS_${monthLabel.replace(/[^a-z0-9]+/gi, '_')}.xlsx`;
-      XLSX.writeFile(wb, fname);
+      const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      const zip = await JSZip.loadAsync(buf);
+      let xml = await zip.file('xl/worksheets/sheet1.xml').async('string');
+      const sqref = remarkRows.map(r => `G${r + 1}`).join(' ') || 'G3';
+      const dv = `<dataValidations count="1"><dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="${sqref}"><formula1>"Mawani Requirement,Night Shift"</formula1></dataValidation></dataValidations>`;
+      xml = xml.replace(/(<worksheet[^>]*>)/, '$1<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>');
+      xml = xml.replace('<pageMargins', dv + '<pageMargins');
+      xml = xml.replace(/(<pageMargins[^>]*\/>)/, '$1<pageSetup orientation="portrait" fitToWidth="1" fitToHeight="0"/>');
+      zip.file('xl/worksheets/sheet1.xml', xml);
+      const outBuf = await zip.generateAsync({ type: 'blob', mimeType:
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+
+      const url = URL.createObjectURL(outBuf);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `STAFF_SHIFTS_${monthLabel.replace(/[^a-z0-9]+/gi, '_')}.xlsx`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
     } catch (e) {
       console.error('Shift schedule export failed:', e);
     } finally {
