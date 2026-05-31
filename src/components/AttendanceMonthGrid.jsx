@@ -606,8 +606,9 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
   .page { width: 297mm; height: 210mm; padding: 7mm; overflow: hidden; display: flex; flex-direction: column; }
   h1 { font: 700 14px/1.15 Arial, sans-serif; color: #0F4C2A; margin: 0; }
   .sub { font: 400 9px/1.2 Arial, sans-serif; color: #475569; margin: 1px 0 6px; }
-  .tablewrap { flex: 1 1 auto; min-height: 0; }
-  table { border-collapse: collapse; font-family: Arial, sans-serif; width: 100%; height: 100%; table-layout: fixed; }
+  .tablewrap { flex: 1 1 auto; min-height: 0; overflow: hidden; position: relative; }
+  .tbl { width: 100%; transform-origin: top left; }
+  table { border-collapse: collapse; font-family: Arial, sans-serif; width: 100%; table-layout: fixed; }
   col.psn { width: 4.4%; } col.nm { width: 13.5%; } col.sum { width: 2.6%; }
   th, td { border: 1px solid #E5EAF0; text-align: center; vertical-align: middle; font-size: 7px; padding: 2px 2px; white-space: nowrap; overflow: hidden; }
   th { background: #0F4C2A; color: #fff; font-weight: 700; letter-spacing: .02em; }
@@ -629,26 +630,31 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
     <h1>MONTHLY ATTENDANCE — ${esc(monthLabel)}</h1>
     <div class="sub">Evergreen Shipping Agency Saudi Co. · ESAU SADMN SUP / HR Dept</div>
     <div class="tablewrap">
-      <table>
-        <colgroup><col class="psn"><col class="nm">${days.map(() => '<col class="d">').join('')}${'<col class="sum">'.repeat(5)}</colgroup>
-        <thead><tr>${head}</tr></thead>
-        <tbody>${body}</tbody>
-      </table>
+      <div class="tbl">
+        <table>
+          <colgroup><col class="psn"><col class="nm">${days.map(() => '<col class="d">').join('')}${'<col class="sum">'.repeat(5)}</colgroup>
+          <thead><tr>${head}</tr></thead>
+          <tbody>${body}</tbody>
+        </table>
+      </div>
     </div>
     <div class="legend">${legend}</div>
     <div class="ftr">${esc(note)}</div>
   </div>
   <script>
     (function () {
-      // Layout already fills the full A4 width (table 100%, fixed) and
-      // height (table height:100% distributes rows). Guard only against
-      // an unusually long roster spilling onto a 2nd page by shrinking
-      // to fit if the content genuinely overflows. Nadeem 2026-06-01.
-      var page = document.querySelector('.page');
-      if (page.scrollHeight > page.clientHeight + 2) {
-        var s = page.clientHeight / page.scrollHeight;
-        page.style.transformOrigin = 'top left';
-        page.style.transform = 'scale(' + s + ')';
+      // Table fills the page WIDTH (width:100% + table-layout fixed).
+      // To fill the HEIGHT without pushing into the legend/footer (which
+      // are reserved below by flexbox), scale the table block vertically
+      // so it exactly fills the remaining area — fits any roster size on
+      // one page, no overlap. Nadeem 2026-06-01.
+      var wrap = document.querySelector('.tablewrap');
+      var tbl = document.querySelector('.tbl');
+      tbl.style.transform = 'none';
+      var natH = tbl.offsetHeight;
+      var availH = wrap.clientHeight;
+      if (natH > 0 && availH > 0) {
+        tbl.style.transform = 'scaleY(' + (availH / natH) + ')';
       }
       setTimeout(function () { window.focus(); window.print(); }, 250);
     })();
