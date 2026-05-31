@@ -180,19 +180,35 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
   const refetch = useCallback(async () => {
     setLoading(true);
     try {
-      // select=* (not a fixed column list) so a drifted/renamed column
-      // in the live table can never 400 the read and silently blank the
-      // grid. Missing optional columns just come back undefined.
-      const data = await directGet(
-        'attendance_daily',
-        `select=*` +
-        `&attendance_date=gte.${ymd(firstDay)}` +
-        `&attendance_date=lte.${ymd(lastDay)}` +
-        `&order=attendance_date.asc`,
-        { timeoutMs: 9000 }
-      );
-      setRecords(data || []);
-      setLastCount(Array.isArray(data) ? data.length : 0);
+      // PostgREST caps a single response at 1000 rows. A full month for
+      // ~60 staff is ~1800 rows, so a single request silently returned
+      // only the first 1000 (the earliest dates, since we order asc) —
+      // which dropped the last third of the month off the grid entirely
+      // (Nadeem 2026-05-31: 26–31 May showed empty while 1000 rows
+      // loaded). Paginate with limit/offset until a short page comes
+      // back. A stable secondary sort (employee_id) keeps offset paging
+      // deterministic. select=* so a drifted column can't 400 the read.
+      const PAGE = 1000;
+      let all = [];
+      let offset = 0;
+      for (;;) {
+        const page = await directGet(
+          'attendance_daily',
+          `select=*` +
+          `&attendance_date=gte.${ymd(firstDay)}` +
+          `&attendance_date=lte.${ymd(lastDay)}` +
+          `&order=attendance_date.asc,employee_id.asc` +
+          `&limit=${PAGE}&offset=${offset}`,
+          { timeoutMs: 12000 }
+        );
+        const arr = Array.isArray(page) ? page : [];
+        all = all.concat(arr);
+        if (arr.length < PAGE) break;
+        offset += PAGE;
+        if (offset > 100000) break; // hard safety stop
+      }
+      setRecords(all);
+      setLastCount(all.length);
       setFetchErr(null);
     } catch (e) {
       console.warn('attendance_daily fetch failed:', e);
