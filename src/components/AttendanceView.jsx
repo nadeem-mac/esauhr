@@ -1439,15 +1439,27 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // page exactly as it was, which was confusing for a button labelled
   // 'Save & Close').
   const handleSaveAndClose = useCallback(async () => {
-    if (reevalState.running) return;
+    if (reevalState.running) {
+      // A re-eval is already mid-flight (it will bump the tick itself on
+      // completion). Still honour the close + a refresh so the grid
+      // picks up the just-written rows, and don't trap the user.
+      setCalendarRefreshTick(t => t + 1);
+      setDailyReviewOpen(false);
+      return;
+    }
     let summary = null;
     try {
       summary = await triggerReevaluation({ silent: false });
     } catch (e) {
-      // A re-eval failure must NOT trap the user in the modal — log and
-      // still close. (Nadeem 2026-05-31: 'Save & Close does not close'.)
+      // A re-eval failure must NOT trap the user — log and still close.
       console.error('Save & Close re-evaluation failed:', e);
     }
+    // ALWAYS refresh the calendar grid so the dates that were just
+    // uploaded show up — independent of whether the re-eval returned a
+    // summary or threw. triggerReevaluation only bumps the tick on
+    // success; this guarantees the grid refetches attendance_daily every
+    // time. (Nadeem 2026-05-31: grid wasn't updating after Save & Close.)
+    setCalendarRefreshTick(t => t + 1);
     try {
       const evt = new CustomEvent('esauhr_toast', { detail: summary ? {
         kind: 'success',
@@ -1456,17 +1468,17 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       } : {
         kind: 'success',
         title: 'Upload session closed',
-        body: 'Review marked complete.',
+        body: 'Calendar refreshed.',
       }});
       window.dispatchEvent(evt);
     } catch {}
-    // ALWAYS close — the close is the button's contract; the 7-day
-    // re-evaluation is a side effect. Previously reset()+close lived
-    // inside `if (summary)`, so when triggerReevaluation returned falsy
-    // (nothing to re-eval, or an error) the modal stayed open. reset()
-    // clears the form data; setDailyReviewOpen(false) dismisses the
-    // overlay that wraps the whole upload UI.
-    reset();
+    // Close the daily-review modal but KEEP the loaded file. We do NOT
+    // reset() here: clearing xlsxFileName hides the '📋 Today's review'
+    // button (gated on hasFile), which is the button Nadeem wants left
+    // available after closing so he can reopen and see the update. The
+    // explicit way to clear for a fresh day is the 'Upload different
+    // file' control. (Nadeem 2026-05-31: 'today's report button does not
+    // come to see the update'.)
     setDailyReviewOpen(false);
   }, [reevalState.running, triggerReevaluation]);
 
