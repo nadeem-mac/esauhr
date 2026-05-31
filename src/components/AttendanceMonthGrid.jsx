@@ -161,6 +161,29 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
   const [month, setMonth] = useState(today.getMonth());
   const [records, setRecords] = useState([]);
   const recordsRef = useRef([]);   // last-good records, for transient-error guard in refetch
+  // Public / government holidays for the visible month (date -> name).
+  // Used to tint those columns distinctly and to exclude them from the
+  // "missing working days" coverage check. Nadeem 2026-05-31.
+  const [holidayMap, setHolidayMap] = useState(() => new Map());
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await directGet(
+          'public_holidays',
+          `select=date,name&date=gte.${ymd(firstDay)}&date=lte.${ymd(lastDay)}&order=date`,
+          { timeoutMs: 8000 }
+        );
+        if (cancelled) return;
+        const m = new Map();
+        (Array.isArray(rows) ? rows : []).forEach(h => {
+          if (h?.date) m.set(String(h.date).slice(0, 10), h.name || 'Public holiday');
+        });
+        setHolidayMap(m);
+      } catch { /* non-fatal — table may be empty/absent */ }
+    })();
+    return () => { cancelled = true; };
+  }, [firstDay, lastDay]);
   const [loading, setLoading] = useState(false);
   const [fetchErr, setFetchErr] = useState(null);   // surfaced on-screen
   const [lastCount, setLastCount] = useState(null);  // rows from last fetch
@@ -342,7 +365,12 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
   const coverage = useMemo(() => {
     const covered = new Set(records.map(r => r.attendance_date));
     const expected = days.filter(d => ymd(d) <= todayStr);
-    const workExpected = expected.filter(d => { const w = d.getDay(); return w !== 5 && w !== 6; });
+    // Working days = Sun–Thu, excluding public holidays (a holiday can
+    // legitimately have no punches and must not show as "missing").
+    const workExpected = expected.filter(d => {
+      const w = d.getDay();
+      return w !== 5 && w !== 6 && !holidayMap.has(ymd(d));
+    });
     const missing = workExpected.filter(d => !covered.has(ymd(d)));
     return {
       coveredSet: covered,
@@ -352,7 +380,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
       complete: workExpected.length > 0 && missing.length === 0,
       anyExpected: workExpected.length > 0,
     };
-  }, [records, days, todayStr]);
+  }, [records, days, todayStr, holidayMap]);
 
   // ── Anomaly list ───────────────────────────────────────────────
   // Surfaces exactly what HR should review/correct this month, drawn
@@ -830,6 +858,20 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
             </span>
             <span style={{ fontSize: 10, color: '#0A0A0A' }}>Single punch — click to fix</span>
           </span>
+          {/* Public / government holiday column marker */}
+          <span className="inline-flex items-center gap-1" style={{ flex: '0 0 auto' }}>
+            <span style={{
+              background: '#EDE9FE',
+              color: '#5B21B6',
+              border: '1px solid #A78BFA',
+              borderRadius: 3,
+              fontSize: 9,
+              padding: '1px 5px',
+              fontWeight: 800,
+              letterSpacing: '0.04em',
+            }}>H</span>
+            <span style={{ fontSize: 10, color: '#0A0A0A' }}>Public holiday</span>
+          </span>
         </div>
         <div style={{ overflowX: 'visible', overflowY: 'auto', maxHeight: '72vh', maxWidth: '100%', boxSizing: 'border-box' }}>
           <div style={{
@@ -849,19 +891,24 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
               const dow = d.getDay();
               const isWeekend = dow === 5 || dow === 6;
               const isToday = dStr === todayStr;
+              const holidayName = holidayMap.get(dStr);
+              const isHoliday = !!holidayName;
               // Working day, on/before today, with no attendance loaded:
-              // flag the column so a gap in the upload is obvious.
-              const noData = !isWeekend && dStr <= todayStr && !coverage.coveredSet.has(dStr);
+              // flag the column so a gap in the upload is obvious. A
+              // public holiday is never flagged as missing.
+              const noData = !isWeekend && !isHoliday && dStr <= todayStr && !coverage.coveredSet.has(dStr);
               return (
                 <div
                   key={dStr}
-                  title={noData ? 'No attendance data loaded for this date' : undefined}
+                  title={isHoliday ? `Public holiday: ${holidayName}` : (noData ? 'No attendance data loaded for this date' : undefined)}
                   style={{
                     position: 'sticky',
                     top: 0,
                     zIndex: 2,
                     background: isToday
                       ? '#E3EDE7'   // opaque so scrolled rows don't show through
+                      : isHoliday
+                        ? '#EDE9FE'  // violet-100 — public / government holiday
                       : isWeekend
                         ? '#FEF3C7'  // amber-50 — clearly distinguishable from working days
                         : noData
@@ -870,17 +917,18 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
                     padding: '4px 0',
                     fontSize: 9,
                     fontWeight: 700,
-                    color: isWeekend ? '#854F0B' : (noData ? '#B91C1C' : '#0A0A0A'),
+                    color: isHoliday ? '#5B21B6' : (isWeekend ? '#854F0B' : (noData ? '#B91C1C' : '#0A0A0A')),
                     textAlign: 'center',
-                    borderTop: isToday ? '2px solid #0F4C2A' : (isWeekend ? '2px solid #FCD34D' : (noData ? '2px solid #FCA5A5' : '1px solid transparent')),
-                    borderBottom: isWeekend ? '1px solid #FCD34D' : (noData ? '1px solid #FCA5A5' : 'none'),
+                    borderTop: isToday ? '2px solid #0F4C2A' : (isHoliday ? '2px solid #A78BFA' : (isWeekend ? '2px solid #FCD34D' : (noData ? '2px solid #FCA5A5' : '1px solid transparent'))),
+                    borderBottom: isHoliday ? '1px solid #A78BFA' : (isWeekend ? '1px solid #FCD34D' : (noData ? '1px solid #FCA5A5' : 'none')),
                   }}
                 >
-                  <div style={{ fontSize: 8, opacity: isWeekend ? 0.95 : 0.6, fontWeight: isWeekend ? 700 : 600, letterSpacing: isWeekend ? '0.05em' : 0 }}>
+                  <div style={{ fontSize: 8, opacity: (isWeekend || isHoliday) ? 0.95 : 0.6, fontWeight: (isWeekend || isHoliday) ? 700 : 600, letterSpacing: (isWeekend || isHoliday) ? '0.05em' : 0 }}>
                     {['Su','Mo','Tu','We','Th','Fr','Sa'][dow]}
                   </div>
                   <div>{d.getDate()}</div>
-                  {noData && <div style={{ fontSize: 7, lineHeight: 1, marginTop: 1 }}>•</div>}
+                  {isHoliday && <div style={{ fontSize: 7, lineHeight: 1, marginTop: 1, fontWeight: 800 }}>H</div>}
+                  {!isHoliday && noData && <div style={{ fontSize: 7, lineHeight: 1, marginTop: 1 }}>•</div>}
                 </div>
               );
             })}
@@ -943,9 +991,11 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
                     const isWeekend = dow === 5 || dow === 6;
                     const isToday = dStr === todayStr;
                     const isFuture = dStr > todayStr;
+                    const isHoliday = holidayMap.has(dStr);
                     const r = recordIndex.get(`${emp.id}|${dStr}`);
                     const cellBg = isToday ? 'rgba(15,76,42,0.04)'
                                  : isFuture ? '#FAFAFA'
+                                 : isHoliday ? '#F5F3FF'   // violet-50 — public holiday column
                                  : isWeekend ? '#FEF8E1' : 'transparent';
                     if (!r) {
                       return (
