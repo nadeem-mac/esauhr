@@ -277,7 +277,9 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
           [...acc.locs].sort().join(', '),
           acc.date,
           new Date(acc.date).toLocaleDateString('en-GB', { weekday: 'long' }),
-          '', '', '', '', '', '',
+          '', '', '', '',
+          acc.late || '',
+          acc.early || '',
           r2(acc.exp), r2(acc.assigned), r2(acc.actual),
           acc.exp > 0 ? Math.round((acc.assigned / acc.exp) * 100) : 0,
           '', '', '',
@@ -291,7 +293,7 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
       for (const r of sortedRows) {
         const d = r.shift.shift_date;
         if (acc && acc.date !== d) flushDate();      // close out previous date
-        if (!acc) acc = { date: d, count: 0, exp: 0, assigned: 0, actual: 0, depts: new Set(), locs: new Set() };
+        if (!acc) acc = { date: d, count: 0, exp: 0, assigned: 0, actual: 0, late: 0, early: 0, depts: new Set(), locs: new Set() };
 
         const statusLabel = r.status === 'no_show' ? 'NO SHOW'
           : r.status === 'deviation' ? 'DEVIATION' : 'ON TIME';
@@ -327,6 +329,8 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
         acc.exp += r.expected_hours || 0;
         acc.assigned += r.worked_hours || 0;
         acc.actual += r.actual_hours || 0;
+        acc.late += r.late_minutes || 0;
+        acc.early += r.early_minutes || 0;
         if (r.employee?.department) acc.depts.add(r.employee.department);
         if (r.employee?.location)   acc.locs.add(r.employee.location);
       }
@@ -336,7 +340,9 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
       aoa.push([]);
       rowDate.push(null); rowDeviation.push(false); rowLate.push(false); rowEarly.push(false); rowIncomplete.push(false); rowKind.push('blank');
       aoa.push([
-        'GRAND TOTAL', `${sortedRows.length} shifts`, '', '', '', '', '', '', '', '', '', '',
+        'GRAND TOTAL', `${sortedRows.length} shifts`, '', '', '', '', '', '', '', '',
+        sortedRows.reduce((s, r) => s + (r.late_minutes || 0), 0) || '',
+        sortedRows.reduce((s, r) => s + (r.early_minutes || 0), 0) || '',
         r2(summary.totalScheduled),
         r2(summary.totalWorked),
         r2(sortedRows.reduce((s, r) => s + (r.actual_hours || 0), 0)),
@@ -369,23 +375,26 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
           if (rowKind[R] === 'header') {
             ws[addr].s = headerStyle;
           } else if (rowKind[R] === 'grandtotal') {
-            // Grand total — bold, light-grey fill
+            // Grand total — bold, light-grey fill; Late/Early (10,11) red
+            const isMin = (C === 10 || C === 11);
             ws[addr].s = cell({
-              font: { bold: true, sz: 10, color: { rgb: '0A0A0A' } },
+              font: { bold: true, sz: 10, color: { rgb: isMin ? 'DC2626' : '0A0A0A' } },
               fill: { fgColor: { rgb: 'F3F4F6' } },
               alignment: { vertical: 'center',
-                horizontal: (C >= 12 && C <= 15) ? 'right' : 'left' },
+                horizontal: (C >= 10 && C <= 15) ? 'right' : 'left' },
             });
           } else if (rowKind[R] === 'datetotal') {
             // Per-date subtotal — bold, the date's tint, medium top
             // border to separate each day's block. Departments and
             // locations that worked that day appear in their columns.
+            // Late/Early (10,11) totals in red.
             const tint = rowDate[R] ? dateColors[rowDate[R]] : 'EEF2F7';
+            const isMin = (C === 10 || C === 11);
             ws[addr].s = {
-              font: { bold: true, sz: 10, color: { rgb: '0A0A0A' } },
+              font: { bold: true, sz: 10, color: { rgb: isMin ? 'DC2626' : '0A0A0A' } },
               fill: { fgColor: { rgb: tint || 'EEF2F7' } },
               alignment: { vertical: 'center', wrapText: (C === 2 || C === 3),
-                horizontal: (C >= 12 && C <= 15) ? 'right' : 'left' },
+                horizontal: (C >= 10 && C <= 15) ? 'right' : 'left' },
               border: medBorder,
             };
           } else {
@@ -534,7 +543,9 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
             <td>${g.count} staff</td>
             <td>${esc([...g.depts].sort().join(', '))}</td>
             <td>${esc([...g.locs].sort().join(', '))}</td>
-            <td></td><td></td><td></td><td></td>
+            <td></td><td></td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;color:#DC2626">${g.late > 0 ? g.late + 'm' : ''}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;color:#DC2626">${g.early > 0 ? g.early + 'm' : ''}</td>
             <td style="text-align:right;font-variant-numeric:tabular-nums">${r1(g.exp)}h</td>
             <td style="text-align:right;font-variant-numeric:tabular-nums">${r1(g.assigned)}h</td>
             <td style="text-align:right;font-variant-numeric:tabular-nums">${r1(g.actual)}h</td>
@@ -546,7 +557,7 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
       for (const r of sortedRows) {
         const d = r.shift.shift_date;
         if (g && g.date !== d) flushHtmlDate();
-        if (!g) g = { date: d, count: 0, exp: 0, assigned: 0, actual: 0, depts: new Set(), locs: new Set() };
+        if (!g) g = { date: d, count: 0, exp: 0, assigned: 0, actual: 0, late: 0, early: 0, depts: new Set(), locs: new Set() };
         const tint = dateColors[r.shift.shift_date] || 'FFFFFF';
         const workedColor = r.status === 'deviation' ? '#DC2626' : '#1F1B16';
         const incomplete = r.expected_hours > 0 && r.actual_hours < r.expected_hours;
@@ -577,6 +588,8 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
         g.exp += r.expected_hours || 0;
         g.assigned += r.worked_hours || 0;
         g.actual += r.actual_hours || 0;
+        g.late += r.late_minutes || 0;
+        g.early += r.early_minutes || 0;
         if (r.employee?.department) g.depts.add(r.employee.department);
         if (r.employee?.location)   g.locs.add(r.employee.location);
       }
@@ -586,7 +599,9 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
           <td>GRAND TOTAL</td>
           <td></td>
           <td>${sortedRows.length} shifts</td>
-          <td></td><td></td><td></td><td></td><td></td><td></td>
+          <td></td><td></td><td></td><td></td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;color:#DC2626">${(() => { const v = sortedRows.reduce((s, r) => s + (r.late_minutes || 0), 0); return v > 0 ? v + 'm' : ''; })()}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;color:#DC2626">${(() => { const v = sortedRows.reduce((s, r) => s + (r.early_minutes || 0), 0); return v > 0 ? v + 'm' : ''; })()}</td>
           <td style="text-align:right;font-variant-numeric:tabular-nums">${r1(summary.totalScheduled)}h</td>
           <td style="text-align:right;font-variant-numeric:tabular-nums">${r1(summary.totalWorked)}h</td>
           <td style="text-align:right;font-variant-numeric:tabular-nums">${r1(sortedRows.reduce((s, r) => s + (r.actual_hours || 0), 0))}h</td>
