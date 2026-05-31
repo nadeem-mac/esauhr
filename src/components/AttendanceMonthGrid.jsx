@@ -244,6 +244,23 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
     return idx;
   }, [records]);
 
+  // Diagnostic — how many loaded records' employee_id actually match a
+  // directory employee id (the exact string the cell lookup uses), plus
+  // a sample row. If matched=0 while records>0, the cells will all be
+  // empty because the keys don't line up (e.g. PSN written without the
+  // 'H' prefix). Surfaced in the status line. Nadeem 2026-05-31.
+  const recordDiag = useMemo(() => {
+    if (!records.length) return null;
+    const ids = new Set((employees || []).map(e => String(e?.id)));
+    let matched = 0;
+    for (const r of records) if (ids.has(String(r.employee_id))) matched++;
+    const s = records[0] || {};
+    return {
+      matched, total: records.length,
+      sampleId: s.employee_id, sampleDate: s.attendance_date, sampleStatus: s.status,
+    };
+  }, [records, employees]);
+
   // Include ALL active staff — not just those with records this
   // month. Staff on long-term leave or new hires who haven't been
   // in any time-card upload yet would otherwise disappear from the
@@ -455,6 +472,12 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
       ) : lastCount != null && (
         <div className="text-[11px] mb-2" style={{ color: '#0A0A0A', opacity: 0.7 }}>
           {lastCount} record{lastCount === 1 ? '' : 's'} loaded for {ymd(firstDay)} → {ymd(lastDay)}
+          {recordDiag && (
+            <span style={{ color: recordDiag.matched === 0 && recordDiag.total > 0 ? '#991B1B' : 'inherit' }}>
+              {' · '}{recordDiag.matched}/{recordDiag.total} match a known employee
+              {' · sample: '}{recordDiag.sampleId} / {recordDiag.sampleDate} / {recordDiag.sampleStatus}
+            </span>
+          )}
         </div>
       )}
 
