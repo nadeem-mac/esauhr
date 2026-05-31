@@ -257,6 +257,7 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
       const rowDate = [null];       // header row → no date
       const rowDeviation = [false];
       const rowLate = [false];
+      const rowEarly = [false];
       // Rows where ACTUAL HRS (biometric span) fell short of the
       // scheduled/expected shift — i.e. the staff did not complete the
       // assigned hours. Flagged red on the ACTUAL HRS cell. Nadeem.
@@ -275,8 +276,8 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
           fmtTime(r.shift.clock_out_time),
           fmtTime(r.actual_in),
           fmtTime(r.actual_out),
-          r.late_minutes,
-          r.early_minutes,
+          r.late_minutes || '',
+          r.early_minutes || '',
           r.expected_hours,
           r.worked_hours,
           r.actual_hours,
@@ -288,11 +289,12 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
         rowDate.push(r.shift.shift_date);
         rowDeviation.push(r.status === 'deviation');
         rowLate.push(r.late_minutes > 0);
+        rowEarly.push(r.early_minutes > 0);
         rowIncomplete.push(r.expected_hours > 0 && r.actual_hours < r.expected_hours);
       }
       // Blank + totals row
       aoa.push([]);
-      rowDate.push(null); rowDeviation.push(false); rowLate.push(false); rowIncomplete.push(false);
+      rowDate.push(null); rowDeviation.push(false); rowLate.push(false); rowEarly.push(false); rowIncomplete.push(false);
       aoa.push([
         'TOTAL', '', '', '', '', '', '', '', '', '', '', '',
         summary.totalScheduled,
@@ -305,7 +307,7 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
         `${summary.onTime} on-time / ${summary.deviation} dev / ${summary.noShow} no-show`,
         '',
       ]);
-      rowDate.push(null); rowDeviation.push(false); rowLate.push(false); rowIncomplete.push(false);
+      rowDate.push(null); rowDeviation.push(false); rowLate.push(false); rowEarly.push(false); rowIncomplete.push(false);
 
       const ws = XLSX.utils.aoa_to_sheet(aoa);
 
@@ -341,6 +343,14 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
             });
             // Late (min) col → red bold when this row was late
             if (C === lateCol && rowLate[R]) {
+              style = cell({
+                font: { bold: true, sz: 10, color: { rgb: 'DC2626' } },
+                alignment: { horizontal: 'right', vertical: 'center' },
+                ...(dateFill ? { fill: { fgColor: { rgb: dateFill } } } : {}),
+              });
+            }
+            // Early Out (min) col (11) → red bold when staff left early
+            if (C === 11 && rowEarly[R]) {
               style = cell({
                 font: { bold: true, sz: 10, color: { rgb: 'DC2626' } },
                 alignment: { horizontal: 'right', vertical: 'center' },
