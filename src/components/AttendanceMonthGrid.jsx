@@ -555,11 +555,12 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
     };
     const locOf = (e) => abbr(e.location || '');
     const deptOf = (e) => abbr(e.department || '');
-    // Sort: Employee Name, then Location, then Department.
+    // Sort: Location, then Department, then Employee name (groups each
+    // office/department together).
     const rows = [...tracked].sort((a, b) =>
-      (a.name || a.id).localeCompare(b.name || b.id) ||
       locOf(a).localeCompare(locOf(b)) ||
-      deptOf(a).localeCompare(deptOf(b))
+      deptOf(a).localeCompare(deptOf(b)) ||
+      (a.name || a.id).localeCompare(b.name || b.id)
     );
     // Column headers
     let head = '<th class="sl">#</th><th class="psn">PSN</th><th class="nm">Employee</th><th class="loc">Loc</th><th class="dept">Dept</th>';
