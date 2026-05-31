@@ -577,27 +577,52 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
       row += `<td class="sum">${s.present || 0}</td><td class="sum">${s.late || 0}</td><td class="sum">${s.short || 0}</td><td class="sum">${s.absent || 0}</td><td class="sum">${s.leave || 0}</td>`;
       body += `<tr>${row}</tr>`;
     });
-    const note = `Working days only count toward totals. Coverage: ${coverage.loadedCount}/${coverage.expectedCount} working days loaded${coverage.missing.length ? ` (missing ${coverage.missing.map(d => d.getDate()).join(', ')})` : ''}.`;
+    const note = `Working days only count toward totals. Coverage: ${coverage.loadedCount}/${coverage.expectedCount} working days loaded${coverage.missing.length ? ` (missing ${coverage.missing.map(d => d.getDate()).join(', ')})` : ''}. Far-right columns P · LT · SH · AB · LV are this month's totals per person.`;
+    // Legend — same colours as the cells, so the codes are self-explanatory.
+    const legChip = (bg, fg, border, code, lbl, dashed) =>
+      `<span class="lg"><b style="background:${bg};color:${fg || '#0A0A0A'};border:1px ${dashed ? 'dashed' : 'solid'} ${border}">${esc(code)}</b>${esc(lbl)}</span>`;
+    const lg = (st, lbl, codeOverride) => {
+      const s = styleForStatus(st);
+      return legChip(s.bg, s.fg, s.border, codeOverride || s.label.replace('✓', ''), lbl);
+    };
+    const legend =
+      lg('present', 'Present', 'P') +
+      lg('late', 'Late') +
+      lg('short', 'Short') +
+      lg('absent', 'Absent') +
+      lg('annual_leave', 'Annual leave') +
+      lg('sick_leave', 'Sick leave') +
+      lg('emergency_leave', 'Emergency', 'EL') +
+      lg('maternity_leave', 'Maternity', 'ML') +
+      legChip('#EFF6FF', '#1E40AF', '#93C5FD', 'LP/EP', 'Late / early — permitted') +
+      legChip('#FFFFFF', '#7C2D12', '#C026D3', '1', 'Single punch — needs review', true) +
+      legChip('#FEF3C7', '#854F0B', '#FCD34D', '\u00A0', 'Weekend') +
+      legChip('#EDE9FE', '#5B21B6', '#A78BFA', 'H', 'Public holiday');
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>Attendance ${esc(monthLabel)}</title>
 <style>
   @page { size: A4 landscape; margin: 0; }
   * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   html, body { margin: 0; padding: 0; }
-  .page { width: 297mm; height: 210mm; padding: 6mm; overflow: hidden; display: flex; flex-direction: column; }
-  h1 { font: 700 15px/1.15 Arial, sans-serif; color: #0F4C2A; margin: 0; }
-  .sub { font: 400 9px/1.2 Arial, sans-serif; color: #0A0A0A; margin: 1px 0 4px; }
+  .page { width: 297mm; height: 210mm; padding: 7mm; overflow: hidden; display: flex; flex-direction: column; }
+  h1 { font: 700 14px/1.15 Arial, sans-serif; color: #0F4C2A; margin: 0; }
+  .sub { font: 400 9px/1.2 Arial, sans-serif; color: #475569; margin: 1px 0 6px; }
   .tablewrap { flex: 1 1 auto; min-height: 0; }
   table { border-collapse: collapse; font-family: Arial, sans-serif; width: 100%; height: 100%; table-layout: fixed; }
-  col.psn { width: 4.2%; } col.nm { width: 13%; } col.sum { width: 2.5%; }
-  th, td { border: 1px solid #D9DEE5; text-align: center; vertical-align: middle; font-size: 8px; padding: 0 1px; white-space: nowrap; overflow: hidden; }
-  th { background: #0F4C2A; color: #fff; font-weight: 700; }
+  col.psn { width: 4.4%; } col.nm { width: 13.5%; } col.sum { width: 2.6%; }
+  th, td { border: 1px solid #E5EAF0; text-align: center; vertical-align: middle; font-size: 7px; padding: 2px 2px; white-space: nowrap; overflow: hidden; }
+  th { background: #0F4C2A; color: #fff; font-weight: 700; letter-spacing: .02em; }
   th.wknd { background: #0A3A20; } th.hol { background: #5B21B6; }
-  th.d .dw { font-size: 6.5px; opacity: .9; } th.d .hh { font-size: 6px; font-weight: 800; }
-  td.psn, th.psn { text-align: left; font-size: 7.5px; padding-left: 3px; }
-  td.nm, th.nm { text-align: left; font-weight: 600; padding-left: 3px; text-overflow: ellipsis; }
+  th.d .dw { font-size: 6px; opacity: .9; } th.d .hh { font-size: 5.5px; font-weight: 800; }
+  td.psn, th.psn { text-align: left; font-size: 6.5px; padding-left: 4px; color: #334155; }
+  td.nm, th.nm { text-align: left; font-weight: 600; padding-left: 4px; text-overflow: ellipsis; }
   td.d { font-weight: 700; }
-  td.sum, th.sum { font-weight: 700; background: #F3F4F6; }
-  .ftr { font: 400 8px/1.3 Arial, sans-serif; color: #0A0A0A; margin-top: 4px; flex: 0 0 auto; }
+  /* Month-total columns: dark header (readable) + tinted body */
+  th.sum { background: #334155; color: #FFFFFF; }
+  td.sum { background: #EEF2F7; color: #0A0A0A; font-weight: 800; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font: 400 8px/1.45 Arial, sans-serif; color: #0A0A0A; flex: 0 0 auto; }
+  .lg { display: inline-flex; align-items: center; gap: 4px; }
+  .lg b { display: inline-block; min-width: 13px; text-align: center; font-size: 7px; font-weight: 800; padding: 1px 4px; border-radius: 3px; }
+  .ftr { font: 400 7.5px/1.35 Arial, sans-serif; color: #475569; margin-top: 5px; flex: 0 0 auto; }
 </style></head>
 <body>
   <div class="page">
@@ -610,6 +635,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
         <tbody>${body}</tbody>
       </table>
     </div>
+    <div class="legend">${legend}</div>
     <div class="ftr">${esc(note)}</div>
   </div>
   <script>
