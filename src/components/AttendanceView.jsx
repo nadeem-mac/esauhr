@@ -4077,7 +4077,8 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     cutoff.setDate(cutoff.getDate() - 14);
     const cutoffIso = localDateString(cutoff);
     directGet(
-      'attendance_review_log?select=review_date,morning_at,eod_at'
+      'attendance_review_log',
+      'select=review_date,morning_at,eod_at'
         + '&review_date=gte.' + cutoffIso
         + '&order=review_date.desc',
       { timeoutMs: 6000 }
