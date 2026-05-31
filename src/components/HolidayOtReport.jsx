@@ -257,6 +257,10 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
       const rowDate = [null];       // header row → no date
       const rowDeviation = [false];
       const rowLate = [false];
+      // Rows where ACTUAL HRS (biometric span) fell short of the
+      // scheduled/expected shift — i.e. the staff did not complete the
+      // assigned hours. Flagged red on the ACTUAL HRS cell. Nadeem.
+      const rowIncomplete = [false];
       for (const r of sortedRows) {
         const statusLabel = r.status === 'no_show' ? 'NO SHOW'
           : r.status === 'deviation' ? 'DEVIATION' : 'ON TIME';
@@ -284,10 +288,11 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
         rowDate.push(r.shift.shift_date);
         rowDeviation.push(r.status === 'deviation');
         rowLate.push(r.late_minutes > 0);
+        rowIncomplete.push(r.expected_hours > 0 && r.actual_hours < r.expected_hours);
       }
       // Blank + totals row
       aoa.push([]);
-      rowDate.push(null); rowDeviation.push(false); rowLate.push(false);
+      rowDate.push(null); rowDeviation.push(false); rowLate.push(false); rowIncomplete.push(false);
       aoa.push([
         'TOTAL', '', '', '', '', '', '', '', '', '', '', '',
         summary.totalScheduled,
@@ -300,7 +305,7 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
         `${summary.onTime} on-time / ${summary.deviation} dev / ${summary.noShow} no-show`,
         '',
       ]);
-      rowDate.push(null); rowDeviation.push(false); rowLate.push(false);
+      rowDate.push(null); rowDeviation.push(false); rowLate.push(false); rowIncomplete.push(false);
 
       const ws = XLSX.utils.aoa_to_sheet(aoa);
 
@@ -350,6 +355,16 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
                 ...(dateFill ? { fill: { fgColor: { rgb: dateFill } } } : {}),
               });
             }
+            // ACTUAL HRS col (14) → red bold + red fill when the
+            // biometric span fell short of the scheduled shift, i.e.
+            // staff did not complete the assigned hours.
+            if (C === 14 && rowIncomplete[R]) {
+              style = cell({
+                font: { bold: true, sz: 10, color: { rgb: 'B91C1C' } },
+                fill: { fgColor: { rgb: 'FEE2E2' } },
+                alignment: { horizontal: 'right', vertical: 'center' },
+              });
+            }
             // Remarks col → dark-red bold caps (when non-empty)
             if (C === remarksCol && ws[addr].v) {
               style = cell({
@@ -375,14 +390,18 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
         }
       }
 
-      // Column widths (added Remarks before Status)
+      // Column widths (added Remarks before Status). Sized so the
+      // two-line wrapped headers sit cleanly without crowding.
       ws['!cols'] = [
-        { wch: 9 },  { wch: 26 }, { wch: 12 }, { wch: 9 },  { wch: 11 }, { wch: 10 },
-        { wch: 9 },  { wch: 9 },  { wch: 9 },  { wch: 10 }, { wch: 9 },  { wch: 12 },
-        { wch: 11 }, { wch: 10 }, { wch: 11 }, { wch: 9 },  { wch: 18 }, { wch: 11 }, { wch: 40 },
+        { wch: 10 }, { wch: 26 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 11 },
+        { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 12 },
+        { wch: 12 }, { wch: 13 }, { wch: 12 }, { wch: 10 }, { wch: 20 }, { wch: 12 }, { wch: 40 },
       ];
       // Freeze header row
       ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+      // Taller header row so wrapped two-line headers display fully
+      // without overlapping; modest body-row height for clean padding.
+      ws['!rows'] = [{ hpt: 32 }];
 
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, period.name.slice(0, 31));
@@ -439,6 +458,7 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
       const tableRows = sortedRows.map(r => {
         const tint = dateColors[r.shift.shift_date] || 'FFFFFF';
         const workedColor = r.status === 'deviation' ? '#DC2626' : '#1F1B16';
+        const incomplete = r.expected_hours > 0 && r.actual_hours < r.expected_hours;
         return `
           <tr style="background:#${tint}">
             <td>${esc(fmtDate(r.shift.shift_date))}</td>
@@ -454,7 +474,9 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
             <td style="text-align:right;font-variant-numeric:tabular-nums">${r.early_minutes > 0 ? '<strong style="color:#B45309">' + r.early_minutes + 'm</strong>' : '—'}</td>
             <td style="text-align:right;font-variant-numeric:tabular-nums">${Number(r.expected_hours).toFixed(1)}h</td>
             <td style="text-align:right;font-variant-numeric:tabular-nums"><strong style="color:${workedColor}">${Number(r.worked_hours).toFixed(1)}h</strong></td>
-            <td style="text-align:right;font-variant-numeric:tabular-nums">${r.no_show ? '<span style="color:#991B1B">—</span>' : Number(r.actual_hours).toFixed(1) + 'h'}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums${incomplete ? ';background:#FEE2E2' : ''}">${r.no_show
+              ? '<strong style="color:#B91C1C">—</strong>'
+              : (incomplete ? '<strong style="color:#B91C1C">' + Number(r.actual_hours).toFixed(1) + 'h</strong>' : Number(r.actual_hours).toFixed(1) + 'h')}</td>
             <td style="font-size:9px;font-weight:700;color:#991B1B;letter-spacing:.03em">${esc(remarkFor(r)) || '<span style="color:#aaa;font-weight:400">—</span>'}</td>
             <td style="text-align:center">${statusPill(r.status)}</td>
             <td style="font-size:10px;color:#555">${esc(r.shift.notes || '')}</td>
