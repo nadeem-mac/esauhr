@@ -53,7 +53,7 @@ import {
   reevaluateBackfillRows,
 } from '../lib/attendanceBackfill.js';
 import { TimeCardParseError } from '../lib/timeCard.js';
-import { directGet, directGetAll } from '../supabaseClient.js';
+import { directGet, directGetAll, directPost } from '../supabaseClient.js';
 
 // ─── Inline keyframes ────────────────────────────────────────────────
 // Plain ease transitions — bounces removed per Nadeem's feedback.
@@ -158,7 +158,17 @@ export default function AttendanceBackfillPanel({ me, employees, embedded = fals
         mawaniDays,
       });
       const overwrites = await previewOverwrites(built.rows);
-      setPreview({ rows: built.rows, summary: built.summary, overwrites, fileName: file.name });
+      // Hash the file so the import can write an attendance_uploads
+      // marker (the "Uploaded … ago" badge reads that table, which the
+      // backfill previously never touched — so a same-day backfill still
+      // showed the last daily upload). Nadeem 2026-05-31.
+      let fileSha256 = null;
+      try {
+        const ab = await file.arrayBuffer();
+        const hb = await crypto.subtle.digest('SHA-256', ab);
+        fileSha256 = [...new Uint8Array(hb)].map(b => b.toString(16).padStart(2, '0')).join('');
+      } catch { /* hashing unavailable — marker will be skipped */ }
+      setPreview({ rows: built.rows, summary: built.summary, overwrites, fileName: file.name, fileSha256, fileSize: file.size });
     } catch (e) {
       setParseErr(e instanceof TimeCardParseError ? e.message : String(e?.message || e));
     } finally {
@@ -197,12 +207,29 @@ export default function AttendanceBackfillPanel({ me, employees, embedded = fals
       } catch { /* verification is best-effort */ }
       setDone({ written, verified, summary: preview.summary });
       setPreview(null);
+
+      // Record an upload marker so the "Uploaded … ago" badge reflects
+      // this backfill (the badge reads attendance_uploads). Best-effort:
+      // a duplicate (same file + date) or a missing table is non-fatal.
+      if (preview.fileSha256 && preview.summary?.maxDate) {
+        try {
+          await directPost('attendance_uploads', {
+            uploaded_by: me?.id || 'H94830',
+            data_date: preview.summary.maxDate,
+            sheet_name: 'Historical backfill',
+            file_name: preview.fileName || 'backfill.xlsx',
+            file_size_bytes: preview.fileSize || null,
+            file_sha256: preview.fileSha256,
+            row_count: written,
+          }, { timeoutMs: 6000 });
+        } catch { /* dup / table-missing — non-fatal */ }
+      }
     } catch (e) {
       setParseErr(`Import failed: ${e?.message || e}`);
     } finally {
       setImporting(false);
     }
-  }, [preview, overrideWarn]);
+  }, [preview, overrideWarn, me?.id]);
 
   const formatDate = (iso) => {
     if (!iso) return '—';

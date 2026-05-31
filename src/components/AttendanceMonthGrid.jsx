@@ -158,6 +158,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
   const [year, setYear]   = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
   const [records, setRecords] = useState([]);
+  const recordsRef = useRef([]);   // last-good records, for transient-error guard in refetch
   const [loading, setLoading] = useState(false);
   const [fetchErr, setFetchErr] = useState(null);   // surfaced on-screen
   const [lastCount, setLastCount] = useState(null);  // rows from last fetch
@@ -208,17 +209,27 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
         if (offset > 100000) break; // hard safety stop
       }
       setRecords(all);
+      recordsRef.current = all;
       setLastCount(all.length);
       setFetchErr(null);
     } catch (e) {
       console.warn('attendance_daily fetch failed:', e);
-      setRecords([]);
-      setLastCount(null);
-      setFetchErr(e?.message || String(e) || 'fetch failed');
+      // A background refresh (realtime / re-eval tick) that errors out
+      // must NOT wipe a good view — otherwise the coverage banner and
+      // grid blank out for no reason. Keep the last-good data and stay
+      // quiet; only surface the error on a true cold load. Nadeem.
+      if (recordsRef.current && recordsRef.current.length) {
+        // keep existing records, lastCount, no error banner
+      } else {
+        setRecords([]);
+        setLastCount(null);
+        setFetchErr(e?.message || String(e) || 'fetch failed');
+      }
     } finally {
       setLoading(false);
     }
   }, [firstDay, lastDay]);
+  useEffect(() => { recordsRef.current = []; }, [firstDay, lastDay]);
   useEffect(() => { refetch(); }, [refetch]);
 
   // External refresh — bumps when AttendanceView's re-evaluation
