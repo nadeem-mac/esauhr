@@ -1440,25 +1440,34 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // 'Save & Close').
   const handleSaveAndClose = useCallback(async () => {
     if (reevalState.running) return;
-    const summary = await triggerReevaluation({ silent: false });
-    if (summary) {
-      try {
-        const evt = new CustomEvent('esauhr_toast', { detail: {
-          kind: 'success',
-          title: 'Upload session closed',
-          body: `Re-evaluated ${summary.scanned || 0} ${summary.scanned === 1 ? 'row' : 'rows'} · ${summary.changed || 0} updated. Calendar refreshed.`,
-        }});
-        window.dispatchEvent(evt);
-      } catch {}
-      // Close the form data, then dismiss the daily-review modal that
-      // wraps the whole upload UI. The previous version called reset()
-      // alone, which cleared parsedData but left the modal open with
-      // an empty file picker — which Nadeem flagged 2026-05-10 as
-      // 'window doesn't close'. setDailyReviewOpen(false) is the
-      // actual close.
-      reset();
-      setDailyReviewOpen(false);
+    let summary = null;
+    try {
+      summary = await triggerReevaluation({ silent: false });
+    } catch (e) {
+      // A re-eval failure must NOT trap the user in the modal — log and
+      // still close. (Nadeem 2026-05-31: 'Save & Close does not close'.)
+      console.error('Save & Close re-evaluation failed:', e);
     }
+    try {
+      const evt = new CustomEvent('esauhr_toast', { detail: summary ? {
+        kind: 'success',
+        title: 'Upload session closed',
+        body: `Re-evaluated ${summary.scanned || 0} ${summary.scanned === 1 ? 'row' : 'rows'} · ${summary.changed || 0} updated. Calendar refreshed.`,
+      } : {
+        kind: 'success',
+        title: 'Upload session closed',
+        body: 'Review marked complete.',
+      }});
+      window.dispatchEvent(evt);
+    } catch {}
+    // ALWAYS close — the close is the button's contract; the 7-day
+    // re-evaluation is a side effect. Previously reset()+close lived
+    // inside `if (summary)`, so when triggerReevaluation returned falsy
+    // (nothing to re-eval, or an error) the modal stayed open. reset()
+    // clears the form data; setDailyReviewOpen(false) dismisses the
+    // overlay that wraps the whole upload UI.
+    reset();
+    setDailyReviewOpen(false);
   }, [reevalState.running, triggerReevaluation]);
 
   // Stale-check on mount (Decision #5 / option C — the "B" leg).
