@@ -23,6 +23,12 @@ import { CalendarDays, Plus, Save, Loader2, Trash2, AlertCircle, CheckCircle2, X
 
 const GREEN = '#0F4C2A';
 
+// Tell any open attendance grid to refetch holidays so a newly marked
+// holiday tints the grid live (no refresh / tab-switch needed).
+function broadcastHolidayChange() {
+  try { window.dispatchEvent(new CustomEvent('esau:public-holidays-changed')); } catch { /* SSR / no window */ }
+}
+
 function fmtLong(dateStr) {
   try {
     const d = new Date(dateStr + 'T00:00:00');
@@ -76,6 +82,7 @@ export default function PublicHolidaysCard({ me }) {
         setOk('Holiday added.');
       }
       resetForm();
+      broadcastHolidayChange();
       await load();
     } catch (e) {
       const msg = String(e?.message || e);
@@ -93,6 +100,7 @@ export default function PublicHolidaysCard({ me }) {
     try {
       await directDelete('public_holidays', `id=eq.${r.id}`, { timeoutMs: 10000 });
       setOk('Holiday removed.');
+      broadcastHolidayChange();
       await load();
     } catch (e) {
       setErr(e?.message || 'Delete failed');
@@ -117,6 +125,7 @@ export default function PublicHolidaysCard({ me }) {
     }
     setOk(added ? `Added ${added} fixed holiday${added > 1 ? 's' : ''} for ${y}.` : `Those holidays already exist for ${y}.`);
     setSaving(false);
+    broadcastHolidayChange();
     await load();
   };
 

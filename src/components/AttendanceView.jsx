@@ -6004,6 +6004,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
                     embedded
                     allowedStart={allowedStart}
                     allowedEnd={allowedEnd}
+                    onChanged={() => setCalendarRefreshTick(t => t + 1)}
                   />
                 </AttendanceErrorBoundary>
               </div>

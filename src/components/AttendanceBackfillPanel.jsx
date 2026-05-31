@@ -70,7 +70,7 @@ const ANIM_CSS = `
 }
 `;
 
-export default function AttendanceBackfillPanel({ me, employees, embedded = false }) {
+export default function AttendanceBackfillPanel({ me, employees, embedded = false, onChanged }) {
   // When embedded inside the AttendanceView sidebar layout the panel
   // is always "open" — there's no point in collapsing it since the
   // user already chose to navigate here. The header chrome (decorative
@@ -224,12 +224,17 @@ export default function AttendanceBackfillPanel({ me, employees, embedded = fals
           }, { timeoutMs: 6000 });
         } catch { /* dup / table-missing — non-fatal */ }
       }
+
+      // Tell the parent (AttendanceView) the master changed so the
+      // Monthly Attendance grid refetches and updates live — no manual
+      // refresh needed. Nadeem 2026-05-31.
+      try { onChanged?.(); } catch { /* ignore */ }
     } catch (e) {
       setParseErr(`Import failed: ${e?.message || e}`);
     } finally {
       setImporting(false);
     }
-  }, [preview, overrideWarn, me?.id]);
+  }, [preview, overrideWarn, me?.id, onChanged]);
 
   const formatDate = (iso) => {
     if (!iso) return '—';

@@ -181,29 +181,32 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
   }, [year, month, lastDay]);
 
   // Public / government holidays for the visible month (date -> name).
-  // Declared after firstDay/lastDay so the fetch effect can reference
-  // them without hitting the temporal dead zone. Used to tint those
-  // columns and to exclude them from the coverage check. Nadeem.
+  // Declared after firstDay/lastDay so the fetch can reference them
+  // without hitting the temporal dead zone. Refetched on month change,
+  // on every refreshTick (upload / re-eval), and when the Public
+  // Holidays admin card broadcasts a change — so marking a holiday
+  // updates the grid live. Nadeem.
   const [holidayMap, setHolidayMap] = useState(() => new Map());
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const rows = await directGet(
-          'public_holidays',
-          `select=date,name&date=gte.${ymd(firstDay)}&date=lte.${ymd(lastDay)}&order=date`,
-          { timeoutMs: 8000 }
-        );
-        if (cancelled) return;
-        const m = new Map();
-        (Array.isArray(rows) ? rows : []).forEach(h => {
-          if (h?.date) m.set(String(h.date).slice(0, 10), h.name || 'Public holiday');
-        });
-        setHolidayMap(m);
-      } catch { /* non-fatal — table may be empty/absent */ }
-    })();
-    return () => { cancelled = true; };
+  const loadHolidays = useCallback(async () => {
+    try {
+      const rows = await directGet(
+        'public_holidays',
+        `select=date,name&date=gte.${ymd(firstDay)}&date=lte.${ymd(lastDay)}&order=date`,
+        { timeoutMs: 8000 }
+      );
+      const m = new Map();
+      (Array.isArray(rows) ? rows : []).forEach(h => {
+        if (h?.date) m.set(String(h.date).slice(0, 10), h.name || 'Public holiday');
+      });
+      setHolidayMap(m);
+    } catch { /* non-fatal — table may be empty/absent */ }
   }, [firstDay, lastDay]);
+  useEffect(() => { loadHolidays(); }, [loadHolidays, refreshTick]);
+  useEffect(() => {
+    const onChange = () => loadHolidays();
+    window.addEventListener('esau:public-holidays-changed', onChange);
+    return () => window.removeEventListener('esau:public-holidays-changed', onChange);
+  }, [loadHolidays]);
 
   const refetch = useCallback(async () => {
     setLoading(true);
