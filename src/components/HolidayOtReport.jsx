@@ -104,9 +104,24 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
         a.attendance_date === s.shift_date
       );
       const schedIn  = toMins(s.clock_in_time);
-      const schedOut = toMins(s.clock_out_time);
+      let   schedOut = toMins(s.clock_out_time);
       const actIn    = toMins(att?.first_punch);
-      const actOut   = toMins(att?.last_punch);
+      let   actOut   = toMins(att?.last_punch);
+
+      // Overnight handling: a shift or punch-out that crosses midnight
+      // shows an out time earlier than the in time. Treat it as the next
+      // day (+24h) so spans / late / early compute correctly instead of
+      // collapsing to 0. Nadeem 2026-06-01.
+      if (schedOut != null && schedIn != null && schedOut < schedIn) schedOut += 1440;
+      if (actOut   != null && actIn   != null && actOut   < actIn)   actOut   += 1440;
+
+      // Manager-dictated OT (holiday_shifts.manual_ot_hours): when set
+      // it is the credited OT for payroll and overrides the punch-
+      // computed figure — used for overnight / extended work where the
+      // manager fixes the hours. Nadeem 2026-06-01.
+      const rawOt = s.manual_ot_hours;
+      const manualOt = (rawOt != null && rawOt !== '' && !Number.isNaN(Number(rawOt)))
+                       ? Number(rawOt) : null;
 
       // Strict comparison (no grace)
       const noShow      = actIn == null;
@@ -125,6 +140,7 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
                            ? Math.max(0, actOut - actIn)
                            : 0;
       const expectedMins = schedOut - schedIn;
+      const computedWorked = Math.round((workedMins / 60) * 100) / 100;
 
       return {
         shift: s,
@@ -133,12 +149,14 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
         actual_out: att?.last_punch || null,
         late_minutes:  late,
         early_minutes: earlyOut,
-        worked_hours:  Math.round((workedMins / 60) * 100) / 100,
+        // ASSIGNED / credited OT hours — manager override wins when set
+        worked_hours:  manualOt != null ? manualOt : computedWorked,
         actual_hours:  Math.round((actualMins / 60) * 100) / 100,
         expected_hours: Math.round((expectedMins / 60) * 100) / 100,
         worked_pct: expectedMins > 0
-                     ? Math.round((workedMins / expectedMins) * 100)
+                     ? Math.round(((manualOt != null ? manualOt * 60 : workedMins) / expectedMins) * 100)
                      : 0,
+        ot_overridden: manualOt != null,
         no_show: noShow,
         status: noShow ? 'no_show'
               : (late === 0 && earlyOut === 0) ? 'on_time'
