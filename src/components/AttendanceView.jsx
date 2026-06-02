@@ -4545,7 +4545,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // Nadeem 2026-06-02.
   const buildNoShowPanel = () => (
     <FlaggedSection
-      title="No-show — absent, no leave on file"
+      title="Absent (without Notice)"
       kicker="NO SIGN-IN · NO LEAVE REQUEST · TODAY"
       iconColor="#9D174D"
       barFrom="#F472B6" barTo="#9D174D"
