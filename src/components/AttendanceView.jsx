@@ -3342,12 +3342,19 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     // not silent — they're already in another detection bucket.
     const punchedToday = new Set();
     (parsed.rows || []).forEach(r => {
-      if (r.date !== csvDate) return;
+      // parsed.rows are shaped with the 'Date' / 'Employee ID' keys
+      // (NOT r.date) — using r.date here silently matched nothing and
+      // flagged the entire roster as absent. Nadeem 2026-06-02.
+      if (r['Date'] !== csvDate) return;
       const idRaw = r['Employee ID'] || r.employee_id || r.EmployeeID || r.ID || '';
-      const id    = String(idRaw).trim().toUpperCase();
-      if (!id) return;
-      const norm = id.startsWith('H') ? id : 'H' + id;
-      punchedToday.add(norm);
+      const empId = String(idRaw).trim();
+      if (!empId) return;
+      // Resolve through the same lookups detection uses so PSN variants
+      // (missing leading 9, with/without H) still match the directory.
+      const up = empId.toUpperCase();
+      const lookupKey = up.startsWith('H') ? up : ('H' + up);
+      const emp = empById[up] || empById[lookupKey] || empByDigits[psnDigits(empId)] || null;
+      if (emp) punchedToday.add(String(emp.id).toUpperCase());
     });
 
     // Iterate the employee directory. Skip terminated/inactive flags
@@ -3387,7 +3394,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     out.onMawani.sort(byName);
     out.unexplained.sort(byName);
     return out;
-  }, [csvDate, csvIsWeekend, empById, parsed.rows, onLeaveOnDate, halfDayLeaveOnDate, mawaniDays]);
+  }, [csvDate, csvIsWeekend, empById, empByDigits, parsed.rows, onLeaveOnDate, halfDayLeaveOnDate, mawaniDays]);
 
   // ─── Persist daily attendance to attendance_daily ──────────────────
   // Every successful parse triggers a write of one row per
