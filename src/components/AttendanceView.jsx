@@ -4034,6 +4034,8 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     window.location.href = url;
   };
 
+  // ─── Render ────────────────────────────────────────────────────────────
+  const hasFile = !!xlsxFileName;
 
   // Auto-open the daily-review modal as soon as a file is parsed.
   // Triggered on the transition from no-file to has-file so we don't
