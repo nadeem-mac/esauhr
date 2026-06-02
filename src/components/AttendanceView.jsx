@@ -3396,47 +3396,69 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     return out;
   }, [csvDate, csvIsWeekend, empById, empByDigits, parsed.rows, onLeaveOnDate, halfDayLeaveOnDate, mawaniDays]);
 
-  // ─── Shift-staff monitor ───────────────────────────────────────────
-  // For every employee with an assigned shift on csvDate (from
-  // employee_shifts), compare their actual punches against the shift
-  // window and flag check-in / check-out / punch problems. Overnight
-  // shifts (e.g. 20:00–05:00) are handled by rolling the end past
-  // midnight. Nadeem 2026-06-02 — "dedicated tile to monitor shift
-  // staff daily check in/out and punch issues".
+  // ─── Shift-staff monitor (DAILY) ───────────────────────────────────
+  // Evaluates the most recently COMPLETED day (yesterday) so both the
+  // check-in and check-out punches are present — a morning upload of
+  // today's file has today's shifts still in progress, which would flag
+  // everyone. Overnight shifts (e.g. 20:00–05:00) have their clock-out
+  // on the FOLLOWING morning's row, so we look there for the out-punch.
+  // Nadeem 2026-06-03 — "check daily and send email daily like late
+  // comers".
   const shiftReview = useMemo(() => {
-    const out = { entries: [], total: 0, issues: 0 };
+    const out = { entries: [], total: 0, issues: 0, refDate: null };
     const toMin = (t) => {
       const m = String(t || '').match(/(\d{1,2}):(\d{2})/);
       return m ? (+m[1]) * 60 + (+m[2]) : null;
     };
-    if (!csvDate) return out;
-    const todays = (acceptedShifts || []).filter(s => String(s.shift_date) === csvDate);
-    if (!todays.length) return out;
-    // Today's punches by canonical employee id
-    const punchByEmp = new Map();
+    const addDay = (d) => {
+      if (!d) return null;
+      const [y, mo, da] = d.split('-').map(Number);
+      const dt = new Date(y, mo - 1, da); dt.setDate(dt.getDate() + 1);
+      return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+    };
+    const refDate = yesterdayDate || csvDate;
+    if (!refDate) return out;
+    out.refDate = refDate;
+    const nextDate = addDay(refDate);
+    const shifts = (acceptedShifts || []).filter(s => String(s.shift_date) === refDate);
+    if (!shifts.length) return out;
+    // Punches indexed by emp|date for the completed day AND the morning
+    // after (overnight clock-out).
+    const punch = new Map();
     (parsed.rows || []).forEach(r => {
-      if (r['Date'] !== csvDate) return;
+      const d = r['Date'];
+      if (d !== refDate && d !== nextDate) return;
       const raw = String(r['Employee ID'] || '').trim();
       const up = raw.toUpperCase();
       const emp = empById[up] || empById[up.startsWith('H') ? up : ('H' + up)] || empByDigits[psnDigits(raw)] || null;
-      if (emp) punchByEmp.set(String(emp.id).toUpperCase(), { in: r['First Punch'] || null, out: r['Last Punch'] || null });
+      if (emp) punch.set(String(emp.id).toUpperCase() + '|' + d, { in: r['First Punch'] || null, out: r['Last Punch'] || null });
     });
-    todays.forEach(s => {
+    shifts.forEach(s => {
       const up = String(s.employee_id).toUpperCase();
       const emp = empById[up] || empByDigits[psnDigits(s.employee_id)] || { id: s.employee_id, name: s.employee_id };
-      const p = punchByEmp.get(up) || null;
       const sIn = toMin(s.start_time);
       let sOut = toMin(s.end_time);
       const overnight = (sIn != null && sOut != null && sOut < sIn);
       if (overnight) sOut += 1440;
-      const aIn = p ? toMin(p.in) : null;
-      let aOut = p ? toMin(p.out) : null;
-      if (aIn != null && aOut != null && aOut < aIn) aOut += 1440;
-      let status = 'OK', problem = false;
-      let lateMin = 0, earlyMin = 0;
-      if (!p || (aIn == null && aOut == null)) { status = 'ABSENT'; problem = true; }
-      else if (aIn != null && aOut == null) { status = '1 PUNCH (no out)'; problem = true; }
-      else if (aIn == null && aOut != null) { status = '1 PUNCH (no in)'; problem = true; }
+      const dayP = punch.get(up + '|' + refDate) || null;
+      const nextP = punch.get(up + '|' + nextDate) || null;
+      const inStr = dayP?.in || null;
+      const aIn = toMin(inStr);
+      let outStr, aOut;
+      if (overnight) {
+        outStr = nextP?.out || nextP?.in || dayP?.out || null;
+        aOut = toMin(outStr);
+        if (aOut != null) aOut += 1440; // following morning
+      } else {
+        outStr = dayP?.out || null;
+        aOut = toMin(outStr);
+        if (aIn != null && aOut != null && aOut < aIn) aOut += 1440;
+      }
+      let status = 'OK', problem = false, lateMin = 0, earlyMin = 0;
+      const noIn = aIn == null, noOut = aOut == null;
+      if (noIn && noOut) { status = 'ABSENT'; problem = true; }
+      else if (!noIn && noOut) { status = '1 PUNCH (no out)'; problem = true; }
+      else if (noIn && !noOut) { status = '1 PUNCH (no in)'; problem = true; }
       else {
         lateMin = (sIn != null) ? Math.max(0, aIn - sIn) : 0;
         earlyMin = (sOut != null) ? Math.max(0, sOut - aOut) : 0;
@@ -3448,9 +3470,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       out.entries.push({
         id: 'shift-' + up, employee: emp,
         shiftLabel: `${s.start_time || '—'}–${s.end_time || '—'}${overnight ? ' (+1)' : ''}`,
-        actualIn: p?.in || '—', actualOut: p?.out || '—',
+        actualIn: inStr || '—', actualOut: outStr || '—',
         status, problem, lateMin, earlyMin,
         scheduledStart: s.start_time, scheduledEnd: s.end_time,
+        dateLabel: refDate,
       });
     });
     out.entries.sort((a, b) => (a.problem === b.problem ? 0 : a.problem ? -1 : 1)
@@ -3458,7 +3481,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     out.total = out.entries.length;
     out.issues = out.entries.filter(e => e.problem).length;
     return out;
-  }, [csvDate, acceptedShifts, parsed.rows, empById, empByDigits]);
+  }, [csvDate, yesterdayDate, acceptedShifts, parsed.rows, empById, empByDigits]);
 
   // ─── Persist daily attendance to attendance_daily ──────────────────
   // Every successful parse triggers a write of one row per
@@ -4124,7 +4147,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   const handleEmailShiftFlag = (entry, mode = 'live') => {
     if (!checkEmailCooldown(entry.id, mode)) return;
     const emp = entry.employee;
-    const dateLong = formatDateLong(csvDate);
+    const dateLong = formatDateLong(entry.dateLabel || csvDate);
     const mgrEmail = getManagerEmail(emp);
     const mgr = emp.manager_id ? empById[String(emp.manager_id).toUpperCase()] : null;
     const mgrName = mgr?.name || 'Manager';
@@ -4738,8 +4761,8 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     return (
       <div className="rounded-xl border" style={{ borderColor: '#E5E5E5', overflow: 'hidden' }}>
         <div className="px-3 py-2" style={{ background: 'linear-gradient(90deg,#60A5FA,#1D4ED8)', color: '#fff' }}>
-          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '.04em' }}>SHIFT STAFF — {csvDate}</div>
-          <div style={{ fontSize: 10.5, opacity: .95 }}>{shiftReview.total} assigned · {shiftReview.issues} with punch issues</div>
+          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '.04em' }}>SHIFT STAFF — {shiftReview.refDate || csvDate}</div>
+          <div style={{ fontSize: 10.5, opacity: .95 }}>completed-day check · {shiftReview.total} assigned · {shiftReview.issues} with punch issues</div>
         </div>
         {shiftReview.total === 0 ? (
           <div className="px-3 py-4 text-[12px]" style={{ color: '#0A0A0A' }}>No shift assignments found for this date in the roster.</div>
