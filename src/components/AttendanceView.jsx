@@ -5409,7 +5409,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         csvDate={csvDate}
       />
     ),
-    ...(dailyPanelsOk && parsed.hasTodayData && (silentAbsences.unexplained || []).length
+    ...(dailyPanelsOk && parsed.hasTodayData
       ? { noShow: buildNoShowPanel() } : {}),
     ...(detection.weekend.length ? { weekend: buildWeekendPanel() } : {}),
   };
@@ -5815,6 +5815,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             shiftAbsent:    detection.shiftAbsent.length,
             onTime:      detection.onTime.length,
             onLeave:     detection.onLeave.length,
+            noShow:      (silentAbsences.unexplained || []).length,
             unknown:     detection.unknownEmp.length,
             weekend:     detection.weekend.length,
             shiftOffDay: detection.shiftOffDay.length,
@@ -7085,6 +7086,7 @@ function FileSummary({
                 <CountPill kind="onTime"   icon="✓"  label="On time"          count={counts.onTime}   color="#047857" tint="#ECFDF5" subtext="punched in by 8:15"        isOpen={drillKind === 'onTime'}   onClick={() => setDrillKind(drillKind === 'onTime'   ? null : 'onTime')}/>
                 <CountPill kind="late"     icon="⚠"  label="Late arrival"     count={counts.late}     color="#BE123C" tint="#FFF1F2" subtext="punched in after 8:15"    isOpen={drillKind === 'late'}     onClick={() => setDrillKind(drillKind === 'late'     ? null : 'late')}     progress={progressByKind?.late}/>
                 <CountPill kind="missedIn" icon="🚫" label="Missed punch-in"  count={counts.missedIn} color="#4338CA" tint="#EEF2FF" subtext="no first-punch on record"  isOpen={drillKind === 'missedIn'} onClick={() => setDrillKind(drillKind === 'missedIn' ? null : 'missedIn')} progress={progressByKind?.missedIn}/>
+                <CountPill kind="noShow"   icon="🛑" label="Absent (no notice)" count={counts.noShow}   color="#9D174D" tint="#FDF2F8" subtext="no sign-in · no leave"      isOpen={drillKind === 'noShow'}   onClick={() => setDrillKind(drillKind === 'noShow'   ? null : 'noShow')}   progress={progressByKind?.noShow}/>
               </div>
             </div>
           )}
