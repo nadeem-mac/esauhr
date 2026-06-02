@@ -3396,6 +3396,70 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     return out;
   }, [csvDate, csvIsWeekend, empById, empByDigits, parsed.rows, onLeaveOnDate, halfDayLeaveOnDate, mawaniDays]);
 
+  // ─── Shift-staff monitor ───────────────────────────────────────────
+  // For every employee with an assigned shift on csvDate (from
+  // employee_shifts), compare their actual punches against the shift
+  // window and flag check-in / check-out / punch problems. Overnight
+  // shifts (e.g. 20:00–05:00) are handled by rolling the end past
+  // midnight. Nadeem 2026-06-02 — "dedicated tile to monitor shift
+  // staff daily check in/out and punch issues".
+  const shiftReview = useMemo(() => {
+    const out = { entries: [], total: 0, issues: 0 };
+    const toMin = (t) => {
+      const m = String(t || '').match(/(\d{1,2}):(\d{2})/);
+      return m ? (+m[1]) * 60 + (+m[2]) : null;
+    };
+    if (!csvDate) return out;
+    const todays = (acceptedShifts || []).filter(s => String(s.shift_date) === csvDate);
+    if (!todays.length) return out;
+    // Today's punches by canonical employee id
+    const punchByEmp = new Map();
+    (parsed.rows || []).forEach(r => {
+      if (r['Date'] !== csvDate) return;
+      const raw = String(r['Employee ID'] || '').trim();
+      const up = raw.toUpperCase();
+      const emp = empById[up] || empById[up.startsWith('H') ? up : ('H' + up)] || empByDigits[psnDigits(raw)] || null;
+      if (emp) punchByEmp.set(String(emp.id).toUpperCase(), { in: r['First Punch'] || null, out: r['Last Punch'] || null });
+    });
+    todays.forEach(s => {
+      const up = String(s.employee_id).toUpperCase();
+      const emp = empById[up] || empByDigits[psnDigits(s.employee_id)] || { id: s.employee_id, name: s.employee_id };
+      const p = punchByEmp.get(up) || null;
+      const sIn = toMin(s.start_time);
+      let sOut = toMin(s.end_time);
+      const overnight = (sIn != null && sOut != null && sOut < sIn);
+      if (overnight) sOut += 1440;
+      const aIn = p ? toMin(p.in) : null;
+      let aOut = p ? toMin(p.out) : null;
+      if (aIn != null && aOut != null && aOut < aIn) aOut += 1440;
+      let status = 'OK', problem = false;
+      let lateMin = 0, earlyMin = 0;
+      if (!p || (aIn == null && aOut == null)) { status = 'ABSENT'; problem = true; }
+      else if (aIn != null && aOut == null) { status = '1 PUNCH (no out)'; problem = true; }
+      else if (aIn == null && aOut != null) { status = '1 PUNCH (no in)'; problem = true; }
+      else {
+        lateMin = (sIn != null) ? Math.max(0, aIn - sIn) : 0;
+        earlyMin = (sOut != null) ? Math.max(0, sOut - aOut) : 0;
+        if (lateMin > 0 && earlyMin > 0) { status = 'LATE + EARLY OUT'; problem = true; }
+        else if (lateMin > 0) { status = 'LATE'; problem = true; }
+        else if (earlyMin > 0) { status = 'EARLY OUT'; problem = true; }
+        else status = 'OK';
+      }
+      out.entries.push({
+        id: 'shift-' + up, employee: emp,
+        shiftLabel: `${s.start_time || '—'}–${s.end_time || '—'}${overnight ? ' (+1)' : ''}`,
+        actualIn: p?.in || '—', actualOut: p?.out || '—',
+        status, problem, lateMin, earlyMin,
+        scheduledStart: s.start_time, scheduledEnd: s.end_time,
+      });
+    });
+    out.entries.sort((a, b) => (a.problem === b.problem ? 0 : a.problem ? -1 : 1)
+      || (a.employee.name || '').localeCompare(b.employee.name || ''));
+    out.total = out.entries.length;
+    out.issues = out.entries.filter(e => e.problem).length;
+    return out;
+  }, [csvDate, acceptedShifts, parsed.rows, empById, empByDigits]);
+
   // ─── Persist daily attendance to attendance_daily ──────────────────
   // Every successful parse triggers a write of one row per
   // (employee, date) to attendance_daily. Re-uploads upsert on the
@@ -3532,6 +3596,9 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         }
         if (allRows.length > 0) {
           const delta = await recordAttendanceRows(allRows);
+          // Tell the monthly grid to refetch immediately — the rows are
+          // now in attendance_daily even before Save & Close. Nadeem.
+          try { window.dispatchEvent(new CustomEvent('esau:attendance-changed')); } catch {}
           // Store the delta in component state so the UI can render
           // the 'what changed in this upload' banner — Bashaier needs
           // to know if her 4pm re-upload caught new late-arrivals
@@ -4600,6 +4667,60 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     />
   );
 
+  // ── SHIFT-STAFF MONITOR panel ──────────────────────────────────────
+  // Read-only overview: every shift-assigned staff for the day, their
+  // assigned window, actual in/out, and a status chip. Problem rows
+  // (absent / single-punch / late / early-out) sort to the top.
+  const buildShiftMonitorPanel = () => {
+    const chip = (st, problem) => {
+      const map = {
+        'OK': ['#065F46', '#D1FAE5'],
+        'ABSENT': ['#FFFFFF', '#9D174D'],
+        'LATE': ['#92400E', '#FEF3C7'],
+        'EARLY OUT': ['#92400E', '#FEF3C7'],
+        'LATE + EARLY OUT': ['#FFFFFF', '#B45309'],
+      };
+      const [fg, bg] = map[st] || (problem ? ['#7C2D12', '#FFEDD5'] : ['#0A0A0A', '#F4F4EE']);
+      return <span style={{ background: bg, color: fg, fontSize: 10, fontWeight: 800, padding: '2px 7px', borderRadius: 999, whiteSpace: 'nowrap' }}>{st}</span>;
+    };
+    return (
+      <div className="rounded-xl border" style={{ borderColor: '#E5E5E5', overflow: 'hidden' }}>
+        <div className="px-3 py-2" style={{ background: 'linear-gradient(90deg,#60A5FA,#1D4ED8)', color: '#fff' }}>
+          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '.04em' }}>SHIFT STAFF — {csvDate}</div>
+          <div style={{ fontSize: 10.5, opacity: .95 }}>{shiftReview.total} assigned · {shiftReview.issues} with punch issues</div>
+        </div>
+        {shiftReview.total === 0 ? (
+          <div className="px-3 py-4 text-[12px]" style={{ color: '#0A0A0A' }}>No shift assignments found for this date in the roster.</div>
+        ) : (
+          <div style={{ maxHeight: '46vh', overflowY: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
+              <thead>
+                <tr style={{ background: '#F4F4EE', color: '#0A0A0A', textAlign: 'left' }}>
+                  <th style={{ padding: '5px 8px', fontWeight: 700 }}>Employee</th>
+                  <th style={{ padding: '5px 8px', fontWeight: 700 }}>Shift</th>
+                  <th style={{ padding: '5px 8px', fontWeight: 700 }}>In</th>
+                  <th style={{ padding: '5px 8px', fontWeight: 700 }}>Out</th>
+                  <th style={{ padding: '5px 8px', fontWeight: 700 }}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shiftReview.entries.map(e => (
+                  <tr key={e.id} style={{ borderTop: '1px solid #EFEFEA', background: e.problem ? '#FFF8F8' : '#fff' }}>
+                    <td style={{ padding: '5px 8px', fontWeight: 600, color: '#0A0A0A' }}>{e.employee.name || e.employee.id} <span style={{ color: '#1F1B16', opacity: .6 }}>({e.employee.id})</span></td>
+                    <td style={{ padding: '5px 8px', color: '#0A0A0A', whiteSpace: 'nowrap' }}>{e.shiftLabel}</td>
+                    <td style={{ padding: '5px 8px', color: e.lateMin > 0 ? '#B45309' : '#0A0A0A', fontWeight: e.lateMin > 0 ? 800 : 400 }}>{e.actualIn}{e.lateMin > 0 ? ` (+${e.lateMin}m)` : ''}</td>
+                    <td style={{ padding: '5px 8px', color: e.earlyMin > 0 ? '#B45309' : '#0A0A0A', fontWeight: e.earlyMin > 0 ? 800 : 400 }}>{e.actualOut}{e.earlyMin > 0 ? ` (−${e.earlyMin}m)` : ''}</td>
+                    <td style={{ padding: '5px 8px' }}>{chip(e.status, e.problem)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const buildEarlyPanel = (opts = {}) => {
     const { shiftMode = false } = opts;
     const filteredEntries = (detection.early || []).filter(e =>
@@ -5427,6 +5548,8 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     ),
     ...(dailyPanelsOk && parsed.hasTodayData
       ? { noShow: buildNoShowPanel() } : {}),
+    ...(dailyPanelsOk && parsed.hasTodayData && shiftReview.total
+      ? { shiftMon: buildShiftMonitorPanel() } : {}),
     ...(detection.weekend.length ? { weekend: buildWeekendPanel() } : {}),
   };
 
@@ -5832,6 +5955,8 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             onTime:      detection.onTime.length,
             onLeave:     detection.onLeave.length,
             noShow:      (silentAbsences.unexplained || []).length,
+            shiftMon:    shiftReview.total,
+            shiftIssues: shiftReview.issues,
             unknown:     detection.unknownEmp.length,
             weekend:     detection.weekend.length,
             shiftOffDay: detection.shiftOffDay.length,
@@ -7103,6 +7228,9 @@ function FileSummary({
                 <CountPill kind="late"     icon="⚠"  label="Late arrival"     count={counts.late}     color="#BE123C" tint="#FFF1F2" subtext="punched in after 8:15"    isOpen={drillKind === 'late'}     onClick={() => setDrillKind(drillKind === 'late'     ? null : 'late')}     progress={progressByKind?.late}/>
                 <CountPill kind="missedIn" icon="🚫" label="Missed punch-in"  count={counts.missedIn} color="#4338CA" tint="#EEF2FF" subtext="no first-punch on record"  isOpen={drillKind === 'missedIn'} onClick={() => setDrillKind(drillKind === 'missedIn' ? null : 'missedIn')} progress={progressByKind?.missedIn}/>
                 <CountPill kind="noShow"   icon="🛑" label="Absent (no notice)" count={counts.noShow}   color="#9D174D" tint="#FDF2F8" subtext="no sign-in · no leave"      isOpen={drillKind === 'noShow'}   onClick={() => setDrillKind(drillKind === 'noShow'   ? null : 'noShow')}   progress={progressByKind?.noShow}/>
+                {counts.shiftMon > 0 && (
+                  <CountPill kind="shiftMon" icon="🌙" label="Shift staff" count={counts.shiftMon} color="#1D4ED8" tint="#EFF6FF" subtext={(counts.shiftIssues || 0) + ' with punch issues'} isOpen={drillKind === 'shiftMon'} onClick={() => setDrillKind(drillKind === 'shiftMon' ? null : 'shiftMon')} progress={progressByKind?.shiftMon}/>
+                )}
               </div>
             </div>
           )}

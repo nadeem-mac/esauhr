@@ -207,6 +207,15 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
     window.addEventListener('esau:public-holidays-changed', onChange);
     return () => window.removeEventListener('esau:public-holidays-changed', onChange);
   }, [loadHolidays]);
+  // Refetch the grid whenever attendance rows are written anywhere
+  // (daily upload auto-record, Save & Close, backfill) — not only when
+  // the refreshTick prop bumps. Nadeem 2026-06-02: grid wasn't updating
+  // on upload because the tick only bumps on Save & Close.
+  useEffect(() => {
+    const onAtt = () => refetchRef.current && refetchRef.current();
+    window.addEventListener('esau:attendance-changed', onAtt);
+    return () => window.removeEventListener('esau:attendance-changed', onAtt);
+  }, []);
 
   const refetch = useCallback(async () => {
     setLoading(true);
@@ -261,6 +270,8 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
   }, [firstDay, lastDay]);
   useEffect(() => { recordsRef.current = []; }, [firstDay, lastDay]);
   useEffect(() => { refetch(); }, [refetch]);
+  const refetchRef = useRef(null);
+  useEffect(() => { refetchRef.current = refetch; }, [refetch]);
 
   // External refresh — bumps when AttendanceView's re-evaluation
   // pipeline completes. Skips the initial mount (refetch above
