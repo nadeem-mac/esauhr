@@ -3997,8 +3997,43 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     window.location.href = url;
   };
 
-  // ─── Render ────────────────────────────────────────────────────────────
-  const hasFile = !!xlsxFileName;
+  // No-show email — sent TO the line manager (CC the staff member and
+  // the fixed execs). The manager is asked to provide the reason for
+  // the absence, since neither a punch nor a leave request is on file.
+  // Reversed recipients vs the late/early/missed emails (those go TO
+  // the staff). Nadeem 2026-06-02.
+  const handleEmailNoShow = (entry, mode = 'live') => {
+    if (!checkEmailCooldown(entry.id, mode)) return;
+    const emp = entry.employee;
+    const dateLong = formatDateLong(entry.dateLabel || csvDate);
+    const mgrEmail = getManagerEmail(emp);
+    const mgr = emp.manager_id ? empById[String(emp.manager_id).toUpperCase()] : null;
+    const mgrName = mgr?.name || 'Manager';
+    const testTag = mode === 'test' ? '[TEST] ' : '';
+    const subject = `${testTag}Attendance — ${emp.name} (${emp.id}) absent on ${dateLong}, reason required`;
+    const body =
+      `Dear ${mgrName},\n\n` +
+      `Our daily attendance review for ${dateLong} shows no sign-in on record for ${emp.name} (${emp.id}), ` +
+      `and there is no approved leave or permission request on file for this date. The day is therefore recorded as an unexplained absence.\n\n` +
+      `Kindly confirm the reason for the absence with the staff member and advise HR accordingly. If the absence was for an approved reason (medical, emergency, etc.), please ensure the appropriate leave request is submitted through the ESAU HR Portal (esauhr.netlify.app) so the record can be updated. Otherwise it will stand as an unexcused absence on the evaluation record.\n\n` +
+      `${emp.name}, you are copied for your awareness and to provide your reason.\n\n` +
+      `Thanks and regards,\n` +
+      `BASHAIER ALI\n` +
+      `ESAU - SADMN SUP / HR DEPT`;
+    const cc = [emp.email, ...FIXED_CC].filter(Boolean);
+    const url = buildMailto({ to: mgrEmail || emp.email, cc, subject, body });
+    if (mode !== 'test') {
+      logViolation({
+        entry,
+        violationType: 'absent',
+        minutesOff: null,
+        scheduledStart: entry.scheduledStart || '08:00',
+        scheduledEnd: entry.scheduledEnd,
+      });
+    }
+    window.location.href = url;
+  };
+
 
   // Auto-open the daily-review modal as soon as a file is parsed.
   // Triggered on the transition from no-file to has-file so we don't
@@ -4497,6 +4532,51 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           logged={entry.logged}
           emailSentAt={entry.emailSentAt}
           label="Email shift absence notice"
+        />
+      )}
+    />
+  );
+
+  // ── NO-SHOW panel — office staff absent without leave ──────────────
+  // silentAbsences.unexplained = staff in the directory with no punch
+  // today and no approved leave / Mawani on file. Distinct from shift
+  // absences (those had an assigned shift). The email goes TO the line
+  // manager (CC the staff member) asking them to provide the reason.
+  // Nadeem 2026-06-02.
+  const buildNoShowPanel = () => (
+    <FlaggedSection
+      title="No-show — absent, no leave on file"
+      kicker="NO SIGN-IN · NO LEAVE REQUEST · TODAY"
+      iconColor="#9D174D"
+      barFrom="#F472B6" barTo="#9D174D"
+      empty="Everyone expected today either punched in or has approved leave."
+      onBulk={actionsEnabled ? (rows) => setBulkSession({ kind: 'noShow', queue: rows, sentIds: new Set(), mode: 'live' }) : null}
+      onExplain={(entry) => setExplainPayload({ entry, kind: 'noShow' })}
+      entries={(silentAbsences.unexplained || []).map(emp => ({
+        id: 'noshow-' + emp.id,
+        employee: emp,
+        dateLabel: csvDate,
+        detail: 'No sign-in recorded for ' + (csvDate || 'today') + ' and no approved leave request on file',
+        metaIcon: <AlertTriangle className="w-4 h-4" />,
+        logged: !!loggedMarkers[emp.id + ':no_show'],
+        actionable: true,
+        emailSentAt: (typeof loggedMarkers[emp.id + ':no_show'] === 'string') ? loggedMarkers[emp.id + ':no_show'] : null,
+        monthlyCount: monthlyCounts[emp.id] || 0,
+      }))}
+      renderButton={(entry) => !actionsEnabled ? (
+        <span className="text-[10px] tracking-wider font-semibold px-2 py-1 rounded-md"
+          style={{ background: '#F4F4EE', color: '#0A0A0A', border: '1px solid #E5E5E5' }}>
+          READ-ONLY
+        </span>
+      ) : (
+        <RowButton
+          onClick={() => setConfirmEntry({ entry, kind: 'noShow', mode: 'live' })}
+          onClickTest={() => setConfirmEntry({ entry, kind: 'noShow', mode: 'test' })}
+          onMarkSent={() => markSent(entry.id)}
+          sent={!!sentMarkers[entry.id]}
+          logged={entry.logged}
+          emailSentAt={entry.emailSentAt}
+          label="Email manager for reason"
         />
       )}
     />
@@ -5327,6 +5407,8 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         csvDate={csvDate}
       />
     ),
+    ...(dailyPanelsOk && parsed.hasTodayData && (silentAbsences.unexplained || []).length
+      ? { noShow: buildNoShowPanel() } : {}),
     ...(detection.weekend.length ? { weekend: buildWeekendPanel() } : {}),
   };
 
@@ -5935,6 +6017,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             setConfirmEntry(null);
             if (kind === 'late')   handleEmailLate(entry, mode);
             else if (kind === 'early')  handleEmailEarly(entry, mode);
+            else if (kind === 'noShow') handleEmailNoShow(entry, mode);
             else if (kind === 'missed' || kind === 'missedIn' || kind === 'missedOut' || kind === 'shiftAbsent') handleEmailMissed(entry, mode);
           }}
         />
@@ -6024,6 +6107,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             const m = bulkSession.mode || 'live';
             if (k === 'late')   handleEmailLate(entry, m);
             else if (k === 'early')  handleEmailEarly(entry, m);
+            else if (k === 'noShow') handleEmailNoShow(entry, m);
             else if (k === 'missed' || k === 'missedIn' || k === 'missedOut' || k === 'shiftAbsent') handleEmailMissed(entry, m);
             // Mark this one in the queue's sent set so the modal can
             // strike it through. Also flips the row's UI state below.
