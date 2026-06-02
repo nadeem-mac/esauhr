@@ -4016,17 +4016,26 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     const mgrEmail = getManagerEmail(emp);
     const mgr = emp.manager_id ? empById[String(emp.manager_id).toUpperCase()] : null;
     const mgrName = mgr?.name || 'Manager';
-    const testTag = mode === 'test' ? '[TEST] ' : '';
-    const subject = `${testTag}Attendance — ${emp.name} (${emp.id}) absent on ${dateLong}, reason required`;
-    const body =
-      `Dear ${mgrName},\n\n` +
-      `Our daily attendance review for ${dateLong} shows no sign-in on record for ${emp.name} (${emp.id}), ` +
-      `and there is no approved leave or permission request on file for this date. The day is therefore recorded as an unexplained absence.\n\n` +
-      `Kindly confirm the reason for the absence with the staff member and advise HR accordingly. If the absence was for an approved reason (medical, emergency, etc.), please ensure the appropriate leave request is submitted through the ESAU HR Portal (esauhr.netlify.app) so the record can be updated. Otherwise it will stand as an unexcused absence on the evaluation record.\n\n` +
-      `${emp.name}, you are copied for your awareness and to provide your reason.\n\n` +
-      `Thanks and regards,\n` +
-      `BASHAIER ALI\n` +
-      `ESAU - SADMN SUP / HR DEPT`;
+    const subject = `Attendance — ${emp.name} (${emp.id}) absent on ${dateLong}, reason required`;
+    const body = mode === 'test'
+      ? (
+        `Dear ${mgrName},\n\n` +
+        `Our attendance review for ${dateLong} shows no sign-in for ${emp.name} (${emp.id}) and no approved leave on file. Kindly confirm the reason for the absence with the staff member and advise HR.\n\n` +
+        `${emp.name}, you are copied to provide your reason.\n\n` +
+        `Thanks and regards,\n` +
+        `BASHAIER ALI\n` +
+        `ESAU - SADMN SUP / HR DEPT`
+      )
+      : (
+        `Dear ${mgrName},\n\n` +
+        `Our daily attendance review for ${dateLong} shows no sign-in on record for ${emp.name} (${emp.id}), ` +
+        `and there is no approved leave or permission request on file for this date. The day is therefore recorded as an unexplained absence.\n\n` +
+        `Kindly confirm the reason for the absence with the staff member and advise HR accordingly. If the absence was for an approved reason (medical, emergency, etc.), please ensure the appropriate leave request is submitted through the ESAU HR Portal (esauhr.netlify.app) so the record can be updated. Otherwise it will stand as an unexcused absence on the evaluation record.\n\n` +
+        `${emp.name}, you are copied for your awareness and to provide your reason.\n\n` +
+        `Thanks and regards,\n` +
+        `BASHAIER ALI\n` +
+        `ESAU - SADMN SUP / HR DEPT`
+      );
     const cc = [emp.email, ...FIXED_CC].filter(Boolean);
     const url = buildMailto({ to: mgrEmail || emp.email, cc, subject, body });
     if (mode !== 'test') {
