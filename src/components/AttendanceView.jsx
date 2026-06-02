@@ -4117,8 +4117,57 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     window.location.href = url;
   };
 
-  // ─── Render ────────────────────────────────────────────────────────────
-  const hasFile = !!xlsxFileName;
+  // Report a shift-staff flag to the manager (TO manager, CC staff +
+  // fixed list) — same flow as the no-show email but worded for an
+  // assigned-shift breach (absent / single-punch / late / early-out).
+  // Nadeem 2026-06-03.
+  const handleEmailShiftFlag = (entry, mode = 'live') => {
+    if (!checkEmailCooldown(entry.id, mode)) return;
+    const emp = entry.employee;
+    const dateLong = formatDateLong(csvDate);
+    const mgrEmail = getManagerEmail(emp);
+    const mgr = emp.manager_id ? empById[String(emp.manager_id).toUpperCase()] : null;
+    const mgrName = mgr?.name || 'Manager';
+    const issue = entry.status;
+    const punchLine = `Assigned shift: ${entry.shiftLabel}   ·   In: ${entry.actualIn}   ·   Out: ${entry.actualOut}`;
+    const detailBits = [];
+    if (entry.lateMin > 0)  detailBits.push(`checked in ${entry.lateMin} min after shift start`);
+    if (entry.earlyMin > 0) detailBits.push(`checked out ${entry.earlyMin} min before shift end`);
+    const subject = `SHIFT — ${issue} — ${emp.name} (${emp.id}) · ${dateLong}`;
+    const body = mode === 'test'
+      ? (
+        `Dear ${mgrName},\n\n` +
+        `Shift review for ${dateLong} flags ${emp.name} (${emp.id}) — ${issue}.\n` +
+        `${punchLine}\n\n` +
+        `Kindly confirm the reason with the staff member and advise HR.\n\n` +
+        `Thanks and regards,\nBASHAIER ALI\nESAU - SADMN SUP / HR DEPT`
+      )
+      : (
+        `Dear ${mgrName},\n\n` +
+        `Our daily shift review for ${dateLong} flags an attendance issue for ${emp.name} (${emp.id}) against the assigned shift.\n\n` +
+        `Status: ${issue}\n${punchLine}\n` +
+        (detailBits.length ? `Details: ${detailBits.join('; ')}.\n` : '') +
+        `\nKindly confirm the reason with the staff member and advise HR accordingly. If it was for an approved reason, please ensure the appropriate request is submitted through the ESAU HR Portal (esauhr.netlify.app) so the record can be updated. Otherwise it will stand on the evaluation record.\n\n` +
+        `${emp.name}, you are copied for your awareness and to provide your reason.\n\n` +
+        `Thanks and regards,\nBASHAIER ALI\nESAU - SADMN SUP / HR DEPT`
+      );
+    const cc = [emp.email, ...FIXED_CC].filter(Boolean);
+    const url = buildMailto({ to: mgrEmail || emp.email, cc, subject, body });
+    if (mode !== 'test') {
+      const vType = issue.includes('ABSENT') ? 'absent'
+        : entry.earlyMin > 0 && entry.lateMin === 0 ? 'early_leave'
+        : entry.lateMin > 0 ? 'late'
+        : 'absent';
+      try {
+        logViolation({
+          entry, violationType: vType,
+          minutesOff: entry.lateMin || entry.earlyMin || null,
+          scheduledStart: entry.scheduledStart, scheduledEnd: entry.scheduledEnd,
+        });
+      } catch {}
+    }
+    window.location.href = url;
+  };
 
   // Auto-open the daily-review modal as soon as a file is parsed.
   // Triggered on the transition from no-file to has-file so we don't
@@ -4710,7 +4759,27 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
                     <td style={{ padding: '5px 8px', color: '#0A0A0A', whiteSpace: 'nowrap' }}>{e.shiftLabel}</td>
                     <td style={{ padding: '5px 8px', color: e.lateMin > 0 ? '#B45309' : '#0A0A0A', fontWeight: e.lateMin > 0 ? 800 : 400 }}>{e.actualIn}{e.lateMin > 0 ? ` (+${e.lateMin}m)` : ''}</td>
                     <td style={{ padding: '5px 8px', color: e.earlyMin > 0 ? '#B45309' : '#0A0A0A', fontWeight: e.earlyMin > 0 ? 800 : 400 }}>{e.actualOut}{e.earlyMin > 0 ? ` (−${e.earlyMin}m)` : ''}</td>
-                    <td style={{ padding: '5px 8px' }}>{chip(e.status, e.problem)}</td>
+                    <td style={{ padding: '5px 8px', whiteSpace: 'nowrap' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        {chip(e.status, e.problem)}
+                        {e.problem && (
+                          <>
+                            <button
+                              onClick={() => handleEmailShiftFlag(e, 'live')}
+                              title="Email the manager (CC staff) about this shift flag"
+                              style={{ fontSize: 10, fontWeight: 800, color: '#fff', background: '#1D4ED8', border: 'none', borderRadius: 6, padding: '3px 8px', cursor: 'pointer' }}>
+                              ✉ Report manager
+                            </button>
+                            <button
+                              onClick={() => handleEmailShiftFlag(e, 'test')}
+                              title="Send a short test email to yourself"
+                              style={{ fontSize: 10, fontWeight: 700, color: '#1D4ED8', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6, padding: '3px 8px', cursor: 'pointer' }}>
+                              Test
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
