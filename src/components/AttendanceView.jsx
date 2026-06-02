@@ -5548,7 +5548,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     ),
     ...(dailyPanelsOk && parsed.hasTodayData
       ? { noShow: buildNoShowPanel() } : {}),
-    ...(dailyPanelsOk && parsed.hasTodayData && shiftReview.total
+    ...(dailyPanelsOk && parsed.hasTodayData
       ? { shiftMon: buildShiftMonitorPanel() } : {}),
     ...(detection.weekend.length ? { weekend: buildWeekendPanel() } : {}),
   };
@@ -7228,9 +7228,7 @@ function FileSummary({
                 <CountPill kind="late"     icon="⚠"  label="Late arrival"     count={counts.late}     color="#BE123C" tint="#FFF1F2" subtext="punched in after 8:15"    isOpen={drillKind === 'late'}     onClick={() => setDrillKind(drillKind === 'late'     ? null : 'late')}     progress={progressByKind?.late}/>
                 <CountPill kind="missedIn" icon="🚫" label="Missed punch-in"  count={counts.missedIn} color="#4338CA" tint="#EEF2FF" subtext="no first-punch on record"  isOpen={drillKind === 'missedIn'} onClick={() => setDrillKind(drillKind === 'missedIn' ? null : 'missedIn')} progress={progressByKind?.missedIn}/>
                 <CountPill kind="noShow"   icon="🛑" label="Absent (no notice)" count={counts.noShow}   color="#9D174D" tint="#FDF2F8" subtext="no sign-in · no leave"      isOpen={drillKind === 'noShow'}   onClick={() => setDrillKind(drillKind === 'noShow'   ? null : 'noShow')}   progress={progressByKind?.noShow}/>
-                {counts.shiftMon > 0 && (
-                  <CountPill kind="shiftMon" icon="🌙" label="Shift staff" count={counts.shiftMon} color="#1D4ED8" tint="#EFF6FF" subtext={(counts.shiftIssues || 0) + ' with punch issues'} isOpen={drillKind === 'shiftMon'} onClick={() => setDrillKind(drillKind === 'shiftMon' ? null : 'shiftMon')} progress={progressByKind?.shiftMon}/>
-                )}
+                <CountPill kind="shiftMon" icon="🌙" label="Shift staff" count={counts.shiftMon || 0} color="#1D4ED8" tint="#EFF6FF" subtext={(counts.shiftIssues || 0) + ' with punch issues'} isOpen={drillKind === 'shiftMon'} onClick={() => setDrillKind(drillKind === 'shiftMon' ? null : 'shiftMon')} progress={progressByKind?.shiftMon}/>
               </div>
             </div>
           )}
