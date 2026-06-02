@@ -4016,7 +4016,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     const mgrEmail = getManagerEmail(emp);
     const mgr = emp.manager_id ? empById[String(emp.manager_id).toUpperCase()] : null;
     const mgrName = mgr?.name || 'Manager';
-    const subject = `ABSENT WITHOUT NOTICE — ${emp.name} (${emp.id}) · ${dateLong} — reason required`;
+    const subject = `ABSENT WITHOUT NOTICE — ${emp.name} (${emp.id}) · ${dateLong}`;
     const body = mode === 'test'
       ? (
         `Dear ${mgrName},\n\n` +
