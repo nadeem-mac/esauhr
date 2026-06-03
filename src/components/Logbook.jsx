@@ -47,8 +47,8 @@
 // ──────────────────────────────────────────────────────────────────────
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { directGet, directPost } from '../supabaseClient.js';
-import { NotebookPen, Save, Loader2, Search, CheckCircle2, AlertCircle, Wallet } from 'lucide-react';
+import { directGet, directPost, directDelete, directPatch } from '../supabaseClient.js';
+import { NotebookPen, Save, Loader2, Search, CheckCircle2, AlertCircle, Wallet, Trash2 } from 'lucide-react';
 import { calculateRequestDays, calculateBalance, fmtDate } from '../lib/leaveLogic.js';
 import { generateLogbookPdfBlob } from '../lib/leaveApplicationPdf.js';
 import LeaveApprovedModal from './LeaveApprovedModal.jsx';
@@ -75,6 +75,7 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [recent, setRecent] = useState([]);
+  const [deletingId, setDeletingId] = useState(null);
   // Manual override for the day count. When null, the form uses the
   // auto-calculated working-days figure (MOL Article 113). Bashaier
   // can override when the paper application explicitly states a
@@ -328,7 +329,50 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
     }
   };
 
-  // ── Render ─────────────────────────────────────────────────────────
+  // Delete a mistakenly-logged entry. Removes the leave_requests row and
+  // reverts any attendance_daily days that were linked to it, so the
+  // record (and the staff member's leave balance, which is computed from
+  // leave_requests) updates correctly. Nadeem 2026-06-03.
+  const deleteEntry = async (r) => {
+    const emp = (employees || []).find(x => x.id === r.employee_id);
+    const who = emp?.name || r.employee_id;
+    const period = `${fmtDate(new Date(r.start_date))}${r.end_date && r.end_date !== r.start_date ? ` → ${fmtDate(new Date(r.end_date))}` : ''}`;
+    if (!window.confirm(
+      `Delete this logged ${r.leave_type_id} entry for ${who} (${period})?\n\n` +
+      `This permanently removes the leave record, restores the leave balance, and reverts those days in attendance. This cannot be undone.`
+    )) return;
+    setDeletingId(r.id);
+    try {
+      // 1) Revert any attendance_daily rows linked to this leave request —
+      //    clear the link and re-derive a basic status from the punch.
+      try {
+        const linked = await directGet(
+          'attendance_daily',
+          `select=id,first_punch,last_punch&leave_request_id=eq.${r.id}`,
+          { timeoutMs: 10000 },
+        );
+        for (const a of (linked || [])) {
+          await directPatch('attendance_daily', 'id', a.id, {
+            leave_request_id: null,
+            status: a.first_punch ? 'present' : 'absent',
+          });
+        }
+      } catch (e) {
+        console.warn('attendance revert during delete failed:', e?.message || e);
+      }
+      // 2) Delete the leave record itself.
+      await directDelete('leave_requests', `id=eq.${r.id}`);
+      // 3) Update the list + refresh the monthly grid.
+      setRecent(prev => prev.filter(x => x.id !== r.id));
+      try { window.dispatchEvent(new CustomEvent('esau:attendance-changed')); } catch {}
+      setMsg({ kind: 'ok', text: `Deleted logged entry for ${who}` });
+    } catch (e) {
+      console.error('logbook delete failed:', e);
+      setMsg({ kind: 'err', text: `Delete failed: ${e?.message || e}` });
+    } finally {
+      setDeletingId(null);
+    }
+  };
   return (
     <div className="space-y-5 p-4 max-w-3xl mx-auto">
       <header className="flex items-center gap-2 pb-2 border-b border-black/10">
@@ -788,6 +832,7 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
                 <th className="py-2 font-semibold">Type</th>
                 <th className="py-2 font-semibold">Period</th>
                 <th className="py-2 font-semibold text-right">Days</th>
+                <th className="py-2 font-semibold text-right" style={{ width: 36 }}></th>
               </tr>
             </thead>
             <tbody>
@@ -827,6 +872,20 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
                       {r.end_date && r.end_date !== r.start_date && ` → ${fmtDate(new Date(r.end_date))}`}
                     </td>
                     <td className="py-2 text-right font-medium">{r.days}</td>
+                    <td className="py-2 text-right">
+                      <button
+                        type="button"
+                        title="Delete this entry (logged by mistake)"
+                        onClick={(ev) => { ev.stopPropagation(); deleteEntry(r); }}
+                        disabled={deletingId === r.id}
+                        className="inline-flex items-center justify-center rounded p-1 hover:bg-red-50"
+                        style={{ color: '#B91C1C', opacity: deletingId === r.id ? 0.5 : 1 }}
+                      >
+                        {deletingId === r.id
+                          ? <Loader2 size={13} className="animate-spin" />
+                          : <Trash2 size={13} />}
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
