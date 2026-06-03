@@ -33,6 +33,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Clock, Download, ChevronDown, ChevronRight, FileText, Users, Mail, FileSpreadsheet, ClipboardCopy, Printer } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import XLSXStyle from 'xlsx-js-style';
 import { directGet } from '../supabaseClient.js';
 import { todayLocal, addDaysIso } from '../lib/dateUtils.js';
 import { salutationFor } from '../lib/salutations.js';
@@ -690,41 +691,91 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   };
 
   // Excel export — one "Detail" sheet (every day) + a "Summary" sheet
-  // (per-staff totals), respecting the chosen scope.
+  // (per-staff totals), respecting the chosen scope. Cells are coloured
+  // to match the HTML report's status pills via xlsx-js-style.
   const handleExcel = () => {
-    const detail = [];
+    // Status family → { bg, fg } matching the HTML pills.
+    const STATUS_FILL = {
+      present:          { bg: 'DCFCE7', fg: '166534' },
+      late:             { bg: 'FEF3C7', fg: '92400E' },
+      short:            { bg: 'FEF3C7', fg: '92400E' },
+      absent:           { bg: 'FEE2E2', fg: '991B1B' },
+      sick_leave:       { bg: 'EDE9FE', fg: '5B21B6' },
+      annual_leave:     { bg: 'CCFBF1', fg: '115E59' },
+      maternity_leave:  { bg: 'FCE7F3', fg: '9D174D' },
+      paternity_leave:  { bg: 'E0F2FE', fg: '075985' },
+      hajj_leave:       { bg: 'FEF3C7', fg: '854F0B' },
+      marriage_leave:   { bg: 'FCE7F3', fg: '831843' },
+      bereavement_leave:{ bg: 'E5E7EB', fg: '374151' },
+      unpaid_leave:     { bg: 'F3F4F6', fg: '374151' },
+      emergency_leave:  { bg: 'FEE2E2', fg: '7F1D1D' },
+      iddah_leave:      { bg: 'F3E8FF', fg: '6B21A8' },
+      off_day:          { bg: 'F3F4F6', fg: '374151' },
+      off_roster:       { bg: 'F3F4F6', fg: '374151' },
+    };
+    const thin = { style: 'thin', color: { rgb: 'D1D5DB' } };
+    const border = { top: thin, bottom: thin, left: thin, right: thin };
+    const headerStyle = {
+      fill: { patternType: 'solid', fgColor: { rgb: '0F4C2A' } },
+      font: { color: { rgb: 'FFFFFF' }, bold: true },
+      alignment: { vertical: 'center', horizontal: 'left' },
+      border,
+    };
+    const cell = (v, style) => ({ v: v == null ? '' : v, t: typeof v === 'number' ? 'n' : 's', s: style });
+
+    const detailHeaders = ['Employee','PSN','Department','Location','Date','Assigned shift','In','Out','Total (h:m)','Status'];
+    const detailAoa = [detailHeaders.map(h => cell(h, headerStyle))];
+    let rIdx = 0;
     for (const s of reportSummaries) {
       for (const r of s.rows) {
-        detail.push({
-          Employee:   s.emp.name,
-          PSN:        s.emp.id,
-          Department: s.emp.department || '',
-          Location:   s.emp.location || '',
-          Date:       fmtDateLong(r.attendance_date),
-          'Assigned shift': fmtShiftWindow(r.expected_start, r.expected_end) || '',
-          In:         fmtTime(r.effective_in) || '',
-          Out:        fmtTime(r.effective_out) || '',
-          'Total (h:m)': fmtHoursMins(r.total_minutes),
-          Status:     detailedStatusLabel(r),
-        });
+        rIdx += 1;
+        const zebra = rIdx % 2 === 0 ? 'FAF8F1' : 'FFFFFF';
+        const base = { fill: { patternType: 'solid', fgColor: { rgb: zebra } }, font: { color: { rgb: '1F2937' } }, alignment: { vertical: 'center' }, border };
+        const fam = STATUS_FILL[r.status] || { bg: 'F3F4F6', fg: '374151' };
+        const statusStyle = { fill: { patternType: 'solid', fgColor: { rgb: fam.bg } }, font: { color: { rgb: fam.fg }, bold: true }, alignment: { vertical: 'center' }, border };
+        detailAoa.push([
+          cell(s.emp.name, base),
+          cell(s.emp.id, base),
+          cell(s.emp.department || '', base),
+          cell(s.emp.location || '', base),
+          cell(fmtDateLong(r.attendance_date), base),
+          cell(fmtShiftWindow(r.expected_start, r.expected_end) || '', base),
+          cell(fmtTime(r.effective_in) || '', base),
+          cell(fmtTime(r.effective_out) || '', base),
+          cell(fmtHoursMins(r.total_minutes), base),
+          cell(detailedStatusLabel(r), statusStyle),
+        ]);
       }
     }
-    const summaryRows = reportSummaries.map(s => ({
-      Employee: s.emp.name, PSN: s.emp.id,
-      Department: s.emp.department || '', Location: s.emp.location || '',
-      'Days present': s.daysPresent, 'Total hours': fmtHoursMins(s.totalMin),
-      'Avg/day': fmtHoursMins(s.avgMin),
-      'Compliance %': s.compliancePct != null ? s.compliancePct : '',
-      Late: s.daysLate, Short: s.daysShort, Absent: s.daysAbsent, Leave: s.daysLeave,
-    }));
-    const wb = XLSX.utils.book_new();
-    const wsSum = XLSX.utils.json_to_sheet(summaryRows);
+
+    const sumHeaders = ['Employee','PSN','Department','Location','Days present','Total hours','Avg/day','Compliance %','Late','Short','Absent','Leave'];
+    const sumAoa = [sumHeaders.map(h => cell(h, headerStyle))];
+    reportSummaries.forEach((s, i) => {
+      const zebra = (i + 1) % 2 === 0 ? 'FAF8F1' : 'FFFFFF';
+      const base = { fill: { patternType: 'solid', fgColor: { rgb: zebra } }, font: { color: { rgb: '1F2937' } }, alignment: { vertical: 'center' }, border };
+      const comp = s.compliancePct;
+      const compStyle = comp == null ? base : {
+        fill: { patternType: 'solid', fgColor: { rgb: comp >= 90 ? 'DCFCE7' : comp >= 70 ? 'FEF3C7' : 'FEE2E2' } },
+        font: { color: { rgb: comp >= 90 ? '166534' : comp >= 70 ? '92400E' : '991B1B' }, bold: true },
+        alignment: { vertical: 'center' }, border,
+      };
+      sumAoa.push([
+        cell(s.emp.name, base), cell(s.emp.id, base),
+        cell(s.emp.department || '', base), cell(s.emp.location || '', base),
+        cell(s.daysPresent, base), cell(fmtHoursMins(s.totalMin), base), cell(fmtHoursMins(s.avgMin), base),
+        cell(comp != null ? comp : '', compStyle),
+        cell(s.daysLate, base), cell(s.daysShort, base), cell(s.daysAbsent, base), cell(s.daysLeave, base),
+      ]);
+    });
+
+    const wb = XLSXStyle.utils.book_new();
+    const wsSum = XLSXStyle.utils.aoa_to_sheet(sumAoa);
     wsSum['!cols'] = [{ wch: 26 }, { wch: 9 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 11 }, { wch: 10 }, { wch: 12 }, { wch: 7 }, { wch: 7 }, { wch: 8 }, { wch: 7 }];
-    XLSX.utils.book_append_sheet(wb, wsSum, 'Summary');
-    const wsDet = XLSX.utils.json_to_sheet(detail);
+    XLSXStyle.utils.book_append_sheet(wb, wsSum, 'Summary');
+    const wsDet = XLSXStyle.utils.aoa_to_sheet(detailAoa);
     wsDet['!cols'] = [{ wch: 26 }, { wch: 9 }, { wch: 14 }, { wch: 12 }, { wch: 22 }, { wch: 16 }, { wch: 10 }, { wch: 10 }, { wch: 11 }, { wch: 22 }];
-    XLSX.utils.book_append_sheet(wb, wsDet, 'Detail');
-    XLSX.writeFile(wb, `Shift-Staff-Attendance-${scopeTag}-${from}_to_${to}.xlsx`);
+    XLSXStyle.utils.book_append_sheet(wb, wsDet, 'Detail');
+    XLSXStyle.writeFile(wb, `Shift-Staff-Attendance-${scopeTag}-${from}_to_${to}.xlsx`);
   };
 
   // ─── render ──
