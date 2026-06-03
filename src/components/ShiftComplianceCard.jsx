@@ -242,7 +242,64 @@ function buildStaffEmail({ staff, manager, monthLabel, rangeLabel }) {
   return { subject, bodyPlain, bodyHtml, mailto, to: staff.empEmail || '', cc };
 }
 
-// ─── preview modal ────────────────────────────────────────────────────────
+// Single-day staff clarification — lets HR email a shift worker about
+// ONE day's non-compliance instead of the whole range. Nadeem 2026-06-03.
+function buildStaffDayEmail({ staff, manager, day }) {
+  const dayLabel = fmtDayLabel(day.date);
+  const verdictLabel = (VERDICT_LABEL[day.verdict] || day.verdict).toUpperCase();
+  const subject = `Shift attendance — clarification needed — ${dayLabel}`;
+
+  const bodyPlain = [
+    `Dear ${salutationFor({ id: staff.empId, name: staff.empName })},`,
+    '',
+    `As part of HR's daily shift-attendance review, your assigned shift on ${dayLabel} did not meet the standard policy (15-min grace on either side of the assigned start/end, both punches required):`,
+    '',
+    `  • ${dayLabel}   Assigned ${fmtTime(day.shift.start_time)} → ${fmtTime(day.shift.end_time)}   ${day.detail}   [${verdictLabel}]`,
+    '',
+    `Please reply confirming what actually happened on this day — late arrival reason, missed punch-out reason, or any approved permission on file we should match against.`,
+    '',
+    `If you believe this is a system error (the assigned times were wrong, the punches were wrong, or you were on approved leave that day), please flag it in your reply so we can correct the record.`,
+    '',
+    renderHrSignature(),
+  ].join('\n');
+
+  const v = HTML_VERDICT_STYLE[day.verdict] || { fg: '#1F2937', bg: '#E5E7EB' };
+  const pill = `<span style="display:inline-block;background:${v.bg};color:${v.fg};font-weight:700;font-size:11px;padding:2px 8px;border-radius:999px;letter-spacing:0.04em;white-space:nowrap">${escapeHtml(verdictLabel)}</span>`;
+  const bodyHtml = `<div style="font-family:Calibri,Arial,sans-serif;font-size:14px;color:#0A0A0A;line-height:1.5;max-width:780px">
+  <p style="margin:0 0 12px 0">Dear ${escapeHtml(salutationFor({ id: staff.empId, name: staff.empName }))},</p>
+  <p style="margin:0 0 12px 0">As part of HR's daily shift-attendance review, your assigned shift on <strong>${escapeHtml(dayLabel)}</strong> did not meet the standard policy (15-min grace on either side of the assigned start/end, both punches required):</p>
+  <table style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;margin:12px 0">
+    <thead>
+      <tr>
+        <th style="background:#2D5F3F;color:#fff;padding:5px 8px;text-align:left;font-weight:600;font-size:13px;border:1px solid #1F4530">Date</th>
+        <th style="background:#2D5F3F;color:#fff;padding:5px 8px;text-align:left;font-weight:600;font-size:13px;border:1px solid #1F4530">Assigned shift</th>
+        <th style="background:#2D5F3F;color:#fff;padding:5px 8px;text-align:left;font-weight:600;font-size:13px;border:1px solid #1F4530">What was recorded</th>
+        <th style="background:#2D5F3F;color:#fff;padding:5px 8px;text-align:right;font-weight:600;font-size:13px;border:1px solid #1F4530">Verdict</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td style="padding:3px 8px;border:1px solid #D1D5DB;color:#1F2937;font-size:13px;white-space:nowrap;font-weight:600">${escapeHtml(dayLabel)}</td>
+        <td style="padding:3px 8px;border:1px solid #D1D5DB;color:#1F2937;font-size:13px;white-space:nowrap">${escapeHtml(fmtTime(day.shift.start_time))} → ${escapeHtml(fmtTime(day.shift.end_time))}</td>
+        <td style="padding:3px 8px;border:1px solid #D1D5DB;color:#1F2937;font-size:13px">${escapeHtml(day.detail)}</td>
+        <td style="padding:3px 8px;border:1px solid #D1D5DB;font-size:13px;text-align:right">${pill}</td>
+      </tr>
+    </tbody>
+  </table>
+  <p style="margin:14px 0 8px 0">Please reply confirming what actually happened on this day — late arrival reason, missed punch-out reason, or any approved permission on file we should match against.</p>
+  <p style="margin:0 0 14px 0">If you believe this is a system error (the assigned times were wrong, the punches were wrong, or you were on approved leave that day), please flag it in your reply so we can correct the record.</p>
+  ${renderHrSignatureHtml()}
+</div>`;
+
+  const cc = [HR_EMAIL, manager?.managerEmail].filter(Boolean).filter(e => e !== staff.empEmail).join(',');
+  const params = new URLSearchParams();
+  if (cc) params.set('cc', cc);
+  params.set('subject', subject);
+  params.set('body', bodyPlain);
+  const mailto = `mailto:${encodeURIComponent(staff.empEmail || '')}?${params.toString().replace(/\+/g, '%20')}`;
+
+  return { subject, bodyPlain, bodyHtml, mailto, to: staff.empEmail || '', cc };
+}
 
 function EmailPreviewModal({ payload, kind, onClose }) {
   const [copied, setCopied] = useState('');
@@ -496,6 +553,11 @@ export default function ShiftComplianceCard({ employees = [], me, monthKey = nul
     setPreview({ payload, kind: 'staff' });
   };
 
+  const openStaffDayPreview = (staff, mgr, day) => {
+    const payload = buildStaffDayEmail({ staff, manager: mgr, day });
+    setPreview({ payload, kind: 'staff' });
+  };
+
   if (loading && summary.byManager.length === 0) {
     return (
       <div className="rounded-xl border p-4 text-[11px]"
@@ -613,14 +675,33 @@ export default function ShiftComplianceCard({ employees = [], me, monthKey = nul
                             cursor: s.empEmail ? 'pointer' : 'not-allowed',
                           }}
                         >
-                          <Mail className="w-3 h-3"/> Email staff
+                          <Mail className="w-3 h-3"/> Email all days
                         </button>
                       </div>
                       <div>
                         {s.issueDays.map((d) => (
-                          <ManagerDigestLine key={d.date}
-                            verdict={d.verdict} date={d.date} detail={d.detail} shift={d.shift}
-                          />
+                          <div key={d.date} className="flex items-stretch gap-1" style={{ borderBottom: '1px solid #F4F4EE' }}>
+                            <div style={{ flex: 1 }}>
+                              <ManagerDigestLine
+                                verdict={d.verdict} date={d.date} detail={d.detail} shift={d.shift}
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => openStaffDayPreview(s, mgr, d)}
+                              disabled={!s.empEmail}
+                              title={s.empEmail ? `Email ${s.empName} about ${d.date}` : 'No email on file for this staff'}
+                              className="text-[10px] inline-flex items-center gap-1 px-2 my-1 rounded-full border font-medium self-center"
+                              style={{
+                                borderColor: '#FCD34D', background: '#FFFBEB', color: '#92400E',
+                                whiteSpace: 'nowrap',
+                                opacity: s.empEmail ? 1 : 0.4,
+                                cursor: s.empEmail ? 'pointer' : 'not-allowed',
+                              }}
+                            >
+                              <Mail className="w-3 h-3"/> Email day
+                            </button>
+                          </div>
                         ))}
                       </div>
                     </div>
