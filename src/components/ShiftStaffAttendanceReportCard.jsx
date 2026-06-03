@@ -31,10 +31,12 @@
 // =============================================================================
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Clock, Download, ChevronDown, ChevronRight, FileText, Users, Mail } from 'lucide-react';
+import { Clock, Download, ChevronDown, ChevronRight, FileText, Users, Mail, FileSpreadsheet, ClipboardCopy, Printer } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { directGet } from '../supabaseClient.js';
 import { todayLocal, addDaysIso } from '../lib/dateUtils.js';
 import { salutationFor } from '../lib/salutations.js';
+import { renderHrSignature, renderHrSignatureHtml } from '../lib/emailTemplates.js';
 
 // ─── helpers ───────────────────────────────────────────────────────────────
 
@@ -351,6 +353,8 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   const [from, setFrom] = useState(addDaysIso(today, -29));
   const [to,   setTo]   = useState(today);
   const [expanded, setExpanded] = useState(new Set());  // employee IDs whose drill-down is open
+  const [reportScope, setReportScope] = useState('all'); // 'all' or a specific employee id for export
+  const [copiedId, setCopiedId] = useState(null);
   const [attendance, setAttendance] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
@@ -407,15 +411,61 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     }
     lines.push('Day-to-day supervision stays with you as their line manager — please let me know if any of these need to be formalised into a notice from HR side.');
     lines.push('');
-    lines.push('Best regards,');
-    lines.push(me?.name || 'ESAU HR');
-    lines.push('HR / Admin Supervisory · ESAU Dammam');
+    lines.push(renderHrSignature());
 
     const subject = `Attendance review – ${emp.name} (${emp.id}) · ${periodLabel}`;
     const body    = lines.join('\n');
     const href    = `mailto:${encodeURIComponent(manager.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     window.location.href = href;
   }, [empMap, from, to, me]);
+
+  // Build a clean HTML report for one staff member's anomalies that
+  // Bashaier can paste straight into Outlook (keeps table + signature
+  // formatting). Copies both rich HTML and a plain-text fallback.
+  const copyManagerHtml = useCallback(async (summary) => {
+    const emp     = summary.emp;
+    const manager = emp.manager_id ? empMap[emp.manager_id] : null;
+    const periodLabel = `${fmtDate(from)} – ${fmtDate(to)}`;
+    const rowsHtml = (summary.problemRows.length ? summary.problemRows : summary.rows).map((r, i) => {
+      const bg = i % 2 === 0 ? '#FFFFFF' : '#F7F7F2';
+      return `<tr>
+        <td style="padding:6px 12px;border:1px solid #D1D5DB;font-size:13px;background:${bg};white-space:nowrap;font-weight:600;color:#1F2937">${escapeHtml(fmtDateLong(r.attendance_date))}</td>
+        <td style="padding:6px 12px;border:1px solid #D1D5DB;font-size:13px;background:${bg};white-space:nowrap;color:#1F2937">${escapeHtml(fmtShiftWindow(r.expected_start, r.expected_end) || '—')}</td>
+        <td style="padding:6px 12px;border:1px solid #D1D5DB;font-size:13px;background:${bg};white-space:nowrap;color:#1F2937">${escapeHtml(fmtTime(r.effective_in) || '—')}</td>
+        <td style="padding:6px 12px;border:1px solid #D1D5DB;font-size:13px;background:${bg};white-space:nowrap;color:#1F2937">${escapeHtml(fmtTime(r.effective_out) || '—')}</td>
+        <td style="padding:6px 12px;border:1px solid #D1D5DB;font-size:13px;background:${bg};white-space:nowrap;color:#1F2937">${escapeHtml(fmtHoursMins(r.total_minutes))}</td>
+        <td style="padding:6px 12px;border:1px solid #D1D5DB;font-size:13px;background:${bg};color:#1F2937">${escapeHtml(detailedStatusLabel(r))}</td>
+      </tr>`;
+    }).join('');
+    const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:14px;color:#0A0A0A;line-height:1.5;max-width:820px">
+  <p style="margin:0 0 12px 0">Dear ${escapeHtml(salutationFor(manager || {}))},</p>
+  <p style="margin:0 0 12px 0">Please review the attendance record below for <strong>${escapeHtml(emp.name)} (${escapeHtml(emp.id)})</strong> covering <strong>${escapeHtml(periodLabel)}</strong>, pulled from the fingerprint records.</p>
+  <p style="margin:0 0 12px 0">Summary: ${summary.daysLate} late · ${summary.daysShort} short · ${summary.daysAbsent} absent · ${summary.daysPresent} days present in window.</p>
+  <table style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;margin:12px 0">
+    <thead><tr>
+      ${['Date','Assigned shift','In','Out','Total','Status'].map(h => `<th style="background:#2D5F3F;color:#fff;padding:7px 12px;text-align:left;font-weight:600;font-size:13px;border:1px solid #1F4530">${h}</th>`).join('')}
+    </tr></thead>
+    <tbody>${rowsHtml}</tbody>
+  </table>
+  <p style="margin:14px 0 12px 0">Day-to-day supervision stays with you as their line manager — please let me know if any of these need to be formalised into a notice from HR side.</p>
+  ${renderHrSignatureHtml()}
+</div>`;
+    const plain = `Attendance review – ${emp.name} (${emp.id}) · ${periodLabel}`;
+    try {
+      if (navigator.clipboard && window.ClipboardItem) {
+        await navigator.clipboard.write([new window.ClipboardItem({
+          'text/html':  new Blob([html],  { type: 'text/html' }),
+          'text/plain': new Blob([plain], { type: 'text/plain' }),
+        })]);
+      } else {
+        await navigator.clipboard.writeText(html);
+      }
+      setCopiedId(emp.id);
+      setTimeout(() => setCopiedId(c => (c === emp.id ? null : c)), 2000);
+    } catch (e) {
+      alert('Could not copy to clipboard: ' + (e?.message || e));
+    }
+  }, [empMap, from, to]);
 
   // Fetch attendance_daily rows for the date window + flagged staff.
   // attendance_daily has first_punch + last_punch as TIME columns; the
@@ -608,17 +658,73 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     });
   };
 
+  // Summaries limited to the chosen export scope (all staff or one).
+  const reportSummaries = useMemo(
+    () => (reportScope === 'all' ? summaries : summaries.filter(s => s.emp.id === reportScope)),
+    [summaries, reportScope],
+  );
+  const scopeTag = reportScope === 'all' ? 'all-staff' : reportScope;
+
   const handleDownload = () => {
-    const html = renderReportHtml({ summaries, from, to, me });
+    const html = renderReportHtml({ summaries: reportSummaries, from, to, me });
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
     a.href     = url;
-    a.download = `Shift-Staff-Attendance-${from}_to_${to}.html`;
+    a.download = `Shift-Staff-Attendance-${scopeTag}-${from}_to_${to}.html`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  // Open the report in a new window and trigger the print dialog so
+  // Bashaier can "Save as PDF" with the clean letterhead layout.
+  const handlePrint = () => {
+    const html = renderReportHtml({ summaries: reportSummaries, from, to, me });
+    const w = window.open('', '_blank');
+    if (!w) { alert('Pop-up blocked — allow pop-ups to print/save as PDF.'); return; }
+    w.document.write(html);
+    w.document.close();
+    setTimeout(() => { try { w.focus(); w.print(); } catch {} }, 400);
+  };
+
+  // Excel export — one "Detail" sheet (every day) + a "Summary" sheet
+  // (per-staff totals), respecting the chosen scope.
+  const handleExcel = () => {
+    const detail = [];
+    for (const s of reportSummaries) {
+      for (const r of s.rows) {
+        detail.push({
+          Employee:   s.emp.name,
+          PSN:        s.emp.id,
+          Department: s.emp.department || '',
+          Location:   s.emp.location || '',
+          Date:       fmtDateLong(r.attendance_date),
+          'Assigned shift': fmtShiftWindow(r.expected_start, r.expected_end) || '',
+          In:         fmtTime(r.effective_in) || '',
+          Out:        fmtTime(r.effective_out) || '',
+          'Total (h:m)': fmtHoursMins(r.total_minutes),
+          Status:     detailedStatusLabel(r),
+        });
+      }
+    }
+    const summaryRows = reportSummaries.map(s => ({
+      Employee: s.emp.name, PSN: s.emp.id,
+      Department: s.emp.department || '', Location: s.emp.location || '',
+      'Days present': s.daysPresent, 'Total hours': fmtHoursMins(s.totalMin),
+      'Avg/day': fmtHoursMins(s.avgMin),
+      'Compliance %': s.compliancePct != null ? s.compliancePct : '',
+      Late: s.daysLate, Short: s.daysShort, Absent: s.daysAbsent, Leave: s.daysLeave,
+    }));
+    const wb = XLSX.utils.book_new();
+    const wsSum = XLSX.utils.json_to_sheet(summaryRows);
+    wsSum['!cols'] = [{ wch: 26 }, { wch: 9 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 11 }, { wch: 10 }, { wch: 12 }, { wch: 7 }, { wch: 7 }, { wch: 8 }, { wch: 7 }];
+    XLSX.utils.book_append_sheet(wb, wsSum, 'Summary');
+    const wsDet = XLSX.utils.json_to_sheet(detail);
+    wsDet['!cols'] = [{ wch: 26 }, { wch: 9 }, { wch: 14 }, { wch: 12 }, { wch: 22 }, { wch: 16 }, { wch: 10 }, { wch: 10 }, { wch: 11 }, { wch: 22 }];
+    XLSX.utils.book_append_sheet(wb, wsDet, 'Detail');
+    XLSX.writeFile(wb, `Shift-Staff-Attendance-${scopeTag}-${from}_to_${to}.xlsx`);
   };
 
   // ─── render ──
@@ -638,15 +744,47 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
             In / out punches + total worked hours for staff marked as shift workers by their managers.
           </div>
         </div>
-        <button
-          type="button"
-          onClick={handleDownload}
-          disabled={loading || shiftStaff.length === 0}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition disabled:opacity-50"
-          style={{ background: '#0F4C2A', color: '#FFFFFF' }}>
-          <Download className="w-3.5 h-3.5" />
-          Download report
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <select
+            value={reportScope}
+            onChange={e => setReportScope(e.target.value)}
+            disabled={loading || shiftStaff.length === 0}
+            title="Choose which staff the export covers"
+            className="px-2 py-1.5 rounded-md text-xs border bg-white disabled:opacity-50"
+            style={{ borderColor: 'var(--border-soft)', color: '#1F1B16', maxWidth: 220 }}>
+            <option value="all">All shift staff ({summaries.length})</option>
+            {summaries.map(s => (
+              <option key={s.emp.id} value={s.emp.id}>{s.emp.name} ({s.emp.id})</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={handleExcel}
+            disabled={loading || reportSummaries.length === 0}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition disabled:opacity-50"
+            style={{ background: '#107C41', color: '#FFFFFF' }}>
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            Excel
+          </button>
+          <button
+            type="button"
+            onClick={handlePrint}
+            disabled={loading || reportSummaries.length === 0}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition disabled:opacity-50 border"
+            style={{ background: '#FFFFFF', color: '#0F4C2A', borderColor: '#0F4C2A' }}>
+            <Printer className="w-3.5 h-3.5" />
+            Print / PDF
+          </button>
+          <button
+            type="button"
+            onClick={handleDownload}
+            disabled={loading || reportSummaries.length === 0}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition disabled:opacity-50"
+            style={{ background: '#0F4C2A', color: '#FFFFFF' }}>
+            <Download className="w-3.5 h-3.5" />
+            HTML
+          </button>
+        </div>
       </div>
 
       {/* Date range chooser */}
@@ -781,6 +919,16 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
                     : `No email on file for ${s.emp.name}'s manager`}>
                   <Mail className="w-3 h-3" />
                   EMAIL MGR
+                </button>
+                {/* Copy a clean HTML report to paste into Outlook. */}
+                <button
+                  type="button"
+                  onClick={() => copyManagerHtml(s)}
+                  className="flex items-center gap-1 px-2 py-1.5 rounded-md text-[10px] font-semibold transition flex-shrink-0 border"
+                  style={{ background: '#FFFFFF', color: '#0F4C2A', borderColor: '#0F4C2A' }}
+                  title={`Copy a clean HTML report for ${s.emp.name} to paste into Outlook`}>
+                  <ClipboardCopy className="w-3 h-3" />
+                  {copiedId === s.emp.id ? 'COPIED' : 'COPY HTML'}
                 </button>
               </div>
 
@@ -1001,13 +1149,15 @@ function renderReportHtml({ summaries, from, to, me }) {
   .dot.good { background: #15803D; }
   .dot.bad  { background: #B91C1C; }
   .dot.na   { background: #D1D5DB; }
-  table { width: 100%; border-collapse: collapse; font-size: 10pt; }
+  table { width: 100%; border-collapse: collapse; font-size: 10pt; margin-top: 2px; }
   thead th {
-    text-align: left; padding: 6px 8px;
-    background: #FBF6E9; border-bottom: 1px solid #D4C7AB;
-    font-weight: 700; color: #1F1B16;
+    text-align: left; padding: 9px 14px;
+    background: #0F4C2A; color: #FFFFFF; border: 1px solid #0B3A20;
+    font-weight: 600; letter-spacing: 0.02em; white-space: nowrap;
   }
-  tbody td { padding: 5px 8px; border-bottom: 1px solid #EFE6CF; }
+  tbody td { padding: 8px 14px; border: 1px solid #E5E0D2; vertical-align: middle; }
+  tbody tr:nth-child(even) td { background: #FAF8F1; }
+  tbody tr:hover td { background: #F4EEDF; }
   .mono { font-family: 'Consolas', 'Courier New', monospace; font-size: 9.5pt; }
   .pill {
     display: inline-block; padding: 2px 8px; border-radius: 4px;
