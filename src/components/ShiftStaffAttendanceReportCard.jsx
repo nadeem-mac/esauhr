@@ -741,6 +741,14 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       const mm = Math.floor(d / 60); const ss = d % 60;
       return `${mm}:${String(ss).padStart(2, '0')}`;
     };
+    const lateSec = (r) => {
+      const toSec = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/); return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0)) : null; };
+      const inS = toSec(r.first_punch); const st = toSec(r.expected_start);
+      if (inS == null || st == null) return 0;
+      const d = inS - st;
+      return (d > 0 && r.status === 'late') ? d : 0;
+    };
+    const fmtLateSec = (sec) => { if (!sec) return ''; const m = Math.floor(sec / 60); const s = sec % 60; return `${m}:${String(s).padStart(2, '0')}`; };
     const thin = { style: 'thin', color: { argb: 'FFD1D5DB' } };
     const allBorder = { top: thin, bottom: thin, left: thin, right: thin };
     const HEAD_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F4C2A' } };
@@ -789,6 +797,15 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       // Data rows.
       rowsData.forEach((rd, i) => {
         const row = ws.addRow(rd.values);
+        if (rd.subtotal) {
+          row.eachCell({ includeEmpty: true }, (c, col) => {
+            c.border = allBorder;
+            c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDE68A' } };
+            c.font = { bold: true, color: { argb: 'FF1F1B16' } };
+            c.alignment = { vertical: 'middle', horizontal: horizFor(col, rd.rightCols) };
+          });
+          return;
+        }
         const zebra = i % 2 === 0 ? 'FFFFFFFF' : 'FFFAF8F1';
         row.eachCell({ includeEmpty: true }, (c, col) => {
           c.border = allBorder;
@@ -836,13 +853,24 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     });
     buildSheet('Summary', `Attendance Report (Summary) — ${fmtDate(from)} to ${fmtDate(to)}`, sumHeaders, sumRows, [4, 5, 6, 7]);
 
-    // ── Detail sheet ──  (per day; In = check-in, Late as mm:ss, red.)
+    // ── Detail sheet ──  sorted by DATE, with a subtotal row per date
+    //    (staff count + sum of Total h:m + sum of Late mm:ss).
     const detHeaders = ['#','Employee','Shift','PSN','Department','Location','Date','Day','Assigned shift','Check in','Out','Total (h:m)','Late (mm:ss)','Status'];
     const detRows = [];
-    let dN = 0;
-    for (const s of reportSummaries) {
-      for (const r of s.rows) {
-        dN += 1;
+    // Flatten all staff/day pairs, then stable-sort by date (within a
+    // date the location→department→name order is preserved).
+    const flat = [];
+    for (const s of reportSummaries) for (const r of s.rows) flat.push({ s, r });
+    flat.sort((a, b) => a.r.attendance_date < b.r.attendance_date ? -1 : a.r.attendance_date > b.r.attendance_date ? 1 : 0);
+    let dN = 0, i = 0;
+    while (i < flat.length) {
+      const date = flat[i].r.attendance_date;
+      let cnt = 0, sumMin = 0, sumLate = 0;
+      while (i < flat.length && flat[i].r.attendance_date === date) {
+        const { s, r } = flat[i];
+        dN += 1; cnt += 1;
+        sumMin  += Number(r.total_minutes || 0);
+        sumLate += lateSec(r);
         const lms = lateMMSS(r);
         const fam = STATUS_FILL[r.status] || { bg: 'FFF3F4F6', fg: 'FF374151' };
         const style = [
@@ -865,7 +893,18 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
           rightCols: [1, 12, 13],
           style,
         });
+        i += 1;
       }
+      // Per-date subtotal row.
+      detRows.push({
+        subtotal: true,
+        values: [
+          '', `${cnt} staff`, '', '', '', '',
+          fmtDate(date), '', '', '', 'TOTAL →',
+          fmtHoursMins(sumMin), fmtLateSec(sumLate), '',
+        ],
+        rightCols: [11, 12, 13],
+      });
     }
     buildSheet('Detail', `Attendance Report — ${fmtDate(from)} to ${fmtDate(to)}`, detHeaders, detRows, [4, 5, 6, 10]);
 
@@ -1227,28 +1266,59 @@ function renderReportHtml({ summaries, from, to, me }) {
   }).join('');
 
   // DETAIL table — one row per staff per day (mirrors the Excel Detail sheet).
-  let dN = 0;
-  const detailRows = summaries.flatMap(s => s.rows.map(r => {
-    dN += 1;
-    const lms = lateMMSS(r);
-    const shift  = fmtShiftWindow(r.expected_start, r.expected_end);
-    return `<tr class="${s.isShift ? 'shiftrow' : ''}${r._synthetic ? ' silent' : ''}">
-      <td class="num">${dN}</td>
-      <td class="name">${escapeHtml(s.emp.name)}</td>
-      <td class="ctr">${s.isShift ? '<span class="shift-badge">SHIFT</span>' : ''}</td>
-      <td class="ctr mono">${escapeHtml(s.emp.id)}</td>
-      <td class="ctr">${escapeHtml(s.emp.department || '—')}</td>
-      <td class="ctr">${escapeHtml(s.emp.location || '—')}</td>
-      <td class="mono">${escapeHtml(fmtDate(r.attendance_date))}</td>
-      <td>${escapeHtml(fmtDay(r.attendance_date))}</td>
-      <td class="mono" style="color:${shift ? '#1F1B16' : '#9CA3AF'};">${escapeHtml(shift || '—')}</td>
-      <td class="ctr mono">${escapeHtml(fmtTime(r.effective_in) || '—')}${r.isOvernight && r.effective_carry ? `<br><span class="sub">${escapeHtml(fmtTime(r.effective_carry))} (prev)</span>` : ''}</td>
-      <td class="mono">${escapeHtml(fmtTime(r.effective_out) || '—')}${r.isOvernight && r.effective_out ? ' <span class="sub">+1d</span>' : ''}</td>
-      <td class="mono">${escapeHtml(fmtHoursMins(r.total_minutes))}</td>
-      <td class="num red">${escapeHtml(lms)}</td>
-      <td><span class="pill ${escapeHtml(r.status || '')}">${escapeHtml(detailedStatusLabel(r))}</span>${r._synthetic ? ' <span class="badge-silent">no record</span>' : ''}</td>
-    </tr>`;
-  })).join('');
+  // DETAIL — sorted by DATE with a subtotal row per date.
+  const lateSec = (r) => {
+    const toSec = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/); return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0)) : null; };
+    const inS = toSec(r.first_punch); const st = toSec(r.expected_start);
+    if (inS == null || st == null) return 0;
+    const d = inS - st;
+    return (d > 0 && r.status === 'late') ? d : 0;
+  };
+  const fmtLateSec = (sec) => { if (!sec) return ''; return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`; };
+
+  const flatD = [];
+  for (const s of summaries) for (const r of s.rows) flatD.push({ s, r });
+  flatD.sort((a, b) => a.r.attendance_date < b.r.attendance_date ? -1 : a.r.attendance_date > b.r.attendance_date ? 1 : 0);
+
+  let dN = 0, di = 0;
+  const detailParts = [];
+  while (di < flatD.length) {
+    const date = flatD[di].r.attendance_date;
+    let cnt = 0, sumMin = 0, sumLate = 0;
+    while (di < flatD.length && flatD[di].r.attendance_date === date) {
+      const { s, r } = flatD[di];
+      dN += 1; cnt += 1;
+      sumMin  += Number(r.total_minutes || 0);
+      sumLate += lateSec(r);
+      const lms = lateMMSS(r);
+      const shift = fmtShiftWindow(r.expected_start, r.expected_end);
+      detailParts.push(`<tr class="${s.isShift ? 'shiftrow' : ''}${r._synthetic ? ' silent' : ''}">
+        <td class="num">${dN}</td>
+        <td class="name">${escapeHtml(s.emp.name)}</td>
+        <td class="ctr">${s.isShift ? '<span class="shift-badge">SHIFT</span>' : ''}</td>
+        <td class="ctr mono">${escapeHtml(s.emp.id)}</td>
+        <td class="ctr">${escapeHtml(s.emp.department || '—')}</td>
+        <td class="ctr">${escapeHtml(s.emp.location || '—')}</td>
+        <td class="mono">${escapeHtml(fmtDate(r.attendance_date))}</td>
+        <td>${escapeHtml(fmtDay(r.attendance_date))}</td>
+        <td class="mono" style="color:${shift ? '#1F1B16' : '#9CA3AF'};">${escapeHtml(shift || '—')}</td>
+        <td class="ctr mono">${escapeHtml(fmtTime(r.effective_in) || '—')}${r.isOvernight && r.effective_carry ? `<br><span class="sub">${escapeHtml(fmtTime(r.effective_carry))} (prev)</span>` : ''}</td>
+        <td class="mono">${escapeHtml(fmtTime(r.effective_out) || '—')}${r.isOvernight && r.effective_out ? ' <span class="sub">+1d</span>' : ''}</td>
+        <td class="mono">${escapeHtml(fmtHoursMins(r.total_minutes))}</td>
+        <td class="num red">${escapeHtml(lms)}</td>
+        <td><span class="pill ${escapeHtml(r.status || '')}">${escapeHtml(detailedStatusLabel(r))}</span>${r._synthetic ? ' <span class="badge-silent">no record</span>' : ''}</td>
+      </tr>`);
+      di += 1;
+    }
+    detailParts.push(`<tr class="subtotal">
+      <td></td><td>${cnt} staff</td><td></td><td></td><td></td><td></td>
+      <td class="mono">${escapeHtml(fmtDate(date))}</td><td></td><td></td><td></td>
+      <td class="num">TOTAL →</td>
+      <td class="num">${escapeHtml(fmtHoursMins(sumMin))}</td>
+      <td class="num">${escapeHtml(fmtLateSec(sumLate))}</td><td></td>
+    </tr>`);
+  }
+  const detailRows = detailParts.join('');
 
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -1340,6 +1410,7 @@ function renderReportHtml({ summaries, from, to, me }) {
   table.grid .sub { font-size: 8pt; color: #9CA3AF; }
   .sec-title { font-size: 12pt; font-weight: 700; color: #0F4C2A; margin: 18px 0 2px; letter-spacing: 0.3px; }
   table.grid tr.silent td { opacity: 0.75; }
+  table.grid tr.subtotal td { background: #FDE68A !important; font-weight: 700; color: #1F1B16; border-color: #D4C7AB; }
   thead th {
     text-align: left; padding: 9px 14px;
     background: #0F4C2A; color: #FFFFFF; border: 1px solid #0B3A20;
