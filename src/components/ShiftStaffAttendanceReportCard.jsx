@@ -750,12 +750,27 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
 
     const wb = new ExcelJS.Workbook();
 
-    // Shared sheet builder.
-    const buildSheet = (name, title, headers, colWidths, rowsData) => {
+    // Shared sheet builder — auto-fits column widths to content and
+    // supports centred columns.
+    const buildSheet = (name, title, headers, rowsData, centerCols = []) => {
       const ws = wb.addWorksheet(name, {
         views: [{ state: 'frozen', ySplit: 2 }],   // title + header rows frozen
       });
-      ws.columns = colWidths.map(w => ({ width: w }));
+      // Auto-fit each column to the widest of its header / cell values.
+      const widths = headers.map((h, ci) => {
+        let max = String(h).length;
+        for (const rd of rowsData) {
+          const v = rd.values[ci];
+          const len = v == null ? 0 : String(v).length;
+          if (len > max) max = len;
+        }
+        return Math.min(Math.max(max + 2, 6), 42);
+      });
+      ws.columns = widths.map(w => ({ width: w }));
+      const horizFor = (col, rightCols) =>
+        (rightCols || []).includes(col) ? 'right'
+          : centerCols.includes(col) ? 'center'
+          : 'left';
       // Row 1 — centered, merged title.
       const titleRow = ws.addRow([title]);
       ws.mergeCells(1, 1, 1, headers.length);
@@ -763,12 +778,12 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       tcell.font = { bold: true, size: 13, color: { argb: 'FF0F4C2A' } };
       tcell.alignment = { horizontal: 'center', vertical: 'middle' };
       titleRow.height = 22;
-      // Row 2 — column headers.
+      // Row 2 — column headers (aligned to match their column).
       const hRow = ws.addRow(headers);
-      hRow.eachCell((c) => {
+      hRow.eachCell((c, col) => {
         c.fill = HEAD_FILL;
         c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-        c.alignment = { vertical: 'middle', horizontal: 'left' };
+        c.alignment = { vertical: 'middle', horizontal: horizFor(col) === 'right' ? 'right' : (centerCols.includes(col) ? 'center' : 'left') };
         c.border = allBorder;
       });
       // Data rows.
@@ -777,7 +792,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
         const zebra = i % 2 === 0 ? 'FFFFFFFF' : 'FFFAF8F1';
         row.eachCell({ includeEmpty: true }, (c, col) => {
           c.border = allBorder;
-          c.alignment = { vertical: 'middle', horizontal: (rd.rightCols || []).includes(col) ? 'right' : 'left' };
+          c.alignment = { vertical: 'middle', horizontal: horizFor(col, rd.rightCols) };
           c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebra } };
           c.font = { color: { argb: 'FF1F2937' } };
         });
@@ -791,13 +806,9 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       return ws;
     };
 
-    // ── Summary sheet ──  (Days present / Absent / Leave removed;
-    //    Check in + Late mm:ss added; late marked red.)
-    const sumHeaders = ['#','Employee','Shift','PSN','Department','Location','Check in','Late (mm:ss)','Total hours','Avg/day','Compliance %','Short'];
-    const sumWidths  = [5, 26, 7, 9, 14, 12, 10, 12, 12, 10, 13, 7];
+    // ── Summary sheet ──  (Total hours / Avg/day removed.)
+    const sumHeaders = ['#','Employee','Shift','PSN','Department','Location','Check in','Late (mm:ss)','Compliance %','Short'];
     const sumRows = reportSummaries.map((s, i) => {
-      // For the per-staff line use the most relevant row: the late one if
-      // any, else the latest dated row with a punch.
       const lateRow = s.rows.find(r => r.status === 'late');
       const punchRow = lateRow || [...s.rows].reverse().find(r => r.first_punch) || s.rows[s.rows.length - 1] || null;
       const checkIn = punchRow ? (fmtTime(punchRow.effective_in || punchRow.first_punch) || '') : '';
@@ -811,24 +822,22 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       if (lms) style.push({ col: 8, fill: RED_FILL, font: { bold: true, color: { argb: 'FFB91C1C' } }, align: 'right' });
       if (comp != null) {
         const cf = comp >= 90 ? { bg: 'FFDCFCE7', fg: 'FF166534' } : comp >= 70 ? { bg: 'FFFEF3C7', fg: 'FF92400E' } : { bg: 'FFFEE2E2', fg: 'FF991B1B' };
-        style.push({ col: 11, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: cf.bg } }, font: { bold: true, color: { argb: cf.fg } }, align: 'right' });
+        style.push({ col: 9, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: cf.bg } }, font: { bold: true, color: { argb: cf.fg } }, align: 'right' });
       }
       return {
         values: [
           i + 1, s.emp.name, s.isShift ? 'SHIFT' : '', s.emp.id,
           s.emp.department || '', s.emp.location || '',
-          checkIn, lms, fmtHoursMins(s.totalMin), fmtHoursMins(s.avgMin),
-          comp != null ? comp + '%' : '', s.daysShort ? s.daysShort : '',
+          checkIn, lms, comp != null ? comp + '%' : '', s.daysShort ? s.daysShort : '',
         ],
-        rightCols: [1, 7, 8, 9, 10, 11, 12],
+        rightCols: [1, 8, 9, 10],
         style,
       };
     });
-    buildSheet('Summary', `Attendance Report (Summary) — ${fmtDate(from)} to ${fmtDate(to)}`, sumHeaders, sumWidths, sumRows);
+    buildSheet('Summary', `Attendance Report (Summary) — ${fmtDate(from)} to ${fmtDate(to)}`, sumHeaders, sumRows, [4, 5, 6, 7]);
 
     // ── Detail sheet ──  (per day; In = check-in, Late as mm:ss, red.)
     const detHeaders = ['#','Employee','Shift','PSN','Department','Location','Date','Day','Assigned shift','Check in','Out','Total (h:m)','Late (mm:ss)','Status'];
-    const detWidths  = [5, 26, 7, 9, 14, 12, 12, 6, 16, 10, 10, 11, 12, 22];
     const detRows = [];
     let dN = 0;
     for (const s of reportSummaries) {
@@ -858,7 +867,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
         });
       }
     }
-    buildSheet('Detail', `Attendance Report — ${fmtDate(from)} to ${fmtDate(to)}`, detHeaders, detWidths, detRows);
+    buildSheet('Detail', `Attendance Report — ${fmtDate(from)} to ${fmtDate(to)}`, detHeaders, detRows, [4, 5, 6, 10]);
 
     const buf = await wb.xlsx.writeBuffer();
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -1207,13 +1216,11 @@ function renderReportHtml({ summaries, from, to, me }) {
       <td class="num">${sN}</td>
       <td class="name">${escapeHtml(s.emp.name)}</td>
       <td class="ctr">${s.isShift ? '<span class="shift-badge">SHIFT</span>' : ''}</td>
-      <td class="mono">${escapeHtml(s.emp.id)}</td>
-      <td>${escapeHtml(s.emp.department || '—')}</td>
-      <td>${escapeHtml(s.emp.location || '—')}</td>
-      <td class="mono">${escapeHtml(checkIn)}</td>
+      <td class="ctr mono">${escapeHtml(s.emp.id)}</td>
+      <td class="ctr">${escapeHtml(s.emp.department || '—')}</td>
+      <td class="ctr">${escapeHtml(s.emp.location || '—')}</td>
+      <td class="ctr mono">${escapeHtml(checkIn)}</td>
       <td class="num red">${escapeHtml(lms)}</td>
-      <td class="num">${escapeHtml(fmtHoursMins(s.totalMin))}</td>
-      <td class="num">${escapeHtml(fmtHoursMins(s.avgMin))}</td>
       <td class="num ${compCls(s.compliancePct)}">${s.compliancePct != null ? s.compliancePct + '%' : '—'}</td>
       <td class="num">${s.daysShort ? s.daysShort : ''}</td>
     </tr>`;
@@ -1229,13 +1236,13 @@ function renderReportHtml({ summaries, from, to, me }) {
       <td class="num">${dN}</td>
       <td class="name">${escapeHtml(s.emp.name)}</td>
       <td class="ctr">${s.isShift ? '<span class="shift-badge">SHIFT</span>' : ''}</td>
-      <td class="mono">${escapeHtml(s.emp.id)}</td>
-      <td>${escapeHtml(s.emp.department || '—')}</td>
-      <td>${escapeHtml(s.emp.location || '—')}</td>
+      <td class="ctr mono">${escapeHtml(s.emp.id)}</td>
+      <td class="ctr">${escapeHtml(s.emp.department || '—')}</td>
+      <td class="ctr">${escapeHtml(s.emp.location || '—')}</td>
       <td class="mono">${escapeHtml(fmtDate(r.attendance_date))}</td>
       <td>${escapeHtml(fmtDay(r.attendance_date))}</td>
       <td class="mono" style="color:${shift ? '#1F1B16' : '#9CA3AF'};">${escapeHtml(shift || '—')}</td>
-      <td class="mono">${escapeHtml(fmtTime(r.effective_in) || '—')}${r.isOvernight && r.effective_carry ? `<br><span class="sub">${escapeHtml(fmtTime(r.effective_carry))} (prev)</span>` : ''}</td>
+      <td class="ctr mono">${escapeHtml(fmtTime(r.effective_in) || '—')}${r.isOvernight && r.effective_carry ? `<br><span class="sub">${escapeHtml(fmtTime(r.effective_carry))} (prev)</span>` : ''}</td>
       <td class="mono">${escapeHtml(fmtTime(r.effective_out) || '—')}${r.isOvernight && r.effective_out ? ' <span class="sub">+1d</span>' : ''}</td>
       <td class="mono">${escapeHtml(fmtHoursMins(r.total_minutes))}</td>
       <td class="num red">${escapeHtml(lms)}</td>
@@ -1318,6 +1325,7 @@ function renderReportHtml({ summaries, from, to, me }) {
     border: 1px solid #0B3A20; font-weight: 600; white-space: nowrap;
   }
   table.grid thead th.num { text-align: right; }
+  table.grid thead th.ctr { text-align: center; }
   table.grid tbody td { padding: 6px 10px; border: 1px solid #E5E0D2; vertical-align: middle; white-space: nowrap; }
   table.grid tbody tr:nth-child(even) td { background: #FAF8F1; }
   table.grid tbody tr.shiftrow td { background: #EFF6FF; }
@@ -1394,8 +1402,8 @@ function renderReportHtml({ summaries, from, to, me }) {
   <div class="sec-title">Summary</div>
   <table class="grid">
     <thead><tr>
-      <th>#</th><th>Employee</th><th>Shift</th><th>PSN</th><th>Department</th><th>Location</th>
-      <th>Check in</th><th class="num">Late (mm:ss)</th><th class="num">Total hours</th><th class="num">Avg/day</th>
+      <th>#</th><th>Employee</th><th>Shift</th><th class="ctr">PSN</th><th class="ctr">Department</th><th class="ctr">Location</th>
+      <th class="ctr">Check in</th><th class="num">Late (mm:ss)</th>
       <th class="num">Compliance</th><th class="num">Short</th>
     </tr></thead>
     <tbody>${summaryRows}</tbody>
@@ -1404,8 +1412,8 @@ function renderReportHtml({ summaries, from, to, me }) {
   <div class="sec-title">Detail</div>
   <table class="grid">
     <thead><tr>
-      <th>#</th><th>Employee</th><th>Shift</th><th>PSN</th><th>Department</th><th>Location</th>
-      <th>Date</th><th>Day</th><th>Assigned shift</th><th>Check in</th><th>Out</th><th class="num">Total</th>
+      <th>#</th><th>Employee</th><th>Shift</th><th class="ctr">PSN</th><th class="ctr">Department</th><th class="ctr">Location</th>
+      <th>Date</th><th>Day</th><th>Assigned shift</th><th class="ctr">Check in</th><th>Out</th><th class="num">Total</th>
       <th class="num">Late (mm:ss)</th><th>Status</th>
     </tr></thead>
     <tbody>${detailRows}</tbody>
