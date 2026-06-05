@@ -366,8 +366,16 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   // on every parent re-render of AttendanceView — and AttendanceView
   // re-renders a lot during the daily upload flow — which caused a
   // visible flicker as the loading state flipped on/off.
+  // The report now covers ALL staff (renamed to "Attendance report
+  // card"). Shift staff are still identified — via shiftIdSet — so they
+  // can be colour-marked in the list, HTML report and Excel.
+  // Nadeem 2026-06-03.
   const shiftStaff = useMemo(
-    () => (employees || []).filter(e => e.is_shift_staff === true),
+    () => (employees || []).slice(),
+    [employees]
+  );
+  const shiftIdSet = useMemo(
+    () => new Set((employees || []).filter(e => e.is_shift_staff === true).map(e => e.id)),
     [employees]
   );
   const staffKey = useMemo(
@@ -637,6 +645,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
 
       return {
         emp, rows,
+        isShift: shiftIdSet.has(emp.id),
         daysPresent: present.length + late.length + shortRows.length,
         daysLate:    late.length,
         daysShort:   shortRows.length,
@@ -648,8 +657,14 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
         shiftDays, cleanDays, compliancePct,
         countLateIn, countShortOut, countMissedAny,
       };
+    }).sort((a, b) => {
+      const loc = (a.emp.location || '').localeCompare(b.emp.location || '');
+      if (loc) return loc;
+      const dep = (a.emp.department || '').localeCompare(b.emp.department || '');
+      if (dep) return dep;
+      return (a.emp.name || '').localeCompare(b.emp.name || '');
     });
-  }, [shiftStaff, byEmployee]);
+  }, [shiftStaff, byEmployee, shiftIdSet]);
 
   const toggleExpand = (id) => {
     setExpanded(prev => {
@@ -733,8 +748,11 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
         const base = { fill: { patternType: 'solid', fgColor: { rgb: zebra } }, font: { color: { rgb: '1F2937' } }, alignment: { vertical: 'center' }, border };
         const fam = STATUS_FILL[r.status] || { bg: 'F3F4F6', fg: '374151' };
         const statusStyle = { fill: { patternType: 'solid', fgColor: { rgb: fam.bg } }, font: { color: { rgb: fam.fg }, bold: true }, alignment: { vertical: 'center' }, border };
+        const empStyle = s.isShift
+          ? { fill: { patternType: 'solid', fgColor: { rgb: 'DBEAFE' } }, font: { color: { rgb: '1E3A8A' }, bold: true }, alignment: { vertical: 'center' }, border }
+          : base;
         detailAoa.push([
-          cell(s.emp.name, base),
+          cell(s.emp.name, empStyle),
           cell(s.emp.id, base),
           cell(s.emp.department || '', base),
           cell(s.emp.location || '', base),
@@ -748,11 +766,17 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       }
     }
 
-    const sumHeaders = ['Employee','PSN','Department','Location','Days present','Total hours','Avg/day','Compliance %','Late','Short','Absent','Leave'];
+    const sumHeaders = ['Employee','Shift','PSN','Department','Location','Days present','Total hours','Avg/day','Compliance %','Late','Short','Absent','Leave'];
     const sumAoa = [sumHeaders.map(h => cell(h, headerStyle))];
     reportSummaries.forEach((s, i) => {
       const zebra = (i + 1) % 2 === 0 ? 'FAF8F1' : 'FFFFFF';
       const base = { fill: { patternType: 'solid', fgColor: { rgb: zebra } }, font: { color: { rgb: '1F2937' } }, alignment: { vertical: 'center' }, border };
+      const empStyle = s.isShift
+        ? { fill: { patternType: 'solid', fgColor: { rgb: 'DBEAFE' } }, font: { color: { rgb: '1E3A8A' }, bold: true }, alignment: { vertical: 'center' }, border }
+        : base;
+      const shiftBadgeStyle = s.isShift
+        ? { fill: { patternType: 'solid', fgColor: { rgb: '1D4ED8' } }, font: { color: { rgb: 'FFFFFF' }, bold: true }, alignment: { vertical: 'center', horizontal: 'center' }, border }
+        : base;
       const comp = s.compliancePct;
       const compStyle = comp == null ? base : {
         fill: { patternType: 'solid', fgColor: { rgb: comp >= 90 ? 'DCFCE7' : comp >= 70 ? 'FEF3C7' : 'FEE2E2' } },
@@ -760,7 +784,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
         alignment: { vertical: 'center' }, border,
       };
       sumAoa.push([
-        cell(s.emp.name, base), cell(s.emp.id, base),
+        cell(s.emp.name, empStyle), cell(s.isShift ? 'SHIFT' : '', shiftBadgeStyle), cell(s.emp.id, base),
         cell(s.emp.department || '', base), cell(s.emp.location || '', base),
         cell(s.daysPresent, base), cell(fmtHoursMins(s.totalMin), base), cell(fmtHoursMins(s.avgMin), base),
         cell(comp != null ? comp : '', compStyle),
@@ -770,7 +794,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
 
     const wb = XLSXStyle.utils.book_new();
     const wsSum = XLSXStyle.utils.aoa_to_sheet(sumAoa);
-    wsSum['!cols'] = [{ wch: 26 }, { wch: 9 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 11 }, { wch: 10 }, { wch: 12 }, { wch: 7 }, { wch: 7 }, { wch: 8 }, { wch: 7 }];
+    wsSum['!cols'] = [{ wch: 26 }, { wch: 7 }, { wch: 9 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 11 }, { wch: 10 }, { wch: 12 }, { wch: 7 }, { wch: 7 }, { wch: 8 }, { wch: 7 }];
     XLSXStyle.utils.book_append_sheet(wb, wsSum, 'Summary');
     const wsDet = XLSXStyle.utils.aoa_to_sheet(detailAoa);
     wsDet['!cols'] = [{ wch: 26 }, { wch: 9 }, { wch: 14 }, { wch: 12 }, { wch: 22 }, { wch: 16 }, { wch: 10 }, { wch: 10 }, { wch: 11 }, { wch: 22 }];
@@ -788,11 +812,11 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
           <div className="flex items-center gap-2">
             <Clock className="w-5 h-5" style={{ color: '#0F4C2A' }} />
             <div style={{ fontFamily: 'inherit', fontSize: '20px', color: '#1F1B16' }}>
-              Shift staff attendance
+              Attendance report card
             </div>
           </div>
           <div className="text-[11px] mt-1" style={{ color: '#1F1B16' }}>
-            In / out punches + total worked hours for staff marked as shift workers by their managers.
+            Search a date range and export an enriched attendance report (HTML / Print / Excel), sorted by Location, Department, then name. Shift staff are colour-marked.
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -855,7 +879,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
                  style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }} />
         </label>
         <div className="text-[10px]" style={{ color: '#1F1B16' }}>
-          {shiftStaff.length} shift {shiftStaff.length === 1 ? 'staff' : 'staff'} flagged
+          {shiftStaff.length} staff · {shiftIdSet.size} shift staff
         </div>
       </div>
 
@@ -865,9 +889,9 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
              style={{ background: '#FBF6E9', color: '#1F1B16' }}>
           <Users className="w-4 h-4" style={{ color: '#1F1B16' }} />
           <div>
-            <div className="font-medium">No shift staff flagged yet</div>
+            <div className="font-medium">No staff found</div>
             <div className="text-[11px] mt-0.5">
-              Each manager can mark their direct reports as shift staff from their dashboard — once flagged, they appear here.
+              No employees are loaded yet. Shift staff (marked by managers) are highlighted once data appears.
             </div>
           </div>
         </div>
@@ -882,17 +906,21 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
             const hasManagerEmail = !!manager?.email;
             return (
             <div key={s.emp.id} className="rounded-lg border bg-white overflow-hidden"
-                 style={{ borderColor: 'var(--border-soft)' }}>
+                 style={{ borderColor: 'var(--border-soft)', borderLeft: s.isShift ? '4px solid #1D4ED8' : undefined }}>
               {/* Summary row */}
-              <div className="flex items-center gap-3 px-3 py-2.5">
+              <div className="flex items-center gap-3 px-3 py-2.5"
+                   style={{ background: s.isShift ? '#EFF6FF' : undefined }}>
                 <button type="button" onClick={() => toggleExpand(s.emp.id)}
                         className="flex items-center gap-3 flex-1 min-w-0 text-left hover:opacity-80 transition">
                   {expanded.has(s.emp.id)
                     ? <ChevronDown className="w-4 h-4 flex-shrink-0" style={{ color: '#1F1B16' }} />
                     : <ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: '#1F1B16' }} />}
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-semibold" style={{ color: '#1F1B16' }}>
+                    <div className="text-sm font-semibold flex items-center gap-2" style={{ color: '#1F1B16' }}>
                       {s.emp.name}
+                      {s.isShift && (
+                        <span style={{ background: '#1D4ED8', color: '#fff', fontSize: 9, fontWeight: 800, padding: '1px 6px', borderRadius: 999, letterSpacing: '.04em' }}>SHIFT</span>
+                      )}
                     </div>
                     <div className="text-[10px] flex items-center gap-2 flex-wrap mt-0.5" style={{ color: '#1F1B16' }}>
                       <span>{s.emp.id} · {s.emp.department || '—'} · {s.emp.location || '—'}</span>
@@ -1088,10 +1116,10 @@ function renderReportHtml({ summaries, from, to, me }) {
   });
 
   const employeeBlocks = summaries.map(s => `
-    <section class="emp">
+    <section class="emp${s.isShift ? ' shift' : ''}">
       <header class="emp-header">
         <div>
-          <div class="emp-name">${escapeHtml(s.emp.name)}</div>
+          <div class="emp-name">${escapeHtml(s.emp.name)}${s.isShift ? ' <span class="shift-badge">SHIFT</span>' : ''}</div>
           <div class="emp-meta">${escapeHtml(s.emp.id)} · ${escapeHtml(s.emp.department || '—')} · ${escapeHtml(s.emp.location || '—')}</div>
         </div>
         <div class="stats">
@@ -1141,7 +1169,7 @@ function renderReportHtml({ summaries, from, to, me }) {
 
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<title>Shift Staff Attendance · ${from} to ${to}</title>
+<title>Attendance Report · ${from} to ${to}</title>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -1176,6 +1204,14 @@ function renderReportHtml({ summaries, from, to, me }) {
   }
   h1 + .period { font-size: 10pt; color: #5C4406; margin-bottom: 24px; }
   section.emp { margin-bottom: 28px; page-break-inside: avoid; }
+  section.emp.shift .emp-header {
+    background: #EFF6FF; border-left: 3px solid #1D4ED8;
+  }
+  .shift-badge {
+    display: inline-block; margin-left: 8px; vertical-align: middle;
+    background: #1D4ED8; color: #FFFFFF; font-size: 8pt; font-weight: 700;
+    padding: 1px 7px; border-radius: 999px; letter-spacing: 0.5px;
+  }
   .emp-header {
     display: flex; justify-content: space-between; align-items: flex-end;
     padding: 8px 12px;
@@ -1258,8 +1294,8 @@ function renderReportHtml({ summaries, from, to, me }) {
     </div>
   </header>
 
-  <h1>Shift Staff Attendance Report</h1>
-  <div class="period">${escapeHtml(fmtDate(from))} &nbsp;to&nbsp; ${escapeHtml(fmtDate(to))}  ·  ${summaries.length} shift staff</div>
+  <h1>Attendance Report</h1>
+  <div class="period">${escapeHtml(fmtDate(from))} &nbsp;to&nbsp; ${escapeHtml(fmtDate(to))}  ·  ${summaries.length} staff  ·  sorted by location → department → name</div>
 
   ${employeeBlocks}
 
