@@ -6476,6 +6476,10 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
                 📋 Today's review · {csvDate ? new Date(csvDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : ''}
               </button>
             )}
+            {/* Re-evaluation now runs automatically on every daily and
+                historical upload, so the manual buttons are hidden.
+                Logic kept intact. Nadeem 2026-06-03. */}
+            {false && (<>
             <button
               type="button"
               onClick={() => triggerReevaluation({ silent: false })}
@@ -6541,6 +6545,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             >
               {reevalState.running ? '…' : '↻ Re-evaluate this month'}
             </button>
+            </>)}
             <button
               type="button"
               onClick={() => setBackfillModalOpen(true)}
@@ -6561,6 +6566,9 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
                 print rules. The new window auto-triggers print so the
                 user can save as PDF or send to printer in one click.
                 Bashaier can also print directly to physical paper. */}
+            {/* Export report hidden — the monthly grid has its own
+                Export menu (Excel / PDF). Nadeem 2026-06-03. */}
+            {false && (
             <button
               type="button"
               onClick={exportMonthReport}
@@ -6575,6 +6583,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             >
               📄 Export report
             </button>
+            )}
             {/* HQ Report — special-styled button (gradient + glow) for
                 the Evergreen HQ annual attendance workbook. Last in the
                 row, Bashaier + Nadeem only. Toggles the export card
