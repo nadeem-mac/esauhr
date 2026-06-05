@@ -6446,19 +6446,21 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             <button
               type="button"
               onClick={() => setShiftReportOpen(v => !v)}
-              className="text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1.5"
+              className="px-3.5 py-1.5 rounded-full flex items-center gap-1.5"
               style={{
-                background: shiftReportOpen ? '#1E3A8A' : '#1E40AF',
+                fontSize: '12px',
+                letterSpacing: '0.06em',
+                background: shiftReportOpen ? '#3730A3' : '#4338CA',
                 color:      '#FFFFFF',
-                fontWeight: 600,
-                border:     `1px solid ${shiftReportOpen ? '#1E3A8A' : '#1E40AF'}`,
+                fontWeight: 800,
+                border:     `1px solid ${shiftReportOpen ? '#3730A3' : '#4338CA'}`,
                 boxShadow:  shiftReportOpen
-                  ? 'inset 0 1px 3px rgba(0,0,0,0.25)'
-                  : '0 1px 2px rgba(30,64,175,0.25)',
+                  ? 'inset 0 1px 3px rgba(0,0,0,0.3)'
+                  : '0 2px 6px rgba(67,56,202,0.45)',
               }}
-              title="Show in/out punches and total worked hours for staff flagged as shift workers by their managers."
+              title="Open the Attendance Report — search a date range and export an enriched report (HTML / Print / Excel)."
             >
-              🕐 Shift staff attendance {shiftReportOpen ? '·  hide' : ''}
+              🕐 ATTENDANCE REPORT {shiftReportOpen ? '·  hide' : ''}
             </button>
             {hasFile && !dailyReviewOpen && (
               <button
