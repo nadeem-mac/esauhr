@@ -360,6 +360,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   const [attendance, setAttendance] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
+  const [searched, setSearched] = useState(false);  // gate: data shows only after Search
 
   // Shift-flagged staff only. We also compute a stable string key
   // of just the IDs so the load() callback can depend on the SET of
@@ -428,6 +429,48 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     const href    = `mailto:${encodeURIComponent(manager.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     window.location.href = href;
   }, [empMap, from, to, me]);
+
+  // "Email to John" — opens a prefilled mail to the Country Head with a
+  // brief, dated summary of the selected window. The detailed Excel is
+  // attached by the user after exporting. (Nadeem 2026-06-04)
+  const JOHN_EMAIL = 'johnho@evergreen-shipping.com.sa';
+  const emailJohn = useCallback(() => {
+    const toSec = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/); return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0)) : null; };
+    const lateSecOf = (r) => { const inS = toSec(r.first_punch), st = toSec(r.expected_start); if (inS == null || st == null) return 0; const d = inS - st; return (d > 0 && r.status === 'late') ? d : 0; };
+    const fmtSec = (sec) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+    const byDate = new Map();
+    for (const s of reportSummaries) for (const r of s.rows) {
+      const g = byDate.get(r.attendance_date) || { n: 0, late: 0, short: 0, absent: 0, lateSec: 0 };
+      g.n += 1;
+      if (r.status === 'late') g.late += 1;
+      else if (r.status === 'short') g.short += 1;
+      else if (r.status === 'absent') g.absent += 1;
+      g.lateSec += lateSecOf(r);
+      byDate.set(r.attendance_date, g);
+    }
+    const dates = [...byDate.keys()].sort();
+    const periodLabel = from === to ? fmtDateLong(from) : `${fmtDate(from)} – ${fmtDate(to)}`;
+    const scopeLabel = reportScope === 'all'
+      ? `all ${reportSummaries.length} staff`
+      : (reportSummaries[0]?.emp ? `${reportSummaries[0].emp.name} (${reportSummaries[0].emp.id})` : 'selected staff');
+    const lines = [];
+    lines.push('Dear Mr. John,');
+    lines.push('');
+    lines.push(`Please find a brief attendance summary for ${periodLabel}, covering ${scopeLabel}. The detailed report (Excel) is attached.`);
+    lines.push('');
+    for (const d of dates) {
+      const g = byDate.get(d);
+      lines.push(`• ${fmtDateLong(d)} — ${g.n} staff · ${g.late} late · ${g.short} short · ${g.absent} absent · total late ${fmtSec(g.lateSec)}`);
+    }
+    if (dates.length === 0) lines.push('• No attendance data in the selected period.');
+    lines.push('');
+    lines.push('Kindly let me know if you would like any specific day or employee expanded.');
+    lines.push('');
+    lines.push(renderHrSignature());
+    const subject = `Attendance Report — ${from === to ? fmtDate(from) : `${fmtDate(from)} to ${fmtDate(to)}`}`;
+    const href = `mailto:${encodeURIComponent(JOHN_EMAIL)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(lines.join('\n'))}`;
+    window.location.href = href;
+  }, [reportSummaries, from, to, reportScope, me]);
 
   // Build a clean HTML report for one staff member's anomalies that
   // Bashaier can paste straight into Outlook (keeps table + signature
@@ -552,7 +595,13 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [staffKey, from, to]);
 
-  useEffect(() => { load(); }, [load]);
+  // No auto-load — the report is search-gated. Data appears only after
+  // the user picks a period and presses Search. (Nadeem 2026-06-04)
+  const handleSearch = useCallback(() => { setSearched(true); load(); }, [load]);
+  // Changing either date invalidates the shown results — hide them and
+  // require a fresh Search so exports never reflect a stale window.
+  const onFromChange = (v) => { setFrom(v); setSearched(false); };
+  const onToChange   = (v) => { setTo(v);   setSearched(false); };
 
   // Group attendance by employee_id, then for each flagged staff fill
   // missing weekdays in the window as synthetic 'absent' rows so the
@@ -908,7 +957,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
             </div>
           </div>
           <div className="text-[11px] mt-1" style={{ color: '#1F1B16' }}>
-            Search a date range and export an enriched attendance report (HTML / Print / Excel), sorted by Location, Department, then name. Shift staff are colour-marked.
+            Pick a date range and press Search, then export the attendance report to Excel or email a brief summary to Mr. John. Sorted by Location, Department, then name; shift staff are colour-marked.
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -927,7 +976,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
           <button
             type="button"
             onClick={handleExcel}
-            disabled={loading || reportSummaries.length === 0}
+            disabled={!searched || loading || reportSummaries.length === 0}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition disabled:opacity-50"
             style={{ background: '#107C41', color: '#FFFFFF' }}>
             <FileSpreadsheet className="w-3.5 h-3.5" />
@@ -935,21 +984,13 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
           </button>
           <button
             type="button"
-            onClick={handlePrint}
-            disabled={loading || reportSummaries.length === 0}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition disabled:opacity-50 border"
-            style={{ background: '#FFFFFF', color: '#0F4C2A', borderColor: '#0F4C2A' }}>
-            <Printer className="w-3.5 h-3.5" />
-            Print / PDF
-          </button>
-          <button
-            type="button"
-            onClick={handleDownload}
-            disabled={loading || reportSummaries.length === 0}
+            onClick={emailJohn}
+            disabled={!searched || loading || reportSummaries.length === 0}
+            title="Open a prefilled email to Mr. John with a brief summary of the selected period (attach the exported Excel)."
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition disabled:opacity-50"
             style={{ background: '#0F4C2A', color: '#FFFFFF' }}>
-            <Download className="w-3.5 h-3.5" />
-            HTML
+            <Mail className="w-3.5 h-3.5" />
+            Email to John
           </button>
         </div>
       </div>
@@ -960,16 +1001,25 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
         <div className="text-[11px] font-semibold" style={{ color: '#1F1B16' }}>PERIOD</div>
         <label className="flex items-center gap-1.5 text-[11px]" style={{ color: '#1F1B16' }}>
           From
-          <input type="date" value={from} onChange={e => setFrom(e.target.value)}
+          <input type="date" value={from} onChange={e => onFromChange(e.target.value)}
                  className="px-2 py-1 rounded border bg-white text-[11px]"
                  style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }} />
         </label>
         <label className="flex items-center gap-1.5 text-[11px]" style={{ color: '#1F1B16' }}>
           to
-          <input type="date" value={to} onChange={e => setTo(e.target.value)}
+          <input type="date" value={to} onChange={e => onToChange(e.target.value)}
                  className="px-2 py-1 rounded border bg-white text-[11px]"
                  style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }} />
         </label>
+        <button
+          type="button"
+          onClick={handleSearch}
+          disabled={loading || shiftStaff.length === 0}
+          className="flex items-center gap-1.5 px-4 py-1.5 rounded-md text-xs font-bold transition disabled:opacity-50"
+          style={{ background: '#4338CA', color: '#FFFFFF', boxShadow: '0 2px 6px rgba(67,56,202,0.4)' }}>
+          <Clock className="w-3.5 h-3.5" />
+          {loading ? 'Searching…' : 'Search'}
+        </button>
         <div className="text-[10px]" style={{ color: '#1F1B16' }}>
           {shiftStaff.length} staff · {shiftIdSet.size} shift staff
         </div>
@@ -991,6 +1041,17 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
         <div className="text-xs text-red-700 bg-red-50 rounded-md p-2">{err}</div>
       ) : loading ? (
         <div className="text-center text-xs opacity-50 py-4">Loading attendance…</div>
+      ) : !searched ? (
+        <div className="flex items-center gap-2 text-sm py-6 px-3 rounded-lg"
+             style={{ background: '#FBF6E9', color: '#1F1B16' }}>
+          <Clock className="w-4 h-4" style={{ color: '#0F4C2A' }} />
+          <div>
+            <div className="font-medium">Pick a period and press Search</div>
+            <div className="text-[11px] mt-0.5">
+              The attendance data and the Excel / Email to John actions appear once you run a search.
+            </div>
+          </div>
+        </div>
       ) : (
         <div className="space-y-2">
           {summaries.map(s => {
