@@ -430,48 +430,6 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     window.location.href = href;
   }, [empMap, from, to, me]);
 
-  // "Email to John" — opens a prefilled mail to the Country Head with a
-  // brief, dated summary of the selected window. The detailed Excel is
-  // attached by the user after exporting. (Nadeem 2026-06-04)
-  const JOHN_EMAIL = 'johnho@evergreen-shipping.com.sa';
-  const emailJohn = useCallback(() => {
-    const toSec = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/); return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0)) : null; };
-    const lateSecOf = (r) => { const inS = toSec(r.first_punch), st = toSec(r.expected_start); if (inS == null || st == null) return 0; const d = inS - st; return (d > 0 && r.status === 'late') ? d : 0; };
-    const fmtSec = (sec) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
-    const byDate = new Map();
-    for (const s of reportSummaries) for (const r of s.rows) {
-      const g = byDate.get(r.attendance_date) || { n: 0, late: 0, short: 0, absent: 0, lateSec: 0 };
-      g.n += 1;
-      if (r.status === 'late') g.late += 1;
-      else if (r.status === 'short') g.short += 1;
-      else if (r.status === 'absent') g.absent += 1;
-      g.lateSec += lateSecOf(r);
-      byDate.set(r.attendance_date, g);
-    }
-    const dates = [...byDate.keys()].sort();
-    const periodLabel = from === to ? fmtDateLong(from) : `${fmtDate(from)} – ${fmtDate(to)}`;
-    const scopeLabel = reportScope === 'all'
-      ? `all ${reportSummaries.length} staff`
-      : (reportSummaries[0]?.emp ? `${reportSummaries[0].emp.name} (${reportSummaries[0].emp.id})` : 'selected staff');
-    const lines = [];
-    lines.push('Dear Mr. John,');
-    lines.push('');
-    lines.push(`Please find a brief attendance summary for ${periodLabel}, covering ${scopeLabel}. The detailed report (Excel) is attached.`);
-    lines.push('');
-    for (const d of dates) {
-      const g = byDate.get(d);
-      lines.push(`• ${fmtDateLong(d)} — ${g.n} staff · ${g.late} late · ${g.short} short · ${g.absent} absent · total late ${fmtSec(g.lateSec)}`);
-    }
-    if (dates.length === 0) lines.push('• No attendance data in the selected period.');
-    lines.push('');
-    lines.push('Kindly let me know if you would like any specific day or employee expanded.');
-    lines.push('');
-    lines.push(renderHrSignature());
-    const subject = `Attendance Report — ${from === to ? fmtDate(from) : `${fmtDate(from)} to ${fmtDate(to)}`}`;
-    const href = `mailto:${encodeURIComponent(JOHN_EMAIL)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(lines.join('\n'))}`;
-    window.location.href = href;
-  }, [reportSummaries, from, to, reportScope, me]);
-
   // Build a clean HTML report for one staff member's anomalies that
   // Bashaier can paste straight into Outlook (keeps table + signature
   // formatting). Copies both rich HTML and a plain-text fallback.
@@ -735,6 +693,49 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     [summaries, reportScope],
   );
   const scopeTag = reportScope === 'all' ? 'all-staff' : reportScope;
+
+  // "Email to John" — opens a prefilled mail to the Country Head with a
+  // brief, dated summary of the selected window. The detailed Excel is
+  // attached by the user after exporting. Defined AFTER reportSummaries
+  // to avoid a TDZ (it references reportSummaries). (Nadeem 2026-06-04)
+  const JOHN_EMAIL = 'johnho@evergreen-shipping.com.sa';
+  const emailJohn = useCallback(() => {
+    const toSec = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/); return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0)) : null; };
+    const lateSecOf = (r) => { const inS = toSec(r.first_punch), st = toSec(r.expected_start); if (inS == null || st == null) return 0; const d = inS - st; return (d > 0 && r.status === 'late') ? d : 0; };
+    const fmtSec = (sec) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+    const byDate = new Map();
+    for (const s of reportSummaries) for (const r of s.rows) {
+      const g = byDate.get(r.attendance_date) || { n: 0, late: 0, short: 0, absent: 0, lateSec: 0 };
+      g.n += 1;
+      if (r.status === 'late') g.late += 1;
+      else if (r.status === 'short') g.short += 1;
+      else if (r.status === 'absent') g.absent += 1;
+      g.lateSec += lateSecOf(r);
+      byDate.set(r.attendance_date, g);
+    }
+    const dates = [...byDate.keys()].sort();
+    const periodLabel = from === to ? fmtDateLong(from) : `${fmtDate(from)} – ${fmtDate(to)}`;
+    const scopeLabel = reportScope === 'all'
+      ? `all ${reportSummaries.length} staff`
+      : (reportSummaries[0]?.emp ? `${reportSummaries[0].emp.name} (${reportSummaries[0].emp.id})` : 'selected staff');
+    const lines = [];
+    lines.push('Dear Mr. John,');
+    lines.push('');
+    lines.push(`Please find a brief attendance summary for ${periodLabel}, covering ${scopeLabel}. The detailed report (Excel) is attached.`);
+    lines.push('');
+    for (const d of dates) {
+      const g = byDate.get(d);
+      lines.push(`• ${fmtDateLong(d)} — ${g.n} staff · ${g.late} late · ${g.short} short · ${g.absent} absent · total late ${fmtSec(g.lateSec)}`);
+    }
+    if (dates.length === 0) lines.push('• No attendance data in the selected period.');
+    lines.push('');
+    lines.push('Kindly let me know if you would like any specific day or employee expanded.');
+    lines.push('');
+    lines.push(renderHrSignature());
+    const subject = `Attendance Report — ${from === to ? fmtDate(from) : `${fmtDate(from)} to ${fmtDate(to)}`}`;
+    const href = `mailto:${encodeURIComponent(JOHN_EMAIL)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(lines.join('\n'))}`;
+    window.location.href = href;
+  }, [reportSummaries, from, to, reportScope, me]);
 
   const handleDownload = () => {
     const html = renderReportHtml({ summaries: reportSummaries, from, to, me });
