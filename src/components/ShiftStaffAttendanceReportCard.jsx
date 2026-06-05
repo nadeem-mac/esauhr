@@ -352,7 +352,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   // hit the date filter as the literal string 'null' and Supabase
   // rejected the query (22007 invalid input syntax for type date).
   const today = todayLocal();
-  const [from, setFrom] = useState(addDaysIso(today, -29));
+  const [from, setFrom] = useState(today);   // default: today (single-day)
   const [to,   setTo]   = useState(today);
   const [expanded, setExpanded] = useState(new Set());  // employee IDs whose drill-down is open
   const [reportScope, setReportScope] = useState('all'); // 'all' or a specific employee id for export
