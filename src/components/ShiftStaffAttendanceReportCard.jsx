@@ -36,7 +36,7 @@ import * as XLSX from 'xlsx';
 import XLSXStyle from 'xlsx-js-style';
 import ExcelJS from 'exceljs';
 import { directGet } from '../supabaseClient.js';
-import { todayLocal, addDaysIso, isKsaWeekend } from '../lib/dateUtils.js';
+import { todayLocal, addDaysIso, isKsaWeekend, isoDayOfWeek } from '../lib/dateUtils.js';
 import { salutationFor } from '../lib/salutations.js';
 import { renderHrSignature, renderHrSignatureHtml } from '../lib/emailTemplates.js';
 
@@ -490,7 +490,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   // worked-time isn't stored directly. We fetch the punches plus
   // late/early/expected columns and compute total worked minutes
   // client-side. Schema reference: supabase/migration_attendance_daily.sql
-  const load = useCallback(async () => {
+  const load = useCallback(async (fromArg = from, toArg = to) => {
     if (shiftStaff.length === 0) {
       setAttendance([]);
       return;
@@ -499,15 +499,15 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     // date-picker inputs CAN produce empty strings if the user clears
     // them. Don't fire the query in that state — show the existing
     // data and wait for them to set a valid range.
-    if (!from || !to) return;
+    if (!fromArg || !toArg) return;
     setLoading(true);
     setErr(null);
     try {
       const ids = shiftStaff.map(e => `"${e.id}"`).join(',');
       const q = `select=employee_id,attendance_date,first_punch,last_punch,punch_count,expected_start,expected_end,late_minutes,early_leave_minutes,status,leave_request_id`
              + `&employee_id=in.(${ids})`
-             + `&attendance_date=gte.${from}`
-             + `&attendance_date=lte.${to}`
+             + `&attendance_date=gte.${fromArg}`
+             + `&attendance_date=lte.${toArg}`
              + `&order=attendance_date.asc`;
       const rows = await directGet('attendance_daily', q, { timeoutMs: 12000 });
       // Group by employee + sort by date so we can pair overnight
@@ -563,6 +563,15 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   // No auto-load — the report is search-gated. Data appears only after
   // the user picks a period and presses Search. (Nadeem 2026-06-04)
   const handleSearch = useCallback(() => { setSearched(true); load(); }, [load]);
+  // Quick range presets — set the window and run the search immediately
+  // (load accepts explicit dates so we avoid stale state). (Nadeem 2026-06-05)
+  const applyPreset = useCallback((f, t) => {
+    setFrom(f); setTo(t); setSearched(true); load(f, t);
+  }, [load]);
+  const presetToday     = () => applyPreset(today, today);
+  const presetYesterday = () => { const d = addDaysIso(today, -1); applyPreset(d, d); };
+  const presetThisWeek  = () => { const dow = isoDayOfWeek(today); applyPreset(addDaysIso(today, -(dow < 0 ? 0 : dow)), today); };
+  const presetThisMonth = () => applyPreset(`${today.slice(0, 8)}01`, today);
   // Changing either date invalidates the shown results — hide them and
   // require a fresh Search so exports never reflect a stale window.
   const onFromChange = (v) => { setFrom(v); setSearched(false); };
@@ -700,34 +709,6 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     [summaries, reportScope],
   );
   const scopeTag = reportScope === 'all' ? 'all-staff' : reportScope;
-
-  // "Email to John" — opens a prefilled mail to the Country Head with a
-  // brief, dated summary of the selected window. The detailed Excel is
-  // attached by the user after exporting. Defined AFTER reportSummaries
-  // to avoid a TDZ (it references reportSummaries). (Nadeem 2026-06-04)
-  const JOHN_EMAIL = 'johnho@evergreen-shipping.com.sa';
-  // CC the SUP team — Badria (H94458), Jaffar (H94330), Fahad (H94712).
-  const JOHN_CC_PSNS = ['H94458', 'H94330', 'H94712'];
-  const emailJohn = useCallback(() => {
-    const periodLabel = from === to ? fmtDateLong(from) : `${fmtDate(from)} – ${fmtDate(to)}`;
-    const scopeLabel = reportScope === 'all'
-      ? `all ${reportSummaries.length} staff`
-      : (reportSummaries[0]?.emp ? `${reportSummaries[0].emp.name} (${reportSummaries[0].emp.id})` : 'selected staff');
-    const lines = [];
-    lines.push('Dear Mr. John,');
-    lines.push('');
-    lines.push(`Please find a brief attendance summary for ${periodLabel}, covering ${scopeLabel}. The detailed report (Excel) is attached.`);
-    lines.push('');
-    lines.push('Kindly let me know if you would like any specific day or employee expanded.');
-    lines.push('');
-    lines.push(renderHrSignature());
-    const subject = `Attendance Report — ${from === to ? fmtDate(from) : `${fmtDate(from)} to ${fmtDate(to)}`}`;
-    const ccEmails = JOHN_CC_PSNS.map(id => empMap[id]?.email).filter(Boolean);
-    let href = `mailto:${encodeURIComponent(JOHN_EMAIL)}?`;
-    if (ccEmails.length) href += `cc=${encodeURIComponent(ccEmails.join(','))}&`;
-    href += `subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(lines.join('\n'))}`;
-    window.location.href = href;
-  }, [reportSummaries, from, to, reportScope, empMap, me]);
 
   const handleDownload = () => {
     const html = renderReportHtml({ summaries: reportSummaries, from, to, me });
@@ -953,9 +934,39 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
-  // After a search, if the window includes today but no attendance rows
-  // exist for today, the daily time card almost certainly wasn't uploaded
-  // yet — remind the user. But Fri/Sat are the KSA weekend: no duty, no
+  // "Email to John" — first downloads the Excel (so it's ready to attach,
+  // since mailto can't attach a file), then opens a prefilled mail to the
+  // Country Head with a brief, dated summary. CC the SUP team. Defined
+  // after handleExcel so it can call it without a TDZ. (Nadeem 2026-06-05)
+  const JOHN_EMAIL = 'johnho@evergreen-shipping.com.sa';
+  const JOHN_CC_PSNS = ['H94458', 'H94330', 'H94712']; // Badria, Jaffar, Fahad (SUP)
+  const emailJohn = async () => {
+    // Export the workbook first so the user has the file to attach.
+    try { await handleExcel(); } catch { /* non-fatal — still open the mail */ }
+    const periodLabel = from === to ? fmtDateLong(from) : `${fmtDate(from)} – ${fmtDate(to)}`;
+    const scopeLabel = reportScope === 'all'
+      ? `all ${reportSummaries.length} staff`
+      : (reportSummaries[0]?.emp ? `${reportSummaries[0].emp.name} (${reportSummaries[0].emp.id})` : 'selected staff');
+    const lines = [];
+    lines.push('Dear Mr. John,');
+    lines.push('');
+    lines.push(`Please find a brief attendance summary for ${periodLabel}, covering ${scopeLabel}. The detailed report (Excel) is attached.`);
+    lines.push('');
+    lines.push('(The Excel report has just been downloaded to your device — please attach it before sending.)');
+    lines.push('');
+    lines.push('Kindly let me know if you would like any specific day or employee expanded.');
+    lines.push('');
+    lines.push(renderHrSignature());
+    const subject = `Attendance Report — ${from === to ? fmtDate(from) : `${fmtDate(from)} to ${fmtDate(to)}`}`;
+    const ccEmails = JOHN_CC_PSNS.map(id => empMap[id]?.email).filter(Boolean);
+    let href = `mailto:${encodeURIComponent(JOHN_EMAIL)}?`;
+    if (ccEmails.length) href += `cc=${encodeURIComponent(ccEmails.join(','))}&`;
+    href += `subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(lines.join('\n'))}`;
+    // Small delay so the download starts before the mail client steals focus.
+    setTimeout(() => { window.location.href = href; }, 400);
+  };
+  // After a search, remind to upload today's time card when today is in
+  // range but has no rows. Fri/Sat are the KSA weekend: no duty, no
   // upload expected, so never remind (or flag) on those days.
   const todayHasData = attendance.some(r => r.attendance_date === today);
   const todayIsWeekend = isKsaWeekend(today);
@@ -1006,9 +1017,9 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
           </button>
           <button
             type="button"
-            onClick={emailJohn}
+            onClick={async () => { await handleExcel(); emailJohn(); }}
             disabled={!searched || loading || reportSummaries.length === 0}
-            title="Open a prefilled email to Mr. John with a brief summary of the selected period (attach the exported Excel)."
+            title="Downloads the Excel report, then opens a prefilled email to Mr. John — attach the downloaded file before sending."
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition disabled:opacity-50"
             style={{ background: '#0F4C2A', color: '#FFFFFF' }}>
             <Mail className="w-3.5 h-3.5" />
@@ -1042,6 +1053,24 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
           <Clock className="w-3.5 h-3.5" />
           {loading ? 'Searching…' : 'Search'}
         </button>
+        <div className="flex items-center gap-1.5">
+          {[
+            { label: 'Today',      fn: presetToday },
+            { label: 'Yesterday',  fn: presetYesterday },
+            { label: 'This week',  fn: presetThisWeek },
+            { label: 'This month', fn: presetThisMonth },
+          ].map(p => (
+            <button
+              key={p.label}
+              type="button"
+              onClick={p.fn}
+              disabled={loading || shiftStaff.length === 0}
+              className="px-2.5 py-1 rounded-full text-[11px] font-medium border transition disabled:opacity-50"
+              style={{ background: '#FFFFFF', color: '#3730A3', borderColor: '#C7D2FE' }}>
+              {p.label}
+            </button>
+          ))}
+        </div>
         <div className="text-[10px]" style={{ color: '#1F1B16' }}>
           {shiftStaff.length} staff · {shiftIdSet.size} shift staff
         </div>
