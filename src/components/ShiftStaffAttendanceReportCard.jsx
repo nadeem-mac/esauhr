@@ -34,6 +34,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Clock, Download, ChevronDown, ChevronRight, FileText, Users, Mail, FileSpreadsheet, ClipboardCopy, Printer } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import XLSXStyle from 'xlsx-js-style';
+import ExcelJS from 'exceljs';
 import { directGet } from '../supabaseClient.js';
 import { todayLocal, addDaysIso } from '../lib/dateUtils.js';
 import { salutationFor } from '../lib/salutations.js';
@@ -708,129 +709,165 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   // Excel export — one "Detail" sheet (every day) + a "Summary" sheet
   // (per-staff totals), respecting the chosen scope. Cells are coloured
   // to match the HTML report's status pills via xlsx-js-style.
-  const handleExcel = () => {
-    // Status family → { bg, fg } matching the HTML pills.
+  const handleExcel = async () => {
+    // Status family → ARGB fill/font matching the HTML pills.
     const STATUS_FILL = {
-      present:          { bg: 'DCFCE7', fg: '166534' },
-      late:             { bg: 'FEF3C7', fg: '92400E' },
-      short:            { bg: 'FEF3C7', fg: '92400E' },
-      absent:           { bg: 'FEE2E2', fg: '991B1B' },
-      sick_leave:       { bg: 'EDE9FE', fg: '5B21B6' },
-      annual_leave:     { bg: 'CCFBF1', fg: '115E59' },
-      maternity_leave:  { bg: 'FCE7F3', fg: '9D174D' },
-      paternity_leave:  { bg: 'E0F2FE', fg: '075985' },
-      hajj_leave:       { bg: 'FEF3C7', fg: '854F0B' },
-      marriage_leave:   { bg: 'FCE7F3', fg: '831843' },
-      bereavement_leave:{ bg: 'E5E7EB', fg: '374151' },
-      unpaid_leave:     { bg: 'F3F4F6', fg: '374151' },
-      emergency_leave:  { bg: 'FEE2E2', fg: '7F1D1D' },
-      iddah_leave:      { bg: 'F3E8FF', fg: '6B21A8' },
-      off_day:          { bg: 'F3F4F6', fg: '374151' },
-      off_roster:       { bg: 'F3F4F6', fg: '374151' },
+      present:          { bg: 'FFDCFCE7', fg: 'FF166534' },
+      late:             { bg: 'FFFEF3C7', fg: 'FF92400E' },
+      short:            { bg: 'FFFEF3C7', fg: 'FF92400E' },
+      absent:           { bg: 'FFFEE2E2', fg: 'FF991B1B' },
+      sick_leave:       { bg: 'FFEDE9FE', fg: 'FF5B21B6' },
+      annual_leave:     { bg: 'FFCCFBF1', fg: 'FF115E59' },
+      maternity_leave:  { bg: 'FFFCE7F3', fg: 'FF9D174D' },
+      paternity_leave:  { bg: 'FFE0F2FE', fg: 'FF075985' },
+      hajj_leave:       { bg: 'FFFEF3C7', fg: 'FF854F0B' },
+      marriage_leave:   { bg: 'FFFCE7F3', fg: 'FF831843' },
+      bereavement_leave:{ bg: 'FFE5E7EB', fg: 'FF374151' },
+      unpaid_leave:     { bg: 'FFF3F4F6', fg: 'FF374151' },
+      emergency_leave:  { bg: 'FFFEE2E2', fg: 'FF7F1D1D' },
+      iddah_leave:      { bg: 'FFF3E8FF', fg: 'FF6B21A8' },
+      off_day:          { bg: 'FFF3F4F6', fg: 'FF374151' },
+      off_roster:       { bg: 'FFF3F4F6', fg: 'FF374151' },
     };
-    const thin = { style: 'thin', color: { rgb: 'D1D5DB' } };
-    const border = { top: thin, bottom: thin, left: thin, right: thin };
-    const headerStyle = {
-      fill: { patternType: 'solid', fgColor: { rgb: '0F4C2A' } },
-      font: { color: { rgb: 'FFFFFF' }, bold: true },
-      alignment: { vertical: 'center', horizontal: 'left' },
-      border,
-    };
-    const cell = (v, style) => ({ v: v == null ? '' : v, t: typeof v === 'number' ? 'n' : 's', s: style });
-    const z = (n) => (n ? n : '');                       // blank instead of 0
     const fmtDay = (iso) => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short' }) : '';
-    const now = new Date();
-    const genStr = now.toLocaleString('en-GB', { weekday: 'long', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-    const titleStyle = { font: { bold: true, sz: 13, color: { rgb: '0F4C2A' } } };
-    const subTitleStyle = { font: { italic: true, sz: 10, color: { rgb: '5C4406' } } };
-    const redNum = (n) => n > 0
-      ? { fill: { patternType: 'solid', fgColor: { rgb: 'FEE2E2' } }, font: { color: { rgb: 'B91C1C' }, bold: true }, alignment: { vertical: 'center', horizontal: 'right' }, border }
-      : null;
-    const shiftMarkStyle = { fill: { patternType: 'solid', fgColor: { rgb: '1D4ED8' } }, font: { color: { rgb: 'FFFFFF' }, bold: true }, alignment: { vertical: 'center', horizontal: 'center' }, border };
-    const titleRow = (text) => [cell(text, titleStyle)];
+    // Late as mm:ss past the official start (08:00 / shift start), using
+    // the raw punch seconds. Only for genuinely late rows.
+    const lateMMSS = (r) => {
+      const toSec = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/); return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0)) : null; };
+      const inS = toSec(r.first_punch); const st = toSec(r.expected_start);
+      if (inS == null || st == null) return '';
+      const d = inS - st;
+      if (d <= 0 || r.status !== 'late') return '';
+      const mm = Math.floor(d / 60); const ss = d % 60;
+      return `${mm}:${String(ss).padStart(2, '0')}`;
+    };
+    const thin = { style: 'thin', color: { argb: 'FFD1D5DB' } };
+    const allBorder = { top: thin, bottom: thin, left: thin, right: thin };
+    const HEAD_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F4C2A' } };
+    const RED_FILL  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } };
+    const SHIFT_FILL= { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1D4ED8' } };
+    const EMP_FILL  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
 
-    const detailHeaders = ['#','Employee','Shift','PSN','Department','Location','Date','Day','Assigned shift','In','Out','Total (h:m)','Late (min)','Early (min)','Status'];
-    const detailAoa = [
-      titleRow(`Attendance Report — ${fmtDate(from)} to ${fmtDate(to)}`),
-      [cell(`Generated: ${genStr}`, subTitleStyle)],
-      [cell('', subTitleStyle)],
-      detailHeaders.map(h => cell(h, headerStyle)),
-    ];
-    let rIdx = 0;
+    const wb = new ExcelJS.Workbook();
+
+    // Shared sheet builder.
+    const buildSheet = (name, title, headers, colWidths, rowsData) => {
+      const ws = wb.addWorksheet(name, {
+        views: [{ state: 'frozen', ySplit: 2 }],   // title + header rows frozen
+      });
+      ws.columns = colWidths.map(w => ({ width: w }));
+      // Row 1 — centered, merged title.
+      const titleRow = ws.addRow([title]);
+      ws.mergeCells(1, 1, 1, headers.length);
+      const tcell = ws.getCell(1, 1);
+      tcell.font = { bold: true, size: 13, color: { argb: 'FF0F4C2A' } };
+      tcell.alignment = { horizontal: 'center', vertical: 'middle' };
+      titleRow.height = 22;
+      // Row 2 — column headers.
+      const hRow = ws.addRow(headers);
+      hRow.eachCell((c) => {
+        c.fill = HEAD_FILL;
+        c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        c.alignment = { vertical: 'middle', horizontal: 'left' };
+        c.border = allBorder;
+      });
+      // Data rows.
+      rowsData.forEach((rd, i) => {
+        const row = ws.addRow(rd.values);
+        const zebra = i % 2 === 0 ? 'FFFFFFFF' : 'FFFAF8F1';
+        row.eachCell({ includeEmpty: true }, (c, col) => {
+          c.border = allBorder;
+          c.alignment = { vertical: 'middle', horizontal: (rd.rightCols || []).includes(col) ? 'right' : 'left' };
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebra } };
+          c.font = { color: { argb: 'FF1F2937' } };
+        });
+        (rd.style || []).forEach(({ col, fill, font, align }) => {
+          const c = row.getCell(col);
+          if (fill) c.fill = fill;
+          if (font) c.font = font;
+          if (align) c.alignment = { vertical: 'middle', horizontal: align };
+        });
+      });
+      return ws;
+    };
+
+    // ── Summary sheet ──  (Days present / Absent / Leave removed;
+    //    Check in + Late mm:ss added; late marked red.)
+    const sumHeaders = ['#','Employee','Shift','PSN','Department','Location','Check in','Late (mm:ss)','Total hours','Avg/day','Compliance %','Short'];
+    const sumWidths  = [5, 26, 7, 9, 14, 12, 10, 12, 12, 10, 13, 7];
+    const sumRows = reportSummaries.map((s, i) => {
+      // For the per-staff line use the most relevant row: the late one if
+      // any, else the latest dated row with a punch.
+      const lateRow = s.rows.find(r => r.status === 'late');
+      const punchRow = lateRow || [...s.rows].reverse().find(r => r.first_punch) || s.rows[s.rows.length - 1] || null;
+      const checkIn = punchRow ? (fmtTime(punchRow.effective_in || punchRow.first_punch) || '') : '';
+      const lms = punchRow ? lateMMSS(punchRow) : '';
+      const comp = s.compliancePct;
+      const style = [];
+      if (s.isShift) {
+        style.push({ col: 2, fill: EMP_FILL, font: { bold: true, color: { argb: 'FF1E3A8A' } } });
+        style.push({ col: 3, fill: SHIFT_FILL, font: { bold: true, color: { argb: 'FFFFFFFF' } }, align: 'center' });
+      }
+      if (lms) style.push({ col: 8, fill: RED_FILL, font: { bold: true, color: { argb: 'FFB91C1C' } }, align: 'right' });
+      if (comp != null) {
+        const cf = comp >= 90 ? { bg: 'FFDCFCE7', fg: 'FF166534' } : comp >= 70 ? { bg: 'FFFEF3C7', fg: 'FF92400E' } : { bg: 'FFFEE2E2', fg: 'FF991B1B' };
+        style.push({ col: 11, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: cf.bg } }, font: { bold: true, color: { argb: cf.fg } }, align: 'right' });
+      }
+      return {
+        values: [
+          i + 1, s.emp.name, s.isShift ? 'SHIFT' : '', s.emp.id,
+          s.emp.department || '', s.emp.location || '',
+          checkIn, lms, fmtHoursMins(s.totalMin), fmtHoursMins(s.avgMin),
+          comp != null ? comp + '%' : '', s.daysShort ? s.daysShort : '',
+        ],
+        rightCols: [1, 7, 8, 9, 10, 11, 12],
+        style,
+      };
+    });
+    buildSheet('Summary', `Attendance Report (Summary) — ${fmtDate(from)} to ${fmtDate(to)}`, sumHeaders, sumWidths, sumRows);
+
+    // ── Detail sheet ──  (per day; In = check-in, Late as mm:ss, red.)
+    const detHeaders = ['#','Employee','Shift','PSN','Department','Location','Date','Day','Assigned shift','Check in','Out','Total (h:m)','Late (mm:ss)','Status'];
+    const detWidths  = [5, 26, 7, 9, 14, 12, 12, 6, 16, 10, 10, 11, 12, 22];
+    const detRows = [];
+    let dN = 0;
     for (const s of reportSummaries) {
       for (const r of s.rows) {
-        rIdx += 1;
-        const zebra = rIdx % 2 === 0 ? 'FAF8F1' : 'FFFFFF';
-        const base = { fill: { patternType: 'solid', fgColor: { rgb: zebra } }, font: { color: { rgb: '1F2937' } }, alignment: { vertical: 'center' }, border };
-        const baseR = { ...base, alignment: { vertical: 'center', horizontal: 'right' } };
-        const fam = STATUS_FILL[r.status] || { bg: 'F3F4F6', fg: '374151' };
-        const statusStyle = { fill: { patternType: 'solid', fgColor: { rgb: fam.bg } }, font: { color: { rgb: fam.fg }, bold: true }, alignment: { vertical: 'center' }, border };
-        const empStyle = s.isShift
-          ? { fill: { patternType: 'solid', fgColor: { rgb: 'DBEAFE' } }, font: { color: { rgb: '1E3A8A' }, bold: true }, alignment: { vertical: 'center' }, border }
-          : base;
-        const lateM  = Number(r.late_minutes || 0);
-        const earlyM = Number(r.early_leave_minutes || 0);
-        detailAoa.push([
-          cell(rIdx, baseR),
-          cell(s.emp.name, empStyle),
-          cell(s.isShift ? 'SHIFT' : '', s.isShift ? shiftMarkStyle : base),
-          cell(s.emp.id, base),
-          cell(s.emp.department || '', base),
-          cell(s.emp.location || '', base),
-          cell(fmtDate(r.attendance_date), base),
-          cell(fmtDay(r.attendance_date), base),
-          cell(fmtShiftWindow(r.expected_start, r.expected_end) || '', base),
-          cell(fmtTime(r.effective_in) || '', base),
-          cell(fmtTime(r.effective_out) || '', base),
-          cell(fmtHoursMins(r.total_minutes), base),
-          cell(lateM > 0 ? lateM : '', redNum(lateM) || baseR),
-          cell(earlyM > 0 ? earlyM : '', redNum(earlyM) || baseR),
-          cell(detailedStatusLabel(r), statusStyle),
-        ]);
+        dN += 1;
+        const lms = lateMMSS(r);
+        const fam = STATUS_FILL[r.status] || { bg: 'FFF3F4F6', fg: 'FF374151' };
+        const style = [
+          { col: 14, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: fam.bg } }, font: { bold: true, color: { argb: fam.fg } } },
+        ];
+        if (s.isShift) {
+          style.push({ col: 2, fill: EMP_FILL, font: { bold: true, color: { argb: 'FF1E3A8A' } } });
+          style.push({ col: 3, fill: SHIFT_FILL, font: { bold: true, color: { argb: 'FFFFFFFF' } }, align: 'center' });
+        }
+        if (lms) style.push({ col: 13, fill: RED_FILL, font: { bold: true, color: { argb: 'FFB91C1C' } }, align: 'right' });
+        detRows.push({
+          values: [
+            dN, s.emp.name, s.isShift ? 'SHIFT' : '', s.emp.id,
+            s.emp.department || '', s.emp.location || '',
+            fmtDate(r.attendance_date), fmtDay(r.attendance_date),
+            fmtShiftWindow(r.expected_start, r.expected_end) || '',
+            fmtTime(r.effective_in) || '', fmtTime(r.effective_out) || '',
+            fmtHoursMins(r.total_minutes), lms, detailedStatusLabel(r),
+          ],
+          rightCols: [1, 12, 13],
+          style,
+        });
       }
     }
+    buildSheet('Detail', `Attendance Report — ${fmtDate(from)} to ${fmtDate(to)}`, detHeaders, detWidths, detRows);
 
-    const sumHeaders = ['#','Employee','Shift','PSN','Department','Location','Days present','Total hours','Avg/day','Compliance %','Late','Short','Absent','Leave'];
-    const sumAoa = [
-      titleRow(`Attendance Report (Summary) — ${fmtDate(from)} to ${fmtDate(to)}`),
-      [cell(`Generated: ${genStr}`, subTitleStyle)],
-      [cell('', subTitleStyle)],
-      sumHeaders.map(h => cell(h, headerStyle)),
-    ];
-    reportSummaries.forEach((s, i) => {
-      const zebra = (i + 1) % 2 === 0 ? 'FAF8F1' : 'FFFFFF';
-      const base = { fill: { patternType: 'solid', fgColor: { rgb: zebra } }, font: { color: { rgb: '1F2937' } }, alignment: { vertical: 'center' }, border };
-      const baseR = { ...base, alignment: { vertical: 'center', horizontal: 'right' } };
-      const empStyle = s.isShift
-        ? { fill: { patternType: 'solid', fgColor: { rgb: 'DBEAFE' } }, font: { color: { rgb: '1E3A8A' }, bold: true }, alignment: { vertical: 'center' }, border }
-        : base;
-      const comp = s.compliancePct;
-      const compStyle = comp == null ? baseR : {
-        fill: { patternType: 'solid', fgColor: { rgb: comp >= 90 ? 'DCFCE7' : comp >= 70 ? 'FEF3C7' : 'FEE2E2' } },
-        font: { color: { rgb: comp >= 90 ? '166534' : comp >= 70 ? '92400E' : '991B1B' }, bold: true },
-        alignment: { vertical: 'center', horizontal: 'right' }, border,
-      };
-      sumAoa.push([
-        cell(i + 1, baseR),
-        cell(s.emp.name, empStyle),
-        cell(s.isShift ? 'SHIFT' : '', s.isShift ? shiftMarkStyle : base),
-        cell(s.emp.id, base),
-        cell(s.emp.department || '', base), cell(s.emp.location || '', base),
-        cell(z(s.daysPresent), baseR), cell(fmtHoursMins(s.totalMin), baseR), cell(fmtHoursMins(s.avgMin), baseR),
-        cell(comp != null ? comp : '', compStyle),
-        cell(z(s.daysLate), redNum(s.daysLate) || baseR), cell(z(s.daysShort), baseR),
-        cell(z(s.daysAbsent), redNum(s.daysAbsent) || baseR), cell(z(s.daysLeave), baseR),
-      ]);
-    });
-
-    const wb = XLSXStyle.utils.book_new();
-    const wsSum = XLSXStyle.utils.aoa_to_sheet(sumAoa);
-    wsSum['!cols'] = [{ wch: 5 }, { wch: 26 }, { wch: 7 }, { wch: 9 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 11 }, { wch: 10 }, { wch: 12 }, { wch: 7 }, { wch: 7 }, { wch: 8 }, { wch: 7 }];
-    XLSXStyle.utils.book_append_sheet(wb, wsSum, 'Summary');
-    const wsDet = XLSXStyle.utils.aoa_to_sheet(detailAoa);
-    wsDet['!cols'] = [{ wch: 5 }, { wch: 26 }, { wch: 7 }, { wch: 9 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 6 }, { wch: 16 }, { wch: 10 }, { wch: 10 }, { wch: 11 }, { wch: 10 }, { wch: 10 }, { wch: 22 }];
-    XLSXStyle.utils.book_append_sheet(wb, wsDet, 'Detail');
-    XLSXStyle.writeFile(wb, `Shift-Staff-Attendance-${scopeTag}-${from}_to_${to}.xlsx`);
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Attendance-Report-${scopeTag}-${from}_to_${to}.xlsx`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   // ─── render ──
@@ -1148,13 +1185,24 @@ function renderReportHtml({ summaries, from, to, me }) {
   });
 
   const fmtDay = (iso) => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short' }) : '';
-  const z = (n) => (n ? n : '');                       // blank instead of 0
   const compCls = (p) => p == null ? '' : p >= 90 ? 'cgood' : p >= 70 ? 'camber' : 'cred';
+  const lateMMSS = (r) => {
+    const toSec = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/); return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0)) : null; };
+    const inS = toSec(r.first_punch); const st = toSec(r.expected_start);
+    if (inS == null || st == null) return '';
+    const d = inS - st;
+    if (d <= 0 || r.status !== 'late') return '';
+    return `${Math.floor(d / 60)}:${String(d % 60).padStart(2, '0')}`;
+  };
 
   // SUMMARY table — one row per staff (mirrors the Excel Summary sheet).
   let sN = 0;
   const summaryRows = summaries.map(s => {
     sN += 1;
+    const lateRow = s.rows.find(r => r.status === 'late');
+    const punchRow = lateRow || [...s.rows].reverse().find(r => r.first_punch) || s.rows[s.rows.length - 1] || null;
+    const checkIn = punchRow ? (fmtTime(punchRow.effective_in || punchRow.first_punch) || '—') : '—';
+    const lms = punchRow ? lateMMSS(punchRow) : '';
     return `<tr class="${s.isShift ? 'shiftrow' : ''}">
       <td class="num">${sN}</td>
       <td class="name">${escapeHtml(s.emp.name)}</td>
@@ -1162,14 +1210,12 @@ function renderReportHtml({ summaries, from, to, me }) {
       <td class="mono">${escapeHtml(s.emp.id)}</td>
       <td>${escapeHtml(s.emp.department || '—')}</td>
       <td>${escapeHtml(s.emp.location || '—')}</td>
-      <td class="num">${z(s.daysPresent)}</td>
+      <td class="mono">${escapeHtml(checkIn)}</td>
+      <td class="num red">${escapeHtml(lms)}</td>
       <td class="num">${escapeHtml(fmtHoursMins(s.totalMin))}</td>
       <td class="num">${escapeHtml(fmtHoursMins(s.avgMin))}</td>
       <td class="num ${compCls(s.compliancePct)}">${s.compliancePct != null ? s.compliancePct + '%' : '—'}</td>
-      <td class="num red">${z(s.daysLate)}</td>
-      <td class="num">${z(s.daysShort)}</td>
-      <td class="num red">${z(s.daysAbsent)}</td>
-      <td class="num">${z(s.daysLeave)}</td>
+      <td class="num">${s.daysShort ? s.daysShort : ''}</td>
     </tr>`;
   }).join('');
 
@@ -1177,8 +1223,7 @@ function renderReportHtml({ summaries, from, to, me }) {
   let dN = 0;
   const detailRows = summaries.flatMap(s => s.rows.map(r => {
     dN += 1;
-    const lateM  = Number(r.late_minutes || 0);
-    const earlyM = Number(r.early_leave_minutes || 0);
+    const lms = lateMMSS(r);
     const shift  = fmtShiftWindow(r.expected_start, r.expected_end);
     return `<tr class="${s.isShift ? 'shiftrow' : ''}${r._synthetic ? ' silent' : ''}">
       <td class="num">${dN}</td>
@@ -1193,8 +1238,7 @@ function renderReportHtml({ summaries, from, to, me }) {
       <td class="mono">${escapeHtml(fmtTime(r.effective_in) || '—')}${r.isOvernight && r.effective_carry ? `<br><span class="sub">${escapeHtml(fmtTime(r.effective_carry))} (prev)</span>` : ''}</td>
       <td class="mono">${escapeHtml(fmtTime(r.effective_out) || '—')}${r.isOvernight && r.effective_out ? ' <span class="sub">+1d</span>' : ''}</td>
       <td class="mono">${escapeHtml(fmtHoursMins(r.total_minutes))}</td>
-      <td class="num red">${lateM > 0 ? lateM : ''}</td>
-      <td class="num red">${earlyM > 0 ? earlyM : ''}</td>
+      <td class="num red">${escapeHtml(lms)}</td>
       <td><span class="pill ${escapeHtml(r.status || '')}">${escapeHtml(detailedStatusLabel(r))}</span>${r._synthetic ? ' <span class="badge-silent">no record</span>' : ''}</td>
     </tr>`;
   })).join('');
@@ -1340,7 +1384,6 @@ function renderReportHtml({ summaries, from, to, me }) {
       <div class="brand-sub">Evergreen Shipping Agency Saudi Co. (L.L.C) · ESAU SADMN SUP / HR Dept</div>
     </div>
     <div class="meta">
-      Generated ${escapeHtml(generatedAt)}<br>
       ${escapeHtml(me?.name || 'ESAU HR')}
     </div>
   </header>
@@ -1352,8 +1395,8 @@ function renderReportHtml({ summaries, from, to, me }) {
   <table class="grid">
     <thead><tr>
       <th>#</th><th>Employee</th><th>Shift</th><th>PSN</th><th>Department</th><th>Location</th>
-      <th class="num">Days present</th><th class="num">Total hours</th><th class="num">Avg/day</th>
-      <th class="num">Compliance</th><th class="num">Late</th><th class="num">Short</th><th class="num">Absent</th><th class="num">Leave</th>
+      <th>Check in</th><th class="num">Late (mm:ss)</th><th class="num">Total hours</th><th class="num">Avg/day</th>
+      <th class="num">Compliance</th><th class="num">Short</th>
     </tr></thead>
     <tbody>${summaryRows}</tbody>
   </table>
@@ -1362,8 +1405,8 @@ function renderReportHtml({ summaries, from, to, me }) {
   <table class="grid">
     <thead><tr>
       <th>#</th><th>Employee</th><th>Shift</th><th>PSN</th><th>Department</th><th>Location</th>
-      <th>Date</th><th>Day</th><th>Assigned shift</th><th>In</th><th>Out</th><th class="num">Total</th>
-      <th class="num">Late (min)</th><th class="num">Early (min)</th><th>Status</th>
+      <th>Date</th><th>Day</th><th>Assigned shift</th><th>Check in</th><th>Out</th><th class="num">Total</th>
+      <th class="num">Late (mm:ss)</th><th>Status</th>
     </tr></thead>
     <tbody>${detailRows}</tbody>
   </table>
