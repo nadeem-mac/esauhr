@@ -86,7 +86,10 @@ function timeToMinutes(t) {
   if (!t) return null;
   const m = /^(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(t);
   if (!m) return null;
-  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10) + (parseInt(m[3] || '0', 10) / 60);
+  // Whole-minute granularity: drop the seconds so the entire grace
+  // minute counts as on-time (08:15:11 → 08:15, not late). Matches the
+  // daily-upload rule in timeCard.js. Nadeem 2026-06-03.
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
 }
 
 // Pick the schedule that applies to a given employee. Returns the

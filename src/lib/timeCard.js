@@ -350,13 +350,17 @@ function annotateRow(row, permIdx, employeesById) {
   const startSec       = timeToSec(normaliseTime(ATTENDANCE_POLICY.startTime));
   const graceLateSec   = startSec + ATTENDANCE_POLICY.graceLate * 60;
   const firstSec       = timeToSec(row.firstPunch);
-  const isLate         = firstSec > graceLateSec;
+  // Compare at whole-minute granularity so the entire grace minute is
+  // on-time: 08:15:00–08:15:59 is NOT late; only 08:16:00 and later is.
+  // (Comparing raw seconds wrongly flagged 08:15:11 as late.)
+  // Nadeem 2026-06-03.
+  const isLate         = Math.floor(firstSec / 60) > Math.floor(graceLateSec / 60);
 
   // Early check
   const endSec         = timeToSec(normaliseTime(endTime));
   const graceEarlySec  = endSec - ATTENDANCE_POLICY.graceEarly * 60;
   const lastSec        = timeToSec(row.lastPunch);
-  const isEarly        = lastSec < graceEarlySec;
+  const isEarly        = Math.floor(lastSec / 60) < Math.floor(graceEarlySec / 60);
 
   // Apply permissions if relevant.
   if (isLate) {
