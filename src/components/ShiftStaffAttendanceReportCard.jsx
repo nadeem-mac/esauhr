@@ -737,67 +737,98 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       border,
     };
     const cell = (v, style) => ({ v: v == null ? '' : v, t: typeof v === 'number' ? 'n' : 's', s: style });
+    const z = (n) => (n ? n : '');                       // blank instead of 0
+    const fmtDay = (iso) => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short' }) : '';
+    const now = new Date();
+    const genStr = now.toLocaleString('en-GB', { weekday: 'long', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const titleStyle = { font: { bold: true, sz: 13, color: { rgb: '0F4C2A' } } };
+    const subTitleStyle = { font: { italic: true, sz: 10, color: { rgb: '5C4406' } } };
+    const redNum = (n) => n > 0
+      ? { fill: { patternType: 'solid', fgColor: { rgb: 'FEE2E2' } }, font: { color: { rgb: 'B91C1C' }, bold: true }, alignment: { vertical: 'center', horizontal: 'right' }, border }
+      : null;
+    const shiftMarkStyle = { fill: { patternType: 'solid', fgColor: { rgb: '1D4ED8' } }, font: { color: { rgb: 'FFFFFF' }, bold: true }, alignment: { vertical: 'center', horizontal: 'center' }, border };
+    const titleRow = (text) => [cell(text, titleStyle)];
 
-    const detailHeaders = ['Employee','PSN','Department','Location','Date','Assigned shift','In','Out','Total (h:m)','Status'];
-    const detailAoa = [detailHeaders.map(h => cell(h, headerStyle))];
+    const detailHeaders = ['#','Employee','Shift','PSN','Department','Location','Date','Day','Assigned shift','In','Out','Total (h:m)','Late (min)','Early (min)','Status'];
+    const detailAoa = [
+      titleRow(`Attendance Report — ${fmtDate(from)} to ${fmtDate(to)}`),
+      [cell(`Generated: ${genStr}`, subTitleStyle)],
+      [cell('', subTitleStyle)],
+      detailHeaders.map(h => cell(h, headerStyle)),
+    ];
     let rIdx = 0;
     for (const s of reportSummaries) {
       for (const r of s.rows) {
         rIdx += 1;
         const zebra = rIdx % 2 === 0 ? 'FAF8F1' : 'FFFFFF';
         const base = { fill: { patternType: 'solid', fgColor: { rgb: zebra } }, font: { color: { rgb: '1F2937' } }, alignment: { vertical: 'center' }, border };
+        const baseR = { ...base, alignment: { vertical: 'center', horizontal: 'right' } };
         const fam = STATUS_FILL[r.status] || { bg: 'F3F4F6', fg: '374151' };
         const statusStyle = { fill: { patternType: 'solid', fgColor: { rgb: fam.bg } }, font: { color: { rgb: fam.fg }, bold: true }, alignment: { vertical: 'center' }, border };
         const empStyle = s.isShift
           ? { fill: { patternType: 'solid', fgColor: { rgb: 'DBEAFE' } }, font: { color: { rgb: '1E3A8A' }, bold: true }, alignment: { vertical: 'center' }, border }
           : base;
+        const lateM  = Number(r.late_minutes || 0);
+        const earlyM = Number(r.early_leave_minutes || 0);
         detailAoa.push([
+          cell(rIdx, baseR),
           cell(s.emp.name, empStyle),
+          cell(s.isShift ? 'SHIFT' : '', s.isShift ? shiftMarkStyle : base),
           cell(s.emp.id, base),
           cell(s.emp.department || '', base),
           cell(s.emp.location || '', base),
-          cell(fmtDateLong(r.attendance_date), base),
+          cell(fmtDate(r.attendance_date), base),
+          cell(fmtDay(r.attendance_date), base),
           cell(fmtShiftWindow(r.expected_start, r.expected_end) || '', base),
           cell(fmtTime(r.effective_in) || '', base),
           cell(fmtTime(r.effective_out) || '', base),
           cell(fmtHoursMins(r.total_minutes), base),
+          cell(lateM > 0 ? lateM : '', redNum(lateM) || baseR),
+          cell(earlyM > 0 ? earlyM : '', redNum(earlyM) || baseR),
           cell(detailedStatusLabel(r), statusStyle),
         ]);
       }
     }
 
-    const sumHeaders = ['Employee','Shift','PSN','Department','Location','Days present','Total hours','Avg/day','Compliance %','Late','Short','Absent','Leave'];
-    const sumAoa = [sumHeaders.map(h => cell(h, headerStyle))];
+    const sumHeaders = ['#','Employee','Shift','PSN','Department','Location','Days present','Total hours','Avg/day','Compliance %','Late','Short','Absent','Leave'];
+    const sumAoa = [
+      titleRow(`Attendance Report (Summary) — ${fmtDate(from)} to ${fmtDate(to)}`),
+      [cell(`Generated: ${genStr}`, subTitleStyle)],
+      [cell('', subTitleStyle)],
+      sumHeaders.map(h => cell(h, headerStyle)),
+    ];
     reportSummaries.forEach((s, i) => {
       const zebra = (i + 1) % 2 === 0 ? 'FAF8F1' : 'FFFFFF';
       const base = { fill: { patternType: 'solid', fgColor: { rgb: zebra } }, font: { color: { rgb: '1F2937' } }, alignment: { vertical: 'center' }, border };
+      const baseR = { ...base, alignment: { vertical: 'center', horizontal: 'right' } };
       const empStyle = s.isShift
         ? { fill: { patternType: 'solid', fgColor: { rgb: 'DBEAFE' } }, font: { color: { rgb: '1E3A8A' }, bold: true }, alignment: { vertical: 'center' }, border }
         : base;
-      const shiftBadgeStyle = s.isShift
-        ? { fill: { patternType: 'solid', fgColor: { rgb: '1D4ED8' } }, font: { color: { rgb: 'FFFFFF' }, bold: true }, alignment: { vertical: 'center', horizontal: 'center' }, border }
-        : base;
       const comp = s.compliancePct;
-      const compStyle = comp == null ? base : {
+      const compStyle = comp == null ? baseR : {
         fill: { patternType: 'solid', fgColor: { rgb: comp >= 90 ? 'DCFCE7' : comp >= 70 ? 'FEF3C7' : 'FEE2E2' } },
         font: { color: { rgb: comp >= 90 ? '166534' : comp >= 70 ? '92400E' : '991B1B' }, bold: true },
-        alignment: { vertical: 'center' }, border,
+        alignment: { vertical: 'center', horizontal: 'right' }, border,
       };
       sumAoa.push([
-        cell(s.emp.name, empStyle), cell(s.isShift ? 'SHIFT' : '', shiftBadgeStyle), cell(s.emp.id, base),
+        cell(i + 1, baseR),
+        cell(s.emp.name, empStyle),
+        cell(s.isShift ? 'SHIFT' : '', s.isShift ? shiftMarkStyle : base),
+        cell(s.emp.id, base),
         cell(s.emp.department || '', base), cell(s.emp.location || '', base),
-        cell(s.daysPresent, base), cell(fmtHoursMins(s.totalMin), base), cell(fmtHoursMins(s.avgMin), base),
+        cell(z(s.daysPresent), baseR), cell(fmtHoursMins(s.totalMin), baseR), cell(fmtHoursMins(s.avgMin), baseR),
         cell(comp != null ? comp : '', compStyle),
-        cell(s.daysLate, base), cell(s.daysShort, base), cell(s.daysAbsent, base), cell(s.daysLeave, base),
+        cell(z(s.daysLate), redNum(s.daysLate) || baseR), cell(z(s.daysShort), baseR),
+        cell(z(s.daysAbsent), redNum(s.daysAbsent) || baseR), cell(z(s.daysLeave), baseR),
       ]);
     });
 
     const wb = XLSXStyle.utils.book_new();
     const wsSum = XLSXStyle.utils.aoa_to_sheet(sumAoa);
-    wsSum['!cols'] = [{ wch: 26 }, { wch: 7 }, { wch: 9 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 11 }, { wch: 10 }, { wch: 12 }, { wch: 7 }, { wch: 7 }, { wch: 8 }, { wch: 7 }];
+    wsSum['!cols'] = [{ wch: 5 }, { wch: 26 }, { wch: 7 }, { wch: 9 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 11 }, { wch: 10 }, { wch: 12 }, { wch: 7 }, { wch: 7 }, { wch: 8 }, { wch: 7 }];
     XLSXStyle.utils.book_append_sheet(wb, wsSum, 'Summary');
     const wsDet = XLSXStyle.utils.aoa_to_sheet(detailAoa);
-    wsDet['!cols'] = [{ wch: 26 }, { wch: 9 }, { wch: 14 }, { wch: 12 }, { wch: 22 }, { wch: 16 }, { wch: 10 }, { wch: 10 }, { wch: 11 }, { wch: 22 }];
+    wsDet['!cols'] = [{ wch: 5 }, { wch: 26 }, { wch: 7 }, { wch: 9 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 6 }, { wch: 16 }, { wch: 10 }, { wch: 10 }, { wch: 11 }, { wch: 10 }, { wch: 10 }, { wch: 22 }];
     XLSXStyle.utils.book_append_sheet(wb, wsDet, 'Detail');
     XLSXStyle.writeFile(wb, `Shift-Staff-Attendance-${scopeTag}-${from}_to_${to}.xlsx`);
   };
@@ -1110,62 +1141,63 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
  * stamps. Print-stylesheet collapses to letter-format margins.
  */
 function renderReportHtml({ summaries, from, to, me }) {
-  const generatedAt = new Date().toLocaleString('en-GB', {
-    day: '2-digit', month: 'short', year: 'numeric',
+  const now = new Date();
+  const generatedAt = now.toLocaleString('en-GB', {
+    weekday: 'long', day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
 
-  const employeeBlocks = summaries.map(s => `
-    <section class="emp${s.isShift ? ' shift' : ''}">
-      <header class="emp-header">
-        <div>
-          <div class="emp-name">${escapeHtml(s.emp.name)}${s.isShift ? ' <span class="shift-badge">SHIFT</span>' : ''}</div>
-          <div class="emp-meta">${escapeHtml(s.emp.id)} · ${escapeHtml(s.emp.department || '—')} · ${escapeHtml(s.emp.location || '—')}</div>
-        </div>
-        <div class="stats">
-          <div><strong>${s.daysPresent}</strong><span>days present</span></div>
-          <div><strong>${fmtHoursMins(s.totalMin)}</strong><span>total hours</span></div>
-          <div><strong>${fmtHoursMins(s.avgMin)}</strong><span>avg / day</span></div>
-          ${s.compliancePct != null ? `<div class="${s.compliancePct >= 90 ? 'good' : s.compliancePct >= 70 ? 'late' : 'absent'}"><strong>${s.compliancePct}%</strong><span>shift compliance</span></div>` : ''}
-          ${s.daysLate   > 0 ? `<div class="late"><strong>${s.daysLate}</strong><span>late</span></div>`     : ''}
-          ${s.daysShort  > 0 ? `<div class="short"><strong>${s.daysShort}</strong><span>short</span></div>`  : ''}
-          ${s.daysAbsent > 0 ? `<div class="absent"><strong>${s.daysAbsent}</strong><span>absent</span></div>` : ''}
-          ${s.daysLeave  > 0 ? `<div class="leave"><strong>${s.daysLeave}</strong><span>leave</span></div>`  : ''}
-        </div>
-      </header>
-      ${s.rows.length === 0 ? `
-        <div class="empty">No attendance rows for this period.</div>
-      ` : `
-        <table>
-          <thead>
-            <tr>
-              <th>Date</th><th>Shift</th><th>In</th><th>Out</th><th>Total</th><th>Status</th><th>Check</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${s.rows.map(r => {
-              const shift = fmtShiftWindow(r.expected_start, r.expected_end);
-              const check = r.isShiftDay
-                ? `<span class="dot ${r.onTime === false ? 'bad' : r.onTime === true ? 'good' : 'na'}" title="Arrival"></span>`
-                  + `<span class="dot ${r.fullShift === false ? 'bad' : r.fullShift === true ? 'good' : 'na'}" title="Shift end"></span>`
-                  + `<span class="dot ${r.bothPunch === false ? 'bad' : r.bothPunch === true ? 'good' : 'na'}" title="Both punches"></span>`
-                : '—';
-              return `
-              <tr${r._synthetic ? ' class="silent"' : ''}>
-                <td class="mono">${escapeHtml(fmtDateLong(r.attendance_date))}${r._synthetic ? ' <span class="badge-silent">no record</span>' : ''}</td>
-                <td class="mono" style="color:${shift ? '#1F1B16' : '#9CA3AF'};">${escapeHtml(shift || '—')}</td>
-                <td class="mono">${escapeHtml(fmtTime(r.effective_in))}${r.isOvernight && r.effective_carry ? `<br><span style="font-size:8pt;color:#9CA3AF;">${escapeHtml(fmtTime(r.effective_carry))} (prev)</span>` : ''}</td>
-                <td class="mono">${escapeHtml(fmtTime(r.effective_out))}${r.isOvernight && r.effective_out ? ' <span style="font-size:8pt;color:#9CA3AF;">+1d</span>' : ''}</td>
-                <td class="mono">${escapeHtml(fmtHoursMins(r.total_minutes))}</td>
-                <td><span class="pill ${escapeHtml(r.status || '')}">${escapeHtml(detailedStatusLabel(r))}</span></td>
-                <td>${check}</td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
-      `}
-    </section>
-  `).join('\n');
+  const fmtDay = (iso) => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short' }) : '';
+  const z = (n) => (n ? n : '');                       // blank instead of 0
+  const compCls = (p) => p == null ? '' : p >= 90 ? 'cgood' : p >= 70 ? 'camber' : 'cred';
+
+  // SUMMARY table — one row per staff (mirrors the Excel Summary sheet).
+  let sN = 0;
+  const summaryRows = summaries.map(s => {
+    sN += 1;
+    return `<tr class="${s.isShift ? 'shiftrow' : ''}">
+      <td class="num">${sN}</td>
+      <td class="name">${escapeHtml(s.emp.name)}</td>
+      <td class="ctr">${s.isShift ? '<span class="shift-badge">SHIFT</span>' : ''}</td>
+      <td class="mono">${escapeHtml(s.emp.id)}</td>
+      <td>${escapeHtml(s.emp.department || '—')}</td>
+      <td>${escapeHtml(s.emp.location || '—')}</td>
+      <td class="num">${z(s.daysPresent)}</td>
+      <td class="num">${escapeHtml(fmtHoursMins(s.totalMin))}</td>
+      <td class="num">${escapeHtml(fmtHoursMins(s.avgMin))}</td>
+      <td class="num ${compCls(s.compliancePct)}">${s.compliancePct != null ? s.compliancePct + '%' : '—'}</td>
+      <td class="num red">${z(s.daysLate)}</td>
+      <td class="num">${z(s.daysShort)}</td>
+      <td class="num red">${z(s.daysAbsent)}</td>
+      <td class="num">${z(s.daysLeave)}</td>
+    </tr>`;
+  }).join('');
+
+  // DETAIL table — one row per staff per day (mirrors the Excel Detail sheet).
+  let dN = 0;
+  const detailRows = summaries.flatMap(s => s.rows.map(r => {
+    dN += 1;
+    const lateM  = Number(r.late_minutes || 0);
+    const earlyM = Number(r.early_leave_minutes || 0);
+    const shift  = fmtShiftWindow(r.expected_start, r.expected_end);
+    return `<tr class="${s.isShift ? 'shiftrow' : ''}${r._synthetic ? ' silent' : ''}">
+      <td class="num">${dN}</td>
+      <td class="name">${escapeHtml(s.emp.name)}</td>
+      <td class="ctr">${s.isShift ? '<span class="shift-badge">SHIFT</span>' : ''}</td>
+      <td class="mono">${escapeHtml(s.emp.id)}</td>
+      <td>${escapeHtml(s.emp.department || '—')}</td>
+      <td>${escapeHtml(s.emp.location || '—')}</td>
+      <td class="mono">${escapeHtml(fmtDate(r.attendance_date))}</td>
+      <td>${escapeHtml(fmtDay(r.attendance_date))}</td>
+      <td class="mono" style="color:${shift ? '#1F1B16' : '#9CA3AF'};">${escapeHtml(shift || '—')}</td>
+      <td class="mono">${escapeHtml(fmtTime(r.effective_in) || '—')}${r.isOvernight && r.effective_carry ? `<br><span class="sub">${escapeHtml(fmtTime(r.effective_carry))} (prev)</span>` : ''}</td>
+      <td class="mono">${escapeHtml(fmtTime(r.effective_out) || '—')}${r.isOvernight && r.effective_out ? ' <span class="sub">+1d</span>' : ''}</td>
+      <td class="mono">${escapeHtml(fmtHoursMins(r.total_minutes))}</td>
+      <td class="num red">${lateM > 0 ? lateM : ''}</td>
+      <td class="num red">${earlyM > 0 ? earlyM : ''}</td>
+      <td><span class="pill ${escapeHtml(r.status || '')}">${escapeHtml(detailedStatusLabel(r))}</span>${r._synthetic ? ' <span class="badge-silent">no record</span>' : ''}</td>
+    </tr>`;
+  })).join('');
 
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -1236,7 +1268,26 @@ function renderReportHtml({ summaries, from, to, me }) {
   .dot.good { background: #15803D; }
   .dot.bad  { background: #B91C1C; }
   .dot.na   { background: #D1D5DB; }
-  table { width: 100%; border-collapse: collapse; font-size: 10pt; margin-top: 2px; }
+  table.grid { width: 100%; border-collapse: collapse; font-size: 9.5pt; margin: 4px 0 22px; }
+  table.grid thead th {
+    text-align: left; padding: 7px 10px; background: #0F4C2A; color: #FFFFFF;
+    border: 1px solid #0B3A20; font-weight: 600; white-space: nowrap;
+  }
+  table.grid thead th.num { text-align: right; }
+  table.grid tbody td { padding: 6px 10px; border: 1px solid #E5E0D2; vertical-align: middle; white-space: nowrap; }
+  table.grid tbody tr:nth-child(even) td { background: #FAF8F1; }
+  table.grid tbody tr.shiftrow td { background: #EFF6FF; }
+  table.grid tbody tr.shiftrow td:first-child { border-left: 3px solid #1D4ED8; }
+  table.grid td.num { text-align: right; }
+  table.grid td.ctr { text-align: center; }
+  table.grid td.name { font-weight: 600; }
+  table.grid td.red { color: #B91C1C; font-weight: 700; }
+  table.grid td.cgood  { color: #166534; font-weight: 700; }
+  table.grid td.camber { color: #92400E; font-weight: 700; }
+  table.grid td.cred   { color: #991B1B; font-weight: 700; }
+  table.grid .sub { font-size: 8pt; color: #9CA3AF; }
+  .sec-title { font-size: 12pt; font-weight: 700; color: #0F4C2A; margin: 18px 0 2px; letter-spacing: 0.3px; }
+  table.grid tr.silent td { opacity: 0.75; }
   thead th {
     text-align: left; padding: 9px 14px;
     background: #0F4C2A; color: #FFFFFF; border: 1px solid #0B3A20;
@@ -1297,7 +1348,25 @@ function renderReportHtml({ summaries, from, to, me }) {
   <h1>Attendance Report</h1>
   <div class="period">${escapeHtml(fmtDate(from))} &nbsp;to&nbsp; ${escapeHtml(fmtDate(to))}  ·  ${summaries.length} staff  ·  sorted by location → department → name</div>
 
-  ${employeeBlocks}
+  <div class="sec-title">Summary</div>
+  <table class="grid">
+    <thead><tr>
+      <th>#</th><th>Employee</th><th>Shift</th><th>PSN</th><th>Department</th><th>Location</th>
+      <th class="num">Days present</th><th class="num">Total hours</th><th class="num">Avg/day</th>
+      <th class="num">Compliance</th><th class="num">Late</th><th class="num">Short</th><th class="num">Absent</th><th class="num">Leave</th>
+    </tr></thead>
+    <tbody>${summaryRows}</tbody>
+  </table>
+
+  <div class="sec-title">Detail</div>
+  <table class="grid">
+    <thead><tr>
+      <th>#</th><th>Employee</th><th>Shift</th><th>PSN</th><th>Department</th><th>Location</th>
+      <th>Date</th><th>Day</th><th>Assigned shift</th><th>In</th><th>Out</th><th class="num">Total</th>
+      <th class="num">Late (min)</th><th class="num">Early (min)</th><th>Status</th>
+    </tr></thead>
+    <tbody>${detailRows}</tbody>
+  </table>
 
   <footer class="foot">
     Generated from the ESAU HR Portal · esauhr.netlify.app<br>
