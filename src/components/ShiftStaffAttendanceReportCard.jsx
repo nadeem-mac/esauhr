@@ -565,8 +565,13 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       list.push(row);
       map.set(row.employee_id, list);
     }
-    // Synthesize absences for each flagged staff.
-    const weekdays = eachWeekday(from, to);
+    // Only synthesize absences for dates that actually have attendance
+    // data. A weekday with NO uploaded rows for anyone means the day was
+    // simply not uploaded — fabricating "absent" for the whole roster
+    // (e.g. the day before the selected date) is wrong, so we skip it.
+    // Nadeem 2026-06-04.
+    const datesWithData = new Set(attendance.map(r => r.attendance_date));
+    const weekdays = eachWeekday(from, to).filter(d => datesWithData.has(d));
     for (const emp of shiftStaff) {
       const existing  = map.get(emp.id) || [];
       const haveDates = new Set(existing.map(r => r.attendance_date));
@@ -823,37 +828,8 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       return ws;
     };
 
-    // ── Summary sheet ──  (Total hours / Avg/day removed.)
-    const sumHeaders = ['#','Employee','Shift','PSN','Department','Location','Check in','Late (mm:ss)','Compliance %','Short'];
-    const sumRows = reportSummaries.map((s, i) => {
-      const lateRow = s.rows.find(r => r.status === 'late');
-      const punchRow = lateRow || [...s.rows].reverse().find(r => r.first_punch) || s.rows[s.rows.length - 1] || null;
-      const checkIn = punchRow ? (fmtTime(punchRow.effective_in || punchRow.first_punch) || '') : '';
-      const lms = punchRow ? lateMMSS(punchRow) : '';
-      const comp = s.compliancePct;
-      const style = [];
-      if (s.isShift) {
-        style.push({ col: 2, fill: EMP_FILL, font: { bold: true, color: { argb: 'FF1E3A8A' } } });
-        style.push({ col: 3, fill: SHIFT_FILL, font: { bold: true, color: { argb: 'FFFFFFFF' } }, align: 'center' });
-      }
-      if (lms) style.push({ col: 8, fill: RED_FILL, font: { bold: true, color: { argb: 'FFB91C1C' } }, align: 'right' });
-      if (comp != null) {
-        const cf = comp >= 90 ? { bg: 'FFDCFCE7', fg: 'FF166534' } : comp >= 70 ? { bg: 'FFFEF3C7', fg: 'FF92400E' } : { bg: 'FFFEE2E2', fg: 'FF991B1B' };
-        style.push({ col: 9, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: cf.bg } }, font: { bold: true, color: { argb: cf.fg } }, align: 'right' });
-      }
-      return {
-        values: [
-          i + 1, s.emp.name, s.isShift ? 'SHIFT' : '', s.emp.id,
-          s.emp.department || '', s.emp.location || '',
-          checkIn, lms, comp != null ? comp + '%' : '', s.daysShort ? s.daysShort : '',
-        ],
-        rightCols: [1, 8, 9, 10],
-        style,
-      };
-    });
-    buildSheet('Summary', `Attendance Report (Summary) — ${fmtDate(from)} to ${fmtDate(to)}`, sumHeaders, sumRows, [4, 5, 6, 7]);
-
-    // ── Detail sheet ──  sorted by DATE, with a subtotal row per date
+    // ── Detail sheet only ──  (Summary dropped per Nadeem 2026-06-04.)
+    // Detail sheet — sorted by DATE, with a subtotal row per date
     //    (staff count + sum of Total h:m + sum of Late mm:ss).
     const detHeaders = ['#','Employee','Shift','PSN','Department','Location','Date','Day','Assigned shift','Check in','Out','Total (h:m)','Late (mm:ss)','Status'];
     const detRows = [];
@@ -1469,16 +1445,6 @@ function renderReportHtml({ summaries, from, to, me }) {
 
   <h1>Attendance Report</h1>
   <div class="period">${escapeHtml(fmtDate(from))} &nbsp;to&nbsp; ${escapeHtml(fmtDate(to))}  ·  ${summaries.length} staff  ·  sorted by location → department → name</div>
-
-  <div class="sec-title">Summary</div>
-  <table class="grid">
-    <thead><tr>
-      <th>#</th><th>Employee</th><th>Shift</th><th class="ctr">PSN</th><th class="ctr">Department</th><th class="ctr">Location</th>
-      <th class="ctr">Check in</th><th class="num">Late (mm:ss)</th>
-      <th class="num">Compliance</th><th class="num">Short</th>
-    </tr></thead>
-    <tbody>${summaryRows}</tbody>
-  </table>
 
   <div class="sec-title">Detail</div>
   <table class="grid">
