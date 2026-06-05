@@ -161,6 +161,13 @@ function statusPill(status) {
 // Walk a date window and emit YYYY-MM-DD strings for every weekday
 // (skipping KSA weekend Fri+Sat). Used to detect days where a flagged
 // shift staff has NO attendance row at all — those are silent absences.
+// Tolerance (minutes) before a worked day counts as an hours shortfall.
+// Matches the 15-minute late grace: arriving within grace and leaving on
+// time leaves a few minutes' gap against the assigned window (e.g. an
+// 08:00–17:00 = 9h window with an 08:06 in / 17:02 out = 8h56m presence),
+// which must NOT be flagged red. (Nadeem 2026-06-05)
+const SHORTFALL_GRACE_MIN = 15;
+
 function eachWeekday(fromIso, toIso) {
   const out = [];
   if (!fromIso || !toIso) return out;
@@ -799,9 +806,12 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       return Math.round(d / 60);
     };
     // True when a worked day fell short of the assigned hours.
-    const isShortfall = (r) => ['present', 'late', 'short'].includes(r.status)
-      && !isKsaWeekend(r.attendance_date)
-      && r.total_minutes != null && Number(r.total_minutes) < assignedMin(r);
+    // Total (h:m) is flagged red ONLY when the attendance engine itself
+    // classified the day as "short". Comparing raw presence to the gross
+    // window (08:00–17:00 = 9h incl. the 1h lunch) wrongly flagged Present
+    // staff who arrived a minute late. Trust the Status column so a row
+    // shown as Present is never red. (Nadeem 2026-06-05)
+    const isShortfall = (r) => r.status === 'short';
     const thin = { style: 'thin', color: { argb: 'FFD1D5DB' } };
     const allBorder = { top: thin, bottom: thin, left: thin, right: thin };
     const HEAD_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F4C2A' } };
@@ -1359,9 +1369,7 @@ function renderReportHtml({ summaries, from, to, me }) {
     let d = e - s; if (d <= 0) d += 24 * 3600;
     return Math.round(d / 60);
   };
-  const isShortfall = (r) => ['present', 'late', 'short'].includes(r.status)
-    && !isKsaWeekend(r.attendance_date)
-    && r.total_minutes != null && Number(r.total_minutes) < assignedMin(r);
+  const isShortfall = (r) => r.status === 'short';
 
   const flatD = [];
   for (const s of summaries) for (const r of s.rows) flatD.push({ s, r });
