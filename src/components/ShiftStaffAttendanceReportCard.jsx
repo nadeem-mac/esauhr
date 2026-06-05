@@ -36,7 +36,7 @@ import * as XLSX from 'xlsx';
 import XLSXStyle from 'xlsx-js-style';
 import ExcelJS from 'exceljs';
 import { directGet } from '../supabaseClient.js';
-import { todayLocal, addDaysIso } from '../lib/dateUtils.js';
+import { todayLocal, addDaysIso, isKsaWeekend } from '../lib/dateUtils.js';
 import { salutationFor } from '../lib/salutations.js';
 import { renderHrSignature, renderHrSignatureHtml } from '../lib/emailTemplates.js';
 
@@ -800,6 +800,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     };
     // True when a worked day fell short of the assigned hours.
     const isShortfall = (r) => ['present', 'late', 'short'].includes(r.status)
+      && !isKsaWeekend(r.attendance_date)
       && r.total_minutes != null && Number(r.total_minutes) < assignedMin(r);
     const thin = { style: 'thin', color: { argb: 'FFD1D5DB' } };
     const allBorder = { top: thin, bottom: thin, left: thin, right: thin };
@@ -944,10 +945,15 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
 
   // After a search, if the window includes today but no attendance rows
   // exist for today, the daily time card almost certainly wasn't uploaded
-  // yet — remind the user instead of showing an empty/all-absent report.
+  // yet — remind the user. But Fri/Sat are the KSA weekend: no duty, no
+  // upload expected, so never remind (or flag) on those days.
   const todayHasData = attendance.some(r => r.attendance_date === today);
+  const todayIsWeekend = isKsaWeekend(today);
   const needsUploadReminder = searched && !loading && !err
-    && from <= today && today <= to && !todayHasData;
+    && from <= today && today <= to && !todayHasData && !todayIsWeekend;
+  // Single weekend day selected with no data → say so plainly instead.
+  const weekendOnlyNotice = searched && !loading && !err
+    && from === to && isKsaWeekend(from) && !todayHasData;
 
   // ─── render ──
   return (
@@ -1040,6 +1046,20 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
             <div className="text-sm font-semibold">No time card uploaded for today ({fmtDate(today)})</div>
             <div className="text-[11px] mt-0.5">
               There's no attendance data for today yet. Please upload today's time card (Upload Time Card) first, then search again — otherwise today will be blank in the report.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Weekend (Fri/Sat) selected — no duty expected */}
+      {weekendOnlyNotice && (
+        <div className="flex items-start gap-2 mb-4 p-3 rounded-lg border"
+             style={{ background: '#EFF6FF', borderColor: '#93C5FD', color: '#1E3A8A' }}>
+          <Clock className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: '#1D4ED8' }} />
+          <div>
+            <div className="text-sm font-semibold">{fmtDate(from)} is a weekend (Fri/Sat)</div>
+            <div className="text-[11px] mt-0.5">
+              No attendance is expected on the KSA weekend, so there's nothing to report for this day. Any shift staff who worked it will still appear below if their punches were uploaded.
             </div>
           </div>
         </div>
@@ -1340,6 +1360,7 @@ function renderReportHtml({ summaries, from, to, me }) {
     return Math.round(d / 60);
   };
   const isShortfall = (r) => ['present', 'late', 'short'].includes(r.status)
+    && !isKsaWeekend(r.attendance_date)
     && r.total_minutes != null && Number(r.total_minutes) < assignedMin(r);
 
   const flatD = [];
