@@ -942,6 +942,13 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
+  // After a search, if the window includes today but no attendance rows
+  // exist for today, the daily time card almost certainly wasn't uploaded
+  // yet — remind the user instead of showing an empty/all-absent report.
+  const todayHasData = attendance.some(r => r.attendance_date === today);
+  const needsUploadReminder = searched && !loading && !err
+    && from <= today && today <= to && !todayHasData;
+
   // ─── render ──
   return (
     <div className="rounded-2xl border bg-white p-5"
@@ -1023,6 +1030,20 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
           {shiftStaff.length} staff · {shiftIdSet.size} shift staff
         </div>
       </div>
+
+      {/* Reminder: searched today but no time card uploaded for today */}
+      {needsUploadReminder && (
+        <div className="flex items-start gap-2 mb-4 p-3 rounded-lg border"
+             style={{ background: '#FEF3C7', borderColor: '#F59E0B', color: '#7C2D12' }}>
+          <FileSpreadsheet className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: '#B45309' }} />
+          <div>
+            <div className="text-sm font-semibold">No time card uploaded for today ({fmtDate(today)})</div>
+            <div className="text-[11px] mt-0.5">
+              There's no attendance data for today yet. Please upload today's time card (Upload Time Card) first, then search again — otherwise today will be blank in the report.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Body */}
       {shiftStaff.length === 0 ? (
