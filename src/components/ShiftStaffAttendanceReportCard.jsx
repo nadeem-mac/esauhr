@@ -38,6 +38,7 @@ import ExcelJS from 'exceljs';
 import { directGet } from '../supabaseClient.js';
 import { todayLocal, addDaysIso, isKsaWeekend, isoDayOfWeek } from '../lib/dateUtils.js';
 import { salutationFor } from '../lib/salutations.js';
+import { approvedEarlyDeparture, approvalCoversDate } from '../lib/attendanceExceptions.js';
 import { renderHrSignature, renderHrSignatureHtml } from '../lib/emailTemplates.js';
 
 // ─── helpers ───────────────────────────────────────────────────────────────
@@ -543,10 +544,17 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
           // Thursday with the following Sunday across the weekend.
           const nextDay = next && isNextCalendarDay(r.attendance_date, next.attendance_date)
             ? next : null;
-          enriched.push({
-            ...r,
-            ...enrichForShift(r, nextDay),
-          });
+          const e2 = { ...r, ...enrichForShift(r, nextDay) };
+          // Tag HR-approved early departures (e.g. nursing break) so the
+          // report shows a remark instead of an early-leave violation.
+          const appr = approvedEarlyDeparture(r.employee_id);
+          const earlyLeave = r.status === 'short' || Number(r.early_leave_minutes || 0) > 0;
+          if (appr && earlyLeave && approvalCoversDate(appr, r.attendance_date)) {
+            e2._approvedEarly = true;
+            e2._remark = appr.remark;
+            e2._remarkFull = appr.reason;
+          }
+          enriched.push(e2);
         }
       }
       setAttendance(enriched);
@@ -842,7 +850,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     // window (08:00–17:00 = 9h incl. the 1h lunch) wrongly flagged Present
     // staff who arrived a minute late. Trust the Status column so a row
     // shown as Present is never red. (Nadeem 2026-06-05)
-    const isShortfall = (r) => r.status === 'short';
+    const isShortfall = (r) => r.status === 'short' && !r._approvedEarly;
     const thin = { style: 'thin', color: { argb: 'FFD1D5DB' } };
     const allBorder = { top: thin, bottom: thin, left: thin, right: thin };
     const HEAD_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F4C2A' } };
@@ -980,11 +988,13 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
         const lms = lateMMSS(r);
         const holName = holidays.get(r.attendance_date);
         const worked = (r.punch_count || 0) > 0 || r.first_punch || r.last_punch;
-        const statusText = holName ? (worked ? `${detailedStatusLabel(r)} · Holiday: ${holName}` : `Holiday: ${holName}`) : detailedStatusLabel(r);
+        const statusText = holName ? (worked ? `${detailedStatusLabel(r)} · Holiday: ${holName}` : `Holiday: ${holName}`) : (r._approvedEarly ? r._remark : detailedStatusLabel(r));
         const fam = STATUS_FILL[r.status] || { bg: 'FFF3F4F6', fg: 'FF374151' };
         const style = [holName
           ? { col: 14, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: HOL.bg } }, font: { bold: true, color: { argb: HOL.fg } } }
-          : { col: 14, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: fam.bg } }, font: { bold: true, color: { argb: fam.fg } } }];
+          : r._approvedEarly
+            ? { col: 14, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCCFBF1' } }, font: { bold: true, color: { argb: 'FF115E59' } } }
+            : { col: 14, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: fam.bg } }, font: { bold: true, color: { argb: fam.fg } } }];
         if (s.isShift) {
           style.push({ col: 2, fill: EMP_FILL, font: { bold: true, color: { argb: 'FF1E3A8A' } } });
           style.push({ col: 3, fill: SHIFT_FILL, font: { bold: true, color: { argb: 'FFFFFFFF' } }, align: 'center' });
@@ -1045,14 +1055,18 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
         // their status. Either way the Status carries the holiday name.
         const statusText = holName
           ? (worked ? `${detailedStatusLabel(r)} · Holiday: ${holName}` : `Holiday: ${holName}`)
-          : detailedStatusLabel(r);
+          : (r._approvedEarly ? r._remark : detailedStatusLabel(r));
         const HOL_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEDE9FE' } }; // violet-100
         const HOL_FONT = { bold: true, color: { argb: 'FF5B21B6' } };
+        const APPR_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCCFBF1' } }; // teal-100
+        const APPR_FONT = { bold: true, color: { argb: 'FF115E59' } };
         const fam = STATUS_FILL[r.status] || { bg: 'FFF3F4F6', fg: 'FF374151' };
         const style = [
           holName
             ? { col: 14, fill: HOL_FILL, font: HOL_FONT }
-            : { col: 14, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: fam.bg } }, font: { bold: true, color: { argb: fam.fg } } },
+            : r._approvedEarly
+              ? { col: 14, fill: APPR_FILL, font: APPR_FONT }
+              : { col: 14, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: fam.bg } }, font: { bold: true, color: { argb: fam.fg } } },
         ];
         if (holName) {                                  // mark the date itself
           style.push({ col: 7, fill: HOL_FILL, font: HOL_FONT, align: 'center' });
@@ -1474,8 +1488,8 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
                       </thead>
                       <tbody>
                         {s.rows.map(r => {
-                          const pill = statusPill(r.status);
-                          const label = detailedStatusLabel(r);
+                          const pill = r._approvedEarly ? { bg: '#CCFBF1', fg: '#115E59' } : statusPill(r.status);
+                          const label = r._approvedEarly ? (r._remark || 'Approved early-out') : detailedStatusLabel(r);
                           const isSilent = !!r._synthetic;
                           const shift = fmtShiftWindow(r.expected_start, r.expected_end);
                           return (
@@ -1607,7 +1621,7 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
     let d = e - s; if (d <= 0) d += 24 * 3600;
     return Math.round(d / 60);
   };
-  const isShortfall = (r) => r.status === 'short';
+  const isShortfall = (r) => r.status === 'short' && !r._approvedEarly;
 
   const flatD = [];
   for (const s of summaries) for (const r of s.rows) flatD.push({ s, r });
@@ -1631,7 +1645,9 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
         ? (worked
             ? `<span class="pill ${escapeHtml(r.status || '')}">${escapeHtml(detailedStatusLabel(r))}</span> <span class="pill holiday">Holiday: ${escapeHtml(holName)}</span>`
             : `<span class="pill holiday">Holiday: ${escapeHtml(holName)}</span>`)
-        : `<span class="pill ${escapeHtml(r.status || '')}">${escapeHtml(detailedStatusLabel(r))}</span>${r._synthetic ? ' <span class="badge-silent">no record</span>' : ''}`;
+        : r._approvedEarly
+            ? `<span class="pill approved">${escapeHtml(r._remark || 'Approved early-out')}</span>`
+            : `<span class="pill ${escapeHtml(r.status || '')}">${escapeHtml(detailedStatusLabel(r))}</span>${r._synthetic ? ' <span class="badge-silent">no record</span>' : ''}`;
       detailParts.push(`<tr class="${s.isShift ? 'shiftrow' : ''}${r._synthetic ? ' silent' : ''}${holName ? ' holidayrow' : ''}">
         <td class="num">${dN}</td>
         <td class="name">${escapeHtml(s.emp.name)}</td>
@@ -1753,6 +1769,7 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
   table.grid tr.subtotal td { background: #FDE68A !important; font-weight: 700; color: #1F1B16; border-color: #D4C7AB; }
   table.grid tr.holidayrow td { background: #F5F3FF; }
   .pill.holiday { background: #EDE9FE; color: #5B21B6; font-weight: 700; }
+  .pill.approved { background: #CCFBF1; color: #115E59; font-weight: 700; }
   thead th {
     text-align: left; padding: 9px 14px;
     background: #0F4C2A; color: #FFFFFF; border: 1px solid #0B3A20;
