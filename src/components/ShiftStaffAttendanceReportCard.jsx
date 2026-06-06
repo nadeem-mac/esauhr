@@ -1140,8 +1140,6 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       lines.push(`Today so far: ${inCount} signed in (${lateCount} late), ${notIn} not yet in, ${leaveCount} on leave.`);
       lines.push('');
       lines.push(`Please see the attached Excel file which has two sheets: "${sheet1}" (arrivals) and "${sheet2}", the complete report for ${dayDate(yday)} (in/out, total hours, late and early departures).`);
-      lines.push('');
-      lines.push('Thanks and regards,');
     } else {
       const periodLabel = from === to ? fmtDateLong(from) : `${fmtDate(from)} – ${fmtDate(to)}`;
       const scopeLabel = reportScope === 'all'
