@@ -369,6 +369,8 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   const [err, setErr] = useState(null);
   const [searched, setSearched] = useState(false);  // gate: data shows only after Search
   const [holidays, setHolidays] = useState(new Map()); // date(YYYY-MM-DD) → holiday name
+  const [morningMode, setMorningMode] = useState(false);            // 10AM two-part report
+  const [pendingMorningGenerate, setPendingMorningGenerate] = useState(false);
 
   // Shift-flagged staff only. We also compute a stable string key
   // of just the IDs so the load() callback can depend on the SET of
@@ -584,6 +586,39 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   const presetYesterday = () => { const d = addDaysIso(today, -1); applyPreset(d, d); };
   const presetThisWeek  = () => { const dow = isoDayOfWeek(today); applyPreset(addDaysIso(today, -(dow < 0 ? 0 : dow)), today); };
   const presetThisMonth = () => applyPreset(`${today.slice(0, 8)}01`, today);
+
+  // Previous working day (skips Fri/Sat). Used by the morning report so
+  // "yesterday" means the last working day, not literally yesterday.
+  const prevWorkingDay = (iso) => {
+    let d = addDaysIso(iso, -1), guard = 0;
+    while (isKsaWeekend(d) && guard++ < 8) d = addDaysIso(d, -1);
+    return d;
+  };
+
+  // "Morning report for John" (run ~10AM): loads the last working day +
+  // today, then generates a two-part Excel (today = arrival roll-call,
+  // yesterday = full detail) and opens the email. The actual generate
+  // fires from the effect below once the data has loaded. (Nadeem 2026-06-05)
+  const handleMorningReport = useCallback(() => {
+    const t = todayLocal();
+    const y = prevWorkingDay(t);
+    setMorningMode(true);
+    setFrom(y); setTo(t); setSearched(true);
+    setPendingMorningGenerate(true);
+    load(y, t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load]);
+
+  useEffect(() => {
+    if (!pendingMorningGenerate || loading) return;
+    setPendingMorningGenerate(false);
+    (async () => {
+      try { await handleExcel({ morning: true }); } catch { /* still email */ }
+      emailJohn({ morning: true });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingMorningGenerate, loading]);
+
   // Changing either date invalidates the shown results — hide them and
   // require a fresh Search so exports never reflect a stale window.
   const onFromChange = (v) => { setFrom(v); setSearched(false); };
@@ -751,7 +786,8 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   // Excel export — one "Detail" sheet (every day) + a "Summary" sheet
   // (per-staff totals), respecting the chosen scope. Cells are coloured
   // to match the HTML report's status pills via xlsx-js-style.
-  const handleExcel = async () => {
+  const handleExcel = async (opts = {}) => {
+    const morning = !!opts.morning;
     // Status family → ARGB fill/font matching the HTML pills.
     const STATUS_FILL = {
       present:          { bg: 'FFDCFCE7', fg: 'FF166534' },
@@ -881,6 +917,105 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       return ws;
     };
 
+    // ── MORNING MODE — two sheets ──────────────────────────────────────
+    //   Sheet 1: Today — arrival roll-call (sign-outs not known yet).
+    //   Sheet 2: Yesterday — full detail (complete day).
+    if (morning) {
+      const t = to;                  // today
+      const yday = from;             // previous working day
+      const clock = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      const NEUTRAL = { bg: 'FFF1F5F9', fg: 'FF475569' };
+      const HOL = { bg: 'FFEDE9FE', fg: 'FF5B21B6' };
+
+      // Sheet 1 — Today roll-call (one row per staff).
+      const rcHeaders = ['#','Employee','Shift','PSN','Department','Location','Assigned shift','Check in','Late (mm:ss)','Status'];
+      const rcRows = reportSummaries.map((s, idx) => {
+        const tr = s.rows.find(r => r.attendance_date === t) || null;
+        const hol = holidays.get(t);
+        const worked = tr && (tr.first_punch || (tr.punch_count || 0) > 0) && tr.status !== 'absent';
+        const isLeave = tr && /_leave$/.test(tr.status || '');
+        let statusText, fam, checkIn = '', lms = '';
+        if (worked) {
+          checkIn = fmtTime(tr.effective_in || tr.first_punch) || '';
+          lms = lateMMSS(tr);
+          statusText = detailedStatusLabel(tr);
+          fam = STATUS_FILL[tr.status] || NEUTRAL;
+        } else if (isLeave) {
+          statusText = detailedStatusLabel(tr); fam = STATUS_FILL[tr.status] || NEUTRAL;
+        } else if (hol) {
+          statusText = `Holiday: ${hol}`; fam = HOL;
+        } else {
+          statusText = 'Not yet in'; fam = NEUTRAL;
+        }
+        const style = [{ col: 10, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: fam.bg } }, font: { bold: true, color: { argb: fam.fg } } }];
+        if (s.isShift) {
+          style.push({ col: 2, fill: EMP_FILL, font: { bold: true, color: { argb: 'FF1E3A8A' } } });
+          style.push({ col: 3, fill: SHIFT_FILL, font: { bold: true, color: { argb: 'FFFFFFFF' } }, align: 'center' });
+        }
+        if (lms) style.push({ col: 9, fill: RED_FILL, font: { bold: true, color: { argb: 'FFB91C1C' } }, align: 'center' });
+        return {
+          values: [
+            idx + 1, s.emp.name, s.isShift ? 'SHIFT' : '', s.emp.id,
+            s.emp.department || '', s.emp.location || '',
+            fmtShiftWindow(tr?.expected_start, tr?.expected_end) || '',
+            checkIn, lms, statusText,
+          ],
+          rightCols: [1],
+          style,
+        };
+      });
+      buildSheet('Today roll-call', `Today — Morning roll-call · ${fmtDate(t)} (as of ${clock}) · sign-outs finalize end-of-day`, rcHeaders, rcRows, [4, 5, 6, 7, 8, 9, 10]);
+
+      // Sheet 2 — Yesterday full detail (the complete previous working day).
+      const yHeaders = ['#','Employee','Shift','PSN','Department','Location','Date','Day','Assigned shift','Check in','Out','Total (h:m)','Late (mm:ss)','Status'];
+      const yFlat = [];
+      for (const s of reportSummaries) for (const r of s.rows) if (r.attendance_date === yday) yFlat.push({ s, r });
+      const yRows = [];
+      let yN = 0, ySumMin = 0, ySumLate = 0;
+      for (const { s, r } of yFlat) {
+        yN += 1; ySumMin += Number(r.total_minutes || 0); ySumLate += lateSec(r);
+        const lms = lateMMSS(r);
+        const holName = holidays.get(r.attendance_date);
+        const worked = (r.punch_count || 0) > 0 || r.first_punch || r.last_punch;
+        const statusText = holName ? (worked ? `${detailedStatusLabel(r)} · Holiday: ${holName}` : `Holiday: ${holName}`) : detailedStatusLabel(r);
+        const fam = STATUS_FILL[r.status] || { bg: 'FFF3F4F6', fg: 'FF374151' };
+        const style = [holName
+          ? { col: 14, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: HOL.bg } }, font: { bold: true, color: { argb: HOL.fg } } }
+          : { col: 14, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: fam.bg } }, font: { bold: true, color: { argb: fam.fg } } }];
+        if (s.isShift) {
+          style.push({ col: 2, fill: EMP_FILL, font: { bold: true, color: { argb: 'FF1E3A8A' } } });
+          style.push({ col: 3, fill: SHIFT_FILL, font: { bold: true, color: { argb: 'FFFFFFFF' } }, align: 'center' });
+        }
+        if (lms) style.push({ col: 13, fill: RED_FILL, font: { bold: true, color: { argb: 'FFB91C1C' } }, align: 'center' });
+        if (!holName && isShortfall(r)) style.push({ col: 12, fill: RED_FILL, font: { bold: true, color: { argb: 'FFB91C1C' } }, align: 'center' });
+        yRows.push({
+          values: [
+            yN, s.emp.name, s.isShift ? 'SHIFT' : '', s.emp.id,
+            s.emp.department || '', s.emp.location || '',
+            fmtDate(r.attendance_date), fmtDay(r.attendance_date),
+            fmtShiftWindow(r.expected_start, r.expected_end) || '',
+            fmtTime(r.effective_in) || '', fmtTime(r.effective_out) || '',
+            fmtHoursMins(r.total_minutes), lms, statusText,
+          ],
+          rightCols: [1],
+          style,
+        });
+      }
+      if (yRows.length) {
+        yRows.push({ subtotal: true, values: ['', `${yN} staff`, '', '', '', '', fmtDate(yday), '', '', '', 'TOTAL →', fmtHoursMins(ySumMin), fmtLateSec(ySumLate), ''], rightCols: [] });
+      }
+      buildSheet('Yesterday detail', `Yesterday — Full attendance · ${fmtDate(yday)}`, yHeaders, yRows, [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `Attendance-Morning-${t}.xlsx`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return;
+    }
+
     // ── Detail sheet only ──  (Summary dropped per Nadeem 2026-06-04.)
     // Detail sheet — sorted by DATE, with a subtotal row per date
     //    (staff count + sum of Total h:m + sum of Late mm:ss).
@@ -969,24 +1104,51 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   // after handleExcel so it can call it without a TDZ. (Nadeem 2026-06-05)
   const JOHN_EMAIL = 'johnho@evergreen-shipping.com.sa';
   const JOHN_CC_PSNS = ['H94458', 'H94330', 'H94712']; // Badria, Jaffar, Fahad (SUP)
-  const emailJohn = async () => {
-    // Export the workbook first so the user has the file to attach.
-    try { await handleExcel(); } catch { /* non-fatal — still open the mail */ }
-    const periodLabel = from === to ? fmtDateLong(from) : `${fmtDate(from)} – ${fmtDate(to)}`;
-    const scopeLabel = reportScope === 'all'
-      ? `all ${reportSummaries.length} staff`
-      : (reportSummaries[0]?.emp ? `${reportSummaries[0].emp.name} (${reportSummaries[0].emp.id})` : 'selected staff');
+  const emailJohn = async (opts = {}) => {
+    const morning = !!opts.morning;
+    // Export the workbook first so the user has the file to attach. In
+    // morning mode the two-part workbook was already exported by
+    // handleMorningReport's effect, so skip the re-export here.
+    if (!morning) { try { await handleExcel(); } catch { /* non-fatal */ } }
     const lines = [];
-    lines.push('Dear Mr. John,');
-    lines.push('');
-    lines.push(`Please find a brief attendance summary for ${periodLabel}, covering ${scopeLabel}. The detailed report (Excel) is attached.`);
-    lines.push('');
-    lines.push('(The Excel report has just been downloaded to your device — please attach it before sending.)');
-    lines.push('');
-    lines.push('Kindly let me know if you would like any specific day or employee expanded.');
+    let subject;
+    if (morning) {
+      const t = to, yday = from;
+      // Quick today roll-call counts.
+      let inCount = 0, lateCount = 0, notIn = 0, leaveCount = 0;
+      reportSummaries.forEach(s => {
+        const tr = s.rows.find(r => r.attendance_date === t);
+        const worked = tr && (tr.first_punch || (tr.punch_count || 0) > 0) && tr.status !== 'absent';
+        if (worked) { inCount += 1; if (tr.status === 'late') lateCount += 1; }
+        else if (tr && /_leave$/.test(tr.status || '')) leaveCount += 1;
+        else if (!holidays.has(t)) notIn += 1;
+      });
+      subject = `Daily Attendance — ${fmtDate(t)} (morning roll-call + ${fmtDate(yday)} full)`;
+      lines.push('Dear Mr. John,');
+      lines.push('');
+      lines.push(`Please find today's morning attendance roll-call as of ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} (${fmtDateLong(t)}). Sign-outs and total hours finalise at end of day, so today shows arrivals only.`);
+      lines.push('');
+      lines.push(`Today so far: ${inCount} signed in (${lateCount} late), ${notIn} not yet in, ${leaveCount} on leave.`);
+      lines.push('');
+      lines.push(`The attached Excel has two sheets: "Today roll-call" (arrivals) and "Yesterday detail" — the complete report for ${fmtDateLong(yday)} (in/out, total hours, late and early departures).`);
+      lines.push('');
+      lines.push('(The Excel has just been downloaded to your device — please attach it before sending.)');
+    } else {
+      const periodLabel = from === to ? fmtDateLong(from) : `${fmtDate(from)} – ${fmtDate(to)}`;
+      const scopeLabel = reportScope === 'all'
+        ? `all ${reportSummaries.length} staff`
+        : (reportSummaries[0]?.emp ? `${reportSummaries[0].emp.name} (${reportSummaries[0].emp.id})` : 'selected staff');
+      subject = `Attendance Report — ${from === to ? fmtDate(from) : `${fmtDate(from)} to ${fmtDate(to)}`}`;
+      lines.push('Dear Mr. John,');
+      lines.push('');
+      lines.push(`Please find a brief attendance summary for ${periodLabel}, covering ${scopeLabel}. The detailed report (Excel) is attached.`);
+      lines.push('');
+      lines.push('(The Excel report has just been downloaded to your device — please attach it before sending.)');
+      lines.push('');
+      lines.push('Kindly let me know if you would like any specific day or employee expanded.');
+    }
     lines.push('');
     lines.push(renderHrSignature());
-    const subject = `Attendance Report — ${from === to ? fmtDate(from) : `${fmtDate(from)} to ${fmtDate(to)}`}`;
     const ccEmails = JOHN_CC_PSNS.map(id => empMap[id]?.email).filter(Boolean);
     let href = `mailto:${encodeURIComponent(JOHN_EMAIL)}?`;
     if (ccEmails.length) href += `cc=${encodeURIComponent(ccEmails.join(','))}&`;
@@ -1054,6 +1216,16 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
             style={{ background: '#0F4C2A', color: '#FFFFFF' }}>
             <Mail className="w-3.5 h-3.5" />
             Email to John
+          </button>
+          <button
+            type="button"
+            onClick={handleMorningReport}
+            disabled={loading || shiftStaff.length === 0}
+            title="Run the 10AM report: today's arrival roll-call + yesterday's full detail. Downloads a 2-sheet Excel and opens the email to Mr. John."
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition disabled:opacity-50"
+            style={{ background: '#B45309', color: '#FFFFFF' }}>
+            <Clock className="w-3.5 h-3.5" />
+            Morning report (John)
           </button>
         </div>
       </div>
