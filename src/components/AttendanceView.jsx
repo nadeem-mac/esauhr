@@ -2458,8 +2458,19 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     // email engine wrongly treats them as office staff and skips
     // shift-aware wording.
     shiftRosterStaff.forEach(empKey => s.add(empKey));
+    // Source C: staff with the durable is_shift_staff flag on their
+    // employee record. They're shift workers regardless of whether a
+    // specific shift or monthly plan exists for this date/month. Without
+    // C, such a worker with no roster entry falls back to the 08:00–17:00
+    // office evaluation and gets mis-graded (false late/short/absent).
+    // With C they're correctly treated as on-roster, so a date with no
+    // assigned shift becomes off-roster rather than an office-hours
+    // violation. (Nadeem 2026-06-05)
+    (employees || []).forEach(emp => {
+      if (emp?.is_shift_staff && emp?.id) s.add(String(emp.id).toUpperCase());
+    });
     return s;
-  }, [acceptedShifts, shiftRosterStaff]);
+  }, [acceptedShifts, shiftRosterStaff, employees]);
 
   // Per-employee monthly shift list — used by the off-roster
   // diagnostic to show, for each employee in the off-roster
