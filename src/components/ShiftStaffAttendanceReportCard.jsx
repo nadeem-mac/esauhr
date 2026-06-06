@@ -1069,7 +1069,11 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     // Flatten all staff/day pairs, then stable-sort by date (within a
     // date the location→department→name order is preserved).
     const flat = [];
-    for (const s of reportSummaries) for (const r of s.rows) flat.push({ s, r });
+    // On Fri/Sat (KSA weekend) show ONLY staff who actually checked in;
+    // a no-show on a weekend is never an absence. (Nadeem 2026-06-06)
+    const _worked = (r) => (r.punch_count || 0) > 0 || !!r.first_punch || !!r.last_punch;
+    const _weekendNoShow = (r) => isKsaWeekend(r.attendance_date) && !_worked(r);
+    for (const s of reportSummaries) for (const r of s.rows) if (!_weekendNoShow(r)) flat.push({ s, r });
     flat.sort((a, b) => a.r.attendance_date < b.r.attendance_date ? -1 : a.r.attendance_date > b.r.attendance_date ? 1 : 0);
     let dN = 0, i = 0;
     while (i < flat.length) {
@@ -1531,7 +1535,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {s.rows.map(r => {
+                        {s.rows.filter(r => !(isKsaWeekend(r.attendance_date) && !((r.punch_count || 0) > 0 || r.first_punch || r.last_punch))).map(r => {
                           const pill = r._mgt ? { bg: '#DCFCE7', fg: '#166534' }
                                      : r._approvedEarly ? { bg: '#CCFBF1', fg: '#115E59' }
                                      : statusPill(r.status);
@@ -1676,7 +1680,8 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
   const isShortfall = (r) => r.status === 'short' && !r._approvedEarly;
 
   const flatD = [];
-  for (const s of summaries) for (const r of s.rows) flatD.push({ s, r });
+  const _workedH = (r) => (r.punch_count || 0) > 0 || !!r.first_punch || !!r.last_punch;
+  for (const s of summaries) for (const r of s.rows) if (!(isKsaWeekend(r.attendance_date) && !_workedH(r))) flatD.push({ s, r });
   flatD.sort((a, b) => a.r.attendance_date < b.r.attendance_date ? -1 : a.r.attendance_date > b.r.attendance_date ? 1 : 0);
 
   let dN = 0, di = 0;
