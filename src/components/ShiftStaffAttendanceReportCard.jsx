@@ -732,6 +732,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       return {
         emp, rows,
         isShift: shiftIdSet.has(emp.id),
+        is84: emp.working_hours_group === 'sup_team',   // 8AM–4PM (SUP) schedule
         daysPresent: present.length + late.length + shortRows.length,
         daysLate:    late.length,
         daysShort:   shortRows.length,
@@ -857,6 +858,9 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     const RED_FILL  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } };
     const SHIFT_FILL= { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1D4ED8' } };
     const EMP_FILL  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
+    const SUP84_FILL= { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD97706' } }; // amber-600 badge
+    const EMP84_FILL= { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } }; // amber-100 name
+    const AMBER_FILL= { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } }; // incomplete-but-approved Total
 
     const wb = new ExcelJS.Workbook();
 
@@ -962,11 +966,14 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
         if (s.isShift) {
           style.push({ col: 2, fill: EMP_FILL, font: { bold: true, color: { argb: 'FF1E3A8A' } } });
           style.push({ col: 3, fill: SHIFT_FILL, font: { bold: true, color: { argb: 'FFFFFFFF' } }, align: 'center' });
+        } else if (s.is84) {
+          style.push({ col: 2, fill: EMP84_FILL, font: { bold: true, color: { argb: 'FF92400E' } } });
+          style.push({ col: 3, fill: SUP84_FILL, font: { bold: true, color: { argb: 'FFFFFFFF' } }, align: 'center' });
         }
         if (lms) style.push({ col: 9, fill: RED_FILL, font: { bold: true, color: { argb: 'FFB91C1C' } }, align: 'center' });
         return {
           values: [
-            idx + 1, s.emp.name, s.isShift ? 'SHIFT' : '', s.emp.id,
+            idx + 1, s.emp.name, s.isShift ? 'SHIFT' : (s.is84 ? '8-4' : ''), s.emp.id,
             s.emp.department || '', s.emp.location || '',
             fmtShiftWindow(tr?.expected_start, tr?.expected_end) || '',
             checkIn, lms, statusText,
@@ -998,12 +1005,16 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
         if (s.isShift) {
           style.push({ col: 2, fill: EMP_FILL, font: { bold: true, color: { argb: 'FF1E3A8A' } } });
           style.push({ col: 3, fill: SHIFT_FILL, font: { bold: true, color: { argb: 'FFFFFFFF' } }, align: 'center' });
+        } else if (s.is84) {
+          style.push({ col: 2, fill: EMP84_FILL, font: { bold: true, color: { argb: 'FF92400E' } } });
+          style.push({ col: 3, fill: SUP84_FILL, font: { bold: true, color: { argb: 'FFFFFFFF' } }, align: 'center' });
         }
         if (lms) style.push({ col: 13, fill: RED_FILL, font: { bold: true, color: { argb: 'FFB91C1C' } }, align: 'center' });
         if (!holName && isShortfall(r)) style.push({ col: 12, fill: RED_FILL, font: { bold: true, color: { argb: 'FFB91C1C' } }, align: 'center' });
+        else if (!holName && r._approvedEarly) style.push({ col: 12, fill: AMBER_FILL, font: { bold: true, color: { argb: 'FF92400E' } }, align: 'center' });
         yRows.push({
           values: [
-            yN, s.emp.name, s.isShift ? 'SHIFT' : '', s.emp.id,
+            yN, s.emp.name, s.isShift ? 'SHIFT' : (s.is84 ? '8-4' : ''), s.emp.id,
             s.emp.department || '', s.emp.location || '',
             fmtDate(r.attendance_date), fmtDay(r.attendance_date),
             fmtShiftWindow(r.expected_start, r.expected_end) || '',
@@ -1075,12 +1086,16 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
         if (s.isShift) {
           style.push({ col: 2, fill: EMP_FILL, font: { bold: true, color: { argb: 'FF1E3A8A' } } });
           style.push({ col: 3, fill: SHIFT_FILL, font: { bold: true, color: { argb: 'FFFFFFFF' } }, align: 'center' });
+        } else if (s.is84) {
+          style.push({ col: 2, fill: EMP84_FILL, font: { bold: true, color: { argb: 'FF92400E' } } });
+          style.push({ col: 3, fill: SUP84_FILL, font: { bold: true, color: { argb: 'FFFFFFFF' } }, align: 'center' });
         }
         if (lms) style.push({ col: 13, fill: RED_FILL, font: { bold: true, color: { argb: 'FFB91C1C' } }, align: 'center' });
         if (!holName && isShortfall(r)) style.push({ col: 12, fill: RED_FILL, font: { bold: true, color: { argb: 'FFB91C1C' } }, align: 'center' });
+        else if (!holName && r._approvedEarly) style.push({ col: 12, fill: AMBER_FILL, font: { bold: true, color: { argb: 'FF92400E' } }, align: 'center' });
         detRows.push({
           values: [
-            dN, s.emp.name, s.isShift ? 'SHIFT' : '', s.emp.id,
+            dN, s.emp.name, s.isShift ? 'SHIFT' : (s.is84 ? '8-4' : ''), s.emp.id,
             s.emp.department || '', s.emp.location || '',
             fmtDate(r.attendance_date), fmtDay(r.attendance_date),
             fmtShiftWindow(r.expected_start, r.expected_end) || '',
@@ -1361,10 +1376,10 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
             const hasManagerEmail = !!manager?.email;
             return (
             <div key={s.emp.id} className="rounded-lg border bg-white overflow-hidden"
-                 style={{ borderColor: 'var(--border-soft)', borderLeft: s.isShift ? '4px solid #1D4ED8' : undefined }}>
+                 style={{ borderColor: 'var(--border-soft)', borderLeft: s.isShift ? '4px solid #1D4ED8' : (s.is84 ? '4px solid #D97706' : undefined) }}>
               {/* Summary row */}
               <div className="flex items-center gap-3 px-3 py-2.5"
-                   style={{ background: s.isShift ? '#EFF6FF' : undefined }}>
+                   style={{ background: s.isShift ? '#EFF6FF' : (s.is84 ? '#FFFBEB' : undefined) }}>
                 <button type="button" onClick={() => toggleExpand(s.emp.id)}
                         className="flex items-center gap-3 flex-1 min-w-0 text-left hover:opacity-80 transition">
                   {expanded.has(s.emp.id)
@@ -1375,6 +1390,9 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
                       {s.emp.name}
                       {s.isShift && (
                         <span style={{ background: '#1D4ED8', color: '#fff', fontSize: 9, fontWeight: 800, padding: '1px 6px', borderRadius: 999, letterSpacing: '.04em' }}>SHIFT</span>
+                      )}
+                      {!s.isShift && s.is84 && (
+                        <span style={{ background: '#D97706', color: '#fff', fontSize: 9, fontWeight: 800, padding: '1px 6px', borderRadius: 999, letterSpacing: '.04em' }}>8–4</span>
                       )}
                     </div>
                     <div className="text-[10px] flex items-center gap-2 flex-wrap mt-0.5" style={{ color: '#1F1B16' }}>
@@ -1525,7 +1543,11 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
                                   <span className="ml-1 text-[9px]" style={{ color: '#9CA3AF' }}>(next day)</span>
                                 )}
                               </td>
-                              <td className="py-1.5 pr-2 font-mono">{fmtHoursMins(r.total_minutes)}</td>
+                              <td className="py-1.5 pr-2 font-mono"
+                                  style={r._approvedEarly ? { background: '#FEF3C7', color: '#92400E', fontWeight: 700 }
+                                       : (r.status === 'short' ? { color: '#B91C1C', fontWeight: 700 } : undefined)}>
+                                {fmtHoursMins(r.total_minutes)}
+                              </td>
                               <td className="py-1.5 pr-2">
                                 <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold"
                                       style={{ background: pill.bg, color: pill.fg }}>
@@ -1648,10 +1670,10 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
         : r._approvedEarly
             ? `<span class="pill approved">${escapeHtml(r._remark || 'Approved early-out')}</span>`
             : `<span class="pill ${escapeHtml(r.status || '')}">${escapeHtml(detailedStatusLabel(r))}</span>${r._synthetic ? ' <span class="badge-silent">no record</span>' : ''}`;
-      detailParts.push(`<tr class="${s.isShift ? 'shiftrow' : ''}${r._synthetic ? ' silent' : ''}${holName ? ' holidayrow' : ''}">
+      detailParts.push(`<tr class="${s.isShift ? 'shiftrow' : (s.is84 ? 'sup84row' : '')}${r._synthetic ? ' silent' : ''}${holName ? ' holidayrow' : ''}">
         <td class="num">${dN}</td>
         <td class="name">${escapeHtml(s.emp.name)}</td>
-        <td class="ctr">${s.isShift ? '<span class="shift-badge">SHIFT</span>' : ''}</td>
+        <td class="ctr">${s.isShift ? '<span class="shift-badge">SHIFT</span>' : (s.is84 ? '<span class="sup-badge">8&ndash;4</span>' : '')}</td>
         <td class="ctr mono">${escapeHtml(s.emp.id)}</td>
         <td class="ctr">${escapeHtml(s.emp.department || '—')}</td>
         <td class="ctr">${escapeHtml(s.emp.location || '—')}</td>
@@ -1660,7 +1682,7 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
         <td class="ctr mono" style="color:${shift ? '#1F1B16' : '#9CA3AF'};">${escapeHtml(shift || '—')}</td>
         <td class="ctr mono">${escapeHtml(fmtTime(r.effective_in) || '—')}${r.isOvernight && r.effective_carry ? `<br><span class="sub">${escapeHtml(fmtTime(r.effective_carry))} (prev)</span>` : ''}</td>
         <td class="ctr mono">${escapeHtml(fmtTime(r.effective_out) || '—')}${r.isOvernight && r.effective_out ? ' <span class="sub">(next day)</span>' : ''}</td>
-        <td class="ctr mono${!holName && isShortfall(r) ? ' red' : ''}">${escapeHtml(fmtHoursMins(r.total_minutes))}</td>
+        <td class="ctr mono${!holName && isShortfall(r) ? ' red' : (!holName && r._approvedEarly ? ' amber' : '')}">${escapeHtml(fmtHoursMins(r.total_minutes))}</td>
         <td class="ctr red">${escapeHtml(lms)}</td>
         <td class="ctr">${statusCell}</td>
       </tr>`);
@@ -1721,6 +1743,13 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
     background: #1D4ED8; color: #FFFFFF; font-size: 8pt; font-weight: 700;
     padding: 1px 7px; border-radius: 999px; letter-spacing: 0.5px;
   }
+  .sup-badge {
+    display: inline-block; margin-left: 8px; vertical-align: middle;
+    background: #D97706; color: #FFFFFF; font-size: 8pt; font-weight: 700;
+    padding: 1px 7px; border-radius: 999px; letter-spacing: 0.5px;
+  }
+  table.grid tr.sup84row td { background: #FFFBEB; }
+  table.grid td.amber { color: #92400E; font-weight: 700; background: #FEF3C7; }
   .emp-header {
     display: flex; justify-content: space-between; align-items: flex-end;
     padding: 8px 12px;
