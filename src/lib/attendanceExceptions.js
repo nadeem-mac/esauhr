@@ -16,6 +16,28 @@
 //  (Nadeem 2026-06-06)
 // ─────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────
+//  Management / no-attendance-required staff (keyed by UPPERCASE PSN).
+//  These people are not expected to punch in, so they must NEVER be shown
+//  as Absent. The report shows them as "MGT" (green) instead.
+//  (Nadeem 2026-06-06)
+// ─────────────────────────────────────────────────────────────────────────
+export const MANAGEMENT_NO_ATTENDANCE = {
+  '062789': { label: 'MGT', title: 'Management / CEO' },   // CHUNG HSING HO
+};
+
+const _digitsM = (x) => String(x == null ? '' : x).replace(/\D/g, '');
+const _MGT_BY_DIGITS = Object.fromEntries(
+  Object.entries(MANAGEMENT_NO_ATTENDANCE).map(([k, v]) => [_digitsM(k), v]),
+);
+// Return the management record for a PSN (so it's shown as MGT, not Absent), or null.
+export function managementNoAttendance(psn) {
+  if (psn == null || psn === '') return null;
+  return MANAGEMENT_NO_ATTENDANCE[String(psn).toUpperCase()]
+      || _MGT_BY_DIGITS[_digitsM(psn)]
+      || null;
+}
+
 export const APPROVED_EARLY_DEPARTURES = {
   H94766: {
     earlyFrom: '16:00',

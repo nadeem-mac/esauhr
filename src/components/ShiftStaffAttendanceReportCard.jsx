@@ -38,7 +38,7 @@ import ExcelJS from 'exceljs';
 import { directGet } from '../supabaseClient.js';
 import { todayLocal, addDaysIso, isKsaWeekend, isoDayOfWeek } from '../lib/dateUtils.js';
 import { salutationFor } from '../lib/salutations.js';
-import { approvedEarlyDeparture, approvalCoversDate } from '../lib/attendanceExceptions.js';
+import { approvedEarlyDeparture, approvalCoversDate, managementNoAttendance } from '../lib/attendanceExceptions.js';
 import { renderHrSignature, renderHrSignatureHtml } from '../lib/emailTemplates.js';
 
 // ─── helpers ───────────────────────────────────────────────────────────────
@@ -343,7 +343,7 @@ function fmtShiftWindow(start, end) {
   const sMin = timeToMinutes(s);
   const eMin = timeToMinutes(e);
   const overnight = sMin != null && eMin != null && eMin < sMin;
-  return overnight ? `${s}  →  ${e}  (next day)` : `${s}  →  ${e}`;
+  return overnight ? `${s}  →  ${e}  (+1)` : `${s}  →  ${e}`;
 }
 
 // ─── main component ────────────────────────────────────────────────────────
@@ -545,10 +545,24 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
           const nextDay = next && isNextCalendarDay(r.attendance_date, next.attendance_date)
             ? next : null;
           const e2 = { ...r, ...enrichForShift(r, nextDay) };
+          // Whole-minute late grace (as agreed): an arrival is on time up to
+          // shift-start + 15 min counted in WHOLE minutes — so 08:15:xx is on
+          // time, late only from 08:16:00. Rows recorded under the older
+          // second-level rule may be stored as 'late' within this grace, so
+          // correct them for display. (Nadeem 2026-06-06)
+          const _toSec = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/); return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0)) : null; };
+          if (r.status === 'late') {
+            const fS = _toSec(r.first_punch), sS = _toSec(r.expected_start);
+            if (fS != null && sS != null && Math.floor(fS / 60) <= Math.floor(sS / 60) + 15) {
+              e2.status = 'present';
+              e2.late_minutes = 0;
+              e2._gracedLate = true;
+            }
+          }
           // Tag HR-approved early departures (e.g. nursing break) so the
           // report shows a remark instead of an early-leave violation.
           const appr = approvedEarlyDeparture(r.employee_id);
-          const earlyLeave = r.status === 'short' || Number(r.early_leave_minutes || 0) > 0;
+          const earlyLeave = e2.status === 'short' || Number(r.early_leave_minutes || 0) > 0;
           if (appr && earlyLeave && approvalCoversDate(appr, r.attendance_date)) {
             e2._approvedEarly = true;
             e2._remark = appr.remark;
@@ -655,19 +669,21 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     for (const emp of shiftStaff) {
       const existing  = map.get(emp.id) || [];
       const haveDates = new Set(existing.map(r => r.attendance_date));
+      const isMgt = !!managementNoAttendance(emp.id);   // CEO/management — never absent
       const synthetic = [];
       for (const d of weekdays) {
         if (!haveDates.has(d)) {
           synthetic.push({
             employee_id:        emp.id,
             attendance_date:    d,
-            status:             'absent',
+            status:             isMgt ? 'present' : 'absent',
             first_punch:        null,
             last_punch:         null,
             late_minutes:       0,
             early_leave_minutes:0,
             total_minutes:      null,
             _synthetic:         true,   // flag so we can render differently
+            _mgt:               isMgt,  // management: show "MGT" (green), not absent
           });
         }
       }
@@ -949,8 +965,11 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
         const hol = holidays.get(t);
         const worked = tr && (tr.first_punch || (tr.punch_count || 0) > 0) && tr.status !== 'absent';
         const isLeave = tr && /_leave$/.test(tr.status || '');
+        const isMgt = !!managementNoAttendance(s.emp.id);
         let statusText, fam, checkIn = '', lms = '';
-        if (worked) {
+        if (isMgt) {
+          statusText = 'MGT'; fam = { bg: 'FFDCFCE7', fg: 'FF166534' };
+        } else if (worked) {
           checkIn = fmtTime(tr.effective_in || tr.first_punch) || '';
           lms = lateMMSS(tr);
           statusText = detailedStatusLabel(tr);
@@ -985,7 +1004,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       buildSheet(sheetName1, `Today — Morning roll-call · ${fmtDate(t)} (as of ${clock}) · sign-outs finalize end-of-day`, rcHeaders, rcRows, [4, 5, 6, 7, 8, 9, 10]);
 
       // Sheet 2 — Yesterday full detail (the complete previous working day).
-      const yHeaders = ['#','Employee','Shift','PSN','Department','Location','Date','Day','Assigned shift','Check in','Out','Total (h:m)','Late (mm:ss)','Status'];
+      const yHeaders = ['#','Employee','Shift','PSN','Department','Location','Date','Day','Assigned shift','Check in','Check Out','Total (h:m)','Late (mm:ss)','Status'];
       const yFlat = [];
       for (const s of reportSummaries) for (const r of s.rows) if (r.attendance_date === yday) yFlat.push({ s, r });
       const yRows = [];
@@ -995,13 +1014,15 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
         const lms = lateMMSS(r);
         const holName = holidays.get(r.attendance_date);
         const worked = (r.punch_count || 0) > 0 || r.first_punch || r.last_punch;
-        const statusText = holName ? (worked ? `${detailedStatusLabel(r)} · Holiday: ${holName}` : `Holiday: ${holName}`) : (r._approvedEarly ? r._remark : detailedStatusLabel(r));
+        const statusText = holName ? (worked ? `${detailedStatusLabel(r)} · Holiday: ${holName}` : `Holiday: ${holName}`) : (r._mgt ? 'MGT' : r._approvedEarly ? r._remark : detailedStatusLabel(r));
         const fam = STATUS_FILL[r.status] || { bg: 'FFF3F4F6', fg: 'FF374151' };
         const style = [holName
           ? { col: 14, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: HOL.bg } }, font: { bold: true, color: { argb: HOL.fg } } }
-          : r._approvedEarly
-            ? { col: 14, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCCFBF1' } }, font: { bold: true, color: { argb: 'FF115E59' } } }
-            : { col: 14, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: fam.bg } }, font: { bold: true, color: { argb: fam.fg } } }];
+          : r._mgt
+            ? { col: 14, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCFCE7' } }, font: { bold: true, color: { argb: 'FF166534' } } }
+            : r._approvedEarly
+              ? { col: 14, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCCFBF1' } }, font: { bold: true, color: { argb: 'FF115E59' } } }
+              : { col: 14, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: fam.bg } }, font: { bold: true, color: { argb: fam.fg } } }];
         if (s.isShift) {
           style.push({ col: 2, fill: EMP_FILL, font: { bold: true, color: { argb: 'FF1E3A8A' } } });
           style.push({ col: 3, fill: SHIFT_FILL, font: { bold: true, color: { argb: 'FFFFFFFF' } }, align: 'center' });
@@ -1018,7 +1039,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
             s.emp.department || '', s.emp.location || '',
             fmtDate(r.attendance_date), fmtDay(r.attendance_date),
             fmtShiftWindow(r.expected_start, r.expected_end) || '',
-            fmtTime(r.effective_in) || '', (fmtTime(r.effective_out) ? fmtTime(r.effective_out) + (r.isOvernight ? ' (next day)' : '') : ''),
+            fmtTime(r.effective_in) || '', (fmtTime(r.effective_out) ? fmtTime(r.effective_out) + (r.isOvernight ? ' (+1)' : '') : ''),
             fmtHoursMins(r.total_minutes), lms, statusText,
           ],
           rightCols: [1],
@@ -1043,7 +1064,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     // ── Detail sheet only ──  (Summary dropped per Nadeem 2026-06-04.)
     // Detail sheet — sorted by DATE, with a subtotal row per date
     //    (staff count + sum of Total h:m + sum of Late mm:ss).
-    const detHeaders = ['#','Employee','Shift','PSN','Department','Location','Date','Day','Assigned shift','Check in','Out','Total (h:m)','Late (mm:ss)','Status'];
+    const detHeaders = ['#','Employee','Shift','PSN','Department','Location','Date','Day','Assigned shift','Check in','Check Out','Total (h:m)','Late (mm:ss)','Status'];
     const detRows = [];
     // Flatten all staff/day pairs, then stable-sort by date (within a
     // date the location→department→name order is preserved).
@@ -1066,18 +1087,22 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
         // their status. Either way the Status carries the holiday name.
         const statusText = holName
           ? (worked ? `${detailedStatusLabel(r)} · Holiday: ${holName}` : `Holiday: ${holName}`)
-          : (r._approvedEarly ? r._remark : detailedStatusLabel(r));
+          : (r._mgt ? 'MGT' : r._approvedEarly ? r._remark : detailedStatusLabel(r));
         const HOL_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEDE9FE' } }; // violet-100
         const HOL_FONT = { bold: true, color: { argb: 'FF5B21B6' } };
         const APPR_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCCFBF1' } }; // teal-100
         const APPR_FONT = { bold: true, color: { argb: 'FF115E59' } };
+        const MGT_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCFCE7' } }; // green (present)
+        const MGT_FONT = { bold: true, color: { argb: 'FF166534' } };
         const fam = STATUS_FILL[r.status] || { bg: 'FFF3F4F6', fg: 'FF374151' };
         const style = [
           holName
             ? { col: 14, fill: HOL_FILL, font: HOL_FONT }
-            : r._approvedEarly
-              ? { col: 14, fill: APPR_FILL, font: APPR_FONT }
-              : { col: 14, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: fam.bg } }, font: { bold: true, color: { argb: fam.fg } } },
+            : r._mgt
+              ? { col: 14, fill: MGT_FILL, font: MGT_FONT }
+              : r._approvedEarly
+                ? { col: 14, fill: APPR_FILL, font: APPR_FONT }
+                : { col: 14, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: fam.bg } }, font: { bold: true, color: { argb: fam.fg } } },
         ];
         if (holName) {                                  // mark the date itself
           style.push({ col: 7, fill: HOL_FILL, font: HOL_FONT, align: 'center' });
@@ -1099,7 +1124,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
             s.emp.department || '', s.emp.location || '',
             fmtDate(r.attendance_date), fmtDay(r.attendance_date),
             fmtShiftWindow(r.expected_start, r.expected_end) || '',
-            fmtTime(r.effective_in) || '', (fmtTime(r.effective_out) ? fmtTime(r.effective_out) + (r.isOvernight ? ' (next day)' : '') : ''),
+            fmtTime(r.effective_in) || '', (fmtTime(r.effective_out) ? fmtTime(r.effective_out) + (r.isOvernight ? ' (+1)' : '') : ''),
             fmtHoursMins(r.total_minutes), lms, statusText,
           ],
           rightCols: [1],
@@ -1155,6 +1180,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       // Quick today roll-call counts.
       let inCount = 0, lateCount = 0, notIn = 0, leaveCount = 0;
       reportSummaries.forEach(s => {
+        if (managementNoAttendance(s.emp.id)) return;   // CEO/management — not counted
         const tr = s.rows.find(r => r.attendance_date === t);
         const worked = tr && (tr.first_punch || (tr.punch_count || 0) > 0) && tr.status !== 'absent';
         if (worked) { inCount += 1; if (tr.status === 'late') lateCount += 1; }
@@ -1497,8 +1523,8 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
                         <tr className="text-left" style={{ color: '#1F1B16' }}>
                           <th className="py-1.5 pr-2 font-semibold">Date</th>
                           <th className="py-1.5 pr-2 font-semibold">Shift</th>
-                          <th className="py-1.5 pr-2 font-semibold">In</th>
-                          <th className="py-1.5 pr-2 font-semibold">Out</th>
+                          <th className="py-1.5 pr-2 font-semibold">Check In</th>
+                          <th className="py-1.5 pr-2 font-semibold">Check Out</th>
                           <th className="py-1.5 pr-2 font-semibold">Total</th>
                           <th className="py-1.5 pr-2 font-semibold">Status</th>
                           <th className="py-1.5 pr-2 font-semibold" title="Shift compliance: on-time in · full shift · both punches">✓</th>
@@ -1506,9 +1532,13 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
                       </thead>
                       <tbody>
                         {s.rows.map(r => {
-                          const pill = r._approvedEarly ? { bg: '#CCFBF1', fg: '#115E59' } : statusPill(r.status);
-                          const label = r._approvedEarly ? (r._remark || 'Approved early-out') : detailedStatusLabel(r);
-                          const isSilent = !!r._synthetic;
+                          const pill = r._mgt ? { bg: '#DCFCE7', fg: '#166534' }
+                                     : r._approvedEarly ? { bg: '#CCFBF1', fg: '#115E59' }
+                                     : statusPill(r.status);
+                          const label = r._mgt ? 'MGT'
+                                      : r._approvedEarly ? (r._remark || 'Approved early-out')
+                                      : detailedStatusLabel(r);
+                          const isSilent = !!r._synthetic && !r._mgt;
                           const shift = fmtShiftWindow(r.expected_start, r.expected_end);
                           return (
                             <tr key={r.attendance_date}
@@ -1540,7 +1570,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
                               <td className="py-1.5 pr-2 font-mono">
                                 {fmtTime(r.effective_out)}
                                 {r.isOvernight && r.effective_out && (
-                                  <span className="ml-1 text-[9px]" style={{ color: '#9CA3AF' }}>(next day)</span>
+                                  <span className="ml-1 text-[9px]" style={{ color: '#9CA3AF' }}>(+1)</span>
                                 )}
                               </td>
                               <td className="py-1.5 pr-2 font-mono"
@@ -1667,10 +1697,12 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
         ? (worked
             ? `<span class="pill ${escapeHtml(r.status || '')}">${escapeHtml(detailedStatusLabel(r))}</span> <span class="pill holiday">Holiday: ${escapeHtml(holName)}</span>`
             : `<span class="pill holiday">Holiday: ${escapeHtml(holName)}</span>`)
-        : r._approvedEarly
-            ? `<span class="pill approved">${escapeHtml(r._remark || 'Approved early-out')}</span>`
-            : `<span class="pill ${escapeHtml(r.status || '')}">${escapeHtml(detailedStatusLabel(r))}</span>${r._synthetic ? ' <span class="badge-silent">no record</span>' : ''}`;
-      detailParts.push(`<tr class="${s.isShift ? 'shiftrow' : (s.is84 ? 'sup84row' : '')}${r._synthetic ? ' silent' : ''}${holName ? ' holidayrow' : ''}">
+        : r._mgt
+            ? `<span class="pill present">MGT</span>`
+            : r._approvedEarly
+                ? `<span class="pill approved">${escapeHtml(r._remark || 'Approved early-out')}</span>`
+                : `<span class="pill ${escapeHtml(r.status || '')}">${escapeHtml(detailedStatusLabel(r))}</span>${r._synthetic ? ' <span class="badge-silent">no record</span>' : ''}`;
+      detailParts.push(`<tr class="${s.isShift ? 'shiftrow' : (s.is84 ? 'sup84row' : '')}${r._synthetic && !r._mgt ? ' silent' : ''}${holName ? ' holidayrow' : ''}">
         <td class="num">${dN}</td>
         <td class="name">${escapeHtml(s.emp.name)}</td>
         <td class="ctr">${s.isShift ? '<span class="shift-badge">SHIFT</span>' : (s.is84 ? '<span class="sup-badge">8&ndash;4</span>' : '')}</td>
@@ -1681,7 +1713,7 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
         <td class="ctr">${escapeHtml(fmtDay(r.attendance_date))}</td>
         <td class="ctr mono" style="color:${shift ? '#1F1B16' : '#9CA3AF'};">${escapeHtml(shift || '—')}</td>
         <td class="ctr mono">${escapeHtml(fmtTime(r.effective_in) || '—')}${r.isOvernight && r.effective_carry ? `<br><span class="sub">${escapeHtml(fmtTime(r.effective_carry))} (prev)</span>` : ''}</td>
-        <td class="ctr mono">${escapeHtml(fmtTime(r.effective_out) || '—')}${r.isOvernight && r.effective_out ? ' <span class="sub">(next day)</span>' : ''}</td>
+        <td class="ctr mono">${escapeHtml(fmtTime(r.effective_out) || '—')}${r.isOvernight && r.effective_out ? ' <span class="sub">(+1)</span>' : ''}</td>
         <td class="ctr mono${!holName && isShortfall(r) ? ' red' : (!holName && r._approvedEarly ? ' amber' : '')}">${escapeHtml(fmtHoursMins(r.total_minutes))}</td>
         <td class="ctr red">${escapeHtml(lms)}</td>
         <td class="ctr">${statusCell}</td>
@@ -1862,7 +1894,7 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
   <table class="grid">
     <thead><tr>
       <th>#</th><th>Employee</th><th>Shift</th><th class="ctr">PSN</th><th class="ctr">Department</th><th class="ctr">Location</th>
-      <th class="ctr">Date</th><th class="ctr">Day</th><th class="ctr">Assigned shift</th><th class="ctr">Check in</th><th class="ctr">Out</th><th class="ctr">Total</th>
+      <th class="ctr">Date</th><th class="ctr">Day</th><th class="ctr">Assigned shift</th><th class="ctr">Check in</th><th class="ctr">Check Out</th><th class="ctr">Total</th>
       <th class="ctr">Late (mm:ss)</th><th class="ctr">Status</th>
     </tr></thead>
     <tbody>${detailRows}</tbody>
