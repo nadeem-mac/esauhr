@@ -924,6 +924,9 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       const t = to;                  // today
       const yday = from;             // previous working day
       const clock = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      const dShort = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+      const sheetName1 = `Today (${dShort(t)}, ${fmtDay(t)})`.slice(0, 31);
+      const sheetName2 = `Yesterday detail (${dShort(yday)}, ${fmtDay(yday)})`.slice(0, 31);
       const NEUTRAL = { bg: 'FFF1F5F9', fg: 'FF475569' };
       const HOL = { bg: 'FFEDE9FE', fg: 'FF5B21B6' };
 
@@ -964,7 +967,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
           style,
         };
       });
-      buildSheet('Today roll-call', `Today — Morning roll-call · ${fmtDate(t)} (as of ${clock}) · sign-outs finalize end-of-day`, rcHeaders, rcRows, [4, 5, 6, 7, 8, 9, 10]);
+      buildSheet(sheetName1, `Today — Morning roll-call · ${fmtDate(t)} (as of ${clock}) · sign-outs finalize end-of-day`, rcHeaders, rcRows, [4, 5, 6, 7, 8, 9, 10]);
 
       // Sheet 2 — Yesterday full detail (the complete previous working day).
       const yHeaders = ['#','Employee','Shift','PSN','Department','Location','Date','Day','Assigned shift','Check in','Out','Total (h:m)','Late (mm:ss)','Status'];
@@ -1004,7 +1007,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       if (yRows.length) {
         yRows.push({ subtotal: true, values: ['', `${yN} staff`, '', '', '', '', fmtDate(yday), '', '', '', 'TOTAL →', fmtHoursMins(ySumMin), fmtLateSec(ySumLate), ''], rightCols: [] });
       }
-      buildSheet('Yesterday detail', `Yesterday — Full attendance · ${fmtDate(yday)}`, yHeaders, yRows, [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+      buildSheet(sheetName2, `Yesterday — Full attendance · ${fmtDate(yday)}`, yHeaders, yRows, [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
 
       const buf = await wb.xlsx.writeBuffer();
       const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -1114,6 +1117,12 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     let subject;
     if (morning) {
       const t = to, yday = from;
+      const wkShort   = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short' });
+      const dShort    = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+      const dayDate   = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+      const sheet1 = `Today (${dShort(t)}, ${wkShort(t)})`.slice(0, 31);
+      const sheet2 = `Yesterday detail (${dShort(yday)}, ${wkShort(yday)})`.slice(0, 31);
+      const clock = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
       // Quick today roll-call counts.
       let inCount = 0, lateCount = 0, notIn = 0, leaveCount = 0;
       reportSummaries.forEach(s => {
@@ -1126,13 +1135,13 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       subject = `Daily Attendance — ${fmtDate(t)} (morning roll-call + ${fmtDate(yday)} full)`;
       lines.push('Dear Mr. John,');
       lines.push('');
-      lines.push(`Please find today's morning attendance roll-call as of ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} (${fmtDateLong(t)}). Sign-outs and total hours finalise at end of day, so today shows arrivals only.`);
+      lines.push(`Please find today's morning attendance for check-in time as of ${clock} (${dayDate(t)}). Sign-outs and total hours finalise at end of day, so this report shows arrivals only.`);
       lines.push('');
       lines.push(`Today so far: ${inCount} signed in (${lateCount} late), ${notIn} not yet in, ${leaveCount} on leave.`);
       lines.push('');
-      lines.push(`The attached Excel has two sheets: "Today roll-call" (arrivals) and "Yesterday detail" — the complete report for ${fmtDateLong(yday)} (in/out, total hours, late and early departures).`);
+      lines.push(`Please see the attached Excel file which has two sheets: "${sheet1}" (arrivals) and "${sheet2}", the complete report for ${dayDate(yday)} (in/out, total hours, late and early departures).`);
       lines.push('');
-      lines.push('(The Excel has just been downloaded to your device — please attach it before sending.)');
+      lines.push('Thanks and regards,');
     } else {
       const periodLabel = from === to ? fmtDateLong(from) : `${fmtDate(from)} – ${fmtDate(to)}`;
       const scopeLabel = reportScope === 'all'
