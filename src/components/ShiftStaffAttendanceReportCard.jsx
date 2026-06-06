@@ -368,6 +368,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
   const [searched, setSearched] = useState(false);  // gate: data shows only after Search
+  const [holidays, setHolidays] = useState(new Map()); // date(YYYY-MM-DD) → holiday name
 
   // Shift-flagged staff only. We also compute a stable string key
   // of just the IDs so the load() callback can depend on the SET of
@@ -547,6 +548,17 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
         }
       }
       setAttendance(enriched);
+      // Public holidays in range — used to mark holiday dates and to
+      // suppress false absences on them. (Nadeem 2026-06-05)
+      try {
+        const hq = `select=date,name&date=gte.${fromArg}&date=lte.${toArg}&order=date`;
+        const hrows = await directGet('public_holidays', hq, { timeoutMs: 8000 });
+        const hmap = new Map();
+        (Array.isArray(hrows) ? hrows : []).forEach(h => {
+          if (h?.date) hmap.set(String(h.date).slice(0, 10), h.name || 'Public holiday');
+        });
+        setHolidays(hmap);
+      } catch { setHolidays(new Map()); /* non-fatal — table may be empty */ }
     } catch (e) {
       console.error('[shift-staff report] load failed:', e);
       setErr(e?.message || 'Failed to load attendance');
@@ -594,7 +606,9 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     // (e.g. the day before the selected date) is wrong, so we skip it.
     // Nadeem 2026-06-04.
     const datesWithData = new Set(attendance.map(r => r.attendance_date));
-    const weekdays = eachWeekday(from, to).filter(d => datesWithData.has(d));
+    // Skip weekends (eachWeekday) AND public holidays — staff aren't
+    // expected on a holiday, so don't fabricate absences for them.
+    const weekdays = eachWeekday(from, to).filter(d => datesWithData.has(d) && !holidays.has(d));
     for (const emp of shiftStaff) {
       const existing  = map.get(emp.id) || [];
       const haveDates = new Set(existing.map(r => r.attendance_date));
@@ -621,7 +635,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       map.set(emp.id, merged);
     }
     return map;
-  }, [attendance, shiftStaff, from, to]);
+  }, [attendance, shiftStaff, from, to, holidays]);
 
   // Per-employee summary stats — adds dedicated counts for late, short
   // (with sub-classification), and absent. These power the anomaly
@@ -711,7 +725,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   const scopeTag = reportScope === 'all' ? 'all-staff' : reportScope;
 
   const handleDownload = () => {
-    const html = renderReportHtml({ summaries: reportSummaries, from, to, me });
+    const html = renderReportHtml({ summaries: reportSummaries, from, to, me, holidays });
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
@@ -726,7 +740,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   // Open the report in a new window and trigger the print dialog so
   // Bashaier can "Save as PDF" with the clean letterhead layout.
   const handlePrint = () => {
-    const html = renderReportHtml({ summaries: reportSummaries, from, to, me });
+    const html = renderReportHtml({ summaries: reportSummaries, from, to, me, holidays });
     const w = window.open('', '_blank');
     if (!w) { alert('Pop-up blocked — allow pop-ups to print/save as PDF.'); return; }
     w.document.write(html);
@@ -887,16 +901,31 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
         sumMin  += Number(r.total_minutes || 0);
         sumLate += lateSec(r);
         const lms = lateMMSS(r);
+        const holName = holidays.get(r.attendance_date);
+        const worked = (r.punch_count || 0) > 0 || r.first_punch || r.last_punch;
+        // On a holiday: absentees are not absent (no duty); workers keep
+        // their status. Either way the Status carries the holiday name.
+        const statusText = holName
+          ? (worked ? `${detailedStatusLabel(r)} · Holiday: ${holName}` : `Holiday: ${holName}`)
+          : detailedStatusLabel(r);
+        const HOL_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEDE9FE' } }; // violet-100
+        const HOL_FONT = { bold: true, color: { argb: 'FF5B21B6' } };
         const fam = STATUS_FILL[r.status] || { bg: 'FFF3F4F6', fg: 'FF374151' };
         const style = [
-          { col: 14, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: fam.bg } }, font: { bold: true, color: { argb: fam.fg } } },
+          holName
+            ? { col: 14, fill: HOL_FILL, font: HOL_FONT }
+            : { col: 14, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: fam.bg } }, font: { bold: true, color: { argb: fam.fg } } },
         ];
+        if (holName) {                                  // mark the date itself
+          style.push({ col: 7, fill: HOL_FILL, font: HOL_FONT, align: 'center' });
+          style.push({ col: 8, fill: HOL_FILL, font: HOL_FONT, align: 'center' });
+        }
         if (s.isShift) {
           style.push({ col: 2, fill: EMP_FILL, font: { bold: true, color: { argb: 'FF1E3A8A' } } });
           style.push({ col: 3, fill: SHIFT_FILL, font: { bold: true, color: { argb: 'FFFFFFFF' } }, align: 'center' });
         }
         if (lms) style.push({ col: 13, fill: RED_FILL, font: { bold: true, color: { argb: 'FFB91C1C' } }, align: 'center' });
-        if (isShortfall(r)) style.push({ col: 12, fill: RED_FILL, font: { bold: true, color: { argb: 'FFB91C1C' } }, align: 'center' });
+        if (!holName && isShortfall(r)) style.push({ col: 12, fill: RED_FILL, font: { bold: true, color: { argb: 'FFB91C1C' } }, align: 'center' });
         detRows.push({
           values: [
             dN, s.emp.name, s.isShift ? 'SHIFT' : '', s.emp.id,
@@ -904,7 +933,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
             fmtDate(r.attendance_date), fmtDay(r.attendance_date),
             fmtShiftWindow(r.expected_start, r.expected_end) || '',
             fmtTime(r.effective_in) || '', fmtTime(r.effective_out) || '',
-            fmtHoursMins(r.total_minutes), lms, detailedStatusLabel(r),
+            fmtHoursMins(r.total_minutes), lms, statusText,
           ],
           rightCols: [1],
           style,
@@ -970,8 +999,9 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   // upload expected, so never remind (or flag) on those days.
   const todayHasData = attendance.some(r => r.attendance_date === today);
   const todayIsWeekend = isKsaWeekend(today);
+  const todayIsHoliday = holidays.has(today);
   const needsUploadReminder = searched && !loading && !err
-    && from <= today && today <= to && !todayHasData && !todayIsWeekend;
+    && from <= today && today <= to && !todayHasData && !todayIsWeekend && !todayIsHoliday;
   // Single weekend day selected with no data → say so plainly instead.
   const weekendOnlyNotice = searched && !loading && !err
     && from === to && isKsaWeekend(from) && !todayHasData;
@@ -1341,7 +1371,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
  * of the portal: warm cream paper background, evergreen header, copper
  * stamps. Print-stylesheet collapses to letter-format margins.
  */
-function renderReportHtml({ summaries, from, to, me }) {
+function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
   const now = new Date();
   const generatedAt = now.toLocaleString('en-GB', {
     weekday: 'long', day: '2-digit', month: 'short', year: 'numeric',
@@ -1416,7 +1446,14 @@ function renderReportHtml({ summaries, from, to, me }) {
       sumLate += lateSec(r);
       const lms = lateMMSS(r);
       const shift = fmtShiftWindow(r.expected_start, r.expected_end);
-      detailParts.push(`<tr class="${s.isShift ? 'shiftrow' : ''}${r._synthetic ? ' silent' : ''}">
+      const holName = holidays.get(r.attendance_date);
+      const worked = (r.punch_count || 0) > 0 || r.first_punch || r.last_punch;
+      const statusCell = holName
+        ? (worked
+            ? `<span class="pill ${escapeHtml(r.status || '')}">${escapeHtml(detailedStatusLabel(r))}</span> <span class="pill holiday">Holiday: ${escapeHtml(holName)}</span>`
+            : `<span class="pill holiday">Holiday: ${escapeHtml(holName)}</span>`)
+        : `<span class="pill ${escapeHtml(r.status || '')}">${escapeHtml(detailedStatusLabel(r))}</span>${r._synthetic ? ' <span class="badge-silent">no record</span>' : ''}`;
+      detailParts.push(`<tr class="${s.isShift ? 'shiftrow' : ''}${r._synthetic ? ' silent' : ''}${holName ? ' holidayrow' : ''}">
         <td class="num">${dN}</td>
         <td class="name">${escapeHtml(s.emp.name)}</td>
         <td class="ctr">${s.isShift ? '<span class="shift-badge">SHIFT</span>' : ''}</td>
@@ -1428,9 +1465,9 @@ function renderReportHtml({ summaries, from, to, me }) {
         <td class="ctr mono" style="color:${shift ? '#1F1B16' : '#9CA3AF'};">${escapeHtml(shift || '—')}</td>
         <td class="ctr mono">${escapeHtml(fmtTime(r.effective_in) || '—')}${r.isOvernight && r.effective_carry ? `<br><span class="sub">${escapeHtml(fmtTime(r.effective_carry))} (prev)</span>` : ''}</td>
         <td class="ctr mono">${escapeHtml(fmtTime(r.effective_out) || '—')}${r.isOvernight && r.effective_out ? ' <span class="sub">+1d</span>' : ''}</td>
-        <td class="ctr mono${isShortfall(r) ? ' red' : ''}">${escapeHtml(fmtHoursMins(r.total_minutes))}</td>
+        <td class="ctr mono${!holName && isShortfall(r) ? ' red' : ''}">${escapeHtml(fmtHoursMins(r.total_minutes))}</td>
         <td class="ctr red">${escapeHtml(lms)}</td>
-        <td class="ctr"><span class="pill ${escapeHtml(r.status || '')}">${escapeHtml(detailedStatusLabel(r))}</span>${r._synthetic ? ' <span class="badge-silent">no record</span>' : ''}</td>
+        <td class="ctr">${statusCell}</td>
       </tr>`);
       di += 1;
     }
@@ -1535,6 +1572,8 @@ function renderReportHtml({ summaries, from, to, me }) {
   .sec-title { font-size: 12pt; font-weight: 700; color: #0F4C2A; margin: 18px 0 2px; letter-spacing: 0.3px; }
   table.grid tr.silent td { opacity: 0.75; }
   table.grid tr.subtotal td { background: #FDE68A !important; font-weight: 700; color: #1F1B16; border-color: #D4C7AB; }
+  table.grid tr.holidayrow td { background: #F5F3FF; }
+  .pill.holiday { background: #EDE9FE; color: #5B21B6; font-weight: 700; }
   thead th {
     text-align: left; padding: 9px 14px;
     background: #0F4C2A; color: #FFFFFF; border: 1px solid #0B3A20;
