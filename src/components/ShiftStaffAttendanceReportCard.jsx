@@ -342,7 +342,7 @@ function fmtShiftWindow(start, end) {
   const sMin = timeToMinutes(s);
   const eMin = timeToMinutes(e);
   const overnight = sMin != null && eMin != null && eMin < sMin;
-  return overnight ? `${s}  →  ${e}  (+1)` : `${s}  →  ${e}`;
+  return overnight ? `${s}  →  ${e}  (next day)` : `${s}  →  ${e}`;
 }
 
 // ─── main component ────────────────────────────────────────────────────────
@@ -997,7 +997,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
             s.emp.department || '', s.emp.location || '',
             fmtDate(r.attendance_date), fmtDay(r.attendance_date),
             fmtShiftWindow(r.expected_start, r.expected_end) || '',
-            fmtTime(r.effective_in) || '', fmtTime(r.effective_out) || '',
+            fmtTime(r.effective_in) || '', (fmtTime(r.effective_out) ? fmtTime(r.effective_out) + (r.isOvernight ? ' (next day)' : '') : ''),
             fmtHoursMins(r.total_minutes), lms, statusText,
           ],
           rightCols: [1],
@@ -1070,7 +1070,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
             s.emp.department || '', s.emp.location || '',
             fmtDate(r.attendance_date), fmtDay(r.attendance_date),
             fmtShiftWindow(r.expected_start, r.expected_end) || '',
-            fmtTime(r.effective_in) || '', fmtTime(r.effective_out) || '',
+            fmtTime(r.effective_in) || '', (fmtTime(r.effective_out) ? fmtTime(r.effective_out) + (r.isOvernight ? ' (next day)' : '') : ''),
             fmtHoursMins(r.total_minutes), lms, statusText,
           ],
           rightCols: [1],
@@ -1508,7 +1508,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
                               <td className="py-1.5 pr-2 font-mono">
                                 {fmtTime(r.effective_out)}
                                 {r.isOvernight && r.effective_out && (
-                                  <span className="ml-1 text-[9px]" style={{ color: '#9CA3AF' }}>+1d</span>
+                                  <span className="ml-1 text-[9px]" style={{ color: '#9CA3AF' }}>(next day)</span>
                                 )}
                               </td>
                               <td className="py-1.5 pr-2 font-mono">{fmtHoursMins(r.total_minutes)}</td>
@@ -1643,7 +1643,7 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
         <td class="ctr">${escapeHtml(fmtDay(r.attendance_date))}</td>
         <td class="ctr mono" style="color:${shift ? '#1F1B16' : '#9CA3AF'};">${escapeHtml(shift || '—')}</td>
         <td class="ctr mono">${escapeHtml(fmtTime(r.effective_in) || '—')}${r.isOvernight && r.effective_carry ? `<br><span class="sub">${escapeHtml(fmtTime(r.effective_carry))} (prev)</span>` : ''}</td>
-        <td class="ctr mono">${escapeHtml(fmtTime(r.effective_out) || '—')}${r.isOvernight && r.effective_out ? ' <span class="sub">+1d</span>' : ''}</td>
+        <td class="ctr mono">${escapeHtml(fmtTime(r.effective_out) || '—')}${r.isOvernight && r.effective_out ? ' <span class="sub">(next day)</span>' : ''}</td>
         <td class="ctr mono${!holName && isShortfall(r) ? ' red' : ''}">${escapeHtml(fmtHoursMins(r.total_minutes))}</td>
         <td class="ctr red">${escapeHtml(lms)}</td>
         <td class="ctr">${statusCell}</td>
