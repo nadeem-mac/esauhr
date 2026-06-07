@@ -1224,7 +1224,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     lines.push(renderHrSignature());
     const ccEmails = JOHN_CC_PSNS.map(id => empMap[id]?.email).filter(Boolean);
     let href = `mailto:${encodeURIComponent(JOHN_EMAIL)}?`;
-    if (ccEmails.length) href += `cc=${encodeURIComponent(ccEmails.join(','))}&`;
+    if (ccEmails.length) href += `cc=${encodeURIComponent(ccEmails.join(';'))}&`;
     href += `subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(lines.join('\n'))}`;
     // Small delay so the download starts before the mail client steals focus.
     setTimeout(() => { window.location.href = href; }, 400);
