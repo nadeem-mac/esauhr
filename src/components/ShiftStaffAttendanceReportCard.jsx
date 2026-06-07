@@ -1186,11 +1186,15 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       const clock = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
       // Quick today roll-call counts.
       let inCount = 0, lateCount = 0, notIn = 0, leaveCount = 0;
+      // Lateness is judged from the check-in (whole-minute 15-min grace),
+      // not the stored status — so late arrivals with no out-punch yet count.
+      const _toSecL = (x) => { const m = String(x || '').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/); return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0)) : null; };
+      const _isLateIn = (r) => { const i = _toSecL(r.first_punch), st = _toSecL(r.expected_start); return i != null && st != null && Math.floor(i / 60) > Math.floor(st / 60) + 15; };
       reportSummaries.forEach(s => {
         if (managementNoAttendance(s.emp.id)) return;   // CEO/management — not counted
         const tr = s.rows.find(r => r.attendance_date === t);
         const worked = tr && (tr.first_punch || (tr.punch_count || 0) > 0) && tr.status !== 'absent';
-        if (worked) { inCount += 1; if (tr.status === 'late') lateCount += 1; }
+        if (worked) { inCount += 1; if (_isLateIn(tr)) lateCount += 1; }
         else if (tr && /_leave$/.test(tr.status || '')) leaveCount += 1;
         else if (!holidays.has(t)) notIn += 1;
       });
