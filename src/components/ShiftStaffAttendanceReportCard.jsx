@@ -840,7 +840,10 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       const inS = toSec(r.first_punch); const st = toSec(r.expected_start);
       if (inS == null || st == null) return '';
       const d = inS - st;
-      if (d <= 0 || r.status !== 'late') return '';
+      // Lateness is judged from the check-in alone (whole-minute 15-min
+      // grace), independent of status — so a late arrival with no out-punch
+      // yet still shows. On time up to start+15 min; late from +16.
+      if (d <= 0 || Math.floor(inS / 60) <= Math.floor(st / 60) + 15 || r._mgt) return '';
       const mm = Math.floor(d / 60); const ss = d % 60;
       return `${mm}:${String(ss).padStart(2, '0')}`;
     };
@@ -849,7 +852,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       const inS = toSec(r.first_punch); const st = toSec(r.expected_start);
       if (inS == null || st == null) return 0;
       const d = inS - st;
-      return (d > 0 && r.status === 'late') ? d : 0;
+      return (d > 0 && Math.floor(inS / 60) > Math.floor(st / 60) + 15) ? d : 0;
     };
     const fmtLateSec = (sec) => { if (!sec) return ''; const m = Math.floor(sec / 60); const s = sec % 60; return `${m}:${String(s).padStart(2, '0')}`; };
     // Assigned shift length in minutes (overnight-aware). Falls back to a
@@ -1634,7 +1637,7 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
     const inS = toSec(r.first_punch); const st = toSec(r.expected_start);
     if (inS == null || st == null) return '';
     const d = inS - st;
-    if (d <= 0 || r.status !== 'late') return '';
+    if (d <= 0 || Math.floor(inS / 60) <= Math.floor(st / 60) + 15 || r._mgt) return '';
     return `${Math.floor(d / 60)}:${String(d % 60).padStart(2, '0')}`;
   };
 
@@ -1667,7 +1670,7 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
     const inS = toSec(r.first_punch); const st = toSec(r.expected_start);
     if (inS == null || st == null) return 0;
     const d = inS - st;
-    return (d > 0 && r.status === 'late') ? d : 0;
+    return (d > 0 && Math.floor(inS / 60) > Math.floor(st / 60) + 15) ? d : 0;
   };
   const fmtLateSec = (sec) => { if (!sec) return ''; return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`; };
   const assignedMin = (r) => {
