@@ -115,8 +115,13 @@ export function isActiveEmployee(emp) {
 //  FULL ANNUAL ENTITLEMENT by Saudi Labor Law
 //    < 5 years of service   → 21 days
 //    ≥ 5 years of service   → 30 days
+//  A per-employee override (employees.annual_entitlement_override) takes
+//  precedence when set — used for company-granted entitlements that differ
+//  from the statutory 5-year rule. (Nadeem 2026-06-07)
 // ──────────────────────────────────────────────────────────────────────
-export function fullAnnualEntitlement(joinDate, asOf = new Date()) {
+export function fullAnnualEntitlement(joinDate, asOf = new Date(), override = null) {
+  const ov = Number(override);
+  if (Number.isFinite(ov) && ov > 0) return ov;
   return yearsOfService(joinDate, asOf) >= 5 ? 30 : 21;
 }
 
@@ -142,8 +147,13 @@ export function fullAnnualEntitlement(joinDate, asOf = new Date()) {
 //  fairness concern, not MOL Article 109 specifically. Without it,
 //  mid-year hires would get a free full-year allocation.
 // ──────────────────────────────────────────────────────────────────────
-export function annualEntitlementForYear(joinDate, year, asOf = new Date()) {
-  if (!joinDate) return { full: 21, proRatedForYear: 21, earned: 21, remaining: 0 };
+export function annualEntitlementForYear(joinDate, year, asOf = new Date(), override = null) {
+  const ov = Number(override);
+  const hasOverride = Number.isFinite(ov) && ov > 0;
+  if (!joinDate) {
+    const base = hasOverride ? ov : 21;
+    return { full: base, proRatedForYear: base, earned: base, remaining: 0 };
+  }
 
   const yearStart = new Date(year, 0, 1);
   const yearEnd   = new Date(year, 11, 31);
@@ -151,8 +161,8 @@ export function annualEntitlementForYear(joinDate, year, asOf = new Date()) {
   const today     = asOf instanceof Date ? asOf : new Date(asOf);
 
   // Flat rate for the whole calendar year — 21 or 30 based purely on
-  // years of service at year-end.
-  const fullEntitlement = fullAnnualEntitlement(joinDate, yearEnd);
+  // years of service at year-end, unless a per-employee override is set.
+  const fullEntitlement = fullAnnualEntitlement(joinDate, yearEnd, hasOverride ? ov : null);
 
   // Joined after the year ends → zero entitlement for this year.
   if (join > yearEnd) {
@@ -215,9 +225,13 @@ export function calculateBalance({ employee, leaveType, year, requests = [], adj
   let earned = entitlement;
 
   if (leaveType.id === 'annual' && employee.join_date) {
-    const ent = annualEntitlementForYear(employee.join_date, y, asOf);
+    const ent = annualEntitlementForYear(employee.join_date, y, asOf, employee.annual_entitlement_override);
     entitlement = ent.proRatedForYear ?? ent.full;
     earned = ent.earned;
+  } else if (leaveType.id === 'annual' && Number(employee.annual_entitlement_override) > 0) {
+    // Override set but no join date on file — use the override directly.
+    entitlement = Number(employee.annual_entitlement_override);
+    earned = entitlement;
   }
 
   const total = entitlement + carried + adjustment;
