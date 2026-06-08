@@ -779,10 +779,14 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
 
   // Summaries limited to the chosen export scope (all staff or one).
   const reportSummaries = useMemo(
-    () => (reportScope === 'all' ? summaries : summaries.filter(s => s.emp.id === reportScope)),
+    () => (reportScope === 'all' ? summaries
+         : reportScope === 'shift_only' ? summaries.filter(s => s.isShift)
+         : summaries.filter(s => s.emp.id === reportScope)),
     [summaries, reportScope],
   );
-  const scopeTag = reportScope === 'all' ? 'all-staff' : reportScope;
+  const scopeTag = reportScope === 'all' ? 'all-staff'
+                 : reportScope === 'shift_only' ? 'shift-staff'
+                 : reportScope;
 
   const handleDownload = () => {
     const html = renderReportHtml({ summaries: reportSummaries, from, to, me, holidays });
@@ -1210,7 +1214,9 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       const periodLabel = from === to ? fmtDateLong(from) : `${fmtDate(from)} – ${fmtDate(to)}`;
       const scopeLabel = reportScope === 'all'
         ? `all ${reportSummaries.length} staff`
-        : (reportSummaries[0]?.emp ? `${reportSummaries[0].emp.name} (${reportSummaries[0].emp.id})` : 'selected staff');
+        : reportScope === 'shift_only'
+          ? `${reportSummaries.length} shift staff`
+          : (reportSummaries[0]?.emp ? `${reportSummaries[0].emp.name} (${reportSummaries[0].emp.id})` : 'selected staff');
       subject = `Attendance Report — ${from === to ? fmtDate(from) : `${fmtDate(from)} to ${fmtDate(to)}`}`;
       lines.push('Dear Mr. John,');
       lines.push('');
@@ -1266,7 +1272,8 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
             title="Choose which staff the export covers"
             className="px-2 py-1.5 rounded-md text-xs border bg-white disabled:opacity-50"
             style={{ borderColor: 'var(--border-soft)', color: '#1F1B16', maxWidth: 220 }}>
-            <option value="all">All shift staff ({summaries.length})</option>
+            <option value="all">All staff ({summaries.length})</option>
+            <option value="shift_only">Shift staff only ({summaries.filter(s => s.isShift).length})</option>
             {summaries.map(s => (
               <option key={s.emp.id} value={s.emp.id}>{s.emp.name} ({s.emp.id})</option>
             ))}
