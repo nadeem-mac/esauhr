@@ -83,32 +83,93 @@ function isInShiftWindow(punchStr, startStr) {
  *   permission covers this date
  * @returns {{ verdict, detail }}
  */
+// Distance (minutes) between two clock minute-values on a 24h dial.
+function clockDist(a, b) {
+  let d = Math.abs(a - b);
+  if (d > 12 * 60) d = 24 * 60 - d;
+  return d;
+}
+function inWindow(punchStr, refStr, tol = 4 * 60) {
+  const p = timeToMinutes(punchStr);
+  const r = timeToMinutes(refStr);
+  if (p == null || r == null) return false;
+  return clockDist(p, r) <= tol;
+}
+
 export function classifyAssignedDay({
-  shift, att, hasLeaveCoverage, hasLatePerm, hasEarlyPerm,
+  shift, att, attNext, hasLeaveCoverage, hasLatePerm, hasEarlyPerm,
 }) {
   if (hasLeaveCoverage) {
     return { verdict: 'COVERED', detail: 'On approved leave' };
   }
 
+  const overnight = isOvernight(shift.start_time, shift.end_time);
+  const expStart = timeToMinutes(shift.start_time);
+  const expEnd   = timeToMinutes(shift.end_time);
+
+  // ── Overnight shifts (e.g. 20:00 → 05:00) ────────────────────────────
+  // The biometric export stores one row per CALENDAR day, so the morning
+  // clock-OUT (~05:00) lands on the NEXT day's row. We therefore pair the
+  // evening IN on day N with the morning OUT on day N+1, and we ignore any
+  // early-morning punch sitting on day N (it's the PREVIOUS night's out,
+  // not this shift's check-in). (Nadeem 2026-06-08 — Sonnie's SAJED case)
+  if (overnight) {
+    const dayN = [att?.first_punch, att?.last_punch].filter(Boolean);
+    // Evening candidates = day-N punches that are NOT in the end (morning)
+    // window — i.e. exclude carry-over outs from the prior night.
+    const evening = dayN.filter(p => !inWindow(p, shift.end_time));
+    const inPunch = evening.find(p => inWindow(p, shift.start_time)) || null;
+    const nextDay = [attNext?.first_punch, attNext?.last_punch].filter(Boolean);
+    const outPunch = nextDay.find(p => inWindow(p, shift.end_time)) || null;
+
+    if (!inPunch) {
+      // No evening check-in for this shift.
+      if (evening.length === 0 && dayN.length === 0) {
+        return { verdict: 'ABSENT', detail: 'No punches recorded' };
+      }
+      if (evening.length === 0) {
+        // Only carry-over morning punch(es) present — no check-in on file.
+        return { verdict: 'ABSENT', detail: 'No check-in within shift window' };
+      }
+      return {
+        verdict: 'WRONG_WINDOW',
+        detail: `In ${evening[0].slice(0,5)}, assigned ${shift.start_time.slice(0,5)} → ${shift.end_time.slice(0,5)}`,
+      };
+    }
+
+    if (!outPunch) {
+      return { verdict: 'NO_PUNCH_OUT', detail: `In ${inPunch.slice(0,5)}, no out recorded (overnight)` };
+    }
+
+    const inMin  = timeToMinutes(inPunch);
+    const outMin = timeToMinutes(outPunch);
+    if (!hasLatePerm && inMin != null && expStart != null) {
+      const lateBy = inMin - expStart;
+      if (lateBy > GRACE_MIN) {
+        return { verdict: 'LATE', detail: `In ${inPunch.slice(0,5)}, ${lateBy} min after ${shift.start_time.slice(0,5)}` };
+      }
+    }
+    if (!hasEarlyPerm && outMin != null && expEnd != null) {
+      const earlyBy = expEnd - outMin;            // both morning minute-values
+      if (earlyBy > GRACE_MIN) {
+        return { verdict: 'EARLY_OUT', detail: `Out ${outPunch.slice(0,5)} (+1), ${earlyBy} min before ${shift.end_time.slice(0,5)}` };
+      }
+    }
+    return { verdict: 'CLEAN', detail: `In ${inPunch.slice(0,5)}, out ${outPunch.slice(0,5)} (+1)` };
+  }
+
+  // ── Day shifts (same-day in/out) ─────────────────────────────────────
   const first = att?.first_punch || null;
   const last  = att?.last_punch  || null;
 
   if (!first && !last) {
-    return {
-      verdict: 'ABSENT',
-      detail: 'No punches recorded',
-    };
+    return { verdict: 'ABSENT', detail: 'No punches recorded' };
   }
 
-  const overnight = isOvernight(shift.start_time, shift.end_time);
-  const expStart = timeToMinutes(shift.start_time);
-  const expEnd   = timeToMinutes(shift.end_time);
   const inMin    = timeToMinutes(first);
   const outMin   = timeToMinutes(last);
 
-  // Wrong-window check: the IN punch falls way outside the assigned
-  // shift's start time. Treat as "wrong window" rather than "late"
-  // because labelling it 'late by 9 hours' would be misleading.
+  // Wrong-window check: the IN punch falls way outside the assigned start.
   if (first && !isInShiftWindow(first, shift.start_time)) {
     return {
       verdict: 'WRONG_WINDOW',
@@ -116,46 +177,25 @@ export function classifyAssignedDay({
     };
   }
 
-  // No punch-out — Sonnie's specific scenario. Comes before the late
-  // check because a row with first_punch but no last_punch is more
-  // actionable than 'late by 3 minutes' for payroll purposes.
   if (first && !last) {
-    return {
-      verdict: 'NO_PUNCH_OUT',
-      detail: `In ${first.slice(0,5)}, no out recorded`,
-    };
+    return { verdict: 'NO_PUNCH_OUT', detail: `In ${first.slice(0,5)}, no out recorded` };
   }
 
-  // Late arrival.
   if (!hasLatePerm && inMin != null && expStart != null) {
     const lateBy = inMin - expStart;
     if (lateBy > GRACE_MIN) {
-      return {
-        verdict: 'LATE',
-        detail: `In ${first.slice(0,5)}, ${lateBy} min after ${shift.start_time.slice(0,5)}`,
-      };
+      return { verdict: 'LATE', detail: `In ${first.slice(0,5)}, ${lateBy} min after ${shift.start_time.slice(0,5)}` };
     }
   }
 
-  // Early out — only meaningful for day shifts. Overnight shifts have
-  // their out-punch on the next calendar day, so we can't evaluate
-  // here without joining the next-day row. v1 punts on early-out for
-  // overnight; the NO_PUNCH_OUT check above already catches the
-  // worst case (no out at all).
-  if (!overnight && !hasEarlyPerm && outMin != null && expEnd != null) {
+  if (!hasEarlyPerm && outMin != null && expEnd != null) {
     const earlyBy = expEnd - outMin;
     if (earlyBy > GRACE_MIN) {
-      return {
-        verdict: 'EARLY_OUT',
-        detail: `Out ${last.slice(0,5)}, ${earlyBy} min before ${shift.end_time.slice(0,5)}`,
-      };
+      return { verdict: 'EARLY_OUT', detail: `Out ${last.slice(0,5)}, ${earlyBy} min before ${shift.end_time.slice(0,5)}` };
     }
   }
 
-  return {
-    verdict: 'CLEAN',
-    detail: `In ${first.slice(0,5)}, out ${last ? last.slice(0,5) : '—'}`,
-  };
+  return { verdict: 'CLEAN', detail: `In ${first.slice(0,5)}, out ${last ? last.slice(0,5) : '—'}` };
 }
 
 /**
@@ -246,9 +286,11 @@ export function summarizeShiftCompliance({
     const slot = byStaff.get(empKey);
     slot.assigned += 1;
 
+    const nextDateStr = (() => { const d = new Date(dateStr); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); })();
     const { verdict, detail } = classifyAssignedDay({
       shift: s,
       att: attIndex.get(dayKey) || null,
+      attNext: attIndex.get(`${empKey}|${nextDateStr}`) || null,
       hasLeaveCoverage: leaveCoverage.has(dayKey),
       hasLatePerm:  latePermSet.has(dayKey),
       hasEarlyPerm: earlyPermSet.has(dayKey),
