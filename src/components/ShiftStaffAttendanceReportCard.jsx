@@ -357,6 +357,19 @@ function enrichForShift(row, nextDayRow, prevDayRow) {
     const diff   = outMin - expEnd;
     out.fullShift = diff >= -GRACE_MIN;
   }
+  // Recompute the day's status from the corrected overnight pairing so the
+  // Status column no longer reflects the stale stored status (which was
+  // computed from the reversed punches). Only override when both effective
+  // punches are present (confident pairing). (Nadeem 2026-06-08 — Jasim)
+  if (actualIn && actualOut) {
+    const inMin   = timeToMinutes(actualIn);
+    const outMin  = timeToMinutes(actualOut);
+    const lateBy  = (inMin != null && expStart != null) ? inMin - expStart : 0;
+    const earlyBy = (outMin != null && expEnd != null) ? expEnd - outMin : 0;  // out just after midnight ⇒ negative ⇒ not early
+    if (lateBy > GRACE_MIN)       { out.status = 'late';    out.late_minutes = lateBy; out.early_leave_minutes = 0; }
+    else if (earlyBy > GRACE_MIN) { out.status = 'short';   out.late_minutes = 0;      out.early_leave_minutes = earlyBy; }
+    else                          { out.status = 'present'; out.late_minutes = 0;      out.early_leave_minutes = 0; }
+  }
   return out;
 }
 
@@ -581,7 +594,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
           // second-level rule may be stored as 'late' within this grace, so
           // correct them for display. (Nadeem 2026-06-06)
           const _toSec = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/); return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0)) : null; };
-          if (r.status === 'late') {
+          if (r.status === 'late' && !e2.isOvernight) {
             const fS = _toSec(r.first_punch), sS = _toSec(r.expected_start);
             if (fS != null && sS != null && Math.floor(fS / 60) <= Math.floor(sS / 60) + 15) {
               e2.status = 'present';
@@ -592,7 +605,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
           // Tag HR-approved early departures (e.g. nursing break) so the
           // report shows a remark instead of an early-leave violation.
           const appr = approvedEarlyDeparture(r.employee_id);
-          const earlyLeave = e2.status === 'short' || Number(r.early_leave_minutes || 0) > 0;
+          const earlyLeave = e2.status === 'short' || Number(e2.early_leave_minutes ?? r.early_leave_minutes ?? 0) > 0;
           if (appr && earlyLeave && approvalCoversDate(appr, r.attendance_date)) {
             e2._approvedEarly = true;
             e2._remark = appr.remark;
@@ -871,7 +884,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     // the raw punch seconds. Only for genuinely late rows.
     const lateMMSS = (r) => {
       const toSec = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/); return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0)) : null; };
-      const inS = toSec(r.first_punch); const st = toSec(r.expected_start);
+      const inS = toSec(r.effective_in || r.first_punch); const st = toSec(r.expected_start);
       if (inS == null || st == null) return '';
       const d = inS - st;
       // Lateness is judged from the check-in alone (whole-minute 15-min
@@ -883,7 +896,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     };
     const lateSec = (r) => {
       const toSec = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/); return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0)) : null; };
-      const inS = toSec(r.first_punch); const st = toSec(r.expected_start);
+      const inS = toSec(r.effective_in || r.first_punch); const st = toSec(r.expected_start);
       if (inS == null || st == null) return 0;
       const d = inS - st;
       return (d > 0 && Math.floor(inS / 60) > Math.floor(st / 60) + 15) ? d : 0;
@@ -1675,7 +1688,7 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
   const compCls = (p) => p == null ? '' : p >= 90 ? 'cgood' : p >= 70 ? 'camber' : 'cred';
   const lateMMSS = (r) => {
     const toSec = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/); return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0)) : null; };
-    const inS = toSec(r.first_punch); const st = toSec(r.expected_start);
+    const inS = toSec(r.effective_in || r.first_punch); const st = toSec(r.expected_start);
     if (inS == null || st == null) return '';
     const d = inS - st;
     if (d <= 0 || Math.floor(inS / 60) <= Math.floor(st / 60) + 15 || r._mgt) return '';
@@ -1708,7 +1721,7 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
   // DETAIL — sorted by DATE with a subtotal row per date.
   const lateSec = (r) => {
     const toSec = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/); return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0)) : null; };
-    const inS = toSec(r.first_punch); const st = toSec(r.expected_start);
+    const inS = toSec(r.effective_in || r.first_punch); const st = toSec(r.expected_start);
     if (inS == null || st == null) return 0;
     const d = inS - st;
     return (d > 0 && Math.floor(inS / 60) > Math.floor(st / 60) + 15) ? d : 0;
