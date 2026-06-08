@@ -43,11 +43,14 @@ function timeToMinutes(t) {
 }
 
 // True if expected_end < expected_start, meaning the shift crosses
-// midnight (e.g. 16:00 → 00:00, 20:00 → 05:00).
+// midnight (e.g. 16:00 → 05:00). A shift ending at "24:00" ends at
+// midnight, so it is also treated as overnight (out punch falls just
+// after 00:00). (Nadeem 2026-06-08 — Capt's Jasim 16:00→24:00 case)
 function isOvernight(startStr, endStr) {
   const s = timeToMinutes(startStr);
-  const e = timeToMinutes(endStr);
+  let e = timeToMinutes(endStr);
   if (s == null || e == null) return false;
+  if (e === 24 * 60) e = 0;            // 24:00 = midnight
   return e < s;
 }
 

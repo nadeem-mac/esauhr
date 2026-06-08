@@ -211,6 +211,14 @@ function computeWorkedMinutes(firstPunch, lastPunch) {
   return diff;
 }
 
+// Shift end in minutes, treating "24:00" as midnight (00:00 of the next
+// day). A shift like 16:00 → 24:00 ends at midnight, so its OUT punch
+// lands just after 00:00 — i.e. it must be handled as an overnight shift.
+function shiftEndMinutes(t) {
+  const m = timeToMinutes(t);
+  return m === 24 * 60 ? 0 : m;
+}
+
 // ── shift compliance + overnight handling ─────────────────────────────────
 //
 // "Did the staff follow the proper procedure for their assigned shift?"
@@ -270,7 +278,7 @@ function enrichForShift(row, nextDayRow, prevDayRow) {
     // prior shift's clock-OUT (already shown on yesterday's row), NOT a
     // check-in — so don't render today as Present. (Nadeem 2026-06-08)
     const prevOvernight = prevDayRow && prevDayRow.expected_start && prevDayRow.expected_end &&
-      timeToMinutes(prevDayRow.expected_end) < timeToMinutes(prevDayRow.expected_start);
+      shiftEndMinutes(prevDayRow.expected_end) < timeToMinutes(prevDayRow.expected_start);
     const fp = timeToMinutes(row.first_punch);
     const lp = timeToMinutes(row.last_punch);
     const hasPunch = !!(row.first_punch || row.last_punch);
@@ -289,8 +297,8 @@ function enrichForShift(row, nextDayRow, prevDayRow) {
   out.isShiftDay = true;
 
   const expStart = timeToMinutes(row.expected_start);
-  const expEnd   = timeToMinutes(row.expected_end);
-  out.isOvernight = expEnd < expStart;
+  const expEnd   = shiftEndMinutes(row.expected_end);
+  out.isOvernight = expEnd != null && expStart != null && expEnd < expStart;
 
   if (!out.isOvernight) {
     // ─── Day shift — straightforward ───────────────────────────
