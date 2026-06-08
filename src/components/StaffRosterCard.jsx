@@ -137,7 +137,7 @@ export default function StaffRosterCard({ employees = [], me }) {
       const writeRows = (list) => {
         for (const e of list) {
           seq += 1;
-          const vals = [seq, e.name, e.id, e.nationality, e.gender, e.department, e.location, fmtDate(e.join_date), e.email, e.status];
+          const vals = [seq, e.name, e.id, String(e.nationality || '—').toUpperCase(), e.gender, e.department, e.location, fmtDate(e.join_date), e.email, e.status];
           const row = ws.getRow(r);
           vals.forEach((v, i) => {
             const c = row.getCell(i + 1);
