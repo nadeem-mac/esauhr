@@ -251,7 +251,7 @@ function isNextCalendarDay(aDate, bDate) {
   return (b.getTime() - a.getTime()) === 24 * 3600 * 1000;
 }
 
-function enrichForShift(row, nextDayRow) {
+function enrichForShift(row, nextDayRow, prevDayRow) {
   const out = {
     isShiftDay:        false,
     isOvernight:       false,
@@ -264,7 +264,26 @@ function enrichForShift(row, nextDayRow) {
     total_minutes:     computeWorkedMinutes(row.first_punch, row.last_punch),
   };
   // Skip non-working days.
-  if (!row.expected_start || !row.expected_end) return out;
+  if (!row.expected_start || !row.expected_end) {
+    // Off day with no assigned shift. If the PREVIOUS day was an overnight
+    // shift and today's only punch(es) are early-morning, that punch is the
+    // prior shift's clock-OUT (already shown on yesterday's row), NOT a
+    // check-in — so don't render today as Present. (Nadeem 2026-06-08)
+    const prevOvernight = prevDayRow && prevDayRow.expected_start && prevDayRow.expected_end &&
+      timeToMinutes(prevDayRow.expected_end) < timeToMinutes(prevDayRow.expected_start);
+    const fp = timeToMinutes(row.first_punch);
+    const lp = timeToMinutes(row.last_punch);
+    const hasPunch = !!(row.first_punch || row.last_punch);
+    const onlyMorning = hasPunch && (fp == null || fp < 12 * 60) && (lp == null || lp < 12 * 60);
+    if (prevOvernight && onlyMorning) {
+      out.effective_in    = null;
+      out.effective_out   = null;
+      out.effective_carry = row.first_punch || row.last_punch;
+      out.total_minutes   = null;
+      out._carryOnly      = true;   // prior shift's out — not a real attendance day
+    }
+    return out;
+  }
   if (row.status === 'off_day' || row.status === 'off_roster') return out;
   if (row.status && row.status.endsWith('_leave')) return out;
   out.isShiftDay = true;
@@ -544,7 +563,10 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
           // Thursday with the following Sunday across the weekend.
           const nextDay = next && isNextCalendarDay(r.attendance_date, next.attendance_date)
             ? next : null;
-          const e2 = { ...r, ...enrichForShift(r, nextDay) };
+          const prev = (i > 0) ? list[i - 1] : null;
+          const prevDay = prev && isNextCalendarDay(prev.attendance_date, r.attendance_date)
+            ? prev : null;
+          const e2 = { ...r, ...enrichForShift(r, nextDay, prevDay) };
           // Whole-minute late grace (as agreed): an arrival is on time up to
           // shift-start + 15 min counted in WHOLE minutes — so 08:15:xx is on
           // time, late only from 08:16:00. Rows recorded under the older
@@ -1080,7 +1102,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     // a no-show on a weekend is never an absence. (Nadeem 2026-06-06)
     const _worked = (r) => (r.punch_count || 0) > 0 || !!r.first_punch || !!r.last_punch;
     const _weekendNoShow = (r) => isKsaWeekend(r.attendance_date) && !_worked(r);
-    for (const s of reportSummaries) for (const r of s.rows) if (!_weekendNoShow(r)) flat.push({ s, r });
+    for (const s of reportSummaries) for (const r of s.rows) if (!_weekendNoShow(r) && !r._carryOnly) flat.push({ s, r });
     flat.sort((a, b) => a.r.attendance_date < b.r.attendance_date ? -1 : a.r.attendance_date > b.r.attendance_date ? 1 : 0);
     let dN = 0, i = 0;
     while (i < flat.length) {
@@ -1549,7 +1571,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {s.rows.filter(r => !(isKsaWeekend(r.attendance_date) && !((r.punch_count || 0) > 0 || r.first_punch || r.last_punch))).map(r => {
+                        {s.rows.filter(r => !r._carryOnly && !(isKsaWeekend(r.attendance_date) && !((r.punch_count || 0) > 0 || r.first_punch || r.last_punch))).map(r => {
                           const pill = r._mgt ? { bg: '#DCFCE7', fg: '#166534' }
                                      : r._approvedEarly ? { bg: '#CCFBF1', fg: '#115E59' }
                                      : statusPill(r.status);
@@ -1695,7 +1717,7 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
 
   const flatD = [];
   const _workedH = (r) => (r.punch_count || 0) > 0 || !!r.first_punch || !!r.last_punch;
-  for (const s of summaries) for (const r of s.rows) if (!(isKsaWeekend(r.attendance_date) && !_workedH(r))) flatD.push({ s, r });
+  for (const s of summaries) for (const r of s.rows) if (!(isKsaWeekend(r.attendance_date) && !_workedH(r)) && !r._carryOnly) flatD.push({ s, r });
   flatD.sort((a, b) => a.r.attendance_date < b.r.attendance_date ? -1 : a.r.attendance_date > b.r.attendance_date ? 1 : 0);
 
   let dN = 0, di = 0;
