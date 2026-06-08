@@ -488,6 +488,10 @@ export default function ShiftComplianceCard({ employees = [], me, monthKey = nul
     setError('');
     try {
       const { monthStart, monthEnd } = monthRange;
+      // Overnight shifts on the last day clock OUT on the following morning,
+      // so pull one extra day of attendance so that out-punch is available
+      // for pairing. Shifts/leaves/permissions stay within the month.
+      const attEnd = (() => { const d = new Date(monthEnd); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); })();
       const [shifts, attendance, leaves, permissions] = await Promise.all([
         directGet(
           'employee_shifts',
@@ -499,7 +503,7 @@ export default function ShiftComplianceCard({ employees = [], me, monthKey = nul
         directGet(
           'attendance_daily',
           `select=employee_id,attendance_date,first_punch,last_punch,expected_start,expected_end,status,leave_request_id` +
-          `&attendance_date=gte.${monthStart}&attendance_date=lte.${monthEnd}`,
+          `&attendance_date=gte.${monthStart}&attendance_date=lte.${attEnd}`,
           { timeoutMs: 15000 },
         ).catch(() => []),
         directGet(
