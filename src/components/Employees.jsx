@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Search, Users, EyeOff, Eye } from 'lucide-react';
 import { Avatar, Empty } from './Dashboard.jsx';
+import StaffRosterCard from './StaffRosterCard.jsx';
 import { LOCATION_LABELS, calculateBalance, isActiveEmployee } from '../lib/leaveLogic.js';
 
 export default function Employees({ employees, leaveTypes, requests, balances, onSelect }) {
@@ -96,6 +97,8 @@ export default function Employees({ employees, leaveTypes, requests, balances, o
           </button>
         )}
       </div>
+
+      <StaffRosterCard employees={employees} />
 
       <div className="rounded-xl border overflow-hidden"
            style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>

@@ -27,7 +27,6 @@ import ShiftStaffAttendanceReportCard from './ShiftStaffAttendanceReportCard.jsx
 import ShiftComplianceCard from './ShiftComplianceCard.jsx';
 import HolidayShiftDefaultersCard from './HolidayShiftDefaultersCard.jsx';
 import HQAttendanceExportCard from './HQAttendanceExportCard.jsx';
-import StaffRosterCard from './StaffRosterCard.jsx';
 
 // ─── Error Boundary for AttendanceView sections ───────────────────────
 // Without this, a render-time exception anywhere in the tree under
@@ -6640,12 +6639,6 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         {hqExportOpen && ['H94830', 'H94152'].includes(me?.id) && (
           <AttendanceErrorBoundary label="HQ attendance export">
             <HQAttendanceExportCard me={me} employees={employees} />
-          </AttendanceErrorBoundary>
-        )}
-
-        {hqExportOpen && ['H94830', 'H94152'].includes(me?.id) && (
-          <AttendanceErrorBoundary label="Staff roster export">
-            <StaffRosterCard me={me} employees={employees} />
           </AttendanceErrorBoundary>
         )}
 
