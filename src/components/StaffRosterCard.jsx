@@ -58,6 +58,7 @@ export default function StaffRosterCard({ employees = [], me }) {
     const byLocDeptName = (a, b) =>
       String(a.location || '').localeCompare(String(b.location || '')) ||
       String(a.department || '').localeCompare(String(b.department || '')) ||
+      String(a.nationality || '').localeCompare(String(b.nationality || '')) ||
       a.name.localeCompare(b.name);
     const bucket = (saudi) => order
       .map(g => ({ gender: g, list: roster.filter(r => r.saudi === saudi && r.gender === g).sort(byLocDeptName) }))
@@ -170,7 +171,7 @@ export default function StaffRosterCard({ employees = [], me }) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `ESAU_Staff_Roster_Nationality_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      a.download = `ESAU_Active Staff_Details_${new Date().toISOString().slice(0, 10)}.xlsx`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1500);
     } catch (e) {
