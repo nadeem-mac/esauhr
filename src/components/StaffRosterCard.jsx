@@ -55,8 +55,12 @@ export default function StaffRosterCard({ employees = [], me }) {
 
   const groups = useMemo(() => {
     const order = ['Female', 'Male', 'Unspecified'];
+    const byLocDeptName = (a, b) =>
+      String(a.location || '').localeCompare(String(b.location || '')) ||
+      String(a.department || '').localeCompare(String(b.department || '')) ||
+      a.name.localeCompare(b.name);
     const bucket = (saudi) => order
-      .map(g => ({ gender: g, list: roster.filter(r => r.saudi === saudi && r.gender === g).sort((a, b) => a.name.localeCompare(b.name)) }))
+      .map(g => ({ gender: g, list: roster.filter(r => r.saudi === saudi && r.gender === g).sort(byLocDeptName) }))
       .filter(b => b.list.length);
     const saudi = bucket(true);
     const nonSaudi = bucket(false);
