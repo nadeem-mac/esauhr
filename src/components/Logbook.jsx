@@ -52,8 +52,10 @@ import { NotebookPen, Save, Loader2, Search, CheckCircle2, AlertCircle, Wallet, 
 import { calculateRequestDays, calculateBalance, fmtDate } from '../lib/leaveLogic.js';
 import { generateLogbookPdfBlob } from '../lib/leaveApplicationPdf.js';
 import LeaveApprovedModal from './LeaveApprovedModal.jsx';
+import LogbookPermissionEntry from './LogbookPermissionEntry.jsx';
 
 export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }) {
+  const [mode, setMode] = useState('leave');   // 'leave' | 'permission'
   const [empQuery, setEmpQuery] = useState('');
   const [empId, setEmpId] = useState('');
   const [leaveType, setLeaveType] = useState('annual');
@@ -385,6 +387,24 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
         </span>
       </header>
 
+      {/* Leave / Permission mode switch */}
+      <div className="flex gap-2">
+        {[['leave', 'Leave'], ['permission', 'Permission']].map(([k, lbl]) => (
+          <button key={k} type="button" onClick={() => setMode(k)}
+            className="px-3 py-1.5 rounded text-sm font-semibold border transition"
+            style={mode === k
+              ? { background: '#0F4C2A', color: '#FFFFFF', borderColor: '#0F4C2A' }
+              : { background: '#FFFFFF', color: '#1F1B16', borderColor: 'rgba(0,0,0,0.15)' }}>
+            {lbl}
+          </button>
+        ))}
+      </div>
+
+      {mode === 'permission' && (
+        <LogbookPermissionEntry me={me} employees={employees} onSaved={onSaved} />
+      )}
+
+      {mode === 'leave' && (<>
       {/* Form */}
       <div className="rounded-lg border border-black/10 bg-white p-4 space-y-3">
         {/* Employee picker */}
@@ -909,6 +929,7 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
           onClose={() => setSavedModal(null)}
         />
       )}
+      </>)}
     </div>
   );
 }
