@@ -79,7 +79,9 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
     setBusy(true); setMsg(null);
     try {
       const now = new Date().toISOString();
-      const deciderId = me.auth_user_id || me.id;
+      // decided_by columns FK to employees.id (the PSN) — use me.id, not
+      // the auth UUID, or the insert violates the foreign key.
+      const deciderId = me.id;
       const row = {
         employee_id:        empId,
         type,
