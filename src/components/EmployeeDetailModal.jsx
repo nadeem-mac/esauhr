@@ -99,15 +99,21 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
     setDelError('');
     try {
       const targetStatus = isAlreadyInactive ? 'active' : 'inactive';
+      // Primary change — must succeed. Keep the payload to the column we
+      // know exists so a missing audit column can't 400 the whole PATCH.
       const result = await directPatch('employees', 'id', employee.id, {
         employment_status: targetStatus,
-        // Audit fields — who toggled the status and when. Schema
-        // columns are tolerant: if they don't exist the PATCH still
-        // succeeds because PostgREST drops unknown fields rather than
-        // 400. Adding them gives a paper trail when columns exist.
-        status_changed_by: me?.id || null,
-        status_changed_at: new Date().toISOString(),
       });
+      // Audit fields — who toggled the status and when. Best-effort: these
+      // columns may not exist in every environment, and PostgREST returns
+      // PGRST204 (not a silent drop) for unknown columns, so we send them
+      // separately and ignore failures rather than block the deactivation.
+      try {
+        await directPatch('employees', 'id', employee.id, {
+          status_changed_by: me?.id || null,
+          status_changed_at: new Date().toISOString(),
+        });
+      } catch { /* audit columns absent — non-fatal */ }
       setDelResult({ ok: true, status: targetStatus, name: employee.name });
       setDelStage('done');
       setTimeout(() => {
