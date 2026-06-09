@@ -11,8 +11,8 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { directGet, directPost, directDelete } from '../supabaseClient.js';
-import { Save, Loader2, CheckCircle2, AlertCircle, Trash2, Clock } from 'lucide-react';
-import { PERMISSION_TYPES } from '../lib/permissionLogic.js';
+import { Save, Loader2, CheckCircle2, AlertCircle, Trash2, Clock, Mail } from 'lucide-react';
+import { PERMISSION_TYPES, PERMISSION_QUOTA, summariseMonth, checkExceeds } from '../lib/permissionLogic.js';
 import { logAction } from '../lib/audit.js';
 
 const toMin = (t) => { const m = String(t || '').match(/^(\d{1,2}):(\d{2})/); return m ? (+m[1]) * 60 + (+m[2]) : null; };
@@ -29,6 +29,7 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
   const [msg, setMsg]           = useState(null);
   const [recent, setRecent]     = useState([]);
   const [deletingId, setDeletingId] = useState(null);
+  const [monthRows, setMonthRows] = useState([]);
 
   const empMatches = useMemo(() => {
     const q = (empQuery || '').trim().toLowerCase();
@@ -46,6 +47,63 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
     return b - a;
   }, [timeFrom, timeTo]);
   const hours = useMemo(() => (Number.isNaN(durationMin) || durationMin <= 0 ? 0 : Math.round((durationMin / 60) * 10) / 10), [durationMin]);
+
+  const monthKey = (date || '').slice(0, 7);   // 'YYYY-MM'
+
+  // Load this employee's permissions for the selected month (to compute usage).
+  useEffect(() => {
+    let cancelled = false;
+    if (!empId || !monthKey) { setMonthRows([]); return; }
+    (async () => {
+      try {
+        const rows = await directGet(
+          'permission_requests',
+          `select=id,type,permission_date,time_from,time_to,hours,status,stage`
+          + `&employee_id=eq.${empId}`
+          + `&permission_date=gte.${monthKey}-01&permission_date=lte.${monthKey}-31`
+          + `&order=permission_date.asc`,
+          { timeoutMs: 10000 },
+        );
+        if (!cancelled) setMonthRows(rows || []);
+      } catch (e) { if (!cancelled) setMonthRows([]); }
+    })();
+    return () => { cancelled = true; };
+  }, [empId, monthKey, msg]);
+
+  const monthSummary = useMemo(() => summariseMonth(monthRows), [monthRows]);
+  const exceed = useMemo(
+    () => (empId && hours > 0 ? checkExceeds(monthRows, hours) : { willExceed: false }),
+    [empId, hours, monthRows],
+  );
+
+  // Compose a soft courtesy email to the staff listing their month's
+  // permissions + a gentle note about evaluation / personal score.
+  function emailStaffNotice() {
+    if (!selectedEmp?.email) { setMsg({ kind: 'err', text: 'No email on file for this employee.' }); return; }
+    const monthLabel = new Date(date + 'T00:00:00').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+    const counted = monthRows.filter(r => r.status === 'pending' || r.status === 'approved');
+    const all = [...counted, { type, permission_date: date, time_from: timeFrom, time_to: timeTo }];
+    const lines = all
+      .sort((a, b) => String(a.permission_date).localeCompare(String(b.permission_date)))
+      .map(r => `  • ${r.permission_date}  ·  ${PERMISSION_TYPES[r.type]?.label || r.type}  ·  ${String(r.time_from || '').slice(0,5)}–${String(r.time_to || '').slice(0,5)}`);
+    const totalH = Math.round((monthSummary.hoursUsed + hours) * 10) / 10;
+    const totalN = monthSummary.occurrences + 1;
+    const first = (selectedEmp.name || '').split(' ')[0] || selectedEmp.name;
+    const body = [
+      `Dear ${first},`, '',
+      `This is a courtesy note regarding your permission (late arrival / early departure) usage for ${monthLabel}:`, '',
+      ...lines, '',
+      `Total this month: ${totalH} hour(s) across ${totalN} permission(s).`, '',
+      `As per company policy, each employee is allowed a maximum of ${PERMISSION_QUOTA.monthlyOccurrences} permissions (${PERMISSION_QUOTA.monthlyHours} hours) per calendar month. You have now reached or exceeded this allowance.`, '',
+      `Kindly note that permissions beyond the monthly limit may be reflected in your attendance evaluation and personal score. This is only a gentle reminder — please plan accordingly, and for any genuine need coordinate in advance with your manager and HR.`, '',
+      `Thanks and regards,`,
+      `BASHAIER ALI`,
+      `Evergreen Shipping Agency Saudi Co., (L.L.C)`,
+      `ESAU - SADMN SUP / HR DEPT`,
+    ].join('\n');
+    const subject = `Permission usage reminder — ${monthLabel}`;
+    window.open(`mailto:${selectedEmp.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
+  }
 
   const timeError =
     Number.isNaN(durationMin) ? 'Pick a start and end time.' :
@@ -90,7 +148,7 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
         time_to:            timeTo,
         hours,
         reason:             `Manual entry · ${reason.trim() || 'Approved offline'}`,
-        exceeds_quota:      false,
+        exceeds_quota:      !!exceed.willExceed,   // flag for evaluation/personal score
         requested_at:       now,
         requested_by:       me.id,
         // Logged as already approved — skip the workflow, stamp both decisions.
@@ -199,6 +257,27 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
         <label className="text-xs font-semibold" style={{ color: '#1F1B16' }}>Reason / source</label>
         <input className={inputCls + ' mt-1'} placeholder="e.g. Approved by manager via email 21 May" value={reason} onChange={e => setReason(e.target.value)} />
       </div>
+
+      {/* Soft (non-blocking) over-quota notice for HR */}
+      {empId && hours > 0 && exceed.willExceed && (
+        <div className="rounded px-3 py-2.5 text-xs" style={{ background: '#FFFBEB', border: '1px solid #FCD34D', color: '#854F0B' }}>
+          <div className="flex items-start gap-2">
+            <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />
+            <div className="flex-1">
+              <strong>{selectedEmp?.name}</strong> will be over the monthly permission allowance this month
+              {' '}({Math.round((monthSummary.hoursUsed + hours) * 10) / 10} h / {monthSummary.occurrences + 1} permissions vs the {PERMISSION_QUOTA.monthlyHours} h · {PERMISSION_QUOTA.monthlyOccurrences} limit).
+              You can still log it — it will be flagged for evaluation. You may also send the staff a soft reminder.
+              <div className="mt-2">
+                <button type="button" onClick={emailStaffNotice}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[11px] font-semibold"
+                  style={{ background: '#FFFFFF', color: '#854F0B', border: '1px solid #FCD34D' }}>
+                  <Mail size={12} /> Email {selectedEmp?.name?.split(' ')[0] || 'staff'} a soft reminder
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {msg && (
         <div className={`flex items-center gap-2 text-sm rounded px-3 py-2 ${msg.kind === 'ok' ? 'bg-green-50 text-green-900' : 'bg-red-50 text-red-900'}`}>
