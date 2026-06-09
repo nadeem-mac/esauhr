@@ -932,10 +932,11 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
 
     // Shared sheet builder — auto-fits column widths to content and
     // supports centred columns.
-    const buildSheet = (name, title, headers, rowsData, centerCols = []) => {
+    const buildSheet = (name, title, headers, rowsData, centerCols = [], tabColor = null) => {
       const ws = wb.addWorksheet(name, {
         views: [{ state: 'frozen', ySplit: 2 }],   // title + header rows frozen
       });
+      if (tabColor) ws.properties.tabColor = { argb: tabColor };
       // Auto-fit each column to the widest of its header / cell values.
       const widths = headers.map((h, ci) => {
         let max = String(h).length;
@@ -1051,7 +1052,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
           style,
         };
       });
-      buildSheet(sheetName1, `Today — Morning roll-call · ${fmtDate(t)} (as of ${clock}) · sign-outs finalize end-of-day`, rcHeaders, rcRows, [4, 5, 6, 7, 8, 9, 10]);
+      buildSheet(sheetName1, `Today — Morning roll-call · ${fmtDate(t)} (as of ${clock}) · sign-outs finalize end-of-day`, rcHeaders, rcRows, [4, 5, 6, 7, 8, 9, 10], 'FF0F4C2A');
 
       // Sheet 2 — Yesterday full detail (the complete previous working day).
       const yHeaders = ['#','Employee','Shift','PSN','Department','Location','Date','Day','Assigned shift','Check in','Check Out','Total (h:m)','Late (mm:ss)','Status'];
@@ -1099,7 +1100,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       if (yRows.length) {
         yRows.push({ subtotal: true, values: ['', `${yN} staff`, '', '', '', '', fmtDate(yday), '', '', '', 'TOTAL →', fmtHoursMins(ySumMin), fmtLateSec(ySumLate), ''], rightCols: [] });
       }
-      buildSheet(sheetName2, `Yesterday — Full attendance · ${fmtDate(yday)}`, yHeaders, yRows, [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+      buildSheet(sheetName2, `Yesterday — Full attendance · ${fmtDate(yday)}`, yHeaders, yRows, [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14], 'FFB45309');
 
       const buf = await wb.xlsx.writeBuffer();
       const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
