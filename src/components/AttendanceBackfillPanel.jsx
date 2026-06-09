@@ -91,6 +91,7 @@ export default function AttendanceBackfillPanel({ me, employees, embedded = fals
   const [reevaluating, setReevaluating] = useState(false);
   const [reevalProgress, setReevalProgress] = useState({ phase: '', processed: 0, total: 0 });
   const [reevalDone, setReevalDone] = useState(null);
+  const [reevalErr, setReevalErr]   = useState(null);
 
   const reset = useCallback(() => {
     setParseErr(null);
@@ -103,11 +104,13 @@ export default function AttendanceBackfillPanel({ me, employees, embedded = fals
     setReevaluating(false);
     setReevalProgress({ phase: '', processed: 0, total: 0 });
     setReevalDone(null);
+    setReevalErr(null);
   }, []);
 
   const handleReevaluate = useCallback(async () => {
     setReevaluating(true);
     setReevalDone(null);
+    setReevalErr(null);
     setReevalProgress({ phase: 'starting', processed: 0, total: 0 });
     try {
       const result = await reevaluateBackfillRows(
@@ -116,7 +119,7 @@ export default function AttendanceBackfillPanel({ me, employees, embedded = fals
       );
       setReevalDone(result);
     } catch (e) {
-      setParseErr(`Re-evaluation failed: ${e?.message || e}`);
+      setReevalErr(e?.message || String(e));
     } finally {
       setReevaluating(false);
     }
@@ -229,12 +232,18 @@ export default function AttendanceBackfillPanel({ me, employees, embedded = fals
       // Monthly Attendance grid refetches and updates live — no manual
       // refresh needed. Nadeem 2026-05-31.
       try { onChanged?.(); } catch { /* ignore */ }
+
+      // Auto re-evaluate the backfilled rows so late/short/present
+      // classifications reflect the current rules immediately — the user
+      // no longer has to click a separate "Re-evaluate" button. Results
+      // are shown inside the completion card below. (Nadeem 2026-06-08)
+      try { await handleReevaluate(); } catch { /* surfaced via reevalErr */ }
     } catch (e) {
       setParseErr(`Import failed: ${e?.message || e}`);
     } finally {
       setImporting(false);
     }
-  }, [preview, overrideWarn, me?.id, onChanged]);
+  }, [preview, overrideWarn, me?.id, onChanged, handleReevaluate]);
 
   const formatDate = (iso) => {
     if (!iso) return '—';
@@ -841,18 +850,75 @@ export default function AttendanceBackfillPanel({ me, employees, embedded = fals
                   )}
                 </div>
 
-                <button
-                  onClick={reset}
-                  className="text-[11px] mt-2.5 px-3 py-1.5 rounded-full transition-all"
-                  style={{
-                    background: '#FFFFFF', color: '#065F46',
-                    border: '1.5px solid #10B981', fontWeight: 700, cursor: 'pointer',
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = '#ECFDF5'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = '#FFFFFF'; }}
-                >
-                  Import another file
-                </button>
+                {/* ── Auto re-evaluation status ───────────────────────── */}
+                {reevaluating && (
+                  <div className="text-[12px] mt-2 px-2.5 py-2 rounded flex items-center gap-2"
+                       style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', color: '#1E3A8A' }}>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Re-evaluating attendance classifications…
+                    {reevalProgress.phase === 'writing' && reevalProgress.total > 0 && (
+                      <span className="font-mono">{reevalProgress.processed.toLocaleString()} / {reevalProgress.total.toLocaleString()}</span>
+                    )}
+                  </div>
+                )}
+                {!reevaluating && reevalDone && (
+                  <div className="text-[12px] mt-2 px-2.5 py-2 rounded" style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', color: '#065F46' }}>
+                    <div style={{ fontWeight: 700, marginBottom: 3 }}>Re-evaluation complete</div>
+                    <div>
+                      Scanned <strong>{reevalDone.scanned.toLocaleString()}</strong> row{reevalDone.scanned === 1 ? '' : 's'}.{' '}
+                      {reevalDone.changed > 0
+                        ? <>Updated <strong>{reevalDone.changed.toLocaleString()}</strong> classification{reevalDone.changed === 1 ? '' : 's'}.</>
+                        : <>No classifications changed.</>}
+                    </div>
+                    <div className="flex flex-wrap gap-2 mt-1.5">
+                      <EvalChip bg="#ECFDF5" fg="#0F4C2A" border="#A7F3D0" label="Present" count={reevalDone.presentCount} />
+                      {reevalDone.lateCount > 0 && (
+                        <EvalChip bg="#FEF3C7" fg="#854F0B" border="#FCD34D" label="Late" count={reevalDone.lateCount} />
+                      )}
+                      {reevalDone.shortCount > 0 && (
+                        <EvalChip bg="#FED7AA" fg="#7C2D12" border="#FB923C" label="Left early" count={reevalDone.shortCount} />
+                      )}
+                    </div>
+                  </div>
+                )}
+                {!reevaluating && reevalErr && (
+                  <div className="text-[12px] mt-2 px-2.5 py-2 rounded flex items-center justify-between gap-2"
+                       style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B' }}>
+                    <span>Re-evaluation failed: {reevalErr}</span>
+                    <button type="button" onClick={handleReevaluate}
+                      className="px-2 py-1 rounded text-[11px] font-semibold"
+                      style={{ background: '#FFFFFF', color: '#991B1B', border: '1px solid #FCA5A5' }}>
+                      Retry
+                    </button>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 mt-2.5">
+                  <button
+                    onClick={reset}
+                    disabled={reevaluating}
+                    className="text-[11px] px-3 py-1.5 rounded-full transition-all disabled:opacity-50"
+                    style={{
+                      background: '#10B981', color: '#FFFFFF',
+                      border: '1.5px solid #10B981', fontWeight: 700, cursor: reevaluating ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {reevaluating ? 'Finishing…' : 'Close'}
+                  </button>
+                  <button
+                    onClick={reset}
+                    disabled={reevaluating}
+                    className="text-[11px] px-3 py-1.5 rounded-full transition-all disabled:opacity-50"
+                    style={{
+                      background: '#FFFFFF', color: '#065F46',
+                      border: '1.5px solid #10B981', fontWeight: 700, cursor: reevaluating ? 'not-allowed' : 'pointer',
+                    }}
+                    onMouseEnter={(e) => { if (!reevaluating) e.currentTarget.style.background = '#ECFDF5'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = '#FFFFFF'; }}
+                  >
+                    Import another file
+                  </button>
+                </div>
               </div>
             </div>
           )}
