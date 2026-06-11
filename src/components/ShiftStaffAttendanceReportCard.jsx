@@ -39,6 +39,7 @@ import { directGet } from '../supabaseClient.js';
 import { todayLocal, addDaysIso, isKsaWeekend, isoDayOfWeek } from '../lib/dateUtils.js';
 import { salutationFor } from '../lib/salutations.js';
 import { approvedEarlyDeparture, approvalCoversDate, managementNoAttendance } from '../lib/attendanceExceptions.js';
+import { isActiveEmployee } from '../lib/leaveLogic.js';
 import { renderHrSignature, renderHrSignatureHtml } from '../lib/emailTemplates.js';
 
 // ─── helpers ───────────────────────────────────────────────────────────────
@@ -423,8 +424,11 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   // card"). Shift staff are still identified — via shiftIdSet — so they
   // can be colour-marked in the list, HTML report and Excel.
   // Nadeem 2026-06-03.
+  // Exclude deactivated/departed/terminated staff (employment_status) from
+  // every attendance view — daily, monthly and morning all derive from this
+  // list, so a deactivated employee disappears everywhere. (Nadeem 2026-06-08)
   const shiftStaff = useMemo(
-    () => (employees || []).slice(),
+    () => (employees || []).filter(isActiveEmployee),
     [employees]
   );
   const shiftIdSet = useMemo(

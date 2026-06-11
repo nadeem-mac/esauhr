@@ -36,6 +36,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, RefreshCcw, Loader2, Search, X, Download, AlertTriangle } from 'lucide-react';
 import { directGet, directPatch, supabase } from '../supabaseClient.js';
+import { isActiveEmployee } from '../lib/leaveLogic.js';
 
 // Auto-fit text helper — CSS-only. No hooks. Uses container queries
 // + clamp on font-size based on text length to shrink long names so
@@ -337,7 +338,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
   // chips) keeps the on-screen view authoritative.
   const tracked = useMemo(() => {
     const all = (employees || [])
-      .filter(e => e?.id && !e.terminated && e.is_active !== false && e.status !== 'inactive')
+      .filter(e => e?.id && isActiveEmployee(e) && !e.terminated && e.is_active !== false && e.status !== 'inactive')
       .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
     const q = search.trim().toLowerCase();
     if (!q) return all;

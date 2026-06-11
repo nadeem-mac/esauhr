@@ -40,6 +40,7 @@ import HQAttendanceExportCard from './HQAttendanceExportCard.jsx';
 // weekend section) usable. Console gets the full stack trace for
 // debugging.
 import { reportClientError } from '../lib/clientErrors.js';
+import { isActiveEmployee } from '../lib/leaveLogic.js';
 
 class AttendanceErrorBoundary extends React.Component {
   constructor(props) {
@@ -1758,7 +1759,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     // first by office, then by team within an office. Empty locations
     // and departments sort to the end.
     const sortedEmps = (employees || [])
-      .filter(e => e?.id && !e.terminated && e.is_active !== false && e.status !== 'inactive')
+      .filter(e => e?.id && isActiveEmployee(e) && !e.terminated && e.is_active !== false && e.status !== 'inactive')
       .sort((a, b) => {
         const locA = String(a.location   || '\uFFFF').toLowerCase();
         const locB = String(b.location   || '\uFFFF').toLowerCase();
@@ -3372,7 +3373,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     // if present on the record so we don't surface ex-employees.
     Object.values(empById).forEach(emp => {
       if (!emp?.id) return;
-      if (emp.terminated || emp.is_active === false || emp.status === 'inactive') return;
+      if (!isActiveEmployee(emp) || emp.terminated || emp.is_active === false || emp.status === 'inactive') return;
       const empId = String(emp.id).toUpperCase();
       if (punchedToday.has(empId)) return;
 
