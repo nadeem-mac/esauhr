@@ -131,11 +131,17 @@ export default function SilentAbsencesCard({ silentAbsences, empById }) {
                   : <ChevronRight className="w-3.5 h-3.5" style={{ color: '#7A7A7A' }}/>}
               </div>
               {showLeave && (
-                <ul className="px-3 pb-2.5 space-y-0.5">
+                <ul className="px-3 pb-1 space-y-0.5">
                   {onLeave.map(emp => (
-                    <li key={emp.id} className="text-[11px] flex items-baseline gap-2">
+                    <li key={emp.id} className="text-[11px] flex items-baseline gap-2 flex-wrap">
                       <span style={{ color: '#0A0A0A' }}>{emp.name}</span>
                       <span style={{ color: '#7A7A7A', fontFamily: 'monospace' }}>{emp.id}</span>
+                      {emp.leaveLabel && (
+                        <span className="text-[9px] px-1 py-px rounded"
+                          style={{ background: '#E1F5EE', color: '#0F6E56', fontWeight: 600, textTransform: 'capitalize' }}>
+                          {emp.leaveLabel}
+                        </span>
+                      )}
                       {emp.isHalfDay && (
                         <span className="text-[9px] px-1 py-px rounded"
                           style={{ background: '#FAEEDA', color: '#854F0B', fontWeight: 600 }}>
@@ -146,6 +152,9 @@ export default function SilentAbsencesCard({ silentAbsences, empById }) {
                   ))}
                 </ul>
               )}
+              <div className="px-3 pb-2.5 text-[10px]" style={{ color: '#0F6E56' }}>
+                Covered by approved leave — no absence reminder needed.
+              </div>
             </div>
           )}
 

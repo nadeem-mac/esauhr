@@ -3379,10 +3379,23 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       // Approved leave covers today?
       if (onLeaveOnDate(emp.id, csvDate)) {
         const halfDay = halfDayLeaveOnDate(emp.id, csvDate);
+        // Identify which leave (type) covers the day so the daily review
+        // tells Bashaier *why* the staff is out — and confirms no reminder
+        // is needed. Covers Logbook entries and staff-applied approved
+        // leaves alike. (Nadeem 2026-06-08)
+        const lv = (approvedLeaves || []).find(l =>
+          String(l.employee_id) === String(emp.id)
+          && l.start_date <= csvDate && l.end_date >= csvDate);
+        const lt = lv && (leaveTypes || []).find(t => t.id === lv.leave_type_id);
+        const leaveLabel = lt?.name || lt?.label
+          || (lv?.leave_type_id ? String(lv.leave_type_id).replace(/_/g, ' ') : 'Leave');
         out.onLeave.push({
           ...emp,
           isHalfDay: !!halfDay,
           halfDayPeriod: halfDay?.half_day_period || null,
+          leaveLabel,
+          leaveFrom: lv?.start_date || null,
+          leaveTo:   lv?.end_date || null,
         });
         return;
       }
@@ -3405,7 +3418,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     out.onMawani.sort(byName);
     out.unexplained.sort(byName);
     return out;
-  }, [csvDate, csvIsWeekend, empById, empByDigits, parsed.rows, onLeaveOnDate, halfDayLeaveOnDate, mawaniDays]);
+  }, [csvDate, csvIsWeekend, empById, empByDigits, parsed.rows, onLeaveOnDate, halfDayLeaveOnDate, mawaniDays, approvedLeaves, leaveTypes]);
 
   // ─── Shift-staff monitor (DAILY) ───────────────────────────────────
   // Evaluates the most recently COMPLETED day (yesterday) so both the
