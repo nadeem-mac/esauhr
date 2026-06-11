@@ -23,7 +23,7 @@
 
 import React, { useState, useMemo } from 'react';
 import {
-  Plane, Clock, Download, FileText, ChevronLeft, ChevronRight, Users,
+  Plane, Clock, Download, FileText, ChevronLeft, ChevronRight, Users, Mail, Check,
 } from 'lucide-react';
 
 // ── date helpers ──────────────────────────────────────────────────────
@@ -87,6 +87,7 @@ export default function LeaveReport({
   const [year, setYear]   = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth()); // 0-indexed
   const [view, setView]   = useState('table');         // 'table' | 'calendar'
+  const [copied, setCopied] = useState(false);
 
   // Month boundaries as YYYY-MM-DD
   const monthStart = ymd(new Date(year, month, 1));
@@ -562,6 +563,50 @@ export default function LeaveReport({
   };
 
   // ── Excel export ───────────────────────────────────────────────────
+  // Copy a ready-to-paste Outlook email of the On-Leave table. Outlook
+  // strips <style> blocks, so every style here is INLINE. Pastes into a
+  // new mail with formatting intact. (Nadeem 2026-06-08)
+  const copyForOutlook = async () => {
+    const esc = (s) => String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const FONT = 'Calibri,Arial,sans-serif';
+    const pill = (st) => {
+      const m = { now: { bg: '#FEE2E2', fg: '#991B1B', label: 'OUT NOW' }, upcoming: { bg: '#DBEAFE', fg: '#1D4ED8', label: 'UPCOMING' }, returned: { bg: '#D1FAE5', fg: '#065F46', label: 'RETURNED' } }[st] || { bg: '#EEE', fg: '#333', label: String(st || '') };
+      return `<span style="background:${m.bg};color:${m.fg};padding:1px 6px;border-radius:3px;font-size:11px;font-weight:700">${m.label}</span>`;
+    };
+    const th = (t, align = 'left') => `<th style="background:#0F4C2A;color:#fff;padding:4px 9px;text-align:${align};font-family:${FONT};font-size:12px;font-weight:700;border:1px solid #0F4C2A;white-space:nowrap">${t}</th>`;
+    const headRow = `<tr>${th('PSN')}${th('Name')}${th('Dept')}${th('Loc')}${th('Leave Type')}${th('From')}${th('To')}${th('Days', 'right')}${th('Status')}</tr>`;
+    const body = leaveRows.map((r, i) => {
+      const bg = i % 2 ? '#F3F4F6' : '#FFFFFF';
+      const td = (c, align = 'left') => `<td style="padding:3px 9px;border:1px solid #D1D5DB;color:#1F2937;font-family:${FONT};font-size:12px;background:${bg};text-align:${align};white-space:nowrap">${c}</td>`;
+      return `<tr>${td(esc(r.psn))}${td(esc(r.name))}${td(esc(r.dept))}${td(esc(r.loc))}${td(esc(r.typeName))}${td(esc(fmtShort(r.from)))}${td(esc(fmtShort(r.to)))}${td(r.days + (r.isHalf ? ' ½' : ''), 'right')}${td(pill(r.status))}</tr>`;
+    }).join('');
+    const table = leaveRows.length
+      ? `<table style="border-collapse:collapse;font-family:${FONT};margin:10px 0"><thead>${headRow}</thead><tbody>${body}</tbody></table>`
+      : `<p style="font-family:${FONT};color:#6B7280;font-style:italic">No approved leave overlapping ${esc(periodLabel)}.</p>`;
+    const p = (t, extra = '') => `<p style="font-family:${FONT};font-size:14px;color:#1F2937;${extra}">${t}</p>`;
+    const html =
+      p('Dear Mr John,') +
+      p(`Please find below the staff on leave for <strong>${esc(periodLabel)}</strong>. The list shows current, upcoming and returned leave, with type, dates and duration.`) +
+      table +
+      p(`On leave this month: <strong>${summary.onLeaveStaff}</strong> staff · ${summary.leaveRequests} requests · Out today: <strong>${summary.outToday}</strong> · Available now: ${summary.available} of ${summary.scopeTotal}.`, 'font-size:13px;font-weight:600;color:#0F4C2A') +
+      p('Thanks and regards,<br>' + esc(me?.name || 'ESAU HR') + '<br>Evergreen Shipping Agency Saudi Co., (L.L.C)<br>ESAU - SADMN SUP / HR Dept', 'font-size:13px');
+    const plain = html.replace(/<[^>]+>/g, '').replace(/\n{2,}/g, '\n');
+    try {
+      await navigator.clipboard.write([new window.ClipboardItem({
+        'text/html': new Blob([html], { type: 'text/html' }),
+        'text/plain': new Blob([plain], { type: 'text/plain' }),
+      })]);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2200);
+    } catch (e) {
+      // Fallback for browsers without ClipboardItem — open a window to copy manually.
+      const w = window.open('', '_blank');
+      if (w) { w.document.write(html); w.document.close(); }
+    }
+  };
+
   const exportExcel = async () => {
     const XLSX = await import('xlsx-js-style');
     const GREEN = '0F4C2A';
@@ -647,6 +692,11 @@ export default function LeaveReport({
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded border"
             style={{ borderColor: '#0F4C2A', color: '#0F4C2A', background: '#FFFFFF' }}>
             <FileText size={12} /> HTML
+          </button>
+          <button onClick={copyForOutlook}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded border"
+            style={{ borderColor: copied ? '#0F4C2A' : '#1D4ED8', color: copied ? '#0F4C2A' : '#1D4ED8', background: copied ? '#ECFDF5' : '#FFFFFF' }}>
+            {copied ? <Check size={12} /> : <Mail size={12} />} {copied ? 'Copied!' : 'Copy for Outlook'}
           </button>
           <button onClick={exportExcel}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded text-white"

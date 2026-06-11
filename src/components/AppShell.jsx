@@ -171,13 +171,11 @@ function buildTabs({ isAdmin, isReviewer, isManager, isHrReviewer, isHiringViewe
     base.push({ id: 'holiday_shifts', label: 'Holiday Shifts', icon: CalendarDays });
   }
 
-  // Leave Report — monthly who's-on-leave + permissions report. Visible
-  // to managers, HR reviewer, and admin (same gating as Holiday Shifts).
-  // Managers see their reports + dept/location; HR + admin see all staff.
-  // Nadeem 2026-05-29: 'A report showing which staffs are on leave
-  // during the respective month … who took late permission, early
-  // permission … main purpose is to know who is on leave'.
-  if (isManager || isAdmin || isHrReviewer) {
+  // Leave Report — monthly who's-on-leave + permissions report.
+  // Managers + admin get a dedicated tab; the HR reviewer (Bashaier)
+  // gets it inside her REPORTS tab instead (moved there 2026-06-08, she
+  // prefers the Leave Report style + the Copy-for-Outlook email).
+  if (isManager || isAdmin) {
     base.push({ id: 'leave_report', label: 'Leave Report', icon: Plane });
   }
 
@@ -1279,11 +1277,20 @@ export default function AppShell({ session, me, onRefreshMe }) {
           )
         )}
         {tab === 'reports' && isHrReviewer && !isAdmin && (
-          /* REPORTS tab — Mr John report drafting card. HR-reviewer
-             only (Bashaier). Replaces the YOUR TASKS tile that used
-             to live on her dashboard, and the brief REPORTS button
-             that lived in the header. */
-          <BashaierTasksCard employees={employees} requests={requests} permissions={permissions} />
+          /* REPORTS tab — Leave Report (who's on leave + Copy-for-Outlook)
+             plus the Mr John report drafting card. HR-reviewer only. */
+          <div className="space-y-4">
+            <LeaveReport
+              me={me}
+              employees={employees}
+              leaveTypes={leaveTypes}
+              requests={requests}
+              permissions={permissions}
+              isAdmin={isAdmin}
+              isHrReviewer={isHrReviewer}
+            />
+            <BashaierTasksCard employees={employees} requests={requests} permissions={permissions} />
+          </div>
         )}
         {tab === 'reviews' && (
           <>
