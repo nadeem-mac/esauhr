@@ -82,9 +82,9 @@ function plainTable(headers, rows, widths) {
 
 // Build an HTML table for clipboard
 function htmlTable(headers, rows) {
-  const th = headers.map(h => `<th style="background:#0F4C2A;color:#fff;padding:4px 9px;text-align:left;font-weight:700;font-size:12px;border:1px solid #0F4C2A;white-space:nowrap">${escapeHtml(h)}</th>`).join('');
+  const th = headers.map(h => `<th style="background:#334155;color:#fff;padding:4px 9px;text-align:left;font-weight:700;font-size:12px;border:1px solid #334155;white-space:nowrap">${escapeHtml(h)}</th>`).join('');
   const trs = rows.map((r, i) => {
-    const bg = i % 2 === 0 ? '#FFFFFF' : '#F4F7F4';
+    const bg = i % 2 === 0 ? '#FFFFFF' : '#F3F4F6';
     const tds = r.map(c => `<td style="padding:3px 9px;border:1px solid #D1D5DB;color:#1F2937;font-size:12px;background:${bg};white-space:nowrap">${escapeHtml(c == null ? '' : String(c))}</td>`).join('');
     return `<tr>${tds}</tr>`;
   }).join('');
@@ -143,20 +143,26 @@ function buildMidMonthPermissions({ permissions, employees, year, month, today }
   const peopleSet = new Set(rows.map(r => r.employee_id));
   const totalHours = rows.reduce((s, r) => s + Number(r.hours || 0), 0);
 
+  // Per-employee hours used this month (against the 3-hour quota).
+  const usedByEmp = {};
+  rows.forEach(r => { usedByEmp[r.employee_id] = (usedByEmp[r.employee_id] || 0) + Number(r.hours || 0); });
+
   const tableRows = rows.map(p => {
     const emp = empMap[p.employee_id];
+    const used = usedByEmp[p.employee_id] || 0;
     return [
       fmtDateShort(p.permission_date),
       emp?.name || p.employee_id,
       emp?.department || '',
       PERM_TYPE_LABELS[p.type] || p.type || '',
       Number(p.hours || 0).toFixed(1) + 'h',
+      `${used.toFixed(1)} / 3h${used > 3 ? ' ⚠' : ''}`,
       p.status?.charAt(0).toUpperCase() + p.status?.slice(1),
       p.reason || '',
     ];
   });
-  const headers = ['Date', 'Employee', 'Dept', 'Type', 'Hours', 'Status', 'Reason'];
-  const widths = [12, 30, 6, 14, 6, 9, 30];
+  const headers = ['Date', 'Employee', 'Dept', 'Type', 'Hours', 'Quota used', 'Status', 'Reason'];
+  const widths = [12, 30, 6, 14, 6, 11, 9, 30];
   const tablePlain = rows.length > 0 ? plainTable(headers, tableRows, widths) : '(No permission applications recorded so far this month.)';
   const tableHtml = rows.length > 0 ? htmlTable(headers, tableRows) : '<p style="color:#6B7280;font-style:italic">No permission applications recorded so far this month.</p>';
 
@@ -168,7 +174,7 @@ function buildMidMonthPermissions({ permissions, employees, year, month, today }
   const intro = [
     `Dear Mr John,`,
     '',
-    `As part of our monthly compliance reporting, please find below the consolidated list of permission applications submitted by staff so far this month (${range}). The summary covers both late arrivals and early leaves, with hours and approval status against the monthly quota of 3 hours per employee.`,
+    `Please find below the mid-month report of permission applications submitted by staff so far this month (${range}). The list covers all late arrivals and early leaves recorded, with hours and approval status against the monthly quota of 3 hours per employee.`,
     '',
   ].join('\n');
 
@@ -176,7 +182,7 @@ function buildMidMonthPermissions({ permissions, employees, year, month, today }
 
   const closing = [
     '',
-    `The full month-end report will follow on the last day of the month. Please let me know if you would like any breakdown by department, by type, or by individual employee.`,
+    `The full month-end report will follow at month-end.`,
   ].join('\n');
 
   const bodyPlain = intro + tablePlain + '\n\n' + totalsLine + closing + SIGNATURE_PLAIN;
@@ -184,10 +190,10 @@ function buildMidMonthPermissions({ permissions, employees, year, month, today }
   const bodyHtml = `
     <div style="font-family:Calibri,Arial,sans-serif;color:#1F2937;font-size:14px;line-height:1.5">
       <p>Dear Mr John,</p>
-      <p>As part of our monthly compliance reporting, please find below the consolidated list of permission applications submitted by staff so far this month (${escapeHtml(range)}). The summary covers both late arrivals and early leaves, with hours and approval status against the monthly quota of 3 hours per employee.</p>
+      <p>Please find below the mid-month report of permission applications submitted by staff so far this month (${escapeHtml(range)}). The list covers all late arrivals and early leaves recorded, with hours and approval status against the monthly quota of 3 hours per employee.</p>
       ${tableHtml}
-      <p style="font-weight:600;color:#2D5F3F">${escapeHtml(totalsLine)}</p>
-      <p>The full month-end report will follow on the last day of the month. Please let me know if you would like any breakdown by department, by type, or by individual employee.</p>
+      <p style="font-weight:600;color:#334155">${escapeHtml(totalsLine)}</p>
+      <p>The full month-end report will follow at month-end.</p>
       ${SIGNATURE_HTML}
     </div>`;
 
@@ -210,20 +216,26 @@ function buildEndOfMonthPermissions({ permissions, employees, year, month }) {
   const lateCount  = rows.filter(p => p.type === 'late_arrival').length;
   const earlyCount = rows.filter(p => p.type === 'early_leave').length;
 
+  // Per-employee hours used this month (against the 3-hour quota).
+  const usedByEmp = {};
+  rows.forEach(r => { usedByEmp[r.employee_id] = (usedByEmp[r.employee_id] || 0) + Number(r.hours || 0); });
+
   const tableRows = rows.map(p => {
     const emp = empMap[p.employee_id];
+    const used = usedByEmp[p.employee_id] || 0;
     return [
       fmtDateShort(p.permission_date),
       emp?.name || p.employee_id,
       emp?.department || '',
       PERM_TYPE_LABELS[p.type] || p.type || '',
       Number(p.hours || 0).toFixed(1) + 'h',
+      `${used.toFixed(1)} / 3h${used > 3 ? ' ⚠' : ''}`,
       p.status?.charAt(0).toUpperCase() + p.status?.slice(1),
       p.reason || '',
     ];
   });
-  const headers = ['Date', 'Employee', 'Dept', 'Type', 'Hours', 'Status', 'Reason'];
-  const widths = [12, 30, 6, 14, 6, 9, 30];
+  const headers = ['Date', 'Employee', 'Dept', 'Type', 'Hours', 'Quota used', 'Status', 'Reason'];
+  const widths = [12, 30, 6, 14, 6, 11, 9, 30];
   const tablePlain = rows.length > 0 ? plainTable(headers, tableRows, widths) : '(No permission applications recorded for this month.)';
   const tableHtml = rows.length > 0 ? htmlTable(headers, tableRows) : '<p style="color:#6B7280;font-style:italic">No permission applications recorded for this month.</p>';
 
@@ -251,7 +263,7 @@ function buildEndOfMonthPermissions({ permissions, employees, year, month }) {
       <p>Dear Mr John,</p>
       <p>Please find below the full month-end report of permission applications submitted by staff during ${escapeHtml(monthName + ' ' + year)}. The list covers all late arrivals and early leaves recorded for the month, with hours and approval status against the monthly quota of 3 hours per employee.</p>
       ${tableHtml}
-      <p style="font-weight:600;color:#2D5F3F">${escapeHtml(totalsLine)}</p>
+      <p style="font-weight:600;color:#334155">${escapeHtml(totalsLine)}</p>
       <p>Please let me know if you would like any breakdown by department, by type, or by individual employee.</p>
       ${SIGNATURE_HTML}
     </div>`;
@@ -319,7 +331,7 @@ function buildVacationSummary({ requests, employees, year, month }) {
       <p>Dear Mr John,</p>
       <p>Please find below the summary of vacation applications taken by staff during ${escapeHtml(monthName + ' ' + year)}, including their return dates. This covers all approved leaves that overlap with the month.</p>
       ${tableHtml}
-      <p style="font-weight:600;color:#2D5F3F">${escapeHtml(totalsLine)}</p>
+      <p style="font-weight:600;color:#334155">${escapeHtml(totalsLine)}</p>
       <p>Please let me know if you would like any further breakdown by department or by individual employee.</p>
       ${SIGNATURE_HTML}
     </div>`;
