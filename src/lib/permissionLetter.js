@@ -617,24 +617,24 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
           new TableCell({
             children: [new Paragraph({
               children: [
-                run(`${String(i + 1).padStart(2, '0')}.   `, { bold: true, size: 14, color: C_COPPER }),
-                run(b.en, { size: 17 }),
+                run(`${String(i + 1).padStart(2, '0')}.  `, { bold: true, size: 13, color: C_COPPER }),
+                run(b.en, { size: 15 }),
               ],
             })],
             width: { size: HALF_W, type: WidthType.DXA },
-            margins: { top: 50, bottom: 50, left: 180, right: 100 },
+            margins: { top: 40, bottom: 40, left: 90, right: 50 },
             shading: shading(C_LABEL_BG),
             borders: FORM_BORDER,
             verticalAlign: VerticalAlign.CENTER,
           }),
           new TableCell({
             children: [new Paragraph({
-              children: [arRun(b.ar, { size: 16, color: C_MUTED })],
+              children: [arRun(b.ar, { size: 15, color: C_MUTED })],
               alignment: AlignmentType.RIGHT,
               bidirectional: true,
             })],
             width: { size: PAGE_W - HALF_W, type: WidthType.DXA },
-            margins: { top: 50, bottom: 50, left: 100, right: 180 },
+            margins: { top: 40, bottom: 40, left: 50, right: 90 },
             shading: shading(C_LABEL_BG),
             borders: FORM_BORDER,
             verticalAlign: VerticalAlign.CENTER,
