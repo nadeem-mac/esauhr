@@ -12,7 +12,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { directGet, directPost, directDelete } from '../supabaseClient.js';
 import { Save, Loader2, CheckCircle2, AlertCircle, Trash2, Clock, Mail } from 'lucide-react';
-import { PERMISSION_TYPES, PERMISSION_QUOTA, summariseMonth, checkExceeds } from '../lib/permissionLogic.js';
+import { PERMISSION_TYPES, PERMISSION_QUOTA, summariseMonth, checkExceeds, reasonsFor } from '../lib/permissionLogic.js';
 import { logAction } from '../lib/audit.js';
 
 const toMin = (t) => { const m = String(t || '').match(/^(\d{1,2}):(\d{2})/); return m ? (+m[1]) * 60 + (+m[2]) : null; };
@@ -35,7 +35,8 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
   const [date, setDate]         = useState('');
   const [timeFrom, setTimeFrom] = useState('');
   const [timeTo, setTimeTo]     = useState('');
-  const [reason, setReason]     = useState('');
+  const [reasonCategory, setReasonCategory] = useState('');
+  const [reasonOther, setReasonOther]       = useState('');
   const [busy, setBusy]         = useState(false);
   const [msg, setMsg]           = useState(null);
   const [recent, setRecent]     = useState([]);
@@ -60,6 +61,10 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
   const hours = useMemo(() => (Number.isNaN(durationMin) || durationMin <= 0 ? 0 : Math.round((durationMin / 60) * 10) / 10), [durationMin]);
 
   const monthKey = (date || '').slice(0, 7);   // 'YYYY-MM'
+
+  const reasonOptions = useMemo(() => reasonsFor(type), [type]);
+  const isOtherReason = reasonCategory === 'Other';
+  const finalReason = isOtherReason ? reasonOther.trim() : reasonCategory;
 
   // Load this employee's permissions for the selected month (to compute usage).
   useEffect(() => {
@@ -158,7 +163,7 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
         time_from:          timeFrom,
         time_to:            timeTo,
         hours,
-        reason:             `Manual entry · ${reason.trim() || 'Approved offline'}`,
+        reason:             `Manual entry · ${finalReason || 'Approved offline'}`,
         exceeds_quota:      !!exceed.willExceed,   // flag for evaluation/personal score
         requested_at:       now,
         requested_by:       me.id,
@@ -182,7 +187,7 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
       } catch { /* audit best-effort */ }
       setMsg({ kind: 'ok', text: `Logged: ${selectedEmp?.name || empId} · ${PERMISSION_TYPES[type]?.label} · ${date}` });
       // reset for the next entry, keep the employee selected
-      setTimeFrom(''); setTimeTo(''); setReason('');
+      setTimeFrom(''); setTimeTo(''); setReasonCategory(''); setReasonOther('');
       onSaved?.();
     } catch (err) {
       setMsg({ kind: 'err', text: err?.message || 'Could not save. Please try again.' });
@@ -271,8 +276,15 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
 
       {/* Reason / source */}
       <div>
-        <label className="text-xs font-semibold" style={{ color: '#1F1B16' }}>Reason / source</label>
-        <input className={inputCls + ' mt-1'} placeholder="e.g. Approved by manager via email 21 May" value={reason} onChange={e => setReason(e.target.value)} />
+        <label className="text-xs font-semibold" style={{ color: '#1F1B16' }}>Reason</label>
+        <select className={inputCls + ' mt-1'} value={reasonCategory} onChange={e => setReasonCategory(e.target.value)}>
+          <option value="">— select a reason —</option>
+          {reasonOptions.map(r => <option key={r} value={r}>{r}</option>)}
+        </select>
+        {isOtherReason && (
+          <input className={inputCls + ' mt-2'} placeholder="Specify the reason / source…"
+            value={reasonOther} onChange={e => setReasonOther(e.target.value)} />
+        )}
       </div>
 
       {/* Soft (non-blocking) over-quota notice for HR */}
