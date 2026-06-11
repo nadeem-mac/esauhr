@@ -17,6 +17,17 @@ import { logAction } from '../lib/audit.js';
 
 const toMin = (t) => { const m = String(t || '').match(/^(\d{1,2}):(\d{2})/); return m ? (+m[1]) * 60 + (+m[2]) : null; };
 
+// Rounded clock options for the permission From/To dropdowns — every 15
+// minutes from 06:00 to 20:00 (e.g. 08:00, 08:15, 08:30…). Keeps entries
+// tidy and avoids odd second-level values. (Nadeem 2026-06-08)
+const TIME_OPTIONS = (() => {
+  const out = [];
+  for (let m = 6 * 60; m <= 20 * 60; m += 15) {
+    out.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
+  }
+  return out;
+})();
+
 export default function LogbookPermissionEntry({ me, employees = [], onSaved }) {
   const [empQuery, setEmpQuery] = useState('');
   const [empId, setEmpId]       = useState('');
@@ -240,11 +251,17 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="text-xs font-semibold" style={{ color: '#1F1B16' }}>From</label>
-          <input type="time" className={inputCls + ' mt-1'} value={timeFrom} onChange={e => setTimeFrom(e.target.value)} />
+          <select className={inputCls + ' mt-1'} value={timeFrom} onChange={e => setTimeFrom(e.target.value)}>
+            <option value="">— select —</option>
+            {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
         </div>
         <div>
           <label className="text-xs font-semibold" style={{ color: '#1F1B16' }}>To</label>
-          <input type="time" className={inputCls + ' mt-1'} value={timeTo} onChange={e => setTimeTo(e.target.value)} />
+          <select className={inputCls + ' mt-1'} value={timeTo} onChange={e => setTimeTo(e.target.value)}>
+            <option value="">— select —</option>
+            {TIME_OPTIONS.filter(t => !timeFrom || toMin(t) > toMin(timeFrom)).map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
         </div>
       </div>
       <div className="text-xs flex items-center gap-1.5" style={{ color: timeError ? '#B91C1C' : '#1F1B16' }}>
