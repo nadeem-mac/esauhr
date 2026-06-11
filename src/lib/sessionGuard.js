@@ -59,7 +59,10 @@ export function useSessionGuard(me, signOut) {
 
     const kick = (reason) => {
       console.warn(`[sessionGuard] forcing signOut: ${reason}`);
-      try { localStorage.removeItem('esau_session_id'); } catch {}
+      // NOTE: do NOT remove 'esau_session_id' here. localStorage is shared
+      // across all tabs of the same browser, so clearing it makes sibling
+      // tabs see "no local session" and kick themselves → cascade logout.
+      // The explicit Logout button (AppShell) clears it for a full sign-out.
       signOut?.();
     };
 
@@ -78,9 +81,13 @@ export function useSessionGuard(me, signOut) {
         const remote = rows?.[0]?.current_session_id || null;
 
         if (!local && remote) {
-          // We have a remote session but no local UUID — someone
-          // else logged in as this PSN. Kick.
-          kick('no local session UUID but remote exists');
+          // No local UUID but the server has one. On the same browser this
+          // means a sibling tab cleared the shared key, or we're in a
+          // private window — NOT a competing device (a real other device
+          // brings its own local UUID and trips the mismatch branch below).
+          // So adopt the server's id rather than kicking — stops same-browser
+          // tabs fighting each other. (Nadeem 2026-06-08)
+          try { localStorage.setItem('esau_session_id', remote); } catch { /* private mode */ }
           return;
         }
         if (local && !remote) {
