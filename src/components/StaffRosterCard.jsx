@@ -34,26 +34,33 @@ const genderOf = (g) => {
 export default function StaffRosterCard({ employees = [], me }) {
   const [busy, setBusy] = useState(false);
 
-  // Active roster only (drops inactive/departed/terminated + pre-joining).
-  const roster = useMemo(() => {
-    return (employees || [])
-      .filter(e => e && e.id && e.name)
-      .filter(e => isActiveEmployee(e) && e.status !== 'pre_joining')
-      .map(e => ({
-        id: e.id,
-        name: String(e.name || '').replace(/\s+/g, ' ').trim(),
-        nationality: e.nationality_full || e.nationality || '—',
-        gender: genderOf(e.gender),
-        department: e.department || '—',
-        location: e.location || '—',
-        join_date: e.join_date || '',
-        email: e.email || '',
-        status: e.status || 'active',
-        saudi: isSaudi(e.nationality_full || e.nationality),
-      }));
-  }, [employees]);
+  // Map an employee row to the roster shape used by the sheet builder.
+  const mapEmp = (e) => ({
+    id: e.id,
+    name: String(e.name || '').replace(/\s+/g, ' ').trim(),
+    nationality: e.nationality_full || e.nationality || '—',
+    gender: genderOf(e.gender),
+    department: e.department || '—',
+    location: e.location || '—',
+    join_date: e.join_date || '',
+    email: e.email || '',
+    status: e.status || e.employment_status || 'active',
+    saudi: isSaudi(e.nationality_full || e.nationality),
+  });
 
-  const groups = useMemo(() => {
+  // Active roster (drops inactive/departed/terminated + pre-joining).
+  const roster = useMemo(() => (employees || [])
+    .filter(e => e && e.id && e.name)
+    .filter(e => isActiveEmployee(e) && e.status !== 'pre_joining')
+    .map(mapEmp), [employees]);
+
+  // Inactive roster (deactivated / departed / terminated).
+  const inactiveRoster = useMemo(() => (employees || [])
+    .filter(e => e && e.id && e.name)
+    .filter(e => !isActiveEmployee(e))
+    .map(mapEmp), [employees]);
+
+  const buildGroups = (rosterList) => {
     const order = ['Female', 'Male', 'Unspecified'];
     const byLocDeptName = (a, b) =>
       String(a.location || '').localeCompare(String(b.location || '')) ||
@@ -61,7 +68,7 @@ export default function StaffRosterCard({ employees = [], me }) {
       String(a.nationality || '').localeCompare(String(b.nationality || '')) ||
       a.name.localeCompare(b.name);
     const bucket = (saudi) => order
-      .map(g => ({ gender: g, list: roster.filter(r => r.saudi === saudi && r.gender === g).sort(byLocDeptName) }))
+      .map(g => ({ gender: g, list: rosterList.filter(r => r.saudi === saudi && r.gender === g).sort(byLocDeptName) }))
       .filter(b => b.list.length);
     const saudi = bucket(true);
     const nonSaudi = bucket(false);
@@ -69,109 +76,135 @@ export default function StaffRosterCard({ employees = [], me }) {
     return {
       saudi, nonSaudi,
       saudiCount: count(saudi), nonSaudiCount: count(nonSaudi),
-      saudiF: roster.filter(r => r.saudi && r.gender === 'Female').length,
-      saudiM: roster.filter(r => r.saudi && r.gender === 'Male').length,
-      nonF: roster.filter(r => !r.saudi && r.gender === 'Female').length,
-      nonM: roster.filter(r => !r.saudi && r.gender === 'Male').length,
-      total: roster.length,
+      saudiF: rosterList.filter(r => r.saudi && r.gender === 'Female').length,
+      saudiM: rosterList.filter(r => r.saudi && r.gender === 'Male').length,
+      nonF: rosterList.filter(r => !r.saudi && r.gender === 'Female').length,
+      nonM: rosterList.filter(r => !r.saudi && r.gender === 'Male').length,
+      total: rosterList.length,
     };
-  }, [roster]);
+  };
+
+  const groups = useMemo(() => buildGroups(roster), [roster]);
+  const inactiveGroups = useMemo(() => buildGroups(inactiveRoster), [inactiveRoster]);
 
   async function handleExport() {
     setBusy(true);
     try {
       const wb = new ExcelJS.Workbook();
-      const ws = wb.addWorksheet('Staff Roster', { views: [{ state: 'frozen', ySplit: 4 }] });
       const HEADERS = ['#', 'Employee name', 'PSN', 'Nationality', 'Gender', 'Department', 'Location', 'Joined', 'Email', 'Status'];
       const NCOL = HEADERS.length;
 
-      const GREEN = 'FF0F4C2A', GREEN_LT = 'FFDCFCE7', AMBER = 'FFD97706', AMBER_LT = 'FFFEF3C7';
+      const GREEN = 'FF0F4C2A', GREEN_LT = 'FFDCFCE7', AMBER = 'FFD97706', AMBER_LT = 'FFFEF3C7', GREY = 'FF6B7280';
       const border = { top: { style: 'thin', color: { argb: 'FFE5E7EB' } }, bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } }, left: { style: 'thin', color: { argb: 'FFE5E7EB' } }, right: { style: 'thin', color: { argb: 'FFE5E7EB' } } };
 
-      // Title
-      ws.mergeCells(1, 1, 1, NCOL);
-      const t = ws.getCell(1, 1);
-      t.value = `ESAU Staff Roster — Nationality & Gender   ·   ${fmtDate(new Date())}`;
-      t.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
-      t.alignment = { horizontal: 'center', vertical: 'middle' };
-      t.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GREEN } };
-      ws.getRow(1).height = 26;
+      // Shared sheet builder — used for both ACTIVE and INACTIVE.
+      const addRosterSheet = (sheetName, grp, { titleLabel, totalWord, accent, tab }) => {
+        const ws = wb.addWorksheet(sheetName, { views: [{ state: 'frozen', ySplit: 4 }] });
+        ws.properties.tabColor = { argb: tab };
 
-      // Summary
-      ws.mergeCells(2, 1, 2, NCOL);
-      const sm = ws.getCell(2, 1);
-      sm.value = `Total active: ${groups.total}    |    Saudi: ${groups.saudiCount} (F ${groups.saudiF} / M ${groups.saudiM})    |    Non-Saudi: ${groups.nonSaudiCount} (F ${groups.nonF} / M ${groups.nonM})`;
-      sm.font = { bold: true, size: 11, color: { argb: 'FF1F1B16' } };
-      sm.alignment = { horizontal: 'center' };
-      sm.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
-      ws.getRow(2).height = 20;
-      ws.getRow(3).height = 6; // spacer
+        // Title
+        ws.mergeCells(1, 1, 1, NCOL);
+        const t = ws.getCell(1, 1);
+        t.value = titleLabel;
+        t.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
+        t.alignment = { horizontal: 'center', vertical: 'middle' };
+        t.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: accent } };
+        ws.getRow(1).height = 26;
 
-      // Column header (row 4 — frozen)
-      const hr = ws.getRow(4);
-      HEADERS.forEach((h, i) => {
-        const c = hr.getCell(i + 1);
-        c.value = h;
-        c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GREEN } };
-        c.alignment = { horizontal: i === 1 || i === 8 ? 'left' : 'center', vertical: 'middle' };
-        c.border = border;
-      });
-      hr.height = 20;
+        // Summary
+        ws.mergeCells(2, 1, 2, NCOL);
+        const sm = ws.getCell(2, 1);
+        sm.value = `Total ${totalWord}: ${grp.total}    |    Saudi: ${grp.saudiCount} (F ${grp.saudiF} / M ${grp.saudiM})    |    Non-Saudi: ${grp.nonSaudiCount} (F ${grp.nonF} / M ${grp.nonM})`;
+        sm.font = { bold: true, size: 11, color: { argb: 'FF1F1B16' } };
+        sm.alignment = { horizontal: 'center' };
+        sm.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
+        ws.getRow(2).height = 20;
+        ws.getRow(3).height = 6; // spacer
 
-      let r = 5; let seq = 0;
-      const sectionBand = (label, fill) => {
-        ws.mergeCells(r, 1, r, NCOL);
-        const c = ws.getCell(r, 1);
-        c.value = label;
-        c.font = { bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
-        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
-        c.alignment = { horizontal: 'left', vertical: 'middle' };
-        ws.getRow(r).height = 18;
-        r += 1;
-      };
-      const genderBand = (label, fill) => {
-        ws.mergeCells(r, 1, r, NCOL);
-        const c = ws.getCell(r, 1);
-        c.value = label;
-        c.font = { bold: true, size: 10, color: { argb: 'FF1F1B16' } };
-        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
-        c.alignment = { horizontal: 'left' };
-        r += 1;
-      };
-      const writeRows = (list) => {
-        for (const e of list) {
-          seq += 1;
-          const vals = [seq, e.name, e.id, String(e.nationality || '—').toUpperCase(), e.gender, e.department, e.location, fmtDate(e.join_date), e.email, e.status];
-          const row = ws.getRow(r);
-          vals.forEach((v, i) => {
-            const c = row.getCell(i + 1);
-            c.value = v;
-            c.alignment = { horizontal: i === 1 || i === 8 ? 'left' : 'center', vertical: 'middle' };
-            c.border = border;
-            c.font = { size: 10, color: { argb: 'FF1F1B16' } };
-          });
-          if (seq % 2 === 0) row.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFAFAF9' } }; });
+        // Column header (row 4 — frozen)
+        const hr = ws.getRow(4);
+        HEADERS.forEach((h, i) => {
+          const c = hr.getCell(i + 1);
+          c.value = h;
+          c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: accent } };
+          c.alignment = { horizontal: i === 1 || i === 8 ? 'left' : 'center', vertical: 'middle' };
+          c.border = border;
+        });
+        hr.height = 20;
+
+        let r = 5; let seq = 0;
+        const sectionBand = (label, fill) => {
+          ws.mergeCells(r, 1, r, NCOL);
+          const c = ws.getCell(r, 1);
+          c.value = label;
+          c.font = { bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
+          c.alignment = { horizontal: 'left', vertical: 'middle' };
+          ws.getRow(r).height = 18;
           r += 1;
+        };
+        const genderBand = (label, fill) => {
+          ws.mergeCells(r, 1, r, NCOL);
+          const c = ws.getCell(r, 1);
+          c.value = label;
+          c.font = { bold: true, size: 10, color: { argb: 'FF1F1B16' } };
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
+          c.alignment = { horizontal: 'left' };
+          r += 1;
+        };
+        const writeRows = (list) => {
+          for (const e of list) {
+            seq += 1;
+            const vals = [seq, e.name, e.id, String(e.nationality || '—').toUpperCase(), e.gender, e.department, e.location, fmtDate(e.join_date), e.email, e.status];
+            const row = ws.getRow(r);
+            vals.forEach((v, i) => {
+              const c = row.getCell(i + 1);
+              c.value = v;
+              c.alignment = { horizontal: i === 1 || i === 8 ? 'left' : 'center', vertical: 'middle' };
+              c.border = border;
+              c.font = { size: 10, color: { argb: 'FF1F1B16' } };
+            });
+            if (seq % 2 === 0) row.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFAFAF9' } }; });
+            r += 1;
+          }
+        };
+
+        if (grp.total === 0) {
+          ws.mergeCells(r, 1, r, NCOL);
+          const c = ws.getCell(r, 1);
+          c.value = `No ${totalWord} staff.`;
+          c.font = { italic: true, size: 10, color: { argb: 'FF6B7280' } };
+          c.alignment = { horizontal: 'left' };
+          r += 1;
+        } else {
+          sectionBand(`SAUDI NATIONALS  (${grp.saudiCount})`, GREEN);
+          for (const b of grp.saudi) { genderBand(`${b.gender} (${b.list.length})`, GREEN_LT); writeRows(b.list); }
+          r += 1;
+          sectionBand(`NON-SAUDI  (${grp.nonSaudiCount})`, AMBER);
+          for (const b of grp.nonSaudi) { genderBand(`${b.gender} (${b.list.length})`, AMBER_LT); writeRows(b.list); }
         }
+
+        const widths = [5, 34, 9, 14, 11, 14, 12, 13, 38, 11];
+        widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
       };
 
-      sectionBand(`SAUDI NATIONALS  (${groups.saudiCount})`, GREEN);
-      for (const b of groups.saudi) { genderBand(`${b.gender} (${b.list.length})`, GREEN_LT); writeRows(b.list); }
-      r += 1;
-      sectionBand(`NON-SAUDI  (${groups.nonSaudiCount})`, AMBER);
-      for (const b of groups.nonSaudi) { genderBand(`${b.gender} (${b.list.length})`, AMBER_LT); writeRows(b.list); }
-
-      // Column widths (auto-fit-ish)
-      const widths = [5, 34, 9, 14, 11, 14, 12, 13, 38, 11];
-      widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+      const today = fmtDate(new Date());
+      addRosterSheet('ACTIVE', groups, {
+        titleLabel: `ESAU Staff Roster — ACTIVE · Nationality & Gender   ·   ${today}`,
+        totalWord: 'active', accent: GREEN, tab: GREEN,
+      });
+      addRosterSheet('INACTIVE', inactiveGroups, {
+        titleLabel: `ESAU Staff Roster — INACTIVE (deactivated / departed)   ·   ${today}`,
+        totalWord: 'inactive', accent: GREY, tab: GREY,
+      });
 
       const buf = await wb.xlsx.writeBuffer();
       const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `ESAU_Active Staff_Details_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      a.download = `ESAU_Staff_Details_${new Date().toISOString().slice(0, 10)}.xlsx`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1500);
     } catch (e) {
