@@ -82,13 +82,13 @@ function plainTable(headers, rows, widths) {
 
 // Build an HTML table for clipboard
 function htmlTable(headers, rows) {
-  const th = headers.map(h => `<th style="background:#2D5F3F;color:#fff;padding:8px 10px;text-align:left;font-weight:600;font-size:13px;border:1px solid #1F4530">${escapeHtml(h)}</th>`).join('');
+  const th = headers.map(h => `<th style="background:#0F4C2A;color:#fff;padding:4px 9px;text-align:left;font-weight:700;font-size:12px;border:1px solid #0F4C2A;white-space:nowrap">${escapeHtml(h)}</th>`).join('');
   const trs = rows.map((r, i) => {
-    const bg = i % 2 === 0 ? '#FFFFFF' : '#F8F8F2';
-    const tds = r.map(c => `<td style="padding:7px 10px;border:1px solid #D1D5DB;color:#1F2937;font-size:13px;background:${bg}">${escapeHtml(c == null ? '' : String(c))}</td>`).join('');
+    const bg = i % 2 === 0 ? '#FFFFFF' : '#F4F7F4';
+    const tds = r.map(c => `<td style="padding:3px 9px;border:1px solid #D1D5DB;color:#1F2937;font-size:12px;background:${bg};white-space:nowrap">${escapeHtml(c == null ? '' : String(c))}</td>`).join('');
     return `<tr>${tds}</tr>`;
   }).join('');
-  return `<table style="border-collapse:collapse;width:100%;font-family:Calibri,Arial,sans-serif;margin:12px 0">
+  return `<table style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;margin:10px 0">
     <thead><tr>${th}</tr></thead>
     <tbody>${trs}</tbody>
   </table>`;
