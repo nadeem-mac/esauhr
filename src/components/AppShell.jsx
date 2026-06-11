@@ -1277,20 +1277,9 @@ export default function AppShell({ session, me, onRefreshMe }) {
           )
         )}
         {tab === 'reports' && isHrReviewer && !isAdmin && (
-          /* REPORTS tab — Leave Report (who's on leave + Copy-for-Outlook)
-             plus the Mr John report drafting card. HR-reviewer only. */
-          <div className="space-y-4">
-            <LeaveReport
-              me={me}
-              employees={employees}
-              leaveTypes={leaveTypes}
-              requests={requests}
-              permissions={permissions}
-              isAdmin={isAdmin}
-              isHrReviewer={isHrReviewer}
-            />
-            <BashaierTasksCard employees={employees} requests={requests} permissions={permissions} />
-          </div>
+          /* REPORTS tab — Mr John report drafting card. Leave & Availability
+             now lives inside this list as an expandable report. */
+          <BashaierTasksCard employees={employees} requests={requests} permissions={permissions} />
         )}
         {tab === 'reviews' && (
           <>

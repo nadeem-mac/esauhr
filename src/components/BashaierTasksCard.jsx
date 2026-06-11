@@ -381,6 +381,79 @@ function computeTaskStatus(taskKey, today) {
   return { state: 'idle', due: '', color: '#9CA3AF', bg: '#F3F4F6' };
 }
 
+// Leave & Availability — who's on leave this month (current / upcoming /
+// returned), in the Leave Report style Bashaier prefers. (Nadeem 2026-06-08)
+function buildLeaveAvailability({ requests, employees, year, month, today }) {
+  const ms = pad2(month);
+  const monthStart = `${year}-${ms}-01`;
+  const lastDay = new Date(year, month, 0).getDate();
+  const monthEnd = `${year}-${ms}-${pad2(lastDay)}`;
+  const todayStr = `${today.getFullYear()}-${pad2(today.getMonth() + 1)}-${pad2(today.getDate())}`;
+  const empMap = {};
+  (employees || []).forEach(e => { empMap[e.id] = e; });
+
+  const rows = (requests || []).filter(r => {
+    const stage = r.stage || r.status;
+    if (stage !== 'approved') return false;
+    if (!r.start_date || !r.end_date) return false;
+    return r.start_date <= monthEnd && r.end_date >= monthStart;
+  }).map(r => {
+    const e = empMap[r.employee_id];
+    const status = r.end_date < todayStr ? 'returned' : r.start_date > todayStr ? 'upcoming' : 'now';
+    return {
+      psn: r.employee_id, name: e?.name || r.employee_id, dept: e?.department || '', loc: e?.location || '',
+      typeName: leaveTypeLabel(r.leave_type_id), from: r.start_date, to: r.end_date,
+      days: Number(r.days || 0), isHalf: !!r.is_half_day, status,
+    };
+  }).sort((a, b) => a.loc.localeCompare(b.loc) || a.dept.localeCompare(b.dept) || a.name.localeCompare(b.name));
+
+  const monthName = MONTH_FULL[month - 1];
+  const peopleSet = new Set(rows.map(r => r.psn));
+  const outNow = rows.filter(r => r.status === 'now').length;
+  const upcoming = rows.filter(r => r.status === 'upcoming').length;
+  const STATUS_TEXT = { now: 'OUT NOW', upcoming: 'UPCOMING', returned: 'RETURNED' };
+
+  const headers = ['PSN', 'Name', 'Dept', 'Loc', 'Leave Type', 'From', 'To', 'Days', 'Status'];
+  const widths  = [8, 28, 6, 5, 12, 11, 11, 6, 9];
+  const plainRows = rows.map(r => [r.psn, r.name, r.dept, r.loc, r.typeName, fmtDateShort(r.from), fmtDateShort(r.to), r.days.toFixed(1) + (r.isHalf ? ' \u00BD' : ''), STATUS_TEXT[r.status]]);
+  const tablePlain = rows.length ? plainTable(headers, plainRows, widths) : '(No approved leave overlapping this month.)';
+
+  // HTML in the Leave Report style — status pills kept (the look Bashaier likes).
+  const pill = (st) => {
+    const m = { now: { bg: '#FEE2E2', fg: '#991B1B', label: 'OUT NOW' }, upcoming: { bg: '#DBEAFE', fg: '#1D4ED8', label: 'UPCOMING' }, returned: { bg: '#D1FAE5', fg: '#065F46', label: 'RETURNED' } }[st] || { bg: '#EEE', fg: '#333', label: st };
+    return `<span style="background:${m.bg};color:${m.fg};padding:1px 6px;border-radius:3px;font-size:11px;font-weight:700">${m.label}</span>`;
+  };
+  const th = (t, align = 'left') => `<th style="background:#334155;color:#fff;padding:4px 9px;text-align:${align};font-size:12px;font-weight:700;border:1px solid #334155;white-space:nowrap">${t}</th>`;
+  const headRow = `<tr>${th('PSN')}${th('Name')}${th('Dept')}${th('Loc')}${th('Leave Type')}${th('From')}${th('To')}${th('Days', 'right')}${th('Status')}</tr>`;
+  const bodyRows = rows.map((r, i) => {
+    const bg = i % 2 ? '#F3F4F6' : '#FFFFFF';
+    const td = (c, align = 'left') => `<td style="padding:3px 9px;border:1px solid #D1D5DB;color:#1F2937;font-size:12px;background:${bg};text-align:${align};white-space:nowrap">${c}</td>`;
+    return `<tr>${td(escapeHtml(r.psn))}${td(escapeHtml(r.name))}${td(escapeHtml(r.dept))}${td(escapeHtml(r.loc))}${td(escapeHtml(r.typeName))}${td(escapeHtml(fmtDateShort(r.from)))}${td(escapeHtml(fmtDateShort(r.to)))}${td(r.days.toFixed(1) + (r.isHalf ? ' \u00BD' : ''), 'right')}${td(pill(r.status))}</tr>`;
+  }).join('');
+  const tableHtml = rows.length
+    ? `<table style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;margin:10px 0"><thead>${headRow}</thead><tbody>${bodyRows}</tbody></table>`
+    : '<p style="color:#6B7280;font-style:italic">No approved leave overlapping this month.</p>';
+
+  const subject = `Leave & Availability - ${monthName} ${year}`;
+  const totalsLine = `On leave this month: ${peopleSet.size} staff \u00B7 ${rows.length} leave record${rows.length === 1 ? '' : 's'} \u00B7 Out now: ${outNow} \u00B7 Upcoming: ${upcoming}`;
+  const intro = [
+    `Dear Mr John,`, '',
+    `Please find below the staff on leave for ${monthName} ${year}. The list shows current, upcoming and returned leave, with type, dates and duration.`, '',
+  ].join('\n');
+  const closing = ['', `Please let me know if you would like a breakdown by department or location.`].join('\n');
+  const bodyPlain = intro + tablePlain + '\n\n' + totalsLine + closing + SIGNATURE_PLAIN;
+  const bodyHtml = `
+    <div style="font-family:Calibri,Arial,sans-serif;color:#1F2937;font-size:14px;line-height:1.5">
+      <p>Dear Mr John,</p>
+      <p>Please find below the staff on leave for ${escapeHtml(monthName + ' ' + year)}. The list shows current, upcoming and returned leave, with type, dates and duration.</p>
+      ${tableHtml}
+      <p style="font-weight:600;color:#334155">${escapeHtml(totalsLine)}</p>
+      <p>Please let me know if you would like a breakdown by department or location.</p>
+      ${SIGNATURE_HTML}
+    </div>`;
+  return { subject, bodyPlain, bodyHtml, count: rows.length };
+}
+
 // Task 4: Monthly shift-staff timing reminder. Reminds dept managers to verify
 // or update shift-based working hours for any of their team members. Bashaier
 // sees this in her tasks card and clicks to send the reminder email.
@@ -715,6 +788,14 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
 
   const tasks = useMemo(() => [
     {
+      key: 'leave_availability',
+      title: 'Leave & Availability',
+      subtitle: `Who's on leave this month — ${MONTH_FULL[month-1]} ${year}`,
+      icon: <Plane className="w-4 h-4" />,
+      tone: '#334155',
+      build: () => buildLeaveAvailability({ requests, employees, year, month, today }),
+    },
+    {
       key: 'mid_month_perms',
       title: 'Mid-month permissions report',
       subtitle: `Send a 1\u201315 ${MONTH_FULL[month-1]} update to Mr John`,
@@ -746,7 +827,7 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
       tone: '#7E22CE',
       build: () => buildShiftStaffReminder({ year, month }),
     },
-  ], [perms, employees, requests, month, year, prevMonth, prevYear]);
+  ], [perms, employees, requests, month, year, prevMonth, prevYear, today]);
 
   const open = (task) => {
     const built = task.build();
