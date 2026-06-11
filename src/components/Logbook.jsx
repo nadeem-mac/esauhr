@@ -48,9 +48,10 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { directGet, directPost, directDelete, directPatch } from '../supabaseClient.js';
-import { NotebookPen, Save, Loader2, Search, CheckCircle2, AlertCircle, Wallet, Trash2 } from 'lucide-react';
+import { NotebookPen, Save, Loader2, Search, CheckCircle2, AlertCircle, Wallet, Trash2, Mail, FileText } from 'lucide-react';
 import { calculateRequestDays, calculateBalance, fmtDate } from '../lib/leaveLogic.js';
 import { generateLogbookPdfBlob } from '../lib/leaveApplicationPdf.js';
+import { generateVacationFormBlob, buildEmailDraft, downloadBlob } from '../lib/vacationForm.js';
 import LeaveApprovedModal from './LeaveApprovedModal.jsx';
 import LogbookPermissionEntry from './LogbookPermissionEntry.jsx';
 
@@ -85,6 +86,7 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
   // weekends, which is how the legacy Excel tracker recorded leaves.
   const [daysOverride, setDaysOverride] = useState(null);
   const [savedModal, setSavedModal] = useState(null);
+  const [docId, setDocId] = useState(null);
   // Substitutes — Bashaier picks from the staff's own department +
   // location (same eligibility rules as the main workflow). Since
   // she's recording a paper application that's already been signed
@@ -334,6 +336,37 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
   // Delete a mistakenly-logged entry. Removes the leave_requests row and
   // reverts any attendance_daily days that were linked to it, so the
   // record (and the staff member's leave balance, which is computed from
+  // Manually-prepared Word .docx for a logged leave — WITHOUT the QR code
+  // and Ref number (manual:true), so it reads as hand-prepared. Temporary
+  // until the full system launch. (Nadeem 2026-06-08)
+  const downloadLeaveWord = async (r, e) => {
+    setDocId(r.id);
+    try {
+      const manager = e?.manager_id ? (employees || []).find(x => x.id === e.manager_id) : null;
+      const subs = (r.substitute_ids || []).map(psn => (employees || []).find(x => x.id === psn)).filter(Boolean);
+      const blob = await generateVacationFormBlob({
+        employee: e || { id: r.employee_id, name: r.employee_id },
+        request: r, manager, hrApprover: me, substitutes: subs, manual: true,
+      });
+      downloadBlob(blob, `Leave_${(e?.name || r.employee_id).replace(/\s+/g, '_')}_${r.start_date}.docx`);
+    } catch (err) {
+      console.error('leave word doc failed:', err);
+    } finally {
+      setDocId(null);
+    }
+  };
+
+  const emailLeave = (r, e) => {
+    try {
+      const manager = e?.manager_id ? (employees || []).find(x => x.id === e.manager_id) : null;
+      const subs = (r.substitute_ids || []).map(psn => (employees || []).find(x => x.id === psn)).filter(Boolean);
+      const draft = buildEmailDraft({ employee: e || { id: r.employee_id, name: r.employee_id }, request: r, manager, hrApprover: me, substitutes: subs });
+      window.open(draft.mailto, '_blank');
+    } catch (err) {
+      console.error('leave email draft failed:', err);
+    }
+  };
+
   // leave_requests) updates correctly. Nadeem 2026-06-03.
   const deleteEntry = async (r) => {
     const emp = (employees || []).find(x => x.id === r.employee_id);
@@ -852,7 +885,7 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
                 <th className="py-2 font-semibold">Type</th>
                 <th className="py-2 font-semibold">Period</th>
                 <th className="py-2 font-semibold text-right">Days</th>
-                <th className="py-2 font-semibold text-right" style={{ width: 36 }}></th>
+                <th className="py-2 font-semibold text-right" style={{ width: 92 }}></th>
               </tr>
             </thead>
             <tbody>
@@ -892,7 +925,26 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
                       {r.end_date && r.end_date !== r.start_date && ` → ${fmtDate(new Date(r.end_date))}`}
                     </td>
                     <td className="py-2 text-right font-medium">{r.days}</td>
-                    <td className="py-2 text-right">
+                    <td className="py-2 text-right whitespace-nowrap">
+                      <button
+                        type="button"
+                        title="Open prefilled email"
+                        onClick={(ev) => { ev.stopPropagation(); emailLeave(r, e); }}
+                        className="inline-flex items-center justify-center rounded p-1 hover:bg-emerald-50 mr-1"
+                        style={{ color: '#0F6E56' }}
+                      >
+                        <Mail size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        title="Download Word document"
+                        onClick={(ev) => { ev.stopPropagation(); downloadLeaveWord(r, e); }}
+                        disabled={docId === r.id}
+                        className="inline-flex items-center justify-center rounded p-1 hover:bg-blue-50 mr-1"
+                        style={{ color: '#1D4ED8', opacity: docId === r.id ? 0.5 : 1 }}
+                      >
+                        {docId === r.id ? <Loader2 size={13} className="animate-spin" /> : <FileText size={13} />}
+                      </button>
                       <button
                         type="button"
                         title="Delete this entry (logged by mistake)"

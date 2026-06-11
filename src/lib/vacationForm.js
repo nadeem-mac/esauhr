@@ -580,7 +580,7 @@ async function generateQrPng(text, sizePx = 220) {
 }
 
 // ─── main generator ──────────────────────────────────────────────────────────
-export async function generateVacationFormBlob({ employee, request, manager, hrApprover, substitutes = [] }) {
+export async function generateVacationFormBlob({ employee, request, manager, hrApprover, substitutes = [], manual = false }) {
   const ltKey  = LEAVE_TYPE[request.leave_type_id] ? request.leave_type_id : 'annual';
   const ltBoth = LEAVE_TYPE[ltKey];
 
@@ -610,7 +610,7 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
   // version). Generated up front so the header table can embed the QR
   // image directly.
   const verifyUrl = `${VERIFY_BASE_URL}/verify-leave/${request.id}`;
-  const qrBytes = await generateQrPng(verifyUrl, 220);
+  const qrBytes = manual ? null : await generateQrPng(verifyUrl, 220);
 
   // ── HEADER ────────────────────────────────────────────────────────────────
   const headerRow = new Table({
@@ -664,14 +664,14 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
               ],
               alignment: AlignmentType.RIGHT,
             }),
-            new Paragraph({
+            ...(manual ? [] : [new Paragraph({
               children: [
                 run('Ref:  ', { bold: true, color: C_MUTED, size: 14 }),
                 run(shortRef(request.id), { bold: true, size: 14 }),
               ],
               alignment: AlignmentType.RIGHT,
               spacing: { before: 40 },
-            }),
+            })]),
           ],
           width: { size: HEADER_REF, type: WidthType.DXA },
           margins: { top: 0, bottom: 0, left: 0, right: 100 },
@@ -916,7 +916,9 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
 
   const footerBlock = new Paragraph({
     children: [
-      run(`Generated on ${generatedAt} GMT+3  ·  ${hrApprover?.name || HR_SIGNATURE.name}`,
+      run(manual
+          ? `Prepared by ${hrApprover?.name || HR_SIGNATURE.name}`
+          : `Generated on ${generatedAt} GMT+3  ·  ${hrApprover?.name || HR_SIGNATURE.name}`,
           { size: 12, italics: true, color: C_COPPER }),
     ],
     alignment: AlignmentType.LEFT,
