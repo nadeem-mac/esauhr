@@ -403,7 +403,7 @@ async function loadLogoBytes() {
 }
 
 // ─── main generator ──────────────────────────────────────────────────────────
-export async function generatePermissionLetterBlob({ employee, manager, hrApprover, request }) {
+export async function generatePermissionLetterBlob({ employee, manager, hrApprover, request, manual = false }) {
   const typeKey  = TYPE[request.type] ? request.type : 'late_arrival';
   const typeBoth = TYPE[typeKey];
 
@@ -482,14 +482,14 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
               ],
               alignment: AlignmentType.RIGHT,
             }),
-            new Paragraph({
+            ...(manual ? [] : [new Paragraph({
               children: [
                 run('Ref:  ', { bold: true, color: C_MUTED, size: 14 }),
                 run(`PR-${String(request.id).padStart(5, '0')}`, { bold: true, size: 14 }),
               ],
               alignment: AlignmentType.RIGHT,
               spacing: { before: 40 },
-            }),
+            })]),
           ],
           width: { size: HEADER_REF, type: WidthType.DXA },
           margins: { top: 0, bottom: 0, left: 0, right: 0 },
@@ -692,7 +692,7 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
     hour: '2-digit', minute: '2-digit',
   });
   const verifyUrl = `${VERIFY_BASE_URL}/verify/${request.id}`;
-  const qrBytes = await generateQrPng(verifyUrl, 220);
+  const qrBytes = manual ? null : await generateQrPng(verifyUrl, 220);
 
   const footerBlock = new Table({
     width: { size: PAGE_W, type: WidthType.DXA },
@@ -704,20 +704,22 @@ export async function generatePermissionLetterBlob({ employee, manager, hrApprov
           children: [
             new Paragraph({
               children: [
-                run(`Generated on ${generatedAt} GMT+3  ·  ${hrApprover?.name || HR_SIGNATURE.name}`,
+                run(manual
+                    ? `Prepared by ${hrApprover?.name || HR_SIGNATURE.name}`
+                    : `Generated on ${generatedAt} GMT+3  ·  ${hrApprover?.name || HR_SIGNATURE.name}`,
                     { size: 12, italics: true, color: C_COPPER }),
               ],
               alignment: AlignmentType.LEFT,
               spacing: { before: 60, after: 20 },
             }),
-            new Paragraph({
+            ...(manual ? [] : [new Paragraph({
               children: [
                 run('Verify online: ', { size: 11, color: C_MUTED }),
                 run(verifyUrl, { size: 11, color: C_BRAND }),
               ],
               alignment: AlignmentType.LEFT,
               spacing: { before: 0, after: 0 },
-            }),
+            })]),
           ],
           width: { size: PAGE_W - 1100, type: WidthType.DXA },
           borders: NO_BORDER,
@@ -912,8 +914,8 @@ function buildMailto({ to, cc, subject, body }) {
   return `mailto:${encodeURIComponent(to)}?${params.toString().replace(/\+/g, '%20')}`;
 }
 
-export async function downloadPermissionLetter({ employee, manager, hrApprover, request }) {
-  const blob = await generatePermissionLetterBlob({ employee, manager, hrApprover, request });
+export async function downloadPermissionLetter({ employee, manager, hrApprover, request, manual = false }) {
+  const blob = await generatePermissionLetterBlob({ employee, manager, hrApprover, request, manual });
   const fname = `Permission_${(employee?.name || 'staff').replace(/\s+/g, '_')}_${request.permission_date}.docx`;
   downloadBlob(blob, fname);
 }

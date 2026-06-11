@@ -11,8 +11,9 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { directGet, directPost, directDelete } from '../supabaseClient.js';
-import { Save, Loader2, CheckCircle2, AlertCircle, Trash2, Clock, Mail } from 'lucide-react';
+import { Save, Loader2, CheckCircle2, AlertCircle, Trash2, Clock, Mail, FileText } from 'lucide-react';
 import { PERMISSION_TYPES, PERMISSION_QUOTA, summariseMonth, checkExceeds, reasonsFor } from '../lib/permissionLogic.js';
+import { downloadPermissionLetter } from '../lib/permissionLetter.js';
 import { logAction } from '../lib/audit.js';
 
 const toMin = (t) => { const m = String(t || '').match(/^(\d{1,2}):(\d{2})/); return m ? (+m[1]) * 60 + (+m[2]) : null; };
@@ -41,6 +42,7 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
   const [msg, setMsg]           = useState(null);
   const [recent, setRecent]     = useState([]);
   const [deletingId, setDeletingId] = useState(null);
+  const [docId, setDocId]           = useState(null);
   const [monthRows, setMonthRows] = useState([]);
 
   const empMatches = useMemo(() => {
@@ -137,7 +139,7 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
       try {
         const rows = await directGet(
           'permission_requests',
-          `select=id,employee_id,type,permission_date,time_from,time_to,hours,reason,stage,hr_decided_at`
+          `select=id,employee_id,type,permission_date,time_from,time_to,hours,reason,stage,requested_at,manager_decided_at,hr_decided_at,exceeds_quota`
           + `&reason=ilike.Manual entry*`
           + `&order=hr_decided_at.desc&limit=10`,
           { timeoutMs: 10000 },
@@ -206,6 +208,29 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
       setMsg({ kind: 'err', text: err?.message || 'Could not delete.' });
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  // Manual Word document — looks like a hand-prepared permission form,
+  // WITHOUT the QR code and Ref number (manual:true). Temporary measure
+  // until the full system launch. (Nadeem 2026-06-08)
+  async function downloadWord(r) {
+    setDocId(r.id);
+    setMsg(null);
+    try {
+      const emp = (employees || []).find(x => x.id === r.employee_id) || { id: r.employee_id, name: r.employee_id };
+      const manager = emp.manager_id ? (employees || []).find(x => x.id === emp.manager_id) : null;
+      await downloadPermissionLetter({
+        employee: emp,
+        manager,
+        hrApprover: me,
+        request: r,
+        manual: true,
+      });
+    } catch (err) {
+      setMsg({ kind: 'err', text: err?.message || 'Could not generate the Word document.' });
+    } finally {
+      setDocId(null);
     }
   }
 
@@ -337,7 +362,7 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
                 <th className="py-2 font-semibold">Type</th>
                 <th className="py-2 font-semibold">Date</th>
                 <th className="py-2 font-semibold">Window</th>
-                <th className="py-2 font-semibold text-right" style={{ width: 36 }}></th>
+                <th className="py-2 font-semibold text-right" style={{ width: 64 }}></th>
               </tr>
             </thead>
             <tbody>
@@ -349,7 +374,11 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
                     <td className="py-2">{PERMISSION_TYPES[r.type]?.short || r.type}</td>
                     <td className="py-2">{r.permission_date}</td>
                     <td className="py-2 font-mono">{String(r.time_from || '').slice(0,5)}–{String(r.time_to || '').slice(0,5)}</td>
-                    <td className="py-2 text-right">
+                    <td className="py-2 text-right whitespace-nowrap">
+                      <button type="button" title="Download Word document" onClick={() => downloadWord(r)} disabled={docId === r.id}
+                        className="inline-flex items-center justify-center rounded p-1 hover:bg-blue-50 mr-1" style={{ color: '#1D4ED8', opacity: docId === r.id ? 0.5 : 1 }}>
+                        {docId === r.id ? <Loader2 size={13} className="animate-spin" /> : <FileText size={13} />}
+                      </button>
                       <button type="button" title="Delete this entry" onClick={() => deleteEntry(r)} disabled={deletingId === r.id}
                         className="inline-flex items-center justify-center rounded p-1 hover:bg-red-50" style={{ color: '#B91C1C', opacity: deletingId === r.id ? 0.5 : 1 }}>
                         {deletingId === r.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
