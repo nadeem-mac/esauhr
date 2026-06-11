@@ -572,13 +572,14 @@ export default function LeaveReport({
     const wb = XLSX.utils.book_new();
 
     // Sheet 1 — On leave
+    const STATUS_LABEL = { now: 'OUT NOW', upcoming: 'UPCOMING', returned: 'RETURNED' };
     const leaveAoa = [['Staff ID','Name','Department','Location','Leave Type','From','To','Days','Half','Status']];
     for (const r of leaveRows) {
-      leaveAoa.push([r.psn, r.name, r.dept, r.loc, r.typeName, r.from, r.to, r.days, r.isHalf ? 'Half' : '', r.status.toUpperCase()]);
+      leaveAoa.push([r.psn, r.name, r.dept, r.loc, r.typeName, r.from, r.to, r.days, r.isHalf ? 'Half' : '', STATUS_LABEL[r.status] || String(r.status).toUpperCase()]);
     }
     const ws1 = XLSX.utils.aoa_to_sheet(leaveAoa);
     styleSheet(XLSX, ws1, leaveAoa, hStyle, c, 9 /*status col*/, {
-      now: { bg:'FEE2E2', fg:'991B1B' }, upcoming: { bg:'DBEAFE', fg:'1D4ED8' }, returned: { bg:'D1FAE5', fg:'065F46' },
+      'OUT NOW': { bg:'FEE2E2', fg:'991B1B' }, 'UPCOMING': { bg:'DBEAFE', fg:'1D4ED8' }, 'RETURNED': { bg:'D1FAE5', fg:'065F46' },
     });
     ws1['!cols'] = [{wch:9},{wch:28},{wch:12},{wch:9},{wch:14},{wch:12},{wch:12},{wch:7},{wch:7},{wch:11}];
     XLSX.utils.book_append_sheet(wb, ws1, 'On Leave');
@@ -890,7 +891,10 @@ function styleSheet(XLSX, ws, aoa, hStyle, c, pillCol, pillMap) {
       if (R === 0) { ws[addr].s = hStyle; continue; }
       let style = c({ alignment: { vertical: 'center', horizontal: 'left' } });
       if (C === pillCol) {
-        const sc = pillMap[ws[addr].v];
+        const raw = ws[addr].v;
+        const sc = pillMap[raw]
+          || pillMap[String(raw).toLowerCase()]
+          || pillMap[String(raw).toUpperCase()];
         if (sc) style = c({ font: { bold: true, sz: 10, color: { rgb: sc.fg } }, fill: { fgColor: { rgb: sc.bg } }, alignment: { horizontal: 'center', vertical: 'center' } });
       }
       ws[addr].s = style;
