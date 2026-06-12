@@ -171,7 +171,6 @@ export function renderHrSignature(sig) {
   const s = sig || (cache && cache.hr_signature) || DEFAULT_TEMPLATES.hr_signature;
   return [
     'Thanks and regards,',
-    '',
     s.name,
     s.company,
     s.unit,
