@@ -287,6 +287,14 @@ export default function AppShell({ session, me, onRefreshMe }) {
   const isAdmin    = Boolean(me?.is_admin);
   const isReviewer = Boolean(me?.can_review_leave || me?.can_review_permissions);
   const isHrReviewer = Boolean(me?.is_hr_reviewer);
+
+  // Bashaier (H94830) gets the app-wide baby-pink theme — toggled on the
+  // <body> so the CSS variable overrides in index.css cascade everywhere.
+  useEffect(() => {
+    const on = me?.id === 'H94830';
+    document.body.classList.toggle('bashaier-theme', on);
+    return () => document.body.classList.remove('bashaier-theme');
+  }, [me?.id]);
   const isManager  = useMemo(
     () => (employees || []).some(e => e.manager_id === me?.id),
     [employees, me?.id]
@@ -940,7 +948,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
       {/* Header — sticky so the top brand + tab nav stays visible while
           long pages (Attendance grid, calendar, request lists) are
           scrolled. z-index above page content but below modals. */}
-      <header className="border-b sticky top-0 z-30" style={{ borderColor: 'var(--border-soft)', background: 'var(--paper)' }}>
+      <header className="border-b sticky top-0 z-30" style={{ borderColor: 'var(--border-soft)', background: me?.id === 'H94830' ? '#FDEFF4' : 'var(--paper)' }}>
         <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <EvergreenLogo variant="full" size="md" />

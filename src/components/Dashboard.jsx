@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
-import { Check, Copy, ArrowRight, Palmtree, Calendar, KeyRound, Mail, AlertCircle, AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
+import { Check, Copy, ArrowRight, Palmtree, Calendar, KeyRound, Mail, AlertCircle, AlertTriangle, CheckCircle2, Loader2, Plus } from 'lucide-react';
 import { supabase } from '../supabaseClient.js';
 import { todayISO, fmtDateShort, getInitials, avatarColor, isActiveEmployee } from '../lib/leaveLogic.js';
 import { summariseMonth } from '../lib/permissionLogic.js';
@@ -646,28 +646,51 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           Bashaier sees her name + heroMessage as the italic quote; everyone else sees the
           plain greeting. No tiles, no gradients. */}
       {bashaierMode ? (
-        <div className="pb-8" style={{ borderBottom: '1px solid #E5E5E5' }}>
-          <h1 className="leading-[1] mb-4" style={{ fontFamily: 'inherit', fontSize: 'clamp(2.2rem, 5vw, 3.5rem)', color: '#1F1B16', fontWeight: 400, letterSpacing: '-0.02em' }}>
-            Good {_period}, Bashaier.
-          </h1>
-          <p className="mb-3" style={{
-              fontFamily: heroMessage.lang === 'ar' ? '"Segoe UI", "Tahoma", Georgia, serif' : 'inherit',
-              fontStyle: 'italic',
-              color: '#1F1B16',
-              fontSize: '1.15rem',
-              maxWidth: '40rem',
-              lineHeight: 1.5,
-              direction: heroMessage.lang === 'ar' ? 'rtl' : 'ltr',
-              textAlign:  heroMessage.lang === 'ar' ? 'right' : 'left',
-            }}>
-            "{heroMessage.text}" 🧚
-          </p>
-          <p className="text-sm" style={{ color: '#1F1B16', margin: 0 }}>
-            {pending.length > 0
-              ? <>You have <span style={{ fontWeight: 600, color: '#1F1B16' }}>{pending.length} pending {pending.length === 1 ? 'request' : 'requests'}</span> waiting on your decision, and <span style={{ fontWeight: 600, color: '#1F1B16' }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
-              : <>Your queue is clear. <span style={{ fontWeight: 600, color: '#1F1B16' }}>{onLeaveToday.length}</span> {onLeaveToday.length === 1 ? 'person is' : 'people are'} out of office today.</>
-            }
-          </p>
+        <div className="rounded-2xl p-5 sm:p-6 flex flex-wrap justify-between gap-5 items-start"
+             style={{ background: 'linear-gradient(180deg, #FDEFF4, #FBE3EE)', border: '1px solid #F3C9DB' }}>
+          <div className="min-w-[240px] flex-1">
+            <div className="text-[10px]" style={{ letterSpacing: '0.28em', fontWeight: 700, color: '#993556' }}>
+              — GOOD {String(_period).toUpperCase()}
+            </div>
+            <h1 className="serif leading-[1.05] mt-1" style={{ fontSize: 'clamp(1.9rem, 4vw, 2.6rem)', color: '#1F1B16', fontWeight: 500, letterSpacing: '-0.02em' }}>
+              Bashaier
+            </h1>
+            <p className="mt-2" style={{
+                fontStyle: 'italic', color: '#7A2E47', fontSize: '1.05rem', maxWidth: '34rem', lineHeight: 1.5,
+                direction: heroMessage.lang === 'ar' ? 'rtl' : 'ltr',
+                textAlign:  heroMessage.lang === 'ar' ? 'right' : 'left',
+                fontFamily: heroMessage.lang === 'ar' ? '"Segoe UI", "Tahoma", Georgia, serif' : 'inherit',
+              }}>
+              "{heroMessage.text}" 🧚
+            </p>
+            <div className="flex flex-wrap gap-2 mt-3">
+              {pending.length > 0 && (
+                <span className="text-[12px]" style={{ background: '#FFFFFF', border: '1px solid #F3C9DB', color: '#993556', padding: '3px 10px', borderRadius: 999, fontWeight: 600 }}>
+                  {pending.length} pending {pending.length === 1 ? 'decision' : 'decisions'}
+                </span>
+              )}
+              <span className="text-[12px]" style={{ background: '#FFFFFF', border: '1px solid #F3C9DB', color: '#0E7490', padding: '3px 10px', borderRadius: 999, fontWeight: 600 }}>
+                {onLeaveToday.length} out of office today
+              </span>
+            </div>
+          </div>
+
+          <div className="text-right">
+            <div className="text-[10px]" style={{ letterSpacing: '0.2em', fontWeight: 700, color: '#993556', opacity: 0.85 }}>TODAY</div>
+            <div className="serif" style={{ fontSize: 15, color: '#1F1B16', fontWeight: 600, marginTop: 2 }}>
+              {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+            </div>
+            <div className="text-[10px] mt-3" style={{ letterSpacing: '0.2em', fontWeight: 700, color: '#993556', opacity: 0.85 }}>SIGNED IN</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#1F1B16', marginTop: 2 }}>{me?.name || 'Bashaier Ali Alsubaie'}</div>
+            <div className="font-mono" style={{ fontSize: 11, color: '#7A2E47', marginTop: 2 }}>{me?.id || 'H94830'}</div>
+            {onNewRequest && (
+              <button onClick={onNewRequest}
+                className="mt-2.5 inline-flex items-center gap-1.5 rounded-full"
+                style={{ background: '#993556', color: '#FFFFFF', padding: '7px 16px', fontSize: 13, cursor: 'pointer' }}>
+                <Plus className="w-4 h-4" /> New request
+              </button>
+            )}
+          </div>
         </div>
       ) : (
       <div className="pb-8" style={{ borderBottom: '1px solid #E5E5E5' }}>

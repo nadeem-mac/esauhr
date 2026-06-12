@@ -29,6 +29,32 @@
   --clay:   #B84A3E;
 }
 
+/* ── Bashaier (H94830) pink theme ────────────────────────────────────
+   Applied app-wide by toggling body.bashaier-theme. The page background
+   washes baby pink and the brand-green accent ramp is retinted to pink
+   so active tabs, rings, dividers and anything bound to --evergreen-*
+   pick it up automatically — no per-component edits needed. --paper
+   stays white so cards and body text keep their contrast. */
+body.bashaier-theme,
+body.bashaier-theme #root {
+  background: #FCEFF5;
+}
+body.bashaier-theme {
+  --paper-2: #FCEFF5;
+  --paper-3: #F7DCE7;
+  --border-soft: #F3D7E1;
+  --evergreen-50:  #FDEFF4;
+  --evergreen-100: #FBE0EB;
+  --evergreen-200: #F3C4D6;
+  --evergreen-300: #E89DB8;
+  --evergreen-500: #C44D6E;
+  --evergreen-600: #A83B59;
+  --evergreen-700: #8C2E48;
+  --evergreen-800: #6E2238;
+  --evergreen-900: #4B1528;
+  --copper: #E59FB4;
+}
+
 html, body, #root {
   min-height: 100%;
   background: var(--paper);
