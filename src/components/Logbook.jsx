@@ -54,6 +54,7 @@ import { generateLogbookPdfBlob } from '../lib/leaveApplicationPdf.js';
 import { generateVacationFormBlob, buildEmailDraft, downloadBlob } from '../lib/vacationForm.js';
 import LeaveApprovedModal from './LeaveApprovedModal.jsx';
 import LogbookPermissionEntry from './LogbookPermissionEntry.jsx';
+import LogbookRejoiningEntry from './LogbookRejoiningEntry.jsx';
 
 export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }) {
   const [mode, setMode] = useState('leave');   // 'leave' | 'permission'
@@ -420,9 +421,9 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
         </span>
       </header>
 
-      {/* Leave / Permission mode switch */}
+      {/* Leave / Permission / Rejoining mode switch */}
       <div className="flex gap-2">
-        {[['leave', 'Leave'], ['permission', 'Permission']].map(([k, lbl]) => (
+        {[['leave', 'Leave'], ['permission', 'Permission'], ['rejoining', 'Rejoining']].map(([k, lbl]) => (
           <button key={k} type="button" onClick={() => setMode(k)}
             className="px-3 py-1.5 rounded text-sm font-semibold border transition"
             style={mode === k
@@ -435,6 +436,10 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
 
       {mode === 'permission' && (
         <LogbookPermissionEntry me={me} employees={employees} onSaved={onSaved} />
+      )}
+
+      {mode === 'rejoining' && (
+        <LogbookRejoiningEntry me={me} employees={employees} onSaved={onSaved} />
       )}
 
       {mode === 'leave' && (<>

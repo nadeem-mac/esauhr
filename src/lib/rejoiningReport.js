@@ -432,7 +432,7 @@ const yearsOfService = (joinDate) => {
 };
 
 // ─── main generator ──────────────────────────────────────────────────────────
-export async function generateRejoiningReportBlob({ employee, request, manager, hrApprover, returnConfirmer }) {
+export async function generateRejoiningReportBlob({ employee, request, manager, hrApprover, returnConfirmer, manual = false }) {
   const ltKey  = LEAVE_TYPE[request.leave_type_id] ? request.leave_type_id : 'annual';
   const ltBoth = LEAVE_TYPE[ltKey];
 
@@ -462,7 +462,7 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
   // hit a verify page that says "not approved yet" — confusing on a
   // form anyone could be carrying around. Skipping the QR makes the
   // pre-approval state visually obvious (no QR + no REJOINED stamp).
-  const qrBytes = request.return_stage === 'approved'
+  const qrBytes = (!manual && request.return_stage === 'approved')
     ? await generateQrPng(verifyUrl, 220)
     : null;
 
@@ -504,11 +504,11 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
               children: [run('Date: ', { bold: true, color: C_MUTED, size: 14 }), run(fmtDateMed(today), { size: 14 })],
               alignment: AlignmentType.RIGHT,
             }),
-            new Paragraph({
+            ...(manual ? [] : [new Paragraph({
               children: [run('Ref:  ', { bold: true, color: C_MUTED, size: 14 }), run(shortRef(request.id), { bold: true, size: 14 })],
               alignment: AlignmentType.RIGHT,
               spacing: { before: 40 },
-            }),
+            })]),
           ],
           width: { size: HEADER_REF, type: WidthType.DXA },
           margins: { top: 0, bottom: 0, left: 0, right: 100 },
@@ -793,7 +793,9 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
   });
   const footerBlock = new Paragraph({
     children: [
-      run(`Generated ${generatedAt} GMT+3 · ${returnConfirmer?.name || hrApprover?.name || HR_SIGNATURE_NAME}`,
+      run(manual
+          ? `Prepared by ${returnConfirmer?.name || hrApprover?.name || HR_SIGNATURE_NAME}`
+          : `Generated ${generatedAt} GMT+3 · ${returnConfirmer?.name || hrApprover?.name || HR_SIGNATURE_NAME}`,
           { size: 11, italics: true, color: C_COPPER }),
     ],
     alignment: AlignmentType.LEFT,
@@ -876,7 +878,7 @@ function resolveApprover(decidedBy, empMap) {
   return directory.find((e) => e.auth_user_id === decidedBy) || null;
 }
 
-export async function downloadRejoiningReportForRequest(request, empMap) {
+export async function downloadRejoiningReportForRequest(request, empMap, manual = false) {
   if (!request) throw new Error('No request supplied');
   if (!empMap)  throw new Error('Employee directory unavailable');
   const employee = empMap[request.employee_id];
@@ -904,7 +906,7 @@ export async function downloadRejoiningReportForRequest(request, empMap) {
   const returnConfirmer = resolveApprover(request.return_confirmed_by, empMap) || hrApprover;
 
   const blob = await generateRejoiningReportBlob({
-    request, employee, manager, hrApprover, returnConfirmer,
+    request, employee, manager, hrApprover, returnConfirmer, manual,
   });
   const safeName = (employee.name || request.employee_id).replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '');
   const filename = `Rejoining_Report_${safeName}_${request.end_date}.docx`;
