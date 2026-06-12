@@ -20,6 +20,35 @@ function isFemaleEmployee(e) {
   const first = (e?.name || '').split(/\s+/)[0].toUpperCase();
   return FEMALE_FIRST_NAMES.has(first);
 }
+
+// HQ "Personnel Statistic" — budgeted headcount per location/department,
+// set by HQ. Order matters (mirrors the official sheet). Current M/F/T is
+// computed live from the roster; balance = current − budget.
+const HQ_PERSONNEL = [
+  { key: 'MGT',     label: 'MGT',        budget: 1  },
+  { key: 'SUP',     label: 'SUP',        budget: 4  },
+  { key: 'FIN',     label: 'FIN',        budget: 8  },
+  { key: 'BIZ',     label: 'BIZ',        budget: 7  },
+  { key: 'CSD',     label: 'CSD',        budget: 10 },
+  { key: 'LOG',     label: 'LOG',        budget: 8  },
+  { key: 'JED',     label: 'JED',        budget: 2  },
+  { key: 'JED-SUP', label: 'JED-SUP',    budget: 1  },
+  { key: 'JED-BIZ', label: 'JED-BIZ',    budget: 6  },
+  { key: 'JED-CSD', label: 'JED-CSD',    budget: 11 },
+  { key: 'JED-LOG', label: 'JED-LOG',    budget: 8  },
+  { key: 'RYD',     label: 'RYD Office', budget: 7  },
+];
+const DMM_DEPTS = new Set(['SUP', 'FIN', 'BIZ', 'CSD', 'LOG']);
+const JED_DEPTS = new Set(['SUP', 'BIZ', 'CSD', 'LOG']);
+// Which HQ category an active employee falls into.
+function personnelCategory(e) {
+  const loc = e?.location;
+  const dept = e?.department;
+  if (loc === 'RYD') return 'RYD';
+  if (loc === 'JED') return JED_DEPTS.has(dept) ? `JED-${dept}` : 'JED';
+  if (loc === 'DMM') return DMM_DEPTS.has(dept) ? dept : 'MGT';
+  return null;
+}
 import HrLandingCard from './HrLandingCard.jsx';
 import QuickActionsCard from './QuickActionsCard.jsx';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
@@ -260,6 +289,65 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
     }
     setHcCopied(true);
     setTimeout(() => setHcCopied(false), 2000);
+  };
+
+  // HQ Personnel Statistic — budget vs current, per location/department.
+  const [psCopied, setPsCopied] = useState(false);
+  const personnel = useMemo(() => {
+    const rows = HQ_PERSONNEL.map(r => ({ ...r, male: 0, female: 0, total: 0 }));
+    const byKey = {}; rows.forEach(r => { byKey[r.key] = r; });
+    activeEmployees.forEach(e => {
+      const k = personnelCategory(e);
+      const row = byKey[k];
+      if (!row) return;
+      if (isFemaleEmployee(e)) row.female++; else row.male++;
+      row.total++;
+    });
+    rows.forEach(r => { r.balance = r.total - r.budget; });
+    const gt = rows.reduce((a, r) => ({
+      budget: a.budget + r.budget, male: a.male + r.male, female: a.female + r.female, total: a.total + r.total,
+    }), { budget: 0, male: 0, female: 0, total: 0 });
+    gt.balance = gt.total - gt.budget;
+    return { rows, gt };
+  }, [activeEmployees]);
+
+  const copyPersonnel = async () => {
+    const { rows, gt } = personnel;
+    const statusDate = new Date().toISOString().slice(0, 10).replace(/-/g, '.');
+    const th = (t, al = 'center', span) => `<th${span ? ` colspan="${span}"` : ''} style="background:#0F4C2A;color:#fff;padding:5px 9px;text-align:${al};font:600 12px Calibri,Arial,sans-serif;border:1px solid #0F4C2A">${t}</th>`;
+    const cl = (t, al = 'center', bold = false, bg = '#FFFFFF') => `<td style="padding:4px 9px;text-align:${al};font:${bold ? '700' : '400'} 12px Calibri,Arial,sans-serif;border:1px solid #D1D5DB;color:#1F2937;background:${bg}">${t}</td>`;
+    const body = rows.map((r, i) => {
+      const bg = i % 2 ? '#F3F4F6' : '#FFFFFF';
+      const balColor = r.balance < 0 ? 'color:#B91C1C;' : 'color:#1F2937;';
+      return `<tr>${cl(r.label, 'left', true, bg)}${cl(r.budget, 'center', false, bg)}${cl(r.male, 'center', false, bg)}${cl(r.female, 'center', false, bg)}${cl(r.total, 'center', true, bg)}<td style="padding:4px 9px;text-align:center;font:700 12px Calibri,Arial,sans-serif;border:1px solid #D1D5DB;background:${bg};${balColor}">${r.balance}</td>${cl('', 'left', false, bg)}</tr>`;
+    }).join('');
+    const gtBal = gt.balance < 0 ? 'color:#B91C1C;' : 'color:#1F2937;';
+    const html = `<div style="font-family:Calibri,Arial,sans-serif">`
+      + `<div style="font:700 14px Calibri,Arial,sans-serif;color:#0F4C2A">THE PERSONNEL STATISTIC OF ESAU</div>`
+      + `<div style="font:600 12px Calibri,Arial,sans-serif;color:#1F2937;margin:2px 0 6px">STATUS: ${statusDate}</div>`
+      + `<table style="border-collapse:collapse">`
+      + `<thead><tr>${th('DEPT.', 'left')}${th('BUDGET')}${th('CURRENT PERSONNEL', 'center', 3)}${th('BALANCE')}${th('REMARKS')}</tr>`
+      + `<tr>${th('')}${th('')}${th('MALE')}${th('FEMALE')}${th('TOTAL')}${th('')}${th('')}</tr></thead>`
+      + `<tbody>${body}`
+      + `<tr>${cl('GRAND TOTAL', 'left', true, '#ECFDF5')}${cl(gt.budget, 'center', true, '#ECFDF5')}${cl(gt.male, 'center', true, '#ECFDF5')}${cl(gt.female, 'center', true, '#ECFDF5')}${cl(gt.total, 'center', true, '#ECFDF5')}<td style="padding:4px 9px;text-align:center;font:700 12px Calibri,Arial,sans-serif;border:1px solid #D1D5DB;background:#ECFDF5;${gtBal}">${gt.balance}</td>${cl('', 'left', true, '#ECFDF5')}</tr>`
+      + `</tbody></table></div>`;
+    const plain = [
+      'THE PERSONNEL STATISTIC OF ESAU',
+      `STATUS: ${statusDate}`,
+      'DEPT.\tBUDGET\tMALE\tFEMALE\tTOTAL\tBALANCE\tREMARKS',
+      ...rows.map(r => `${r.label}\t${r.budget}\t${r.male}\t${r.female}\t${r.total}\t${r.balance}\t`),
+      `GRAND TOTAL\t${gt.budget}\t${gt.male}\t${gt.female}\t${gt.total}\t${gt.balance}\t`,
+    ].join('\n');
+    try {
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/html':  new Blob([html],  { type: 'text/html' }),
+        'text/plain': new Blob([plain], { type: 'text/plain' }),
+      })]);
+    } catch {
+      try { await navigator.clipboard.writeText(plain); } catch { /* ignore */ }
+    }
+    setPsCopied(true);
+    setTimeout(() => setPsCopied(false), 2000);
   };
   // greeting + monthly task reminder modal with the 🧚 fairy emoji).
   // These are scoped to Bashaier (H94830) specifically, NOT all HR
@@ -772,6 +860,62 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
                     </div>
                   );
                 })()}
+              </div>
+            );
+          })()}
+        </div>
+
+        {/* HQ Personnel Statistic — budget (set by HQ) vs current, per
+            location/department, with balance and remarks. Copies as a real
+            table for the official report. */}
+        <div className="mt-4 rounded-xl border p-5"
+             style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-[11px]" style={{ color: '#1F1B16', letterSpacing: '0.18em', fontWeight: 700 }}>
+              THE PERSONNEL STATISTIC OF ESAU
+            </div>
+            <button type="button" onClick={copyPersonnel}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs border"
+              style={{ borderColor: psCopied ? '#1F4530' : 'var(--border-soft)', background: psCopied ? '#ECFDF5' : 'transparent', color: psCopied ? '#1F4530' : '#0A0A0A', fontWeight: 600, cursor: 'pointer' }}>
+              {psCopied ? <><Check className="w-3.5 h-3.5" /> Copied</> : <><Copy className="w-3.5 h-3.5" /> Copy for email</>}
+            </button>
+          </div>
+          <div className="text-[11px] mb-3" style={{ color: '#1F1B16', fontWeight: 600 }}>
+            STATUS: {new Date().toISOString().slice(0, 10).replace(/-/g, '.')}
+          </div>
+          {(() => {
+            const { rows, gt } = personnel;
+            const Th = ({ children, span, left }) => (
+              <th colSpan={span} style={{ background: '#0F4C2A', color: '#fff', padding: '5px 9px', textAlign: left ? 'left' : 'center', fontSize: '11px', fontWeight: 600, border: '1px solid #0F4C2A', whiteSpace: 'nowrap' }}>{children}</th>
+            );
+            const Td = ({ children, left, bold, bg, bal }) => (
+              <td style={{ padding: '4px 9px', textAlign: left ? 'left' : 'center', fontSize: '12px', fontWeight: (bold || bal) ? 700 : 400, border: '1px solid #D1D5DB', color: bal && children < 0 ? '#B91C1C' : '#1F2937', background: bg || '#FFFFFF', whiteSpace: 'nowrap' }}>{children}</td>
+            );
+            return (
+              <div className="overflow-x-auto">
+                <table style={{ borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr><Th left>DEPT.</Th><Th>BUDGET</Th><Th span={3}>CURRENT PERSONNEL</Th><Th>BALANCE</Th><Th>REMARKS</Th></tr>
+                    <tr><Th></Th><Th></Th><Th>MALE</Th><Th>FEMALE</Th><Th>TOTAL</Th><Th></Th><Th></Th></tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, i) => {
+                      const bg = i % 2 ? '#F3F4F6' : '#FFFFFF';
+                      return (
+                        <tr key={r.key}>
+                          <Td left bold bg={bg}>{r.label}</Td><Td bg={bg}>{r.budget}</Td>
+                          <Td bg={bg}>{r.male}</Td><Td bg={bg}>{r.female}</Td><Td bold bg={bg}>{r.total}</Td>
+                          <Td bal bg={bg}>{r.balance}</Td><Td bg={bg}></Td>
+                        </tr>
+                      );
+                    })}
+                    <tr>
+                      <Td left bold bg="#ECFDF5">GRAND TOTAL</Td><Td bold bg="#ECFDF5">{gt.budget}</Td>
+                      <Td bold bg="#ECFDF5">{gt.male}</Td><Td bold bg="#ECFDF5">{gt.female}</Td><Td bold bg="#ECFDF5">{gt.total}</Td>
+                      <Td bal bold bg="#ECFDF5">{gt.balance}</Td><Td bold bg="#ECFDF5"></Td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             );
           })()}
