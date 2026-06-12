@@ -21,7 +21,8 @@
 //    • Manager     → direct reports + same dept/location
 // ──────────────────────────────────────────────────────────────────────
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { directGet } from '../supabaseClient.js';
 import {
   Plane, Clock, Download, FileText, ChevronLeft, ChevronRight, Users, Mail, Check,
 } from 'lucide-react';
@@ -159,8 +160,45 @@ export default function LeaveReport({
     return out;
   }, [requests, monthStart, monthEnd, todayStr, inScope, empById, leaveTypes]);
 
-  // ── Permission rows for the month ──────────────────────────────────
-  const permRows = useMemo(() => {
+  // For RETURNED staff, pull their most recent actual attendance punch
+  // (latest day with a check-in) so the report shows when they were last
+  // seen at work. (Nadeem 2026-06-12)
+  const [lastPunch, setLastPunch] = useState({});  // psn -> { date, time }
+  const returnedKey = leaveRows.filter(r => r.status === 'returned').map(r => r.psn).sort().join(',');
+  useEffect(() => {
+    const ids = returnedKey ? returnedKey.split(',') : [];
+    if (ids.length === 0) { setLastPunch({}); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const inList = ids.map(encodeURIComponent).join(',');
+        const rows = await directGet(
+          'attendance_daily',
+          `select=employee_id,attendance_date,first_punch,last_punch`
+          + `&employee_id=in.(${inList})`
+          + `&order=attendance_date.desc&limit=1500`,
+          { timeoutMs: 12000 },
+        );
+        const map = {};
+        for (const r of (rows || [])) {
+          if (map[r.employee_id]) continue;            // desc order → first hit is latest
+          const time = r.first_punch || r.last_punch;  // prefer check-in
+          if (!time) continue;                          // skip no-punch days
+          map[r.employee_id] = { date: r.attendance_date, time };
+        }
+        if (!cancelled) setLastPunch(map);
+      } catch (e) { if (!cancelled) setLastPunch({}); }
+    })();
+    return () => { cancelled = true; };
+  }, [returnedKey]);
+
+  // "11 Jun · 08:02" — last punch date + time for returned staff only.
+  const fmtPunch = (r) => {
+    if (r.status !== 'returned') return '—';
+    const lp = lastPunch[r.psn];
+    if (!lp) return '—';
+    return `${fmtShort(lp.date)} · ${String(lp.time).slice(0, 5)}`;
+  };
     const out = [];
     // For quota: order each staff's approved permissions in the month
     // chronologically and number them.
@@ -339,6 +377,7 @@ export default function LeaveReport({
         <td>${esc(fmtShort(r.to))}</td>
         <td style="text-align:right">${r.days}${r.isHalf ? ' <span style="background:#FEF3C7;color:#854F0B;padding:1px 4px;border-radius:2px;font-size:8px;font-weight:700">½</span>' : ''}</td>
         <td>${statusPill(r.status)}</td>
+        <td>${esc(fmtPunch(r))}</td>
       </tr>`).join('');
     const permTbody = permRows.map(p => `
       <tr${p.overQuota ? ' style="background:#FEF2F2"' : ''}>
@@ -407,7 +446,7 @@ export default function LeaveReport({
     <div class="card" style="border-color:#FBCFE8;background:#FDF4FF"><div class="lbl">Early permissions</div><div class="val">${summary.earlyPerms}</div><div class="sv">${summary.permStaff} staff total</div></div>
   </div>
   <h2>Staff on leave this month (${leaveRows.length})</h2>
-  <table><thead><tr><th>Staff ID</th><th>Name</th><th>Dept</th><th>Loc</th><th>Leave Type</th><th>From</th><th>To</th><th style="text-align:right">Days</th><th>Status</th></tr></thead>
+  <table><thead><tr><th>Staff ID</th><th>Name</th><th>Dept</th><th>Loc</th><th>Leave Type</th><th>From</th><th>To</th><th style="text-align:right">Days</th><th>Status</th><th>Last Punch</th></tr></thead>
     <tbody>${leaveTbody || '<tr><td colspan="9" style="padding:8px;color:#999;font-style:italic">No approved leave overlapping this month.</td></tr>'}</tbody></table>
   <h2>Late &amp; early permissions this month (${permRows.length})</h2>
   <table><thead><tr><th>Staff ID</th><th>Name</th><th>Dept</th><th>Loc</th><th>Date</th><th>Type</th><th>Window</th><th style="text-align:right">Mins</th><th>Reason</th><th>Quota</th></tr></thead>
@@ -576,11 +615,11 @@ export default function LeaveReport({
       return `<span style="background:${m.bg};color:${m.fg};padding:1px 6px;border-radius:3px;font-size:11px;font-weight:700">${m.label}</span>`;
     };
     const th = (t, align = 'left') => `<th style="background:#0F4C2A;color:#fff;padding:4px 9px;text-align:${align};font-family:${FONT};font-size:12px;font-weight:700;border:1px solid #0F4C2A;white-space:nowrap">${t}</th>`;
-    const headRow = `<tr>${th('PSN')}${th('Name')}${th('Dept')}${th('Loc')}${th('Leave Type')}${th('From')}${th('To')}${th('Days', 'right')}${th('Status')}</tr>`;
+    const headRow = `<tr>${th('PSN')}${th('Name')}${th('Dept')}${th('Loc')}${th('Leave Type')}${th('From')}${th('To')}${th('Days', 'right')}${th('Status')}${th('Last Punch')}</tr>`;
     const body = leaveRows.map((r, i) => {
       const bg = i % 2 ? '#F3F4F6' : '#FFFFFF';
       const td = (c, align = 'left') => `<td style="padding:3px 9px;border:1px solid #D1D5DB;color:#1F2937;font-family:${FONT};font-size:12px;background:${bg};text-align:${align};white-space:nowrap">${c}</td>`;
-      return `<tr>${td(esc(r.psn))}${td(esc(r.name))}${td(esc(r.dept))}${td(esc(r.loc))}${td(esc(r.typeName))}${td(esc(fmtShort(r.from)))}${td(esc(fmtShort(r.to)))}${td(r.days + (r.isHalf ? ' ½' : ''), 'right')}${td(pill(r.status))}</tr>`;
+      return `<tr>${td(esc(r.psn))}${td(esc(r.name))}${td(esc(r.dept))}${td(esc(r.loc))}${td(esc(r.typeName))}${td(esc(fmtShort(r.from)))}${td(esc(fmtShort(r.to)))}${td(r.days + (r.isHalf ? ' ½' : ''), 'right')}${td(pill(r.status))}${td(esc(fmtPunch(r)))}</tr>`;
     }).join('');
     const table = leaveRows.length
       ? `<table style="border-collapse:collapse;font-family:${FONT};margin:10px 0"><thead>${headRow}</thead><tbody>${body}</tbody></table>`
@@ -618,15 +657,16 @@ export default function LeaveReport({
 
     // Sheet 1 — On leave
     const STATUS_LABEL = { now: 'OUT NOW', upcoming: 'UPCOMING', returned: 'RETURNED' };
-    const leaveAoa = [['Staff ID','Name','Department','Location','Leave Type','From','To','Days','Half','Status']];
+    const leaveAoa = [['Staff ID','Name','Department','Location','Leave Type','From','To','Days','Half','Status','Last Punch']];
     for (const r of leaveRows) {
-      leaveAoa.push([r.psn, r.name, r.dept, r.loc, r.typeName, r.from, r.to, r.days, r.isHalf ? 'Half' : '', STATUS_LABEL[r.status] || String(r.status).toUpperCase()]);
+      const lp = fmtPunch(r);
+      leaveAoa.push([r.psn, r.name, r.dept, r.loc, r.typeName, r.from, r.to, r.days, r.isHalf ? 'Half' : '', STATUS_LABEL[r.status] || String(r.status).toUpperCase(), lp === '—' ? '' : lp]);
     }
     const ws1 = XLSX.utils.aoa_to_sheet(leaveAoa);
     styleSheet(XLSX, ws1, leaveAoa, hStyle, c, 9 /*status col*/, {
       'OUT NOW': { bg:'FEE2E2', fg:'991B1B' }, 'UPCOMING': { bg:'DBEAFE', fg:'1D4ED8' }, 'RETURNED': { bg:'D1FAE5', fg:'065F46' },
     });
-    ws1['!cols'] = [{wch:9},{wch:28},{wch:12},{wch:9},{wch:14},{wch:12},{wch:12},{wch:7},{wch:7},{wch:11}];
+    ws1['!cols'] = [{wch:9},{wch:28},{wch:12},{wch:9},{wch:14},{wch:12},{wch:12},{wch:7},{wch:7},{wch:11},{wch:16}];
     XLSX.utils.book_append_sheet(wb, ws1, 'On Leave');
 
     // Sheet 2 — Permissions
@@ -721,7 +761,7 @@ export default function LeaveReport({
         <table className="w-full text-xs">
           <thead>
             <tr style={{ background: '#0F4C2A' }}>
-              {['Staff ID','Name','Dept','Loc','Leave Type','From','To','Days','Status'].map((h, i) => (
+              {['Staff ID','Name','Dept','Loc','Leave Type','From','To','Days','Status','Last Punch'].map((h, i) => (
                 <th key={i} className="px-2 py-1.5 text-left text-white text-[10px] uppercase tracking-wide whitespace-nowrap"
                     style={{ textAlign: h === 'Days' ? 'right' : 'left' }}>{h}</th>
               ))}
@@ -729,7 +769,7 @@ export default function LeaveReport({
           </thead>
           <tbody>
             {leaveRows.length === 0 ? (
-              <tr><td colSpan={9} className="px-3 py-4 text-center" style={{ color: '#1F1B16', opacity: 0.5 }}>No approved leave overlapping {periodLabel}.</td></tr>
+              <tr><td colSpan={10} className="px-3 py-4 text-center" style={{ color: '#1F1B16', opacity: 0.5 }}>No approved leave overlapping {periodLabel}.</td></tr>
             ) : leaveRows.map((r, i) => (
               <tr key={i} className="border-t" style={{
                 borderColor: 'rgba(0,0,0,0.05)',
@@ -750,6 +790,7 @@ export default function LeaveReport({
                   {r.days}{r.isHalf && <span className="ml-1 text-[8px] px-1 py-0.5 rounded font-bold" style={{ background: '#FEF3C7', color: '#854F0B' }}>½</span>}
                 </td>
                 <td className="px-2 py-1"><StatusPill status={r.status} /></td>
+                <td className="px-2 py-1 whitespace-nowrap" style={{ color: '#1F1B16' }}>{fmtPunch(r)}</td>
               </tr>
             ))}
           </tbody>
