@@ -1309,7 +1309,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
              report drafting card. Leave & Availability lives inside the list. */
           <div className="space-y-6">
             <ShiftStaffAttendanceReportCard me={me} employees={employees} compact />
-            <BashaierTasksCard me={me} employees={employees} requests={requests} permissions={permissions} />
+            <BashaierTasksCard me={me} employees={employees} requests={requests} permissions={permissions} leaveTypes={leaveTypes} balances={balances} />
           </div>
         )}
         {tab === 'reviews' && (

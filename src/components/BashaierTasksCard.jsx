@@ -12,6 +12,7 @@ import {
   REVIEW_THRESHOLD, WATCH_LOWER, BASE_SCORE,
 } from '../lib/evaluationWeights.js';
 import { salutationFor } from '../lib/salutations.js';
+import { calculateBalance, isActiveEmployee } from '../lib/leaveLogic.js';
 
 // =============================================================================
 // CONSTANTS
@@ -407,6 +408,100 @@ function buildUpcomingLeaves({ requests, employees, today, hdr }) {
   return { subject, bodyPlain, bodyHtml, count: rows.length };
 }
 
+// Task (fan-out): one email per department head with their team's leave
+// applications + annual balances (including the manager's own). Each email
+// is addressed to that manager only, CC the fixed oversight list + James.
+function buildDeptHeadLeaveReports({ employees, requests, balances, leaveTypes, year, jamesEmail, hdr }) {
+  const annualType = (leaveTypes || []).find(t => t.id === 'annual') || { id: 'annual', default_days: 21 };
+  const active = (employees || []).filter(isActiveEmployee);
+  const byId = {}; (employees || []).forEach(e => { byId[e.id] = e; });
+
+  // Managers = anyone who is the manager_id of ≥1 active employee.
+  const managerIds = [...new Set(active.map(e => e.manager_id).filter(Boolean))];
+
+  const balOf = (emp) => calculateBalance({
+    employee: emp, leaveType: annualType, year, requests,
+    adjustments: (balances || []).find(b => b.employee_id === emp.id && b.leave_type_id === 'annual' && b.year === year) || {},
+  });
+  const leavesOf = (empId) => (requests || [])
+    .filter(r => r.employee_id === empId && r.start_date && new Date(r.start_date).getFullYear() === year)
+    .sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
+
+  const ccBase = [TO_JOHN, ...CC_LIST, jamesEmail].filter(Boolean);
+
+  const managers = managerIds.map(mid => {
+    const manager = byId[mid];
+    if (!manager) return null;
+    const reports = active.filter(e => e.manager_id === mid);
+    // People = the manager + their direct reports (manager's own included).
+    const people = [manager, ...reports].filter((p, i, arr) => arr.findIndex(x => x.id === p.id) === i);
+
+    // Balance table rows
+    const balRows = people.map(p => {
+      const b = balOf(p);
+      return [p.name || p.id, p.department || '', String(b.entitlement), String(b.carried), String(b.used), String(b.pending), String(b.available)];
+    });
+    const balHeaders = ['Employee', 'Dept', 'Entitle', 'Carried', 'Used', 'Pending', 'Available'];
+    const balWidths  = [28, 6, 8, 8, 6, 8, 9];
+
+    // Leave-application rows (this year)
+    const appRows = [];
+    people.forEach(p => {
+      leavesOf(p.id).forEach(r => {
+        appRows.push([
+          p.name || p.id,
+          leaveTypeLabel(r.leave_type_id),
+          fmtDateShort(r.start_date),
+          fmtDateShort(r.end_date),
+          returnDateFromEnd(r.end_date),
+          Number(r.days || 0).toFixed(1),
+          (r.status || r.stage || '').replace(/_/g, ' '),
+        ]);
+      });
+    });
+    const appHeaders = ['Employee', 'Type', 'Start', 'End', 'Return', 'Days', 'Status'];
+    const appWidths  = [28, 12, 11, 11, 11, 5, 12];
+
+    const balPlain = plainTable(balHeaders, balRows, balWidths);
+    const appPlain = appRows.length ? plainTable(appHeaders, appRows, appWidths) : '(No leave applications recorded this year.)';
+    const balHtmlT = htmlTable(balHeaders, balRows, hdr);
+    const appHtmlT = appRows.length ? htmlTable(appHeaders, appRows, hdr) : '<p style="color:#6B7280;font-style:italic">No leave applications recorded this year.</p>';
+
+    const subject = `Team Leave & Annual Balance — ${manager.name} (${year})`;
+    const intro = [
+      `Dear ${salutationFor(manager)},`,
+      '',
+      `Please find below the annual-leave balances and the leave applications recorded this year for your team (including your own), for your review and planning.`,
+      '',
+    ].join('\n');
+    const bodyPlain = intro + 'Annual balances:\n' + balPlain + '\n\nLeave applications this year:\n' + appPlain + '\n' + SIGNATURE_PLAIN;
+    const bodyHtml = `
+      <div style="font-family:Calibri,sans-serif;color:#1F2937;font-size:10pt;line-height:1.5">
+        <p>Dear ${escapeHtml(salutationFor(manager))},</p>
+        <p>Please find below the annual-leave balances and the leave applications recorded this year for your team (including your own), for your review and planning.</p>
+        <p style="font-weight:600;margin-bottom:2px">Annual balances</p>${balHtmlT}
+        <p style="font-weight:600;margin:10px 0 2px">Leave applications this year</p>${appHtmlT}
+        ${SIGNATURE_HTML}
+      </div>`;
+
+    // CC oversight list, minus the manager themselves if present.
+    const cc = ccBase.filter(addr => addr && addr.toLowerCase() !== String(manager.email || '').toLowerCase());
+
+    return {
+      id: manager.id,
+      name: manager.name,
+      dept: manager.department || '',
+      to: manager.email || '',
+      cc,
+      teamSize: people.length,
+      appCount: appRows.length,
+      subject, bodyPlain, bodyHtml,
+    };
+  }).filter(Boolean).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  return { fanout: true, managers, count: managers.length };
+}
+
 // =============================================================================
 // TASK STATUS LOGIC
 // =============================================================================
@@ -569,7 +664,7 @@ function buildShiftStaffReminder({ year, month }) {
 // =============================================================================
 // MAIN COMPONENT
 // =============================================================================
-export default function BashaierTasksCard({ me, employees, requests, permissions: passedPerms }) {
+export default function BashaierTasksCard({ me, employees, requests, permissions: passedPerms, leaveTypes = [], balances = [] }) {
   // Baby-pink header = Bashaier's signature on the reports she prepares
   // (black text on pink). Anyone else gets the neutral slate header.
   const hdr = me?.id === 'H94830'
@@ -921,6 +1016,15 @@ export default function BashaierTasksCard({ me, employees, requests, permissions
   };
   // ────────────────────────────────────────────────────────────────────────
 
+  // James's email (CC on the dept-head leave reports) — resolved from the
+  // staff directory by name so it follows any future record update.
+  const jamesEmail = useMemo(
+    () => ((employees || []).find(e => /james/i.test(e.name || ''))?.email) || '',
+    [employees],
+  );
+  // Fan-out modal data — one prefilled email per department head.
+  const [fanout, setFanout] = useState(null);
+
   const tasks = useMemo(() => [
     {
       key: 'leave_availability',
@@ -947,12 +1051,13 @@ export default function BashaierTasksCard({ me, employees, requests, permissions
       build: () => buildEndOfMonthPermissions({ permissions: perms, employees, year, month, hdr }),
     },
     {
-      key: 'upcoming_leaves',
-      title: 'Upcoming leaves — next 30 days',
-      subtitle: 'Staff leaves starting soon, for planning cover',
-      icon: <CalendarDays className="w-4 h-4" />,
+      key: 'dept_head_leaves',
+      title: 'Team leave & balance — to each manager',
+      subtitle: 'Send each department head their team\u2019s leaves + balances',
+      icon: <Mail className="w-4 h-4" />,
       tone: '#2D5F3F',
-      build: () => buildUpcomingLeaves({ requests, employees, today, hdr }),
+      fanout: true,
+      build: () => buildDeptHeadLeaveReports({ employees, requests, balances, leaveTypes, year, jamesEmail, hdr }),
     },
     {
       key: 'headcount_snapshot',
@@ -970,10 +1075,14 @@ export default function BashaierTasksCard({ me, employees, requests, permissions
       tone: '#7E22CE',
       build: () => buildShiftStaffReminder({ year, month }),
     },
-  ], [perms, employees, requests, month, year, prevMonth, prevYear, today, leavePunch, hdr]);
+  ], [perms, employees, requests, month, year, prevMonth, prevYear, today, leavePunch, hdr, balances, leaveTypes, jamesEmail]);
 
   const open = (task) => {
     const built = task.build();
+    if (task.fanout || built?.fanout) {
+      setFanout({ title: task.title, managers: built.managers || [] });
+      return;
+    }
     setOpenTask({ ...task, ...built });
   };
 
@@ -1424,6 +1533,14 @@ export default function BashaierTasksCard({ me, employees, requests, permissions
         />
       )}
 
+      {fanout && (
+        <DeptHeadReportModal
+          title={fanout.title}
+          managers={fanout.managers}
+          onClose={() => setFanout(null)}
+        />
+      )}
+
       {reviewModalRow && (
         <EvaluationReviewModal
           row={reviewModalRow.row}
@@ -1703,6 +1820,108 @@ function TaskPreviewModal({ task, onClose, onCompose, onCopyHtml, onCopyPlain, c
           <div className="text-[10px] opacity-60 ml-auto">
             {task.count} record{task.count === 1 ? '' : 's'} in this report
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Fan-out modal: one prefilled email per department head. Each row sends to
+// that manager only, CC the fixed oversight list. Bashaier sends/copies each
+// individually so she stays in control of what goes out.
+function DeptHeadReportModal({ title, managers, onClose }) {
+  const [copiedId, setCopiedId] = useState('');
+  const [openId, setOpenId]     = useState('');
+
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  const sendOne = (m) => {
+    if (!m.to) { alert(`No email address on file for ${m.name}. Add it to their employee record first.`); return; }
+    const href = `mailto:${encodeURIComponent(m.to)}?cc=${encodeURIComponent(m.cc.join(','))}`
+      + `&subject=${encodeURIComponent(m.subject)}&body=${encodeURIComponent(m.bodyPlain)}`;
+    window.location.href = href;
+  };
+  const copyOne = async (m) => {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/html':  new Blob([m.bodyHtml],  { type: 'text/html'  }),
+        'text/plain': new Blob([m.bodyPlain], { type: 'text/plain' }),
+      })]);
+      setCopiedId(m.id);
+      setTimeout(() => setCopiedId(c => (c === m.id ? '' : c)), 2000);
+    } catch {
+      try { await navigator.clipboard.writeText(m.bodyPlain); setCopiedId(m.id); setTimeout(() => setCopiedId(''), 2000); } catch {}
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-6 overflow-y-auto"
+         style={{ background: 'rgba(20,30,25,0.55)', backdropFilter: 'blur(2px)' }}
+         onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-8" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 sm:px-6 py-4 sticky top-0 z-10 rounded-t-2xl flex items-start justify-between gap-3"
+             style={{ background: 'linear-gradient(135deg, #993556 0%, #7A2E47 100%)', color: '#fff' }}>
+          <div>
+            <div className="text-[10px] tracking-[0.25em] opacity-80 mb-1">— ONE EMAIL PER MANAGER</div>
+            <h2 className="text-xl font-serif">{title}</h2>
+            <div className="text-[11px] opacity-80 mt-0.5">{managers.length} department head{managers.length === 1 ? '' : 's'} · each goes to the manager, CC John, Fahad, Badria, Jaffar, James</div>
+          </div>
+          <button onClick={onClose}
+                  className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-white/20 transition-colors flex-shrink-0"
+                  style={{ color: '#fff' }} aria-label="Close">
+            <span style={{ fontSize: '18px', lineHeight: 1 }}>×</span>
+          </button>
+        </div>
+
+        <div className="px-5 sm:px-6 py-4 max-h-[70vh] overflow-y-auto space-y-2.5">
+          {managers.length === 0 ? (
+            <p className="text-sm" style={{ color: '#1F1B16', opacity: 0.7 }}>No department heads found (no staff have a manager assigned).</p>
+          ) : managers.map(m => (
+            <div key={m.id} className="rounded-xl border" style={{ borderColor: 'var(--border-soft)' }}>
+              <div className="flex items-center gap-3 px-3 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold truncate" style={{ color: '#1F1B16' }}>{m.name}</div>
+                  <div className="text-[11px]" style={{ color: '#1F1B16', opacity: 0.65 }}>
+                    {m.dept || '—'} · {m.teamSize} in team · {m.appCount} application{m.appCount === 1 ? '' : 's'}
+                    {!m.to && <span style={{ color: '#B91C1C', fontWeight: 600 }}> · no email on file</span>}
+                  </div>
+                </div>
+                <button type="button" onClick={() => setOpenId(o => (o === m.id ? '' : m.id))}
+                        className="text-[11px] px-2 py-1.5 rounded-lg border inline-flex items-center gap-1"
+                        style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}>
+                  Preview <ChevronDown className="w-3 h-3" style={{ transform: openId === m.id ? 'rotate(180deg)' : 'none' }} />
+                </button>
+                <button type="button" onClick={() => copyOne(m)}
+                        className="text-[11px] px-2.5 py-1.5 rounded-lg inline-flex items-center gap-1 font-semibold"
+                        style={{ background: copiedId === m.id ? '#DCFCE7' : 'rgba(153,53,86,0.08)', color: '#993556', border: '1px solid #F4C0D1' }}>
+                  {copiedId === m.id ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedId === m.id ? 'Copied' : 'Copy HTML'}
+                </button>
+                <button type="button" onClick={() => sendOne(m)} disabled={!m.to}
+                        className="text-[11px] px-3 py-1.5 rounded-lg inline-flex items-center gap-1 font-semibold text-white disabled:opacity-40"
+                        style={{ background: '#993556' }}>
+                  <Mail className="w-3.5 h-3.5" /> Email
+                </button>
+              </div>
+              {openId === m.id && (
+                <div className="px-3 pb-3">
+                  <div className="text-[11px] mb-2" style={{ color: '#1F1B16', opacity: 0.7 }}>
+                    <strong>To:</strong> {m.to || '—'} &nbsp; <strong>Cc:</strong> {m.cc.join(', ')}
+                  </div>
+                  <div className="rounded-lg border p-3 bg-white overflow-x-auto" style={{ borderColor: 'var(--border-soft)' }}
+                       dangerouslySetInnerHTML={{ __html: m.bodyHtml }} />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="px-5 sm:px-6 py-3 border-t text-[10px] opacity-60" style={{ borderColor: 'var(--border-soft)' }}>
+          Each email is addressed to the manager only; the oversight list is CC'd. Balances are annual leave for the current year.
         </div>
       </div>
     </div>
