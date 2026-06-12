@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
-import { Check, ArrowRight, Palmtree, Calendar, KeyRound, Mail, AlertCircle, AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
+import { Check, Copy, ArrowRight, Palmtree, Calendar, KeyRound, Mail, AlertCircle, AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 import { supabase } from '../supabaseClient.js';
 import { todayISO, fmtDateShort, getInitials, avatarColor, isActiveEmployee } from '../lib/leaveLogic.js';
 import { summariseMonth } from '../lib/permissionLogic.js';
@@ -152,7 +152,73 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
     return m;
   }, [activeEmployees]);
 
-  // bashaierMode is the toggle for personal touches (warm hero
+  // Saudi vs Non-Saudi per department (Non-Saudi = anyone not flagged
+  // 'saudi', so the columns always sum to the dept total). Powers the
+  // copy-for-email headcount table. (Nadeem 2026-06-12)
+  const byDeptNat = useMemo(() => {
+    const m = {};
+    activeEmployees.forEach(e => {
+      const dept = e.department || 'OTHER';
+      if (!m[dept]) m[dept] = { saudi: 0, nonSaudi: 0, total: 0 };
+      if (e.nationality === 'saudi') m[dept].saudi++;
+      else m[dept].nonSaudi++;
+      m[dept].total++;
+    });
+    return m;
+  }, [activeEmployees]);
+
+  // Approved/budgeted headcount. Not stored anywhere, so it lives here —
+  // update the number if the budget changes.
+  const HEADCOUNT_BUDGET = 73;
+  const [hcCopied, setHcCopied] = useState(false);
+
+  // Copy the headcount tables as rich HTML (so they paste as real tables
+  // into Outlook/Gmail) with a tab-separated plain-text fallback.
+  const copyHeadcount = async () => {
+    const total = activeEmployees.length || 0;
+    const saudi = byNationality.saudi;
+    const nonSaudi = total - saudi;
+    const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
+    const depts = byDept.map(([d]) => d);
+
+    const th = (t, al = 'left') => `<th style="background:#0F4C2A;color:#fff;padding:5px 10px;text-align:${al};font:600 13px Calibri,Arial,sans-serif;border:1px solid #0F4C2A">${t}</th>`;
+    const cell = (t, al = 'left', bold = false, bg = '#FFFFFF') => `<td style="padding:4px 10px;text-align:${al};font:${bold ? '700' : '400'} 13px Calibri,Arial,sans-serif;border:1px solid #D1D5DB;color:#1F2937;background:${bg}">${t}</td>`;
+
+    const deptRows = depts.map((d, i) => {
+      const n = byDeptNat[d] || { saudi: 0, nonSaudi: 0, total: 0 };
+      const bg = i % 2 ? '#F3F4F6' : '#FFFFFF';
+      return `<tr>${cell(d, 'left', true, bg)}${cell(n.saudi, 'right', false, bg)}${cell(n.nonSaudi, 'right', false, bg)}${cell(n.total, 'right', true, bg)}</tr>`;
+    }).join('');
+    const deptTable = `<table style="border-collapse:collapse;margin:0 0 14px"><thead><tr>${th('Department')}${th('Saudi', 'right')}${th('Non-Saudi', 'right')}${th('Total', 'right')}</tr></thead><tbody>${deptRows}<tr>${cell('TOTAL', 'left', true, '#ECFDF5')}${cell(saudi, 'right', true, '#ECFDF5')}${cell(nonSaudi, 'right', true, '#ECFDF5')}${cell(total, 'right', true, '#ECFDF5')}</tr></tbody></table>`;
+
+    const sumTable = `<table style="border-collapse:collapse"><thead><tr>${th('')}${th('Budget', 'right')}${th('Saudi', 'right')}${th('Non-Saudi', 'right')}${th('Total', 'right')}</tr></thead><tbody>`
+      + `<tr>${cell('Headcount', 'left', true)}${cell(HEADCOUNT_BUDGET, 'right')}${cell(saudi, 'right')}${cell(nonSaudi, 'right')}${cell(total, 'right', true)}</tr>`
+      + `<tr>${cell('Ratio', 'left', true, '#F3F4F6')}${cell('-', 'right', false, '#F3F4F6')}${cell(pct(saudi) + '%', 'right', false, '#F3F4F6')}${cell(pct(nonSaudi) + '%', 'right', false, '#F3F4F6')}${cell('100%', 'right', true, '#F3F4F6')}</tr>`
+      + `</tbody></table>`;
+
+    const html = `<div style="font-family:Calibri,Arial,sans-serif">${deptTable}${sumTable}</div>`;
+    const plain = [
+      'Headcount by department',
+      'Department\tSaudi\tNon-Saudi\tTotal',
+      ...depts.map(d => { const n = byDeptNat[d] || {}; return `${d}\t${n.saudi || 0}\t${n.nonSaudi || 0}\t${n.total || 0}`; }),
+      `TOTAL\t${saudi}\t${nonSaudi}\t${total}`,
+      '',
+      `\tBudget\tSaudi\tNon-Saudi\tTotal`,
+      `Headcount\t${HEADCOUNT_BUDGET}\t${saudi}\t${nonSaudi}\t${total}`,
+      `Ratio\t-\t${pct(saudi)}%\t${pct(nonSaudi)}%\t100%`,
+    ].join('\n');
+
+    try {
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/html':  new Blob([html],  { type: 'text/html' }),
+        'text/plain': new Blob([plain], { type: 'text/plain' }),
+      })]);
+    } catch {
+      try { await navigator.clipboard.writeText(plain); } catch { /* ignore */ }
+    }
+    setHcCopied(true);
+    setTimeout(() => setHcCopied(false), 2000);
+  };
   // greeting + monthly task reminder modal with the 🧚 fairy emoji).
   // These are scoped to Bashaier (H94830) specifically, NOT all HR
   // reviewers. Other HR reviewers (Badria once she has access) see
@@ -588,6 +654,66 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
               </div>
             );
           })}
+        </div>
+
+        {/* Copy-for-email headcount tables — Saudi/Non-Saudi by department
+            plus a Budget/Saudi/Non-Saudi/Total summary. Renders as real
+            tables and copies as rich HTML so it pastes cleanly into email. */}
+        <div className="mt-6 rounded-xl border p-5"
+             style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-[11px]" style={{ color: '#1F1B16', letterSpacing: '0.18em', fontWeight: 700 }}>
+              HEADCOUNT TABLE (Saudization)
+            </div>
+            <button type="button" onClick={copyHeadcount}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs border"
+              style={{ borderColor: hcCopied ? '#1F4530' : 'var(--border-soft)', background: hcCopied ? '#ECFDF5' : 'transparent', color: hcCopied ? '#1F4530' : '#0A0A0A', fontWeight: 600, cursor: 'pointer' }}>
+              {hcCopied ? <><Check className="w-3.5 h-3.5" /> Copied</> : <><Copy className="w-3.5 h-3.5" /> Copy for email</>}
+            </button>
+          </div>
+
+          {(() => {
+            const total = activeEmployees.length || 0;
+            const saudi = byNationality.saudi;
+            const nonSaudi = total - saudi;
+            const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
+            const depts = byDept.map(([d]) => d);
+            const Th = ({ children, right }) => (
+              <th style={{ background: '#0F4C2A', color: '#fff', padding: '5px 10px', textAlign: right ? 'right' : 'left', fontSize: '12px', fontWeight: 600, border: '1px solid #0F4C2A', whiteSpace: 'nowrap' }}>{children}</th>
+            );
+            const Td = ({ children, right, bold, bg }) => (
+              <td style={{ padding: '4px 10px', textAlign: right ? 'right' : 'left', fontSize: '12px', fontWeight: bold ? 700 : 400, border: '1px solid #D1D5DB', color: '#1F2937', background: bg || '#FFFFFF', whiteSpace: 'nowrap' }}>{children}</td>
+            );
+            return (
+              <div className="overflow-x-auto space-y-4">
+                {/* By department */}
+                <table style={{ borderCollapse: 'collapse' }}>
+                  <thead><tr><Th>Department</Th><Th right>Saudi</Th><Th right>Non-Saudi</Th><Th right>Total</Th></tr></thead>
+                  <tbody>
+                    {depts.map((d, i) => {
+                      const n = byDeptNat[d] || { saudi: 0, nonSaudi: 0, total: 0 };
+                      const bg = i % 2 ? '#F3F4F6' : '#FFFFFF';
+                      return (
+                        <tr key={d}>
+                          <Td bold bg={bg}>{d}</Td><Td right bg={bg}>{n.saudi}</Td><Td right bg={bg}>{n.nonSaudi}</Td><Td right bold bg={bg}>{n.total}</Td>
+                        </tr>
+                      );
+                    })}
+                    <tr><Td bold bg="#ECFDF5">TOTAL</Td><Td right bold bg="#ECFDF5">{saudi}</Td><Td right bold bg="#ECFDF5">{nonSaudi}</Td><Td right bold bg="#ECFDF5">{total}</Td></tr>
+                  </tbody>
+                </table>
+
+                {/* Saudization summary */}
+                <table style={{ borderCollapse: 'collapse' }}>
+                  <thead><tr><Th></Th><Th right>Budget</Th><Th right>Saudi</Th><Th right>Non-Saudi</Th><Th right>Total</Th></tr></thead>
+                  <tbody>
+                    <tr><Td bold>Headcount</Td><Td right>{HEADCOUNT_BUDGET}</Td><Td right>{saudi}</Td><Td right>{nonSaudi}</Td><Td right bold>{total}</Td></tr>
+                    <tr><Td bold bg="#F3F4F6">Ratio</Td><Td right bg="#F3F4F6">-</Td><Td right bg="#F3F4F6">{pct(saudi)}%</Td><Td right bg="#F3F4F6">{pct(nonSaudi)}%</Td><Td right bold bg="#F3F4F6">100%</Td></tr>
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
         </div>
       </details>
 
