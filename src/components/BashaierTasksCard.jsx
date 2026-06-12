@@ -402,7 +402,7 @@ function buildLeaveAvailability({ requests, employees, year, month, today }) {
     const status = r.end_date < todayStr ? 'returned' : r.start_date > todayStr ? 'upcoming' : 'now';
     return {
       psn: r.employee_id, name: e?.name || r.employee_id, dept: e?.department || '', loc: e?.location || '',
-      typeName: leaveTypeLabel(r.leave_type_id), from: r.start_date, to: r.end_date,
+      typeId: r.leave_type_id, typeName: leaveTypeLabel(r.leave_type_id), from: r.start_date, to: r.end_date,
       days: Number(r.days || 0), isHalf: !!r.is_half_day, status,
     };
   }).sort((a, b) => a.loc.localeCompare(b.loc) || a.dept.localeCompare(b.dept) || a.name.localeCompare(b.name));
@@ -423,12 +423,16 @@ function buildLeaveAvailability({ requests, employees, year, month, today }) {
     const m = { now: { bg: '#FEE2E2', fg: '#991B1B', label: 'OUT NOW' }, upcoming: { bg: '#DBEAFE', fg: '#1D4ED8', label: 'UPCOMING' }, returned: { bg: '#D1FAE5', fg: '#065F46', label: 'RETURNED' } }[st] || { bg: '#EEE', fg: '#333', label: st };
     return `<span style="background:${m.bg};color:${m.fg};padding:1px 6px;border-radius:3px;font-size:11px;font-weight:700">${m.label}</span>`;
   };
+  // Each leave type has its own colour swatch so the kind of leave is
+  // readable at a glance (matches the Leave Report palette).
+  const LEAVE_TINT = { annual: '#3B82F6', sick: '#EF4444', emergency: '#F59E0B', hajj: '#10B981', maternity: '#EC4899', paternity: '#8B5CF6', marriage: '#14B8A6', bereavement: '#6B7280', unpaid: '#9CA3AF', other: '#84CC16' };
+  const swatch = (id) => `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${LEAVE_TINT[id] || '#94A3B8'};margin-right:6px;vertical-align:middle"></span>`;
   const th = (t, align = 'left') => `<th style="background:#334155;color:#fff;padding:4px 9px;text-align:${align};font-size:12px;font-weight:700;border:1px solid #334155;white-space:nowrap">${t}</th>`;
   const headRow = `<tr>${th('PSN')}${th('Name')}${th('Dept')}${th('Loc')}${th('Leave Type')}${th('From')}${th('To')}${th('Days', 'right')}${th('Status')}</tr>`;
   const bodyRows = rows.map((r, i) => {
     const bg = i % 2 ? '#F3F4F6' : '#FFFFFF';
     const td = (c, align = 'left') => `<td style="padding:3px 9px;border:1px solid #D1D5DB;color:#1F2937;font-size:12px;background:${bg};text-align:${align};white-space:nowrap">${c}</td>`;
-    return `<tr>${td(escapeHtml(r.psn))}${td(escapeHtml(r.name))}${td(escapeHtml(r.dept))}${td(escapeHtml(r.loc))}${td(escapeHtml(r.typeName))}${td(escapeHtml(fmtDateShort(r.from)))}${td(escapeHtml(fmtDateShort(r.to)))}${td(r.days.toFixed(1) + (r.isHalf ? ' \u00BD' : ''), 'right')}${td(pill(r.status))}</tr>`;
+    return `<tr>${td(escapeHtml(r.psn))}${td(escapeHtml(r.name))}${td(escapeHtml(r.dept))}${td(escapeHtml(r.loc))}${td(swatch(r.typeId) + escapeHtml(r.typeName))}${td(escapeHtml(fmtDateShort(r.from)))}${td(escapeHtml(fmtDateShort(r.to)))}${td(r.days.toFixed(1) + (r.isHalf ? ' \u00BD' : ''), 'right')}${td(pill(r.status))}</tr>`;
   }).join('');
   const tableHtml = rows.length
     ? `<table style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;margin:10px 0"><thead>${headRow}</thead><tbody>${bodyRows}</tbody></table>`

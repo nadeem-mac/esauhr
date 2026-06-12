@@ -68,8 +68,17 @@ const LEAVE_TINT = {
   marriage:    '#14B8A6',
   bereavement: '#6B7280',
   unpaid:      '#9CA3AF',
+  other:       '#84CC16',
 };
-const tintFor = (id) => LEAVE_TINT[id] || '#3B82F6';
+const tintFor = (id) => LEAVE_TINT[id] || '#94A3B8';
+
+// Light cell fills (Excel) per leave type — keep text legible while still
+// colour-coding the kind of leave.
+const LEAVE_FILL = {
+  annual: 'DBEAFE', sick: 'FEE2E2', emergency: 'FEF3C7', hajj: 'D1FAE5',
+  maternity: 'FCE7F3', paternity: 'EDE9FE', marriage: 'CCFBF1',
+  bereavement: 'F3F4F6', unpaid: 'F3F4F6', other: 'ECFCCB',
+};
 
 // Single-letter code per leave type — shown inside legend swatches and
 // at the start of each bar so the type is readable even in B&W print.
@@ -622,7 +631,7 @@ export default function LeaveReport({
     const body = leaveRows.map((r, i) => {
       const bg = i % 2 ? '#F3F4F6' : '#FFFFFF';
       const td = (c, align = 'left') => `<td style="padding:3px 9px;border:1px solid #D1D5DB;color:#1F2937;font-family:${FONT};font-size:12px;background:${bg};text-align:${align};white-space:nowrap">${c}</td>`;
-      return `<tr>${td(esc(r.psn))}${td(esc(r.name))}${td(esc(r.dept))}${td(esc(r.loc))}${td(esc(r.typeName))}${td(esc(fmtShort(r.from)))}${td(esc(fmtShort(r.to)))}${td(r.days + (r.isHalf ? ' ½' : ''), 'right')}${td(pill(r.status))}${td(esc(fmtPunch(r)))}</tr>`;
+      return `<tr>${td(esc(r.psn))}${td(esc(r.name))}${td(esc(r.dept))}${td(esc(r.loc))}${td(`<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${tintFor(r.typeId)};margin-right:6px;vertical-align:middle"></span>${esc(r.typeName)}`)}${td(esc(fmtShort(r.from)))}${td(esc(fmtShort(r.to)))}${td(r.days + (r.isHalf ? ' ½' : ''), 'right')}${td(pill(r.status))}${td(esc(fmtPunch(r)))}</tr>`;
     }).join('');
     const table = leaveRows.length
       ? `<table style="border-collapse:collapse;font-family:${FONT};margin:10px 0"><thead>${headRow}</thead><tbody>${body}</tbody></table>`
@@ -670,6 +679,11 @@ export default function LeaveReport({
       'OUT NOW': { bg:'FEE2E2', fg:'991B1B' }, 'UPCOMING': { bg:'DBEAFE', fg:'1D4ED8' }, 'RETURNED': { bg:'D1FAE5', fg:'065F46' },
     });
     ws1['!cols'] = [{wch:9},{wch:28},{wch:12},{wch:9},{wch:14},{wch:12},{wch:12},{wch:7},{wch:7},{wch:11},{wch:16}];
+    // Colour-code the Leave Type cell (col E) by type.
+    for (let i = 0; i < leaveRows.length; i++) {
+      const addr = XLSX.utils.encode_cell({ r: i + 1, c: 4 });
+      if (ws1[addr]) ws1[addr].s = { ...(ws1[addr].s || {}), fill: { fgColor: { rgb: LEAVE_FILL[leaveRows[i].typeId] || 'F3F4F6' } } };
+    }
     XLSX.utils.book_append_sheet(wb, ws1, 'On Leave');
 
     // Sheet 2 — Permissions
