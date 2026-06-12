@@ -633,14 +633,8 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
         .esau-pending-pulse { animation: esau-pending-pulse 1.8s ease-in-out infinite; }
       `}</style>
 
-      {/* Header bar — today's date only. (Org chart moved into the
-          AT A GLANCE card; the LIVE freshness pill was removed.) */}
-      <div className="flex items-center justify-between gap-3 flex-wrap pb-1"
-           style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
-        <div className="text-[10px]" style={{ color: '#9D6B53', letterSpacing: '0.3em', fontWeight: 600 }}>
-          {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase()}
-        </div>
-      </div>
+      {/* Date now shown only in the global header — removed here to
+          avoid duplication (Nadeem 2026-06-13). */}
 
       {/* Hero — Editorial Minimal (Option 1): cream background, serif typography, italic quote.
           Bashaier sees her name + heroMessage as the italic quote; everyone else sees the

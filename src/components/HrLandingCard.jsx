@@ -362,6 +362,25 @@ export default function HrLandingCard({
           )}
         </div>
 
+        {/* Week-at-a-glance metrics — quick numbers above the moment
+            columns so the section leads with data, not just names. */}
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-5">
+          {[
+            ['Out today',      outToday.length,            '#0E7490'],
+            ['Returning',      returnsThisWeek.length,     '#0F4C2A'],
+            ['Leave starting', startsThisWeek.length,      '#7C2D12'],
+            ['Anniversaries',  anniversaries.length,       '#A16207'],
+            ['Pending',        (pendingDecisions?.length ?? 0), '#993556'],
+            ['Next holidays',  holidays.length,            '#0E7490'],
+          ].map(([label, val, c]) => (
+            <div key={label} className="rounded-xl px-3 py-2.5 text-center"
+                 style={{ background: '#FBFAF6', border: '1px solid #F0EEE6' }}>
+              <div style={{ fontSize: 24, fontWeight: 700, color: c, lineHeight: 1 }}>{val}</div>
+              <div className="text-[10px] mt-1.5 uppercase tracking-wider" style={{ color: '#1F1B16', opacity: 0.65 }}>{label}</div>
+            </div>
+          ))}
+        </div>
+
         {!hasLifeEvents ? (
           <p className="text-[13px]" style={{ color: '#1F1B16', opacity: 0.7, fontStyle: 'italic' }}>
             A quiet week. No anniversaries, returns, or holidays in the next seven days — a good window to catch up on the things that always wait.
@@ -373,7 +392,7 @@ export default function HrLandingCard({
               accent="#A16207"
               label="ANNIVERSARIES"
               empty="None this week"
-              items={anniversaries.slice(0, 3).map(a => ({
+              items={anniversaries.slice(0, 4).map(a => ({
                 key:   a.employee.id,
                 title: salutationFor(a.employee),
                 sub:   a.yearsCompleted === 5
@@ -402,7 +421,7 @@ export default function HrLandingCard({
               accent="#0F4C2A"
               label="RETURNING"
               empty="No one returning"
-              items={returnsThisWeek.slice(0, 3).map(r => {
+              items={returnsThisWeek.slice(0, 4).map(r => {
                 const emp = (employees || []).find(e => e.id === r.req.employee_id);
                 return {
                   key:   r.req.id,
@@ -419,7 +438,7 @@ export default function HrLandingCard({
               accent="#7C2D12"
               label="LEAVE STARTING"
               empty="No leaves starting"
-              items={startsThisWeek.slice(0, 3).map(s => {
+              items={startsThisWeek.slice(0, 4).map(s => {
                 const emp = (employees || []).find(e => e.id === s.req.employee_id);
                 const d = daysBetween(todayMidnight(), s.startDate);
                 return {

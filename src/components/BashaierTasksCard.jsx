@@ -339,6 +339,74 @@ function buildVacationSummary({ requests, employees, year, month, hdr }) {
   return { subject, bodyPlain, bodyHtml, count: rows.length };
 }
 
+// Task: Headcount snapshot — active staff by location + department.
+function buildHeadcountSnapshot({ employees, hdr }) {
+  const active = (employees || []).filter(e => {
+    const s = String(e.employment_status || '').toLowerCase();
+    return !['deactivated', 'departed', 'terminated', 'resigned', 'inactive'].includes(s);
+  });
+  const byLoc = {}, byDept = {};
+  active.forEach(e => {
+    const loc = e.location || '—';   byLoc[loc]  = (byLoc[loc]  || 0) + 1;
+    const dep = e.department || '—'; byDept[dep] = (byDept[dep] || 0) + 1;
+  });
+  const locRows = Object.entries(byLoc).sort((a, b) => b[1] - a[1]).map(([k, v]) => [k, String(v)]);
+  const depRows = Object.entries(byDept).sort((a, b) => b[1] - a[1]).map(([k, v]) => [k, String(v)]);
+  const locPlain = plainTable(['Location', 'Staff'], locRows, [20, 8]);
+  const depPlain = plainTable(['Department', 'Staff'], depRows, [20, 8]);
+  const locHtml = htmlTable(['Location', 'Staff'], locRows, hdr);
+  const depHtml = htmlTable(['Department', 'Staff'], depRows, hdr);
+  const subject = `Headcount Snapshot - ${fmtDateShort(todayISO())}`;
+  const totalsLine = `Total active staff: ${active.length}`;
+  const intro = [`Dear Mr John,`, '', `Please find below the current headcount snapshot of active staff, broken down by location and department.`, ''].join('\n');
+  const bodyPlain = intro + 'By location:\n' + locPlain + '\n\nBy department:\n' + depPlain + '\n\n' + totalsLine + SIGNATURE_PLAIN;
+  const bodyHtml = `
+    <div style="font-family:Calibri,sans-serif;color:#1F2937;font-size:10pt;line-height:1.5">
+      <p>Dear Mr John,</p>
+      <p>Please find below the current headcount snapshot of active staff, broken down by location and department.</p>
+      <p style="font-weight:600;margin-bottom:2px">By location</p>${locHtml}
+      <p style="font-weight:600;margin:10px 0 2px">By department</p>${depHtml}
+      <p style="font-weight:600;color:#334155">${escapeHtml(totalsLine)}</p>
+      ${SIGNATURE_HTML}
+    </div>`;
+  return { subject, bodyPlain, bodyHtml, count: active.length };
+}
+
+// Task: Upcoming leaves — approved leaves starting in the next 30 days.
+function buildUpcomingLeaves({ requests, employees, today, hdr }) {
+  const start = today;
+  const end = new Date(new Date(today).getTime() + 30 * 86400000).toISOString().slice(0, 10);
+  const empMap = {}; (employees || []).forEach(e => { empMap[e.id] = e; });
+  const rows = (requests || []).filter(r => {
+    if (r.status !== 'approved' && r.stage !== 'approved') return false;
+    if (!r.start_date) return false;
+    return r.start_date >= start && r.start_date <= end;
+  }).sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
+  const tableRows = rows.map(r => {
+    const e = empMap[r.employee_id];
+    return [e?.name || r.employee_id, e?.department || '', leaveTypeLabel(r.leave_type_id),
+            fmtDateShort(r.start_date), fmtDateShort(r.end_date), returnDateFromEnd(r.end_date), Number(r.days || 0).toFixed(1)];
+  });
+  const headers = ['Employee', 'Dept', 'Type', 'Start', 'End', 'Return', 'Days'];
+  const widths = [30, 6, 12, 12, 12, 12, 5];
+  const tablePlain = rows.length ? plainTable(headers, tableRows, widths) : '(No leaves scheduled in the next 30 days.)';
+  const tableHtml  = rows.length ? htmlTable(headers, tableRows, hdr) : '<p style="color:#6B7280;font-style:italic">No leaves scheduled in the next 30 days.</p>';
+  const totalDays = rows.reduce((s, r) => s + Number(r.days || 0), 0);
+  const subject = `Upcoming Leaves - Next 30 Days`;
+  const totalsLine = `${rows.length} upcoming leave${rows.length === 1 ? '' : 's'}, ${totalDays.toFixed(1)} days, ${new Set(rows.map(r => r.employee_id)).size} staff`;
+  const intro = [`Dear Mr John,`, '', `Please find below the staff leaves scheduled to start within the next 30 days, for planning cover.`, ''].join('\n');
+  const bodyPlain = intro + tablePlain + '\n\n' + totalsLine + SIGNATURE_PLAIN;
+  const bodyHtml = `
+    <div style="font-family:Calibri,sans-serif;color:#1F2937;font-size:10pt;line-height:1.5">
+      <p>Dear Mr John,</p>
+      <p>Please find below the staff leaves scheduled to start within the next 30 days, for planning cover.</p>
+      ${tableHtml}
+      <p style="font-weight:600;color:#334155">${escapeHtml(totalsLine)}</p>
+      ${SIGNATURE_HTML}
+    </div>`;
+  return { subject, bodyPlain, bodyHtml, count: rows.length };
+}
+
 // =============================================================================
 // TASK STATUS LOGIC
 // =============================================================================
@@ -879,12 +947,20 @@ export default function BashaierTasksCard({ me, employees, requests, permissions
       build: () => buildEndOfMonthPermissions({ permissions: perms, employees, year, month, hdr }),
     },
     {
-      key: 'last_month_vacation',
-      title: `${MONTH_FULL[prevMonth-1]} vacation summary`,
-      subtitle: 'Last month staff vacations with return dates',
-      icon: <Plane className="w-4 h-4" />,
+      key: 'upcoming_leaves',
+      title: 'Upcoming leaves — next 30 days',
+      subtitle: 'Staff leaves starting soon, for planning cover',
+      icon: <CalendarDays className="w-4 h-4" />,
       tone: '#2D5F3F',
-      build: () => buildVacationSummary({ requests, employees, year: prevYear, month: prevMonth, hdr }),
+      build: () => buildUpcomingLeaves({ requests, employees, today, hdr }),
+    },
+    {
+      key: 'headcount_snapshot',
+      title: 'Headcount snapshot',
+      subtitle: 'Active staff by location and department',
+      icon: <TrendingUp className="w-4 h-4" />,
+      tone: '#1D4ED8',
+      build: () => buildHeadcountSnapshot({ employees, hdr }),
     },
     {
       key: 'shift_staff_reminder',
@@ -951,12 +1027,12 @@ export default function BashaierTasksCard({ me, employees, requests, permissions
             <h3 className="serif text-lg" style={{ fontWeight: 500 }}>Reports for Mr John</h3>
           </div>
           <div className="text-xs opacity-60 flex items-center gap-1.5">
-            <ClipboardCheck className="w-3 h-3" /> 3 scheduled emails
+            <ClipboardCheck className="w-3 h-3" /> {tasks.length} reports
           </div>
         </div>
 
         <p className="text-xs mb-4" style={{ color: '#1F1B16' }}>
-          Click any task to preview, then send via your mail client or copy to paste into Outlook.
+          Click any report to preview, then send via your mail client or copy to paste into Outlook.
         </p>
 
         {/* P6: Performance escalation — surfaces staff who exceeded 5

@@ -414,6 +414,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
   const [morningMode, setMorningMode] = useState(false);            // 10AM two-part report
   const [pendingMorningGenerate, setPendingMorningGenerate] = useState(false);
   const [morningCopied, setMorningCopied] = useState(false);        // "copied to Outlook" feedback (compact mode)
+  const [mrCollapsed, setMrCollapsed] = useState(true);             // compact card starts collapsed (click to open)
 
   // Shift-flagged staff only. We also compute a stable string key
   // of just the IDs so the load() callback can depend on the SET of
@@ -1448,23 +1449,32 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
     return (
       <div className="rounded-2xl border bg-white p-5"
            style={{ borderColor: ACCENT_BD, boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
-        <div className="flex items-start justify-between flex-wrap gap-3 mb-1">
-          <div className="flex items-center gap-2">
-            <Clock className="w-5 h-5" style={{ color: ACCENT }} />
-            <div>
+        <button type="button" onClick={() => setMrCollapsed(c => !c)}
+                className="w-full flex items-center justify-between gap-3 text-left">
+          <div className="flex items-center gap-2 min-w-0">
+            <Clock className="w-5 h-5 flex-shrink-0" style={{ color: ACCENT }} />
+            <div className="min-w-0">
               <div style={{ fontSize: 18, color: '#1F1B16', fontWeight: 600 }}>Morning report (John)</div>
-              <div className="text-[11px] mt-0.5" style={{ color: '#1F1B16', opacity: 0.7 }}>
-                {fmtDateLong(to)} arrivals · {fmtDateLong(from)} detail
+              <div className="text-[11px] mt-0.5 truncate" style={{ color: '#1F1B16', opacity: 0.7 }}>
+                {mrCollapsed
+                  ? (active
+                      ? `${morningData.late.length} late · ${morningData.early.length} early · ${morningData.missed.length} missed — click to open`
+                      : 'Click to open · updates on each daily upload')
+                  : `${fmtDateLong(to)} arrivals · ${fmtDateLong(from)} detail`}
               </div>
             </div>
           </div>
-          <span className="text-[10px] px-2 py-1 rounded-full font-bold"
-                style={{ background: active ? ACCENT_BG : '#F4F4EE', color: active ? ACCENT : '#9A9A92',
-                         border: `1px solid ${active ? ACCENT_BD : '#E5E5E0'}` }}>
-            {loading ? 'LOADING…' : active ? `ACTIVE · ${clock}` : 'WAITING FOR UPLOAD'}
-          </span>
-        </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <span className="text-[10px] px-2 py-1 rounded-full font-bold"
+                  style={{ background: active ? ACCENT_BG : '#F4F4EE', color: active ? ACCENT : '#9A9A92',
+                           border: `1px solid ${active ? ACCENT_BD : '#E5E5E0'}` }}>
+              {loading ? 'LOADING…' : active ? `ACTIVE · ${clock}` : 'WAITING FOR UPLOAD'}
+            </span>
+            <ChevronDown className="w-4 h-4" style={{ color: '#1F1B16', opacity: 0.5, transform: mrCollapsed ? 'none' : 'rotate(180deg)', transition: 'transform .15s' }} />
+          </div>
+        </button>
 
+        {!mrCollapsed && (<>
         {!loading && !todayHas && (
           <div className="text-[11px] mt-2 mb-3 p-2.5 rounded-lg"
                style={{ background: '#FEF3C7', color: '#7C2D12', border: '1px solid #F59E0B' }}>
@@ -1510,6 +1520,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
               <td className="py-1 pr-2">{r.out}</td><td className="py-1">{r.status}</td>
             </>)} />
         </div>
+        </>)}
       </div>
     );
   }

@@ -1224,7 +1224,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
       )}
 
       <main
-        className={`mx-auto fade-in ${tab === 'attendance' ? 'w-full px-4 sm:px-5 py-2 sm:py-3' : 'max-w-7xl px-3 sm:px-6 py-6 sm:py-8'}`}
+        className={`mx-auto fade-in ${tab === 'attendance' ? 'w-full px-4 sm:px-5 py-2 sm:py-3' : 'max-w-screen-2xl px-3 sm:px-6 py-6 sm:py-8'}`}
         key={tab}
       >
         <Suspense fallback={<ChunkLoader />}>
