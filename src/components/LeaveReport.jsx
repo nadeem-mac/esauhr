@@ -379,7 +379,7 @@ export default function LeaveReport({
       return `<span style="background:${m.bg};color:${m.fg};padding:2px 6px;border-radius:3px;font-size:9px;font-weight:700">${m.label}</span>`;
     };
     const leaveTbody = leaveRows.map(r => `
-      <tr${r.status === 'now' ? ' style="background:#FEF2F2"' : r.status === 'returned' ? ' style="opacity:.72"' : ''}>
+      <tr${r.status === 'now' ? ' style="background:#FEF2F2"' : r.status === 'returned' ? ' style="background:#F9FAFB"' : ''}>
         <td>${esc(r.psn)}</td>
         <td>${esc(r.name)}</td>
         <td>${esc(r.dept)}</td>
@@ -790,8 +790,7 @@ export default function LeaveReport({
             ) : leaveRows.map((r, i) => (
               <tr key={i} className="border-t" style={{
                 borderColor: 'rgba(0,0,0,0.05)',
-                background: r.status === 'now' ? '#FEF2F2' : 'transparent',
-                opacity: r.status === 'returned' ? 0.72 : 1,
+                background: r.status === 'now' ? '#FEF2F2' : r.status === 'returned' ? '#F9FAFB' : 'transparent',
               }}>
                 <td className="px-2 py-1 font-mono">{r.psn}</td>
                 <td className="px-2 py-1">{r.name}</td>
