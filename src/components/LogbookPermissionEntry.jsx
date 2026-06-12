@@ -106,7 +106,8 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
       .map(r => `  • ${r.permission_date}  ·  ${PERMISSION_TYPES[r.type]?.label || r.type}  ·  ${String(r.time_from || '').slice(0,5)}–${String(r.time_to || '').slice(0,5)}`);
     const totalH = Math.round((monthSummary.hoursUsed + hours) * 10) / 10;
     const totalN = monthSummary.occurrences + 1;
-    const first = (selectedEmp.name || '').split(' ')[0] || selectedEmp.name;
+    const firstRaw = (selectedEmp.name || '').trim().split(/\s+/)[0] || selectedEmp.name || '';
+    const first = firstRaw.charAt(0).toUpperCase() + firstRaw.slice(1).toLowerCase();
     const body = [
       `Dear ${first},`, '',
       `This is a courtesy note regarding your permission (late arrival / early departure) usage for ${monthLabel}:`, '',

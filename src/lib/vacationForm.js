@@ -580,6 +580,12 @@ async function generateQrPng(text, sizePx = 220) {
 }
 
 // ─── main generator ──────────────────────────────────────────────────────────
+// Proper-case the first name (roster stores CAPS) — "NASIR" -> "Nasir".
+function properFirst(name) {
+  const f = String(name || '').trim().split(/\s+/)[0] || 'Colleague';
+  return f.charAt(0).toUpperCase() + f.slice(1).toLowerCase();
+}
+
 export async function generateVacationFormBlob({ employee, request, manager, hrApprover, substitutes = [], manual = false }) {
   const ltKey  = LEAVE_TYPE[request.leave_type_id] ? request.leave_type_id : 'annual';
   const ltBoth = LEAVE_TYPE[ltKey];
@@ -1005,7 +1011,7 @@ export function buildEmailDraft({ employee, request, manager, hrApprover, substi
   const subject = `LEAVE APPROVED: ${employee?.id || ''} — ${employee?.name || ''} — ${subjectRange}`;
 
   const body = [
-    `Dear ${(employee?.name || '').split(' ')[0] || 'Colleague'},`,
+    `Dear ${properFirst(employee?.name)},`,
     '',
     `Your ${leaveTypeLabel.toLowerCase()} request from ${dateRange} (${request.days} day${request.days === 1 ? '' : 's'}${request.is_half_day ? ' — half day' : ''}) has been approved.`,
     '',
@@ -1111,7 +1117,7 @@ export function buildSickLeaveApprovalEmailDraft({
   const managerName = manager?.name || 'your line manager';
 
   const body = [
-    `Dear ${(employee?.name || '').split(' ')[0] || 'Colleague'},`,
+    `Dear ${properFirst(employee?.name)},`,
     '',
     `Your sick leave from ${dateRange} (${dayCount}) has been approved.`,
     '',
@@ -1201,7 +1207,7 @@ export function buildLeaveRejectionEmailDraft({
   const subject = `LEAVE NOT APPROVED: ${employee?.id || ''} — ${employee?.name || ''} — ${subjectRange}`;
 
   const body = [
-    `Dear ${(employee?.name || '').split(' ')[0] || 'Colleague'},`,
+    `Dear ${properFirst(employee?.name)},`,
     '',
     `Your ${leaveTypeLabel.toLowerCase()} request from ${dateRange} (${request.days} day${request.days === 1 ? '' : 's'}${request.is_half_day ? ' — half day' : ''}) has not been approved.`,
     '',

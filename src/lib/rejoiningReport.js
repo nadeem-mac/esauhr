@@ -940,17 +940,21 @@ export function buildRejoiningEmailDraft({ employee, request, manager, hrApprove
 
   const subject = `Rejoining approved · ${employee?.name || ''} · returned ${returnDate}`;
 
+  // Proper-case the first name (roster stores names in CAPS) — "NASIR" -> "Nasir".
+  const firstName = (() => {
+    const f = String(employee?.name || '').trim().split(/\s+/)[0] || 'Colleague';
+    return f.charAt(0).toUpperCase() + f.slice(1).toLowerCase();
+  })();
+
   const body = [
-    `Dear ${(employee?.name || '').split(' ')[0] || 'Colleague'},`,
+    `Dear ${firstName},`,
     '',
     `Welcome back. Your rejoining following the ${leaveTypeLabel.toLowerCase()} from ${dateRange} has been approved by management. Your return on duty is recorded as ${returnDate} and your payroll has been resumed accordingly.`,
-    '',
-    request.return_notes ? `Notes on file: ${request.return_notes}` : null,
     request.balance_after && Number(request.balance_after) > 0
-      ? `Balance reconciliation: +${request.balance_after} day${request.balance_after === 1 ? '' : 's'} have been credited back to your leave balance for the early return.`
+      ? `\n${request.balance_after} day${request.balance_after === 1 ? '' : 's'} have been credited back to your leave balance for the early return.`
       : null,
     '',
-    `The signed rejoining report is attached for your records — kindly print it, get it signed by yourself and your department head, and submit a hard copy to the HR office at your earliest convenience.`,
+    `The signed rejoining report is attached for your records, kindly print it, get it signed by yourself and your department head, and submit a hard copy to the HR office at your earliest convenience.`,
     '',
     `If you have any questions, please contact HR.`,
     '',

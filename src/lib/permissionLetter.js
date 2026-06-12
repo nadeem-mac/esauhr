@@ -845,7 +845,10 @@ export function buildPermissionEmailDraft({ employee, manager, hrApprover, reque
   const ccRaw    = [manager?.email, ...resolveExecCcEmails(employees)].filter(Boolean);
   const cc = Array.from(new Set(ccRaw.filter(e => e !== to)));
 
-  const firstName = (employee?.name || '').split(' ')[0] || 'Colleague';
+  const firstName = (() => {
+    const f = (employee?.name || '').trim().split(/\s+/)[0] || 'Colleague';
+    return f.charAt(0).toUpperCase() + f.slice(1).toLowerCase();
+  })();
   // Subject follows the portal-wide convention (set 2026-05-09):
   //   TYPE: PSN — NAME — TYPE_DETAIL — DATE
   const subjectDate = request.permission_date
