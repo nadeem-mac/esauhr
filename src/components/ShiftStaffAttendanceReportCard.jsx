@@ -1257,11 +1257,11 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
       subject = `Daily Attendance — ${fmtDate(t)} (morning roll-call + ${fmtDate(yday)} full)`;
       lines.push('Dear Mr. John,');
       lines.push('');
-      lines.push(`Good morning. Here is today's attendance as of ${clock} (${dayDate(t)}). The staff sign out at the end of the day, so this shows the morning arrivals only.`);
+      lines.push(`Please find today's morning attendance for check-in time as of ${clock} (${dayDate(t)}). Sign-outs and total hours finalise at end of day, so this report shows arrivals only.`);
       lines.push('');
-      lines.push(`Today so far: ${inCount} signed in (${lateCount} late), ${notIn} not in yet, ${leaveCount} on leave.`);
+      lines.push(`Today so far: ${inCount} signed in (${lateCount} late shift staff), ${notIn} not yet in, ${leaveCount} on leave.`);
       lines.push('');
-      lines.push(`Please see the attached file for the complete details. It has two sheets: "${sheet1}" for today's arrivals and "${sheet2}" for yesterday's full report (in/out, total hours, late arrivals and early departures).`);
+      lines.push(`Please see the attached Excel file which has two sheets: "${sheet1}" (arrivals) and "${sheet2}", the complete report for ${dayDate(yday)} (in/out, total hours, late and early departures).`);
     } else {
       const periodLabel = from === to ? fmtDateLong(from) : `${fmtDate(from)} – ${fmtDate(to)}`;
       const scopeLabel = reportScope === 'all'
@@ -1327,6 +1327,23 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
     const t = to, y = from;
     const hdr = me?.id === 'H94830' ? { bg: '#F7C5D0', fg: '#0A0A0A' } : { bg: '#2D5F3F', fg: '#FFFFFF' };
     const dept = (e) => `${e.department || '—'}${e.location ? ' · ' + e.location : ''}`;
+    // Same roll-call counts + sheet labels the mailto email uses, so both
+    // read identically. (Nadeem 2026-06-13)
+    const clock = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    const wkShort = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short' });
+    const dShort  = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+    const dayDate = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+    const sheet1 = `Today (${dShort(t)}, ${wkShort(t)})`.slice(0, 31);
+    const sheet2 = `Yesterday detail (${dShort(y)}, ${wkShort(y)})`.slice(0, 31);
+    let inCount = 0, lateCount = 0, notIn = 0, leaveCount = 0;
+    reportSummaries.forEach(s => {
+      if (managementNoAttendance(s.emp.id)) return;
+      const tr = s.rows.find(r => r.attendance_date === t);
+      const worked = tr && (tr.first_punch || (tr.punch_count || 0) > 0) && tr.status !== 'absent';
+      if (worked) { inCount += 1; if (_isLateMR(tr)) lateCount += 1; }
+      else if (tr && /_leave$/.test(tr.status || '')) leaveCount += 1;
+      else if (!holidays.has(t)) notIn += 1;
+    });
     const cell = (v, extra = '') => `<td style="padding:2px 8px;border:1px solid #D1D5DB;font-size:10pt;color:#1F2937;white-space:nowrap;${extra}">${escapeHtml(String(v ?? '—'))}</td>`;
     const th = (h) => `<th style="background:${hdr.bg};color:${hdr.fg};padding:3px 8px;text-align:left;font-weight:700;font-size:10pt;border:1px solid ${hdr.bg}">${escapeHtml(h)}</th>`;
     const tbl = (heads, rows) => rows.length
@@ -1338,8 +1355,9 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
     const shiftB = morningData.shift.map(r => `<tr>${cell(r.emp.name, 'font-weight:600')}${cell(dept(r.emp))}${cell(r.in)}${cell(r.out)}${cell(r.status)}</tr>`);
     const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:10pt;color:#0A0A0A;line-height:1.5;max-width:860px">
   <p style="margin:0 0 12px 0">Dear Mr. John,</p>
-  <p style="margin:0 0 12px 0">Good morning. Here is today's attendance for <strong>${escapeHtml(fmtDateLong(t))}</strong>. The staff sign out at the end of the day, so this shows the morning arrivals only.</p>
-  <p style="margin:0 0 12px 0">A short summary is below. Please see the attached file for the complete details.</p>
+  <p style="margin:0 0 12px 0">Please find today's morning attendance for check-in time as of ${escapeHtml(clock)} (${escapeHtml(dayDate(t))}). Sign-outs and total hours finalise at end of day, so this report shows arrivals only.</p>
+  <p style="margin:0 0 12px 0">Today so far: ${inCount} signed in (${lateCount} late shift staff), ${notIn} not yet in, ${leaveCount} on leave.</p>
+  <p style="margin:0 0 12px 0">Please see the attached Excel file which has two sheets: "${escapeHtml(sheet1)}" (arrivals) and "${escapeHtml(sheet2)}", the complete report for ${escapeHtml(dayDate(y))} (in/out, total hours, late and early departures). A short summary is below.</p>
   <p style="margin:14px 0 2px 0;font-weight:700">Today's late arrivals &mdash; ${escapeHtml(fmtDateLong(t))}</p>
   ${tbl(['Employee', 'Department', 'In', 'Expected', 'Late by'], lateB)}
   <p style="margin:14px 0 2px 0;font-weight:700">Yesterday's early departures &mdash; ${escapeHtml(fmtDateLong(y))}</p>
