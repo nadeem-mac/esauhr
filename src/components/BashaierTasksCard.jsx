@@ -436,13 +436,17 @@ function buildDeptHeadLeaveReports({ employees, requests, balances, leaveTypes, 
     // People = the manager + their direct reports (manager's own included).
     const people = [manager, ...reports].filter((p, i, arr) => arr.findIndex(x => x.id === p.id) === i);
 
-    // Balance table rows
+    // Balance table rows. Available is shown as Entitled + Carried − Used
+    // so it always reconciles with the visible columns (the stored
+    // leave_balances 'adjustment' field was double-counting prior usage
+    // and pushing Available negative). Pending is omitted per Nadeem.
     const balRows = people.map(p => {
       const b = balOf(p);
-      return [p.name || p.id, p.department || '', String(b.entitlement), String(b.carried), String(b.used), String(b.pending), String(b.available)];
+      const avail = Number(b.entitlement) + Number(b.carried) - Number(b.used);
+      return [p.name || p.id, p.department || '', String(b.entitlement), String(b.carried), String(b.used), String(Math.round(avail * 10) / 10)];
     });
-    const balHeaders = ['Employee', 'Dept', 'Entitle', 'Carried', 'Used', 'Pending', 'Available'];
-    const balWidths  = [28, 6, 8, 8, 6, 8, 9];
+    const balHeaders = ['Employee', 'Dept', 'Entitled', 'Carried', 'Used', 'Available'];
+    const balWidths  = [28, 6, 9, 8, 6, 10];
 
     // Leave-application rows (this year)
     const appRows = [];
@@ -1841,7 +1845,7 @@ function DeptHeadReportModal({ title, managers, onClose }) {
 
   const sendOne = (m) => {
     if (!m.to) { alert(`No email address on file for ${m.name}. Add it to their employee record first.`); return; }
-    const href = `mailto:${encodeURIComponent(m.to)}?cc=${encodeURIComponent(m.cc.join(','))}`
+    const href = `mailto:${encodeURIComponent(m.to)}?cc=${encodeURIComponent(m.cc.join(';'))}`
       + `&subject=${encodeURIComponent(m.subject)}&body=${encodeURIComponent(m.bodyPlain)}`;
     window.location.href = href;
   };
@@ -1910,7 +1914,7 @@ function DeptHeadReportModal({ title, managers, onClose }) {
               {openId === m.id && (
                 <div className="px-3 pb-3">
                   <div className="text-[11px] mb-2" style={{ color: '#1F1B16', opacity: 0.7 }}>
-                    <strong>To:</strong> {m.to || '—'} &nbsp; <strong>Cc:</strong> {m.cc.join(', ')}
+                    <strong>To:</strong> {m.to || '—'} &nbsp; <strong>Cc:</strong> {m.cc.join('; ')}
                   </div>
                   <div className="rounded-lg border p-3 bg-white overflow-x-auto" style={{ borderColor: 'var(--border-soft)' }}
                        dangerouslySetInnerHTML={{ __html: m.bodyHtml }} />

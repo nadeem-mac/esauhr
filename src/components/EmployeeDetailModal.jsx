@@ -195,11 +195,12 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
     }).map(({ type, balance }) => {
       const bonus = Number(balance.bonus || 0);
       const dispTotal = balance.entitlement + balance.carried + bonus;
+      const dispAvail = dispTotal - (balance.used || 0);
       return `<tr>
         <td>${esc(type.label || type.name || type.id)}</td>
         <td style="text-align:right">${dispTotal}</td>
         <td style="text-align:right">${balance.used || 0}</td>
-        <td style="text-align:right;font-weight:700;color:${(balance.available||0) <= 0 ? '#991B1B' : '#065F46'}">${Math.max(0, balance.available || 0)}</td>
+        <td style="text-align:right;font-weight:700;color:${dispAvail <= 0 ? '#991B1B' : '#065F46'}">${dispAvail}</td>
       </tr>`;
     }).join('');
 
@@ -267,7 +268,7 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
   <div class="cards">
     <div class="card" style="border-color:#A7F3D0;background:#F0FDF4">
       <div class="lbl">Annual remaining</div>
-      <div class="val" style="color:#065F46">${Math.max(0, (balByType.find(b => b.type.id === 'annual')?.balance.available) || 0)}</div>
+      <div class="val" style="color:#065F46">${(() => { const b = balByType.find(x => x.type.id === 'annual')?.balance; return b ? (b.entitlement + b.carried + Number(b.bonus||0) - (b.used||0)) : 0; })()}</div>
       <div class="sv">of ${(() => { const b = balByType.find(x => x.type.id === 'annual')?.balance; return b ? (b.entitlement + b.carried + Number(b.bonus||0)) : 0; })()} days</div>
     </div>
     <div class="card" style="border-color:#BFDBFE;background:#EFF6FF">
