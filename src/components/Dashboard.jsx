@@ -618,6 +618,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           employees={employees}
           requests={requests}
           permissions={permissions}
+          leaveTypes={leaveTypes}
           onGoToReviews={onGoToReviews || onGoToRequests}
           onGoToAttendance={() => { /* parent doesn't wire this yet; safe no-op until they do */ }}
         />
@@ -831,7 +832,10 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
       </div>
       </details>
 
-      {/* Three column summary */}
+      {/* Three column summary — for Bashaier this is folded into the
+          consolidated HrLandingCard hub above (Out today / Pending /
+          Upcoming all live there once), so it only renders for admin. */}
+      {!bashaierMode && (
       <div className="grid lg:grid-cols-3 gap-5">
         <Card title="Out of office today" subtitle={`${onLeaveToday.length} ${onLeaveToday.length === 1 ? 'person' : 'people'}`}>
           {onLeaveToday.length === 0 ? (
@@ -952,6 +956,7 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           )}
         </Card>
       </div>
+      )}
 
       {/* Pending shift approvals — Bashaier-only Card. Self-hides when the
           queue is empty so it never shows a stale 0-state. Sits between the

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Cake, Award, Plane, CalendarCheck, AlertCircle, ClipboardList,
   Heart, FileWarning, ShieldAlert, TrendingUp, ArrowRight, Sparkles,
-  Loader2, MapPin, Inbox,
+  Loader2, MapPin, Inbox, Palmtree,
 } from 'lucide-react';
 import { directGet } from '../supabaseClient.js';
 import { monthsOfService, fmtDateShort } from '../lib/leaveLogic.js';
@@ -149,6 +149,7 @@ export default function HrLandingCard({
   employees = [],
   requests = [],
   permissions = [],
+  leaveTypes = [],
   onGoToReviews,
   onGoToAttendance,
 }) {
@@ -248,6 +249,40 @@ export default function HrLandingCard({
     };
   }, [requests]);
 
+  // Lookup for nice leave-type names + colours (the standalone "Out of
+  // office today" tile used to own this; folded in here so it lives once).
+  const typeMap = useMemo(() => {
+    const m = {};
+    for (const t of (leaveTypes || [])) m[t.id] = t;
+    return m;
+  }, [leaveTypes]);
+
+  // Who is out RIGHT NOW (approved leave spanning today, not yet rejoined).
+  // This is the one piece the old three-tile strip had that Moments didn't.
+  const outToday = useMemo(() => {
+    const today = todayMidnight();
+    const rows = [];
+    for (const req of (requests || [])) {
+      if (req.stage !== 'approved') continue;
+      if (req.return_stage === 'approved') continue;       // already back
+      const start = req.start_date ? new Date(req.start_date) : null;
+      const end   = req.end_date   ? new Date(req.end_date)   : start;
+      if (!start || !end) continue;
+      if (start <= today && end >= today) {
+        const emp = (employees || []).find(e => e.id === req.employee_id);
+        const tp  = typeMap[req.leave_type_id];
+        rows.push({
+          key: req.id,
+          emp: emp || { id: req.employee_id, name: req.employee_id },
+          typeName: tp?.name || req.leave_type_id || 'Leave',
+          color: tp?.color || '#0E7490',
+          endDate: end,
+        });
+      }
+    }
+    return rows.sort((a, b) => a.endDate - b.endDate);
+  }, [requests, employees, typeMap]);
+
   // Pending decision count — same source as the hero's pending count
   // for consistency. Filtered to actual approval-required stages so
   // 'pending_certificate' (which is its own queue) doesn't double-count.
@@ -279,6 +314,40 @@ export default function HrLandingCard({
         overflow: 'hidden',
       }}
     >
+      {/* ── AT A GLANCE ───────────────────────────────────────────── */}
+      <div className="px-6 py-5 sm:px-8 sm:py-6" style={{ borderBottom: '1px solid #F4F4EE' }}>
+        <div className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.3em', fontWeight: 700 }}>
+          — AT A GLANCE
+        </div>
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2.5 mt-3">
+          <GlanceChip value={outToday.length}      label="OUT TODAY"  color="#7C2D12" />
+          <GlanceChip value={returnsThisWeek.length} label="RETURNING" color="#0F4C2A" />
+          <GlanceChip value={startsThisWeek.length}  label="STARTING"  color="#7C2D12" />
+          <GlanceChip value={pendingDecisions}       label="PENDING"   color="#C2410C" onClick={onGoToReviews} />
+          <GlanceChip value={pendingCertCount}       label="SICK CERTS" color="#BE123C" onClick={onGoToReviews} />
+          <GlanceChip value={(evalZoneCounts?.review || 0) + (evalZoneCounts?.watch || 0)} label="EVAL FLAGS" color="#A16207" onClick={onGoToReviews} />
+        </div>
+
+        {outToday.length > 0 && (
+          <div className="mt-5">
+            <div className="flex items-center gap-2 mb-2">
+              <Palmtree className="w-3.5 h-3.5" style={{ color: '#0E7490' }} />
+              <span className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.18em', fontWeight: 700 }}>
+                OUT OF OFFICE TODAY
+              </span>
+            </div>
+            <ul className="space-y-1">
+              {outToday.slice(0, 5).map(o => <OutTodayRow key={o.key} o={o} />)}
+            </ul>
+            {outToday.length > 5 && (
+              <div className="text-[11px] mt-1.5 pl-2" style={{ color: '#1F1B16', opacity: 0.6 }}>
+                +{outToday.length - 5} more out today
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* ── THIS WEEK ─────────────────────────────────────────────── */}
       <div className="px-6 py-5 sm:px-8 sm:py-6" style={{ borderBottom: '1px solid #F4F4EE' }}>
         <div className="flex items-baseline justify-between flex-wrap gap-2 mb-4">
@@ -514,7 +583,7 @@ function ActionPill({ label, count, loading, icon: Icon, accentDark, accentTint,
       type="button"
       onClick={onClick}
       disabled={isZero || isPending}
-      className="text-left rounded-xl p-4 transition-all"
+      className={`text-left rounded-xl p-4 transition-all ${(count === 0) ? '' : 'hover:-translate-y-0.5'}`}
       style={{
         background: isZero ? '#F8F8F2' : accentTint,
         border: `1px solid ${isZero ? 'var(--border-soft, #E8E5D8)' : accentDark}33`,
@@ -543,5 +612,68 @@ function ActionPill({ label, count, loading, icon: Icon, accentDark, accentTint,
         {caption}
       </div>
     </button>
+  );
+}
+
+// ─── glance + out-today sub-components ─────────────────────────────────
+function initials(name) {
+  const p = String(name || '').trim().split(/\s+/);
+  return ((p[0]?.[0] || '') + (p[1]?.[0] || '')).toUpperCase() || '?';
+}
+
+// Compact stat chip for the AT A GLANCE strip. Lifts + greens its border
+// on hover; only navigates when an onClick is supplied and the count is
+// actionable (non-zero, loaded).
+function GlanceChip({ value, label, color, onClick }) {
+  const loading = value === null || value === undefined;
+  const isZero  = value === 0;
+  const tone    = (loading || isZero) ? '#9CA3AF' : color;
+  const clickable = !!onClick && !isZero && !loading;
+  return (
+    <button
+      type="button"
+      onClick={clickable ? onClick : undefined}
+      className="text-left rounded-xl px-3 py-2.5 border border-[#E8E5D8] transition-all hover:-translate-y-0.5 hover:border-[#0F4C2A] hover:bg-[#F6FAF4]"
+      style={{ background: '#FFFFFF', cursor: clickable ? 'pointer' : 'default' }}
+    >
+      <div className="serif" style={{ fontSize: '21px', lineHeight: 1, fontWeight: 600, color: tone }}>
+        {loading ? '–' : value}
+      </div>
+      <div className="text-[10px] mt-1" style={{ color: '#1F1B16', letterSpacing: '0.08em', fontWeight: 700 }}>
+        {label}
+      </div>
+    </button>
+  );
+}
+
+// One person currently on leave — initials avatar, name, dept·loc, and a
+// type pill with the return date. Row highlights on hover.
+function OutTodayRow({ o }) {
+  return (
+    <li className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-[#F4F4EE]">
+      <div
+        className="flex-shrink-0 rounded-full flex items-center justify-center"
+        style={{ width: 28, height: 28, background: '#FBEAF0', color: '#993556', fontSize: 11, fontWeight: 600 }}
+      >
+        {initials(o.emp.name)}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-[13px] truncate" style={{ color: '#1F1B16', fontWeight: 500 }}>{o.emp.name}</div>
+        <div className="text-[11px]" style={{ color: '#1F1B16', opacity: 0.6 }}>
+          {[o.emp.department, o.emp.location].filter(Boolean).join(' · ')}
+        </div>
+      </div>
+      <div className="text-right flex-shrink-0">
+        <span
+          className="text-[10px]"
+          style={{ fontWeight: 600, color: o.color, background: `${o.color}1A`, padding: '2px 8px', borderRadius: 999 }}
+        >
+          {o.typeName}
+        </span>
+        <div className="text-[11px] mt-0.5" style={{ color: '#1F1B16', opacity: 0.6 }}>
+          until {fmtDateShort(o.endDate)}
+        </div>
+      </div>
+    </li>
   );
 }
