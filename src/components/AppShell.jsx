@@ -42,6 +42,7 @@ const HiringView              = lazy(() => import('./HiringView.jsx'));
 const ReviewerPanel           = lazy(() => import('./ReviewerPanel.jsx'));
 const MonthlyReportsCard      = lazy(() => import('./MonthlyReportsCard.jsx'));
 const BashaierTasksCard       = lazy(() => import('./BashaierTasksCard.jsx'));
+const ShiftStaffAttendanceReportCard = lazy(() => import('./ShiftStaffAttendanceReportCard.jsx'));
 const AttendanceView          = lazy(() => import('./AttendanceView.jsx'));
 const RefreshOverlay          = lazy(() => import('./RefreshOverlay.jsx'));
 const GovernmentDataSync      = lazy(() => import('./GovernmentDataSync.jsx'));
@@ -1304,9 +1305,12 @@ export default function AppShell({ session, me, onRefreshMe }) {
           )
         )}
         {tab === 'reports' && isHrReviewer && !isAdmin && (
-          /* REPORTS tab — Mr John report drafting card. Leave & Availability
-             now lives inside this list as an expandable report. */
-          <BashaierTasksCard me={me} employees={employees} requests={requests} permissions={permissions} />
+          /* REPORTS tab — Morning report (John) at the top, then the Mr John
+             report drafting card. Leave & Availability lives inside the list. */
+          <div className="space-y-6">
+            <ShiftStaffAttendanceReportCard me={me} employees={employees} compact />
+            <BashaierTasksCard me={me} employees={employees} requests={requests} permissions={permissions} />
+          </div>
         )}
         {tab === 'reviews' && (
           <>
