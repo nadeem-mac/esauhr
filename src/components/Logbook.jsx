@@ -142,7 +142,7 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
           'leave_requests',
           `select=id,employee_id,leave_type_id,start_date,end_date,days,reason,is_half_day,requested_at,manager_decided_at,hr_decided_at,substitute_ids,substitute_decisions`
           + `&reason=ilike.Manual entry*`
-          + `&order=hr_decided_at.desc&limit=10`,
+          + `&order=hr_decided_at.desc.nullslast&limit=2000`,
           { timeoutMs: 10000 }
         );
         if (!cancelled) setRecent(rows || []);
@@ -153,6 +153,25 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
     loadRecent();
     return () => { cancelled = true; };
   }, [msg]);  // reload after each successful save
+
+  // ── Group logged entries by the month they were entered (logged) ──────
+  const recentGroups = useMemo(() => {
+    const map = new Map();
+    (recent || []).forEach(r => {
+      const dt = r.hr_decided_at || r.requested_at || r.start_date;
+      const d = dt ? new Date(dt) : null;
+      const key = d && !isNaN(d) ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` : '0000-00';
+      if (!map.has(key)) {
+        map.set(key, {
+          key,
+          label: d && !isNaN(d) ? d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }) : 'Undated',
+          items: [],
+        });
+      }
+      map.get(key).items.push(r);
+    });
+    return [...map.values()].sort((a, b) => b.key.localeCompare(a.key));
+  }, [recent]);
 
   // Reset substitutes whenever the picked employee changes — they're
   // department-scoped, so swapping employees invalidates the previous
@@ -456,8 +475,8 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
       )}
 
       {mode === 'leave' && (<>
-      <div className="grid grid-cols-1 lg:grid-cols-[1.45fr_1fr] gap-5 items-start">
-      {/* LEFT — form */}
+      <div className="space-y-5">
+      {/* TOP — form */}
       <div className="space-y-4 min-w-0">
       {/* Form */}
       <div className="rounded-xl border bg-white p-4 space-y-3" style={{ borderColor: ACCENT_BD }}>
@@ -882,85 +901,95 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
           </button>
         </div>
       </div>
-      </div>{/* /LEFT */}
+      </div>{/* /TOP form */}
 
-      {/* RIGHT — recently logged sidebar */}
-      <div className="lg:sticky lg:top-4 min-w-0">
-      <div className="rounded-xl border bg-white p-4" style={{ borderColor: ACCENT_BD }}>
-        <h3 className="text-sm font-semibold mb-3" style={{ color: '#1F1B16' }}>
-          Recently logged ({recent.length})
+      {/* BELOW — logged entries, grouped by month, all entries, scrollable */}
+      <div className="rounded-xl border bg-white overflow-hidden" style={{ borderColor: ACCENT_BD }}>
+        <div className="px-4 py-3 border-b flex items-center gap-2" style={{ borderColor: ACCENT_BD }}>
+          <h3 className="text-sm font-semibold" style={{ color: '#1F1B16' }}>
+            Logged entries ({recent.length})
+          </h3>
           {recent.length > 0 && (
-            <span className="ml-2 text-xs font-normal" style={{ opacity: 0.6 }}>
-              · tap to re-open
-            </span>
+            <span className="text-xs" style={{ color: '#1F1B16', opacity: 0.6 }}>· tap a row to re-open</span>
           )}
-        </h3>
+        </div>
         {recent.length === 0 ? (
-          <p className="text-xs" style={{ color: '#1F1B16', opacity: 0.6 }}>
+          <p className="text-xs px-4 py-4" style={{ color: '#1F1B16', opacity: 0.6 }}>
             No manual entries yet. Logged entries will appear here.
           </p>
         ) : (
-          <div className="flex flex-col">
-            {recent.map(r => {
-              const e = (employees || []).find(x => x.id === r.employee_id);
-              const period = `${fmtDate(new Date(r.start_date))}${r.end_date && r.end_date !== r.start_date ? ` → ${fmtDate(new Date(r.end_date))}` : ''}`;
-              return (
-                <div
-                  key={r.id}
-                  onClick={() => {
-                    const mgr = e?.manager_id
-                      ? (employees || []).find(x => x.id === e.manager_id)
-                      : null;
-                    const empMap = (employees || []).reduce((acc, x) => { acc[x.id] = x; return acc; }, {});
-                    const subs = (r.substitute_ids || [])
-                      .map(psn => (employees || []).find(x => x.id === psn))
-                      .filter(Boolean);
-                    setSavedModal({ request: r, employee: e, manager: mgr, hrApprover: me, empMap, substitutes: subs });
-                  }}
-                  className="group flex items-start justify-between gap-2 py-2.5 border-b border-black/5 last:border-0 cursor-pointer hover:bg-black/[0.02] rounded px-1 -mx-1"
-                  style={{ color: '#1F1B16' }}>
-                  <div className="min-w-0">
-                    <div className="text-[13px] font-medium truncate">{e?.name || r.employee_id}</div>
-                    <div className="text-[11px] mt-0.5" style={{ color: '#1F1B16', opacity: 0.6 }}>
-                      <span className="capitalize">{r.leave_type_id}</span> · {period}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded"
-                          style={{ background: ACCENT_BG, color: ACCENT }}>
-                      {r.days}{Number(r.days) === 1 ? 'd' : 'd'}
-                    </span>
-                    <span className="hidden group-hover:inline-flex items-center gap-0.5">
-                      <button type="button" title="Open prefilled email"
-                        onClick={(ev) => { ev.stopPropagation(); emailLeave(r, e); }}
-                        className="inline-flex items-center justify-center rounded p-1 hover:bg-emerald-50"
-                        style={{ color: '#0F6E56' }}>
-                        <Mail size={12} />
-                      </button>
-                      <button type="button" title="Download Word document"
-                        onClick={(ev) => { ev.stopPropagation(); downloadLeaveWord(r, e); }}
-                        disabled={docId === r.id}
-                        className="inline-flex items-center justify-center rounded p-1 hover:bg-blue-50"
-                        style={{ color: '#1D4ED8', opacity: docId === r.id ? 0.5 : 1 }}>
-                        {docId === r.id ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
-                      </button>
-                      <button type="button" title="Delete this entry"
-                        onClick={(ev) => { ev.stopPropagation(); deleteEntry(r); }}
-                        disabled={deletingId === r.id}
-                        className="inline-flex items-center justify-center rounded p-1 hover:bg-red-50"
-                        style={{ color: '#B91C1C', opacity: deletingId === r.id ? 0.5 : 1 }}>
-                        {deletingId === r.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                      </button>
-                    </span>
-                  </div>
+          <div className="max-h-[62vh] overflow-y-auto">
+            {recentGroups.map(g => (
+              <div key={g.key}>
+                <div className="px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide sticky top-0 z-10"
+                     style={{ background: ACCENT_BG, color: ACCENT }}>
+                  {g.label} · {g.items.length}
                 </div>
-              );
-            })}
+                {g.items.map(r => {
+                  const e = (employees || []).find(x => x.id === r.employee_id);
+                  const period = `${fmtDate(new Date(r.start_date))}${r.end_date && r.end_date !== r.start_date ? ` → ${fmtDate(new Date(r.end_date))}` : ''}`;
+                  const enteredRaw = r.hr_decided_at || r.requested_at || null;
+                  const enteredDt = enteredRaw ? new Date(enteredRaw) : null;
+                  const entered = enteredDt && !isNaN(enteredDt) ? fmtDate(enteredDt) : null;
+                  return (
+                    <div
+                      key={r.id}
+                      onClick={() => {
+                        const mgr = e?.manager_id
+                          ? (employees || []).find(x => x.id === e.manager_id)
+                          : null;
+                        const empMap = (employees || []).reduce((acc, x) => { acc[x.id] = x; return acc; }, {});
+                        const subs = (r.substitute_ids || [])
+                          .map(psn => (employees || []).find(x => x.id === psn))
+                          .filter(Boolean);
+                        setSavedModal({ request: r, employee: e, manager: mgr, hrApprover: me, empMap, substitutes: subs });
+                      }}
+                      className="group flex items-center justify-between gap-3 px-4 py-2.5 border-b border-black/5 cursor-pointer hover:bg-black/[0.02]"
+                      style={{ color: '#1F1B16' }}>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[13px] font-medium truncate">{e?.name || r.employee_id}</div>
+                        <div className="text-[11px] mt-0.5" style={{ color: '#1F1B16', opacity: 0.65 }}>
+                          <span className="capitalize">{r.leave_type_id}</span> · {period}
+                          {entered && <> · logged {entered}</>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded"
+                              style={{ background: ACCENT_BG, color: ACCENT }}>
+                          {r.days}d
+                        </span>
+                        <span className="hidden group-hover:inline-flex items-center gap-0.5">
+                          <button type="button" title="Open prefilled email"
+                            onClick={(ev) => { ev.stopPropagation(); emailLeave(r, e); }}
+                            className="inline-flex items-center justify-center rounded p-1 hover:bg-emerald-50"
+                            style={{ color: '#0F6E56' }}>
+                            <Mail size={13} />
+                          </button>
+                          <button type="button" title="Download Word document"
+                            onClick={(ev) => { ev.stopPropagation(); downloadLeaveWord(r, e); }}
+                            disabled={docId === r.id}
+                            className="inline-flex items-center justify-center rounded p-1 hover:bg-blue-50"
+                            style={{ color: '#1D4ED8', opacity: docId === r.id ? 0.5 : 1 }}>
+                            {docId === r.id ? <Loader2 size={13} className="animate-spin" /> : <FileText size={13} />}
+                          </button>
+                          <button type="button" title="Delete this entry"
+                            onClick={(ev) => { ev.stopPropagation(); deleteEntry(r); }}
+                            disabled={deletingId === r.id}
+                            className="inline-flex items-center justify-center rounded p-1 hover:bg-red-50"
+                            style={{ color: '#B91C1C', opacity: deletingId === r.id ? 0.5 : 1 }}>
+                            {deletingId === r.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                          </button>
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
           </div>
         )}
       </div>
-      </div>{/* /RIGHT */}
-      </div>{/* /grid */}
+      </div>{/* /wrapper */}
 
       {/* Post-save modal — same Download PDF + Open Email surface the
           regular approval flow uses. Re-opens too when Bashaier clicks
