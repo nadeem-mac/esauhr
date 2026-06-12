@@ -1279,7 +1279,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
         {tab === 'reports' && isHrReviewer && !isAdmin && (
           /* REPORTS tab — Mr John report drafting card. Leave & Availability
              now lives inside this list as an expandable report. */
-          <BashaierTasksCard employees={employees} requests={requests} permissions={permissions} />
+          <BashaierTasksCard me={me} employees={employees} requests={requests} permissions={permissions} />
         )}
         {tab === 'reviews' && (
           <>

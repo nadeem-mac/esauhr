@@ -81,8 +81,8 @@ function plainTable(headers, rows, widths) {
 }
 
 // Build an HTML table for clipboard
-function htmlTable(headers, rows) {
-  const th = headers.map(h => `<th style="background:#334155;color:#fff;padding:2px 6px;text-align:left;font-weight:700;font-size:11px;border:1px solid #334155;white-space:nowrap">${escapeHtml(h)}</th>`).join('');
+function htmlTable(headers, rows, hdr = { bg: '#334155', fg: '#FFFFFF' }) {
+  const th = headers.map(h => `<th style="background:${hdr.bg};color:${hdr.fg};padding:2px 6px;text-align:left;font-weight:700;font-size:11px;border:1px solid ${hdr.bg};white-space:nowrap">${escapeHtml(h)}</th>`).join('');
   const trs = rows.map((r, i) => {
     const bg = i % 2 === 0 ? '#FFFFFF' : '#F3F4F6';
     const tds = r.map(c => `<td style="padding:1px 6px;border:1px solid #D1D5DB;color:#1F2937;font-size:11px;background:${bg};white-space:nowrap">${escapeHtml(c == null ? '' : String(c))}</td>`).join('');
@@ -127,7 +127,7 @@ function returnDateFromEnd(endIso) {
 // =============================================================================
 
 // Task 1: Mid-month permissions update (1 to today)
-function buildMidMonthPermissions({ permissions, employees, year, month, today }) {
+function buildMidMonthPermissions({ permissions, employees, year, month, today, hdr }) {
   const ms = pad2(month);
   const todayDay = today.getDate();
   const empMap = {};
@@ -164,7 +164,7 @@ function buildMidMonthPermissions({ permissions, employees, year, month, today }
   const headers = ['Date', 'Employee', 'Dept', 'Type', 'Hours', 'Quota used', 'Status', 'Reason'];
   const widths = [12, 30, 6, 14, 6, 11, 9, 30];
   const tablePlain = rows.length > 0 ? plainTable(headers, tableRows, widths) : '(No permission applications recorded so far this month.)';
-  const tableHtml = rows.length > 0 ? htmlTable(headers, tableRows) : '<p style="color:#6B7280;font-style:italic">No permission applications recorded so far this month.</p>';
+  const tableHtml = rows.length > 0 ? htmlTable(headers, tableRows, hdr) : '<p style="color:#6B7280;font-style:italic">No permission applications recorded so far this month.</p>';
 
   const monthName = MONTH_FULL[month - 1];
   const range = `1\u201315 ${monthName} ${year}`;
@@ -201,7 +201,7 @@ function buildMidMonthPermissions({ permissions, employees, year, month, today }
 }
 
 // Task 2: End-of-month permissions report (whole month)
-function buildEndOfMonthPermissions({ permissions, employees, year, month }) {
+function buildEndOfMonthPermissions({ permissions, employees, year, month, hdr }) {
   const ms = pad2(month);
   const empMap = {};
   (employees || []).forEach(e => { empMap[e.id] = e; });
@@ -237,7 +237,7 @@ function buildEndOfMonthPermissions({ permissions, employees, year, month }) {
   const headers = ['Date', 'Employee', 'Dept', 'Type', 'Hours', 'Quota used', 'Status', 'Reason'];
   const widths = [12, 30, 6, 14, 6, 11, 9, 30];
   const tablePlain = rows.length > 0 ? plainTable(headers, tableRows, widths) : '(No permission applications recorded for this month.)';
-  const tableHtml = rows.length > 0 ? htmlTable(headers, tableRows) : '<p style="color:#6B7280;font-style:italic">No permission applications recorded for this month.</p>';
+  const tableHtml = rows.length > 0 ? htmlTable(headers, tableRows, hdr) : '<p style="color:#6B7280;font-style:italic">No permission applications recorded for this month.</p>';
 
   const monthName = MONTH_FULL[month - 1];
   const subject = `Permissions Report - Month-End - ${monthName} ${year}`;
@@ -272,7 +272,7 @@ function buildEndOfMonthPermissions({ permissions, employees, year, month }) {
 }
 
 // Task 3: Last month vacation summary (with return dates)
-function buildVacationSummary({ requests, employees, year, month }) {
+function buildVacationSummary({ requests, employees, year, month, hdr }) {
   const ms = pad2(month);
   const monthStart = `${year}-${ms}-01`;
   const next = new Date(year, month, 0); // last day of month
@@ -305,7 +305,7 @@ function buildVacationSummary({ requests, employees, year, month }) {
   const headers = ['Employee', 'Dept', 'Type', 'Start', 'End', 'Return', 'Days'];
   const widths = [30, 6, 12, 12, 12, 12, 5];
   const tablePlain = rows.length > 0 ? plainTable(headers, tableRows, widths) : '(No vacation applications recorded for last month.)';
-  const tableHtml = rows.length > 0 ? htmlTable(headers, tableRows) : '<p style="color:#6B7280;font-style:italic">No vacation applications recorded for last month.</p>';
+  const tableHtml = rows.length > 0 ? htmlTable(headers, tableRows, hdr) : '<p style="color:#6B7280;font-style:italic">No vacation applications recorded for last month.</p>';
 
   const monthName = MONTH_FULL[month - 1];
   const subject = `Vacation Summary - ${monthName} ${year}`;
@@ -383,7 +383,7 @@ function computeTaskStatus(taskKey, today) {
 
 // Leave & Availability — who's on leave this month (current / upcoming /
 // returned), in the Leave Report style Bashaier prefers. (Nadeem 2026-06-08)
-function buildLeaveAvailability({ requests, employees, year, month, today, lastPunch = {} }) {
+function buildLeaveAvailability({ requests, employees, year, month, today, lastPunch = {}, hdr = { bg: '#334155', fg: '#FFFFFF' } }) {
   const ms = pad2(month);
   const monthStart = `${year}-${ms}-01`;
   const lastDay = new Date(year, month, 0).getDate();
@@ -439,7 +439,7 @@ function buildLeaveAvailability({ requests, employees, year, month, today, lastP
   // readable at a glance (matches the Leave Report palette).
   const LEAVE_TINT = { annual: '#3B82F6', sick: '#EF4444', emergency: '#F59E0B', hajj: '#10B981', maternity: '#EC4899', paternity: '#8B5CF6', marriage: '#14B8A6', bereavement: '#6B7280', unpaid: '#9CA3AF', other: '#84CC16' };
   const swatch = (id) => `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${LEAVE_TINT[id] || '#94A3B8'};margin-right:4px;vertical-align:middle"></span>`;
-  const th = (t, align = 'left') => `<th style="background:#334155;color:#fff;padding:2px 6px;text-align:${align};font-size:11px;font-weight:700;border:1px solid #334155;white-space:nowrap">${t}</th>`;
+  const th = (t, align = 'left') => `<th style="background:${hdr.bg};color:${hdr.fg};padding:2px 6px;text-align:${align};font-size:11px;font-weight:700;border:1px solid ${hdr.bg};white-space:nowrap">${t}</th>`;
   const headRow = `<tr>${th('PSN')}${th('Name')}${th('Dept')}${th('Loc')}${th('Leave Type')}${th('From')}${th('To')}${th('Days', 'right')}${th('Status')}${th('Last Punch')}</tr>`;
   const bodyRows = rows.map((r, i) => {
     const bg = i % 2 ? '#F3F4F6' : '#FFFFFF';
@@ -500,7 +500,12 @@ function buildShiftStaffReminder({ year, month }) {
 // =============================================================================
 // MAIN COMPONENT
 // =============================================================================
-export default function BashaierTasksCard({ employees, requests, permissions: passedPerms }) {
+export default function BashaierTasksCard({ me, employees, requests, permissions: passedPerms }) {
+  // Baby-pink header = Bashaier's signature on the reports she prepares
+  // (black text on pink). Anyone else gets the neutral slate header.
+  const hdr = me?.id === 'H94830'
+    ? { bg: '#F7C5D0', fg: '#0A0A0A' }
+    : { bg: '#334155', fg: '#FFFFFF' };
   const today = new Date();
   const month = today.getMonth() + 1;
   const year  = today.getFullYear();
@@ -854,7 +859,7 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
       subtitle: `Who's on leave this month — ${MONTH_FULL[month-1]} ${year}`,
       icon: <Plane className="w-4 h-4" />,
       tone: '#334155',
-      build: () => buildLeaveAvailability({ requests, employees, year, month, today, lastPunch: leavePunch }),
+      build: () => buildLeaveAvailability({ requests, employees, year, month, today, lastPunch: leavePunch, hdr }),
     },
     {
       key: 'mid_month_perms',
@@ -862,7 +867,7 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
       subtitle: `Send a 1\u201315 ${MONTH_FULL[month-1]} update to Mr John`,
       icon: <Coffee className="w-4 h-4" />,
       tone: '#C97A4F',
-      build: () => buildMidMonthPermissions({ permissions: perms, employees, year, month, today }),
+      build: () => buildMidMonthPermissions({ permissions: perms, employees, year, month, today, hdr }),
     },
     {
       key: 'end_of_month_perms',
@@ -870,7 +875,7 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
       subtitle: `Full ${MONTH_FULL[month-1]} ${year} permissions report`,
       icon: <CalendarDays className="w-4 h-4" />,
       tone: '#5A8A9A',
-      build: () => buildEndOfMonthPermissions({ permissions: perms, employees, year, month }),
+      build: () => buildEndOfMonthPermissions({ permissions: perms, employees, year, month, hdr }),
     },
     {
       key: 'last_month_vacation',
@@ -878,7 +883,7 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
       subtitle: 'Last month staff vacations with return dates',
       icon: <Plane className="w-4 h-4" />,
       tone: '#2D5F3F',
-      build: () => buildVacationSummary({ requests, employees, year: prevYear, month: prevMonth }),
+      build: () => buildVacationSummary({ requests, employees, year: prevYear, month: prevMonth, hdr }),
     },
     {
       key: 'shift_staff_reminder',
@@ -888,7 +893,7 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
       tone: '#7E22CE',
       build: () => buildShiftStaffReminder({ year, month }),
     },
-  ], [perms, employees, requests, month, year, prevMonth, prevYear, today, leavePunch]);
+  ], [perms, employees, requests, month, year, prevMonth, prevYear, today, leavePunch, hdr]);
 
   const open = (task) => {
     const built = task.build();
