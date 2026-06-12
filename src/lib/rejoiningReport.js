@@ -849,7 +849,8 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
         spacer(20),
         sectionBanner('RETURN DETAILS', 'تفاصيل العودة'),
         returnTable,
-        spacer(10),
+        spacer(700),   // breathing room after RETURN DETAILS; pushes the
+        spacer(200),   // signature grid further down to fill the page
         sigTable,
         footerBlock,
       ],

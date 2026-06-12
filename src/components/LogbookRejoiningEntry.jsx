@@ -10,7 +10,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { directGet, directPatch } from '../supabaseClient.js';
-import { Save, Loader2, CheckCircle2, AlertCircle, Mail, FileText } from 'lucide-react';
+import { Save, Loader2, CheckCircle2, AlertCircle, Mail, FileText, Trash2 } from 'lucide-react';
 import { downloadRejoiningReportForRequest, buildRejoiningEmailDraft } from '../lib/rejoiningReport.js';
 
 const addDaysIso = (iso, n) => {
@@ -31,6 +31,7 @@ export default function LogbookRejoiningEntry({ me, employees = [], onSaved }) {
   const [msg, setMsg]           = useState(null);
   const [recent, setRecent]     = useState([]);
   const [docId, setDocId]       = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
 
   const empMap = useMemo(() => {
     const m = {}; (employees || []).forEach(e => { m[e.id] = e; }); return m;
@@ -100,13 +101,16 @@ export default function LogbookRejoiningEntry({ me, employees = [], onSaved }) {
     setBusy(true); setMsg(null);
     try {
       const now = new Date().toISOString();
+      // Stamp the employee's actual department manager as the return
+      // approver (so the DEPT MGR box on the report resolves to them, e.g.
+      // Sadakath for H94328 — NOT whoever logged it). HR = me. (Nadeem 2026-06-08)
+      const mgrId = selectedEmp?.manager_id || me.id;
       await directPatch('leave_requests', 'id', leaveId, {
         actual_return_date:         returnDate,
         return_notes:               notes.trim() || null,
         return_submitted_at:        now,
-        // Logged by HR as already approved — stamp both return decisions.
         return_manager_decided_at:  now,
-        return_manager_decided_by:  me.id,
+        return_manager_decided_by:  mgrId,
         return_hr_decided_at:       now,
         return_hr_decided_by:       me.id,
         return_stage:               'approved',
@@ -130,6 +134,34 @@ export default function LogbookRejoiningEntry({ me, employees = [], onSaved }) {
       setMsg({ kind: 'err', text: err?.message || 'Could not generate the Word document.' });
     } finally {
       setDocId(null);
+    }
+  }
+
+  // Delete = undo the rejoining (clears the return fields on the leave
+  // row so it goes back to "awaiting rejoining"). Same delete affordance
+  // as the leave / permission entries. (Nadeem 2026-06-08)
+  async function deleteEntry(r) {
+    const e = empMap[r.employee_id];
+    if (!window.confirm(`Remove the logged rejoining for ${e?.name || r.employee_id} (returned ${r.actual_return_date})? The leave will go back to "awaiting rejoining".`)) return;
+    setDeletingId(r.id);
+    try {
+      await directPatch('leave_requests', 'id', r.id, {
+        actual_return_date:         null,
+        return_notes:               null,
+        return_submitted_at:        null,
+        return_manager_decided_at:  null,
+        return_manager_decided_by:  null,
+        return_hr_decided_at:       null,
+        return_hr_decided_by:       null,
+        return_stage:               null,
+        return_rejection_reason:    null,
+      }, { timeoutMs: 10000 });
+      setRecent(prev => prev.filter(x => x.id !== r.id));
+      onSaved?.();
+    } catch (err) {
+      setMsg({ kind: 'err', text: err?.message || 'Could not delete the rejoining.' });
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -237,7 +269,7 @@ export default function LogbookRejoiningEntry({ me, employees = [], onSaved }) {
                 <th className="py-2 font-semibold">Employee</th>
                 <th className="py-2 font-semibold">Leave</th>
                 <th className="py-2 font-semibold">Returned</th>
-                <th className="py-2 font-semibold text-right" style={{ width: 64 }}></th>
+                <th className="py-2 font-semibold text-right" style={{ width: 92 }}></th>
               </tr>
             </thead>
             <tbody>
@@ -254,8 +286,12 @@ export default function LogbookRejoiningEntry({ me, employees = [], onSaved }) {
                         <Mail size={13} />
                       </button>
                       <button type="button" title="Download Word document" onClick={() => downloadWord(r)} disabled={docId === r.id}
-                        className="inline-flex items-center justify-center rounded p-1 hover:bg-blue-50" style={{ color: '#1D4ED8', opacity: docId === r.id ? 0.5 : 1 }}>
+                        className="inline-flex items-center justify-center rounded p-1 hover:bg-blue-50 mr-1" style={{ color: '#1D4ED8', opacity: docId === r.id ? 0.5 : 1 }}>
                         {docId === r.id ? <Loader2 size={13} className="animate-spin" /> : <FileText size={13} />}
+                      </button>
+                      <button type="button" title="Remove this rejoining (undo)" onClick={() => deleteEntry(r)} disabled={deletingId === r.id}
+                        className="inline-flex items-center justify-center rounded p-1 hover:bg-red-50" style={{ color: '#B91C1C', opacity: deletingId === r.id ? 0.5 : 1 }}>
+                        {deletingId === r.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
                       </button>
                     </td>
                   </tr>
