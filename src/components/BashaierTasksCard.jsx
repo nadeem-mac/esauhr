@@ -82,10 +82,10 @@ function plainTable(headers, rows, widths) {
 
 // Build an HTML table for clipboard
 function htmlTable(headers, rows) {
-  const th = headers.map(h => `<th style="background:#334155;color:#fff;padding:4px 9px;text-align:left;font-weight:700;font-size:12px;border:1px solid #334155;white-space:nowrap">${escapeHtml(h)}</th>`).join('');
+  const th = headers.map(h => `<th style="background:#334155;color:#fff;padding:2px 6px;text-align:left;font-weight:700;font-size:11px;border:1px solid #334155;white-space:nowrap">${escapeHtml(h)}</th>`).join('');
   const trs = rows.map((r, i) => {
     const bg = i % 2 === 0 ? '#FFFFFF' : '#F3F4F6';
-    const tds = r.map(c => `<td style="padding:3px 9px;border:1px solid #D1D5DB;color:#1F2937;font-size:12px;background:${bg};white-space:nowrap">${escapeHtml(c == null ? '' : String(c))}</td>`).join('');
+    const tds = r.map(c => `<td style="padding:1px 6px;border:1px solid #D1D5DB;color:#1F2937;font-size:11px;background:${bg};white-space:nowrap">${escapeHtml(c == null ? '' : String(c))}</td>`).join('');
     return `<tr>${tds}</tr>`;
   }).join('');
   return `<table style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;margin:10px 0">
@@ -438,12 +438,12 @@ function buildLeaveAvailability({ requests, employees, year, month, today, lastP
   // Each leave type has its own colour swatch so the kind of leave is
   // readable at a glance (matches the Leave Report palette).
   const LEAVE_TINT = { annual: '#3B82F6', sick: '#EF4444', emergency: '#F59E0B', hajj: '#10B981', maternity: '#EC4899', paternity: '#8B5CF6', marriage: '#14B8A6', bereavement: '#6B7280', unpaid: '#9CA3AF', other: '#84CC16' };
-  const swatch = (id) => `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${LEAVE_TINT[id] || '#94A3B8'};margin-right:6px;vertical-align:middle"></span>`;
-  const th = (t, align = 'left') => `<th style="background:#334155;color:#fff;padding:4px 9px;text-align:${align};font-size:12px;font-weight:700;border:1px solid #334155;white-space:nowrap">${t}</th>`;
+  const swatch = (id) => `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${LEAVE_TINT[id] || '#94A3B8'};margin-right:4px;vertical-align:middle"></span>`;
+  const th = (t, align = 'left') => `<th style="background:#334155;color:#fff;padding:2px 6px;text-align:${align};font-size:11px;font-weight:700;border:1px solid #334155;white-space:nowrap">${t}</th>`;
   const headRow = `<tr>${th('PSN')}${th('Name')}${th('Dept')}${th('Loc')}${th('Leave Type')}${th('From')}${th('To')}${th('Days', 'right')}${th('Status')}${th('Last Punch')}</tr>`;
   const bodyRows = rows.map((r, i) => {
     const bg = i % 2 ? '#F3F4F6' : '#FFFFFF';
-    const td = (c, align = 'left') => `<td style="padding:3px 9px;border:1px solid #D1D5DB;color:#1F2937;font-size:12px;background:${bg};text-align:${align};white-space:nowrap">${c}</td>`;
+    const td = (c, align = 'left') => `<td style="padding:1px 6px;border:1px solid #D1D5DB;color:#1F2937;font-size:11px;background:${bg};text-align:${align};white-space:nowrap">${c}</td>`;
     return `<tr>${td(escapeHtml(r.psn))}${td(escapeHtml(r.name))}${td(escapeHtml(r.dept))}${td(escapeHtml(r.loc))}${td(swatch(r.typeId) + escapeHtml(r.typeName))}${td(escapeHtml(fmtDateShort(r.from)))}${td(escapeHtml(fmtDateShort(r.to)))}${td(r.days.toFixed(1) + (r.isHalf ? ' \u00BD' : ''), 'right')}${td(pill(r.status))}${td(escapeHtml(punchFor(r) || '\u2014'))}</tr>`;
   }).join('');
   const tableHtml = rows.length
