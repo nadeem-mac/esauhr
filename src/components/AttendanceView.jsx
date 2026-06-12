@@ -139,7 +139,7 @@ function AttendanceSidebar({ activeView, setActiveView, setupComplete, escapeHat
     // Working hours and Mawani visits moved to per-employee context
     // (employee detail card) — they were rarely-used global views and
     // belonged better alongside the staff record they describe.
-    { id: 'backfill',   icon: <FileSpreadsheet className="w-4 h-4" />,  label: 'Historical backfill',  hint: 'Sep last year → Sep this year' },
+    { id: 'backfill',   icon: <FileSpreadsheet className="w-4 h-4" />,  label: 'Historical backfill',  hint: 'Sep last year → Sep this year', hidden: setupComplete && !escapeHatchActive },
   ];
   const items = allItems.filter(it => !it.hidden);
   return (
@@ -6573,6 +6573,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
               {reevalState.running ? '…' : '↻ Re-evaluate this month'}
             </button>
             </>)}
+            {escapeHatchActive && (
             <button
               type="button"
               onClick={() => setBackfillModalOpen(true)}
@@ -6587,6 +6588,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             >
               📚 Historical backfill
             </button>
+            )}
             {/* Export to HTML — print-friendly report of the on-screen
                 month grid. Clones the calendar's DOM, inlines all
                 stylesheets, and opens in a new window with @page A4
