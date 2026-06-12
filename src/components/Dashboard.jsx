@@ -8,6 +8,18 @@ import { salutationFor } from '../lib/salutations.js';
 import BashaierTasksCard from './BashaierTasksCard.jsx';
 import PendingShiftApprovalsCard from './PendingShiftApprovalsCard.jsx';
 import HrShiftMonthCard from './HrShiftMonthCard.jsx';
+
+// Shared female-name fallback used when an employee's gender isn't set
+// explicitly. Kept module-level so headcount cross-tabs and the dept
+// breakdown classify gender identically.
+const FEMALE_FIRST_NAMES = new Set(['BASHAIER','BADRIA','SHAHAD','AMNA','AMINAH','NORA','NORAH','NOURA','LAYLA','SARA','SARAH','MARIA','JOAN','JOY','GRACE','AISHA','AMINA','FATIMA','KHADIJA','MARIAM','MARYAM','ZAINAB','HAYA','REEM','REEMA','RANA','DANA','LINA','NADA','WAFA','AYESHA','PRINCESS','JESSICA','JENNIFER','ANNA','HANNAH','LISA','EMMA','OLIVIA','SOPHIA','PRIYA','NEHA','SAFIA','SAFIYA']);
+function isFemaleEmployee(e) {
+  const g = (e?.gender || '').toLowerCase();
+  if (g === 'female' || g === 'f') return true;
+  if (g === 'male' || g === 'm') return false;
+  const first = (e?.name || '').split(/\s+/)[0].toUpperCase();
+  return FEMALE_FIRST_NAMES.has(first);
+}
 import HrLandingCard from './HrLandingCard.jsx';
 import QuickActionsCard from './QuickActionsCard.jsx';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
@@ -172,6 +184,20 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
   const HEADCOUNT_BUDGET = 73;
   const [hcCopied, setHcCopied] = useState(false);
 
+  // Nationality × gender cross-tab (overall). Lets the summary show how
+  // many of the Saudi staff are male/female, and likewise for Non-Saudi —
+  // clearer than parallel Saudi and Male columns. (Nadeem 2026-06-12)
+  const natGender = useMemo(() => {
+    const m = { saudiMale: 0, saudiFemale: 0, nonSaudiMale: 0, nonSaudiFemale: 0 };
+    activeEmployees.forEach(e => {
+      const saudi = e.nationality === 'saudi';
+      const female = isFemaleEmployee(e);
+      if (saudi) female ? m.saudiFemale++ : m.saudiMale++;
+      else       female ? m.nonSaudiFemale++ : m.nonSaudiMale++;
+    });
+    return m;
+  }, [activeEmployees]);
+
   // Copy the headcount tables as rich HTML (so they paste as real tables
   // into Outlook/Gmail) with a tab-separated plain-text fallback.
   const copyHeadcount = async () => {
@@ -192,21 +218,36 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
     }).join('');
     const deptTable = `<table style="border-collapse:collapse;margin:0 0 14px"><thead><tr>${th('Department')}${th('Saudi', 'right')}${th('Non-Saudi', 'right')}${th('Male', 'right')}${th('Female', 'right')}${th('Total', 'right')}</tr></thead><tbody>${deptRows}<tr>${cell('TOTAL', 'left', true, '#ECFDF5')}${cell(saudi, 'right', true, '#ECFDF5')}${cell(nonSaudi, 'right', true, '#ECFDF5')}${cell(byGender.male, 'right', true, '#ECFDF5')}${cell(byGender.female, 'right', true, '#ECFDF5')}${cell(total, 'right', true, '#ECFDF5')}</tr></tbody></table>`;
 
-    const sumTable = `<table style="border-collapse:collapse"><thead><tr>${th('')}${th('Budget', 'right')}${th('Saudi', 'right')}${th('Non-Saudi', 'right')}${th('Male', 'right')}${th('Female', 'right')}${th('Total', 'right')}</tr></thead><tbody>`
-      + `<tr>${cell('Headcount', 'left', true)}${cell(HEADCOUNT_BUDGET, 'right')}${cell(saudi, 'right')}${cell(nonSaudi, 'right')}${cell(byGender.male, 'right')}${cell(byGender.female, 'right')}${cell(total, 'right', true)}</tr>`
-      + `<tr>${cell('Ratio', 'left', true, '#F3F4F6')}${cell('-', 'right', false, '#F3F4F6')}${cell(pct(saudi) + '%', 'right', false, '#F3F4F6')}${cell(pct(nonSaudi) + '%', 'right', false, '#F3F4F6')}${cell(pct(byGender.male) + '%', 'right', false, '#F3F4F6')}${cell(pct(byGender.female) + '%', 'right', false, '#F3F4F6')}${cell('100%', 'right', true, '#F3F4F6')}</tr>`
+    // Saudization × gender cross-tab + a budget/vacancy line.
+    const g = natGender;
+    const saudiT = g.saudiMale + g.saudiFemale;
+    const nsT    = g.nonSaudiMale + g.nonSaudiFemale;
+    const maleT  = g.saudiMale + g.nonSaudiMale;
+    const femaleT = g.saudiFemale + g.nonSaudiFemale;
+    const grand  = saudiT + nsT;
+    const vacant = Math.max(0, HEADCOUNT_BUDGET - grand);
+    const sumRow = (label, m, f, t, share, bg) =>
+      `<tr>${cell(label, 'left', true, bg)}${cell(m, 'right', false, bg)}${cell(f, 'right', false, bg)}${cell(t, 'right', true, bg)}${cell(share, 'right', false, bg)}</tr>`;
+    const sumTable = `<table style="border-collapse:collapse"><thead><tr>${th('Category')}${th('Male', 'right')}${th('Female', 'right')}${th('Total', 'right')}${th('Share', 'right')}</tr></thead><tbody>`
+      + sumRow('Saudi',     g.saudiMale,    g.saudiFemale,    saudiT, pct(saudiT) + '%', '#FFFFFF')
+      + sumRow('Non-Saudi', g.nonSaudiMale, g.nonSaudiFemale, nsT,    pct(nsT) + '%',    '#F3F4F6')
+      + sumRow('Total',     maleT,          femaleT,          grand,  '100%',            '#ECFDF5')
       + `</tbody></table>`;
+    const budgetLine = `<div style="margin-top:8px;font:600 12px Calibri,Arial,sans-serif;color:#1F2937">Budget ${HEADCOUNT_BUDGET} &middot; Filled ${grand} &middot; Vacant ${vacant}</div>`;
 
-    const html = `<div style="font-family:Calibri,Arial,sans-serif">${deptTable}${sumTable}</div>`;
+    const html = `<div style="font-family:Calibri,Arial,sans-serif">${deptTable}${sumTable}${budgetLine}</div>`;
     const plain = [
       'Headcount by department',
       'Department\tSaudi\tNon-Saudi\tMale\tFemale\tTotal',
-      ...depts.map(d => { const n = byDeptNat[d] || {}; const g = byDeptGender[d] || {}; return `${d}\t${n.saudi || 0}\t${n.nonSaudi || 0}\t${g.male || 0}\t${g.female || 0}\t${n.total || 0}`; }),
+      ...depts.map(d => { const n = byDeptNat[d] || {}; const gg = byDeptGender[d] || {}; return `${d}\t${n.saudi || 0}\t${n.nonSaudi || 0}\t${gg.male || 0}\t${gg.female || 0}\t${n.total || 0}`; }),
       `TOTAL\t${saudi}\t${nonSaudi}\t${byGender.male}\t${byGender.female}\t${total}`,
       '',
-      `\tBudget\tSaudi\tNon-Saudi\tMale\tFemale\tTotal`,
-      `Headcount\t${HEADCOUNT_BUDGET}\t${saudi}\t${nonSaudi}\t${byGender.male}\t${byGender.female}\t${total}`,
-      `Ratio\t-\t${pct(saudi)}%\t${pct(nonSaudi)}%\t${pct(byGender.male)}%\t${pct(byGender.female)}%\t100%`,
+      'Category\tMale\tFemale\tTotal\tShare',
+      `Saudi\t${g.saudiMale}\t${g.saudiFemale}\t${saudiT}\t${pct(saudiT)}%`,
+      `Non-Saudi\t${g.nonSaudiMale}\t${g.nonSaudiFemale}\t${nsT}\t${pct(nsT)}%`,
+      `Total\t${maleT}\t${femaleT}\t${grand}\t100%`,
+      '',
+      `Budget ${HEADCOUNT_BUDGET} · Filled ${grand} · Vacant ${vacant}`,
     ].join('\n');
 
     try {
@@ -705,14 +746,32 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
                   </tbody>
                 </table>
 
-                {/* Saudization + gender summary */}
-                <table style={{ borderCollapse: 'collapse' }}>
-                  <thead><tr><Th></Th><Th right>Budget</Th><Th right>Saudi</Th><Th right>Non-Saudi</Th><Th right>Male</Th><Th right>Female</Th><Th right>Total</Th></tr></thead>
-                  <tbody>
-                    <tr><Td bold>Headcount</Td><Td right>{HEADCOUNT_BUDGET}</Td><Td right>{saudi}</Td><Td right>{nonSaudi}</Td><Td right>{byGender.male}</Td><Td right>{byGender.female}</Td><Td right bold>{total}</Td></tr>
-                    <tr><Td bold bg="#F3F4F6">Ratio</Td><Td right bg="#F3F4F6">-</Td><Td right bg="#F3F4F6">{pct(saudi)}%</Td><Td right bg="#F3F4F6">{pct(nonSaudi)}%</Td><Td right bg="#F3F4F6">{pct(byGender.male)}%</Td><Td right bg="#F3F4F6">{pct(byGender.female)}%</Td><Td right bold bg="#F3F4F6">100%</Td></tr>
-                  </tbody>
-                </table>
+                {/* Saudization × gender cross-tab — shows how many of the
+                    Saudi (and Non-Saudi) staff are male vs female. */}
+                {(() => {
+                  const g = natGender;
+                  const saudiT = g.saudiMale + g.saudiFemale;
+                  const nsT = g.nonSaudiMale + g.nonSaudiFemale;
+                  const maleT = g.saudiMale + g.nonSaudiMale;
+                  const femaleT = g.saudiFemale + g.nonSaudiFemale;
+                  const grand = saudiT + nsT;
+                  const vacant = Math.max(0, HEADCOUNT_BUDGET - grand);
+                  return (
+                    <div>
+                      <table style={{ borderCollapse: 'collapse' }}>
+                        <thead><tr><Th>Category</Th><Th right>Male</Th><Th right>Female</Th><Th right>Total</Th><Th right>Share</Th></tr></thead>
+                        <tbody>
+                          <tr><Td bold>Saudi</Td><Td right>{g.saudiMale}</Td><Td right>{g.saudiFemale}</Td><Td right bold>{saudiT}</Td><Td right>{pct(saudiT)}%</Td></tr>
+                          <tr><Td bold bg="#F3F4F6">Non-Saudi</Td><Td right bg="#F3F4F6">{g.nonSaudiMale}</Td><Td right bg="#F3F4F6">{g.nonSaudiFemale}</Td><Td right bold bg="#F3F4F6">{nsT}</Td><Td right bg="#F3F4F6">{pct(nsT)}%</Td></tr>
+                          <tr><Td bold bg="#ECFDF5">Total</Td><Td right bold bg="#ECFDF5">{maleT}</Td><Td right bold bg="#ECFDF5">{femaleT}</Td><Td right bold bg="#ECFDF5">{grand}</Td><Td right bold bg="#ECFDF5">100%</Td></tr>
+                        </tbody>
+                      </table>
+                      <div className="mt-2 text-xs" style={{ color: '#1F1B16', fontWeight: 600 }}>
+                        Budget {HEADCOUNT_BUDGET} · Filled {grand} · Vacant {vacant}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}
