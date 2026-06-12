@@ -26,6 +26,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { directGet } from '../supabaseClient.js';
+import { excelHeaderRgb } from '../lib/excelHeader.js';
 import {
   X, Download, Loader2, AlertCircle, Clock, FileText,
   CheckCircle2, AlertTriangle, MinusCircle,
@@ -246,9 +247,10 @@ export default function HolidayOtReport({ period, employees = [], me, onClose })
         left:   { style: 'thin', color: { rgb: 'E5E7EB' } },
         right:  { style: 'thin', color: { rgb: 'E5E7EB' } },
       };
+      const H = excelHeaderRgb(me);  // baby-pink header for Bashaier
       const headerStyle = {
-        font:      { bold: true, color: { rgb: 'FFFFFF' }, sz: 10 },
-        fill:      { fgColor: { rgb: GREEN } },
+        font:      { bold: true, color: { rgb: H.fg }, sz: 10 },
+        fill:      { fgColor: { rgb: H.bg } },
         alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
         border,
       };

@@ -926,7 +926,8 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
     const isShortfall = (r) => r.status === 'short' && !r._approvedEarly;
     const thin = { style: 'thin', color: { argb: 'FFD1D5DB' } };
     const allBorder = { top: thin, bottom: thin, left: thin, right: thin };
-    const HEAD_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F4C2A' } };
+    const headPink = me?.id === 'H94830';   // baby-pink header = Bashaier's signature
+    const HEAD_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: headPink ? 'FFF7C5D0' : 'FF0F4C2A' } };
     const RED_FILL  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } };
     const SHIFT_FILL= { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1D4ED8' } };
     const EMP_FILL  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
@@ -969,7 +970,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
       const hRow = ws.addRow(headers);
       hRow.eachCell((c, col) => {
         c.fill = HEAD_FILL;
-        c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        c.font = { bold: true, color: { argb: headPink ? 'FF0A0A0A' : 'FFFFFFFF' } };
         c.alignment = { vertical: 'middle', horizontal: horizFor(col) === 'right' ? 'right' : (centerCols.includes(col) ? 'center' : 'left') };
         c.border = allBorder;
       });

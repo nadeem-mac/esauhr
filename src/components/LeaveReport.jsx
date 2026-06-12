@@ -23,6 +23,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { directGet } from '../supabaseClient.js';
+import { excelHeaderRgb } from '../lib/excelHeader.js';
 import {
   Plane, Clock, Download, FileText, ChevronLeft, ChevronRight, Users, Mail, Check,
 } from 'lucide-react';
@@ -669,9 +670,9 @@ export default function LeaveReport({
 
   const exportExcel = async () => {
     const XLSX = await import('xlsx-js-style');
-    const GREEN = '0F4C2A';
+    const H = excelHeaderRgb(me);  // baby-pink header for Bashaier, brand-green otherwise
     const border = { top:{style:'thin',color:{rgb:'E5E7EB'}}, bottom:{style:'thin',color:{rgb:'E5E7EB'}}, left:{style:'thin',color:{rgb:'E5E7EB'}}, right:{style:'thin',color:{rgb:'E5E7EB'}} };
-    const hStyle = { font:{bold:true,color:{rgb:'FFFFFF'},sz:10}, fill:{fgColor:{rgb:GREEN}}, alignment:{horizontal:'center',vertical:'center',wrapText:true}, border };
+    const hStyle = { font:{bold:true,color:{rgb:H.fg},sz:10}, fill:{fgColor:{rgb:H.bg}}, alignment:{horizontal:'center',vertical:'center',wrapText:true}, border };
     const c = (extra={}) => ({ font:{sz:10,color:{rgb:'1F1B16'}}, alignment:{vertical:'center'}, border, ...extra });
 
     const wb = XLSX.utils.book_new();

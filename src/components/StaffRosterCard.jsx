@@ -101,14 +101,18 @@ export default function StaffRosterCard({ employees = [], me }) {
       const addRosterSheet = (sheetName, grp, { titleLabel, totalWord, accent, tab }) => {
         const ws = wb.addWorksheet(sheetName, { views: [{ state: 'frozen', ySplit: 4 }] });
         ws.properties.tabColor = { argb: tab };
+        // Baby-pink header (black text) = Bashaier's signature on what she exports.
+        const hPink = me?.id === 'H94830';
+        const accentC = hPink ? 'FFF7C5D0' : accent;
+        const accentFg = hPink ? 'FF0A0A0A' : 'FFFFFFFF';
 
         // Title
         ws.mergeCells(1, 1, 1, NCOL);
         const t = ws.getCell(1, 1);
         t.value = titleLabel;
-        t.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
+        t.font = { bold: true, size: 14, color: { argb: accentFg } };
         t.alignment = { horizontal: 'center', vertical: 'middle' };
-        t.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: accent } };
+        t.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: accentC } };
         ws.getRow(1).height = 26;
 
         // Summary
@@ -126,8 +130,8 @@ export default function StaffRosterCard({ employees = [], me }) {
         HEADERS.forEach((h, i) => {
           const c = hr.getCell(i + 1);
           c.value = h;
-          c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: accent } };
+          c.font = { bold: true, color: { argb: accentFg } };
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: accentC } };
           c.alignment = { horizontal: i === 1 || i === 8 ? 'left' : 'center', vertical: 'middle' };
           c.border = border;
         });

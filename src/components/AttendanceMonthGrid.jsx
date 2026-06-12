@@ -36,6 +36,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, RefreshCcw, Loader2, Search, X, Download, AlertTriangle } from 'lucide-react';
 import { directGet, directPatch, supabase } from '../supabaseClient.js';
+import { excelHeaderRgb } from '../lib/excelHeader.js';
 import { isActiveEmployee } from '../lib/leaveLogic.js';
 
 // Auto-fit text helper — CSS-only. No hooks. Uses container queries
@@ -156,7 +157,7 @@ function readableStatus(status) {
 //     without the user having to navigate away and back. Per Decision
 //     #3 / option A: single refetch at session end, no live updates
 //     during the upload to avoid scroll/flicker.
-export default function AttendanceMonthGrid({ employees, onEmployeeClick, refreshTick = 0 }) {
+export default function AttendanceMonthGrid({ me, employees, onEmployeeClick, refreshTick = 0 }) {
   const today = useMemo(() => new Date(), []);
   const [year, setYear]   = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
@@ -502,6 +503,8 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
       setExportingMonth(true);
       const XLSX = await import('xlsx-js-style');
       const GREEN = '0F4C2A';
+      // Baby-pink header band = Bashaier's signature (weekend = a deeper shade).
+      const H = { ...excelHeaderRgb(me), wknd: me?.id === 'H94830' ? 'E59FB4' : '0A3A20' };
       // Same abbreviation + sort as the PDF: strip trailing "OFFICE",
       // map cities to codes, group by Location -> Dept -> Name.
       const cityMap = { JEDDAH: 'JED', DAMMAM: 'DMM', RIYADH: 'RYD', JED: 'JED', DMM: 'DMM', RYD: 'RYD' };
@@ -543,7 +546,7 @@ export default function AttendanceMonthGrid({ employees, onEmployeeClick, refres
         const k = kind[R];
         if (k === 'title') ws[a].s = { font: { bold: true, sz: 14, color: { rgb: GREEN } } };
         else if (k === 'note') ws[a].s = { font: { sz: 10, color: { rgb: '0A0A0A' } }, alignment: { wrapText: true } };
-        else if (k === 'header') ws[a].s = { font: { bold: true, sz: 9, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: isWknd(C) ? '0A3A20' : GREEN } }, alignment: { horizontal: leftAlign(C) ? 'left' : 'center', vertical: 'center', wrapText: true }, border };
+        else if (k === 'header') ws[a].s = { font: { bold: true, sz: 9, color: { rgb: H.fg } }, fill: { fgColor: { rgb: isWknd(C) ? H.wknd : H.bg } }, alignment: { horizontal: leftAlign(C) ? 'left' : 'center', vertical: 'center', wrapText: true }, border };
         else if (k === 'data') ws[a].s = { font: { sz: 9, color: { rgb: '0A0A0A' } }, fill: isWknd(C) ? { fgColor: { rgb: 'F3F4F6' } } : undefined, alignment: { horizontal: leftAlign(C) ? 'left' : 'center', vertical: 'center' }, border };
       }
       ws['!cols'] = [{ wch: 4 }, { wch: 10 }, { wch: 22 }, { wch: 7 }, { wch: 8 }, ...days.map(() => ({ wch: 4.5 })), { wch: 4 }, { wch: 4 }, { wch: 4 }, { wch: 4 }, { wch: 4 }];

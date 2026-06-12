@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { ChevronLeft, ChevronRight, Loader2, Calendar as CalIcon } from 'lucide-react';
 import { directGet, supabase } from '../supabaseClient.js';
+import { excelHeaderRgb } from '../lib/excelHeader.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ShiftMonthGrid
@@ -320,6 +321,7 @@ export default function ShiftMonthGrid({
       const JSZipMod = await import('jszip');
       const JSZip = JSZipMod.default || JSZipMod;
       const GREEN = '0F4C2A';
+      const H = excelHeaderRgb(me);  // baby-pink location band for Bashaier
 
       const sl = (st, en) => {
         const a = String(st || '').slice(0, 5), b = String(en || '').slice(0, 5);
@@ -396,8 +398,8 @@ export default function ShiftMonthGrid({
           } else if (k === 'note') {
             ws[addr].s = { font: { sz: 10, color: { rgb: '0A0A0A' } }, alignment: { wrapText: true } };
           } else if (k === 'loc') {
-            ws[addr].s = { font: { bold: true, sz: 11, color: { rgb: 'FFFFFF' } },
-              fill: { fgColor: { rgb: GREEN } }, alignment: { horizontal: 'left', vertical: 'center' } };
+            ws[addr].s = { font: { bold: true, sz: 11, color: { rgb: H.fg } },
+              fill: { fgColor: { rgb: H.bg } }, alignment: { horizontal: 'left', vertical: 'center' } };
           } else if (k === 'header') {
             ws[addr].s = { font: { bold: true, sz: 10, color: { rgb: '0A0A0A' } },
               fill: { fgColor: { rgb: 'EEF2F7' } }, alignment: { horizontal: ctr ? 'center' : 'left', vertical: 'center' }, border };

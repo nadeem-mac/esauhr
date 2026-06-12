@@ -19,6 +19,7 @@
 import React, { useState } from 'react';
 import { Download, Loader2, FileSpreadsheet } from 'lucide-react';
 import { directGet, directGetAll } from '../supabaseClient.js';
+import { excelHeaderRgb } from '../lib/excelHeader.js';
 
 // ════════════════════════════════════════════════════════════════════
 //  CONFIG — table + column names matched to the REAL Supabase schema
@@ -475,12 +476,13 @@ export default function HQAttendanceExportCard({ me, employees = [] }) {
       // ── Style + write ──────────────────────────────────────────────
       const ws = XLSX.utils.aoa_to_sheet(aoa);
       const GREEN = '0F4C2A';
+      const H = excelHeaderRgb(me);  // baby-pink header for Bashaier
       const range = XLSX.utils.decode_range(ws['!ref']);
       for (let Ci = range.s.c; Ci <= range.e.c; Ci++) {
         const addr = XLSX.utils.encode_cell({ r: 0, c: Ci });
         if (ws[addr]) ws[addr].s = {
-          font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 9 },
-          fill: { fgColor: { rgb: GREEN } },
+          font: { bold: true, color: { rgb: H.fg }, sz: 9 },
+          fill: { fgColor: { rgb: H.bg } },
           alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
         };
       }

@@ -6659,6 +6659,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         <AttendanceErrorBoundary label="Monthly attendance calendar">
           <div data-month-export-target>
           <AttendanceMonthGrid
+            me={me}
             employees={employees}
             onEmployeeClick={setDetailEmployee}
             refreshTick={calendarRefreshTick}
