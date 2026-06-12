@@ -49,6 +49,18 @@ function personnelCategory(e) {
   if (loc === 'DMM') return DMM_DEPTS.has(dept) ? dept : 'MGT';
   return null;
 }
+
+// Minimal table cells for the headcount tile — hairline rules, muted
+// uppercase headers, right-aligned figures. No fills, no gradients.
+const HCol = ({ children, left }) => (
+  <th className={`text-[10px] uppercase tracking-wider font-bold pb-2 whitespace-nowrap ${left ? 'text-left pr-4' : 'text-right pl-5'}`}
+      style={{ color: '#1F1B16', opacity: 0.5, borderBottom: '1px solid #E5E5E5' }}>{children}</th>
+);
+const DCell = ({ children, left, strong, danger, top }) => (
+  <td className={`text-[13px] py-2 whitespace-nowrap ${left ? 'text-left pr-4' : 'text-right pl-5'} ${strong ? 'font-semibold' : ''}`}
+      style={{ color: danger ? '#B91C1C' : '#1F1B16', borderBottom: '1px solid #F2F2F2', borderTop: top ? '1px solid #D4D4D4' : undefined }}>{children}</td>
+);
+const DEPT_DOT = { CSD: '#1D4ED8', LOG: '#047857', BIZ: '#D97706', FIN: '#6D28D9', SUP: '#C2410C', MGT: '#0F4C2A' };
 import HrLandingCard from './HrLandingCard.jsx';
 import QuickActionsCard from './QuickActionsCard.jsx';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
@@ -693,233 +705,130 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
               </h2>
             </div>
           </div>
-          <div className="text-xs" style={{ color: '#1F1B16', fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
-            {activeEmployees.length} active · 🇸🇦 {byNationality.saudi} Saudi · 🌍 {byNationality.expat} Expat · 👨 {byGender.male} Men · 👩 {byGender.female} Women
+          <div className="text-xs" style={{ color: '#1F1B16', opacity: 0.7, fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
+            {activeEmployees.length} active · {byNationality.saudi} Saudi · {activeEmployees.length - byNationality.saudi} Non-Saudi · {byGender.male} men · {byGender.female} women
           </div>
         </summary>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-4"
-             style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
-          {byDept.map(([dept, count]) => {
-            const DEPT_COLORS = {
-              'CSD':        { from: '#3B82F6', to: '#1D4ED8', tint: '#EFF6FF' },
-              'LOG':        { from: '#10B981', to: '#047857', tint: '#ECFDF5' },
-              'BIZ':        { from: '#F59E0B', to: '#D97706', tint: '#FFFBEB' },
-              'RYD OFFICE': { from: '#EC4899', to: '#BE185D', tint: '#FDF2F8' },
-              'FIN':        { from: '#8B5CF6', to: '#6D28D9', tint: '#F5F3FF' },
-              'SUP':        { from: '#F97316', to: '#C2410C', tint: '#FFF7ED' },
-            };
-            const palette = DEPT_COLORS[dept] || { from: '#94A3B8', to: '#475569', tint: '#F8FAFC' };
-            const g = byDeptGender[dept] || { male: 0, female: 0 };
-            const total = count || 1;
-            const malePct  = Math.round((g.male / total) * 100);
-            const femalePct = 100 - malePct;
-            return (
-              <div key={dept}
-                   className="rounded-xl border p-5 esau-card"
-                   style={{
-                     borderColor: 'var(--border-soft)',
-                     background: '#FFFFFF',
-                   }}>
-                {/* Header row: dept code + total — laid out like the canonical
-                    Card header (small accent dot + label on the left, count
-                    pill on the right) so the badges read as siblings of the
-                    info cards below them ("Out of office today" et al.). The
-                    accent dot replaces the old 5px gradient side rail and
-                    keeps a tiny dose of dept color identity without breaking
-                    the unified paper chrome. */}
-                <div className="flex items-start justify-between pb-3 mb-3 border-b" style={{ borderColor: 'var(--border-soft)' }}>
-                  <div className="flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 rounded-full" style={{ background: palette.to }} />
-                    <div>
-                      <div className="text-[10px]"
-                           style={{ color: '#1F1B16', letterSpacing: '0.18em', fontWeight: 700 }}>
-                        {dept}
-                      </div>
-                      <div className="text-[11px]" style={{ color: '#1F1B16', marginTop: '2px' }}>
-                        {Math.round((count / activeEmployees.length) * 100)}% of staff
-                      </div>
-                    </div>
-                  </div>
-                  <div className="rounded-full px-3 py-1"
-                       style={{
-                         background: palette.tint,
-                         color: palette.to,
-                         fontSize: '20px',
-                         fontWeight: 700,
-                         letterSpacing: '-0.01em',
-                         lineHeight: 1,
-                       }}>
-                    {count}
-                  </div>
-                </div>
+      <div className="space-y-8 pt-1" style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
 
-                {/* Gender breakdown row */}
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5">
-                    <span style={{ fontSize: '16px', lineHeight: 1 }}>👨</span>
-                    <span style={{ fontSize: '15px', fontWeight: 600, color: '#1F1B16' }}>{g.male}</span>
-                    <span className="text-[11px]" style={{ color: '#1F1B16' }}>men</span>
-                  </div>
-                  <div style={{ width: '1px', height: '14px', background: '#E5E5E5' }}/>
-                  <div className="flex items-center gap-1.5">
-                    <span style={{ fontSize: '16px', lineHeight: 1 }}>👩</span>
-                    <span style={{ fontSize: '15px', fontWeight: 600, color: g.female > 0 ? '#BE185D' : '#1F1B16' }}>{g.female}</span>
-                    <span className="text-[11px]" style={{ color: '#1F1B16' }}>women</span>
-                  </div>
-                </div>
-
-                {/* Mini split bar */}
-                <div className="mt-3 rounded-full overflow-hidden flex"
-                     style={{ height: '6px', background: '#F1ECE0' }}>
-                  {g.male > 0 && (
-                    <div title={`${g.male} men (${malePct}%)`}
-                         style={{ width: `${malePct}%`, background: 'linear-gradient(90deg, #93C5FD 0%, #3B82F6 100%)' }}/>
-                  )}
-                  {g.female > 0 && (
-                    <div title={`${g.female} women (${femalePct}%)`}
-                         style={{ width: `${femalePct}%`, background: 'linear-gradient(90deg, #F9A8D4 0%, #DB2777 100%)' }}/>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+        {/* Summary figures */}
+        <div className="flex flex-wrap gap-x-10 gap-y-3">
+          {[
+            ['Active', activeEmployees.length],
+            ['Saudi', byNationality.saudi],
+            ['Non-Saudi', activeEmployees.length - byNationality.saudi],
+            ['Men', byGender.male],
+            ['Women', byGender.female],
+          ].map(([label, value]) => (
+            <div key={label} className="flex items-baseline gap-2">
+              <span style={{ fontSize: 22, fontWeight: 600, color: '#1F1B16', letterSpacing: '-0.01em' }}>{value}</span>
+              <span className="text-[11px] uppercase tracking-wider" style={{ color: '#1F1B16', opacity: 0.5 }}>{label}</span>
+            </div>
+          ))}
         </div>
 
-        {/* Copy-for-email headcount tables — Saudi/Non-Saudi by department
-            plus a Budget/Saudi/Non-Saudi/Total summary. Renders as real
-            tables and copies as rich HTML so it pastes cleanly into email. */}
-        <div className="mt-6 rounded-xl border p-5"
-             style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
+        {/* Saudization — by department + cross-tab */}
+        <section>
           <div className="flex items-center justify-between mb-3">
-            <div className="text-[11px]" style={{ color: '#1F1B16', letterSpacing: '0.18em', fontWeight: 700 }}>
-              HEADCOUNT TABLE (Saudization)
-            </div>
+            <div className="text-[10px] uppercase font-bold" style={{ color: '#1F1B16', letterSpacing: '0.22em' }}>Saudization</div>
             <button type="button" onClick={copyHeadcount}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs border"
-              style={{ borderColor: hcCopied ? '#1F4530' : 'var(--border-soft)', background: hcCopied ? '#ECFDF5' : 'transparent', color: hcCopied ? '#1F4530' : '#0A0A0A', fontWeight: 600, cursor: 'pointer' }}>
-              {hcCopied ? <><Check className="w-3.5 h-3.5" /> Copied</> : <><Copy className="w-3.5 h-3.5" /> Copy for email</>}
+              className="inline-flex items-center gap-1.5 text-[11px]"
+              style={{ color: hcCopied ? '#0F4C2A' : '#1F1B16', opacity: hcCopied ? 1 : 0.65, fontWeight: 600, cursor: 'pointer' }}>
+              {hcCopied ? <><Check className="w-3.5 h-3.5" /> Copied</> : <><Copy className="w-3.5 h-3.5" /> Copy</>}
             </button>
           </div>
+          <div className="overflow-x-auto">
+            <table style={{ borderCollapse: 'collapse', minWidth: '100%' }}>
+              <thead><tr>
+                <HCol left>Department</HCol><HCol>Total</HCol><HCol>Saudi</HCol><HCol>Non-Saudi</HCol><HCol>Men</HCol><HCol>Women</HCol>
+              </tr></thead>
+              <tbody>
+                {byDept.map(([dept, count]) => {
+                  const n = byDeptNat[dept] || { saudi: 0, nonSaudi: 0, total: 0 };
+                  const g = byDeptGender[dept] || { male: 0, female: 0 };
+                  return (
+                    <tr key={dept}>
+                      <DCell left><span className="inline-block w-1.5 h-1.5 rounded-full mr-2 align-middle" style={{ background: DEPT_DOT[dept] || '#475569' }} />{dept}</DCell>
+                      <DCell strong>{count}</DCell><DCell>{n.saudi}</DCell><DCell>{n.nonSaudi}</DCell><DCell>{g.male}</DCell><DCell>{g.female}</DCell>
+                    </tr>
+                  );
+                })}
+                <tr>
+                  <DCell left strong top>Total</DCell>
+                  <DCell strong top>{activeEmployees.length}</DCell>
+                  <DCell strong top>{byNationality.saudi}</DCell>
+                  <DCell strong top>{activeEmployees.length - byNationality.saudi}</DCell>
+                  <DCell strong top>{byGender.male}</DCell>
+                  <DCell strong top>{byGender.female}</DCell>
+                </tr>
+              </tbody>
+            </table>
+          </div>
 
-          {(() => {
-            const total = activeEmployees.length || 0;
-            const saudi = byNationality.saudi;
-            const nonSaudi = total - saudi;
-            const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
-            const depts = byDept.map(([d]) => d);
-            const Th = ({ children, right }) => (
-              <th style={{ background: '#0F4C2A', color: '#fff', padding: '5px 10px', textAlign: right ? 'right' : 'left', fontSize: '12px', fontWeight: 600, border: '1px solid #0F4C2A', whiteSpace: 'nowrap' }}>{children}</th>
-            );
-            const Td = ({ children, right, bold, bg }) => (
-              <td style={{ padding: '4px 10px', textAlign: right ? 'right' : 'left', fontSize: '12px', fontWeight: bold ? 700 : 400, border: '1px solid #D1D5DB', color: '#1F2937', background: bg || '#FFFFFF', whiteSpace: 'nowrap' }}>{children}</td>
-            );
-            return (
-              <div className="overflow-x-auto space-y-4">
-                {/* By department */}
-                <table style={{ borderCollapse: 'collapse' }}>
-                  <thead><tr><Th>Department</Th><Th right>Saudi</Th><Th right>Non-Saudi</Th><Th right>Male</Th><Th right>Female</Th><Th right>Total</Th></tr></thead>
-                  <tbody>
-                    {depts.map((d, i) => {
-                      const n = byDeptNat[d] || { saudi: 0, nonSaudi: 0, total: 0 };
-                      const g = byDeptGender[d] || { male: 0, female: 0 };
-                      const bg = i % 2 ? '#F3F4F6' : '#FFFFFF';
-                      return (
-                        <tr key={d}>
-                          <Td bold bg={bg}>{d}</Td><Td right bg={bg}>{n.saudi}</Td><Td right bg={bg}>{n.nonSaudi}</Td><Td right bg={bg}>{g.male}</Td><Td right bg={bg}>{g.female}</Td><Td right bold bg={bg}>{n.total}</Td>
-                        </tr>
-                      );
-                    })}
-                    <tr><Td bold bg="#ECFDF5">TOTAL</Td><Td right bold bg="#ECFDF5">{saudi}</Td><Td right bold bg="#ECFDF5">{nonSaudi}</Td><Td right bold bg="#ECFDF5">{byGender.male}</Td><Td right bold bg="#ECFDF5">{byGender.female}</Td><Td right bold bg="#ECFDF5">{total}</Td></tr>
-                  </tbody>
-                </table>
-
-                {/* Saudization × gender cross-tab — shows how many of the
-                    Saudi (and Non-Saudi) staff are male vs female. */}
+          <div className="overflow-x-auto mt-6">
+            <table style={{ borderCollapse: 'collapse' }}>
+              <thead><tr>
+                <HCol left>Nationality</HCol><HCol>Men</HCol><HCol>Women</HCol><HCol>Total</HCol><HCol>Share</HCol>
+              </tr></thead>
+              <tbody>
                 {(() => {
                   const g = natGender;
-                  const saudiT = g.saudiMale + g.saudiFemale;
-                  const nsT = g.nonSaudiMale + g.nonSaudiFemale;
-                  const maleT = g.saudiMale + g.nonSaudiMale;
-                  const femaleT = g.saudiFemale + g.nonSaudiFemale;
-                  const grand = saudiT + nsT;
-                  const vacant = Math.max(0, HEADCOUNT_BUDGET - grand);
+                  const sT = g.saudiMale + g.saudiFemale, nT = g.nonSaudiMale + g.nonSaudiFemale;
+                  const tot = sT + nT;
+                  const pct = (x) => (tot ? Math.round((x / tot) * 100) : 0);
                   return (
-                    <div>
-                      <table style={{ borderCollapse: 'collapse' }}>
-                        <thead><tr><Th>Category</Th><Th right>Male</Th><Th right>Female</Th><Th right>Total</Th><Th right>Share</Th></tr></thead>
-                        <tbody>
-                          <tr><Td bold>Saudi</Td><Td right>{g.saudiMale}</Td><Td right>{g.saudiFemale}</Td><Td right bold>{saudiT}</Td><Td right>{pct(saudiT)}%</Td></tr>
-                          <tr><Td bold bg="#F3F4F6">Non-Saudi</Td><Td right bg="#F3F4F6">{g.nonSaudiMale}</Td><Td right bg="#F3F4F6">{g.nonSaudiFemale}</Td><Td right bold bg="#F3F4F6">{nsT}</Td><Td right bg="#F3F4F6">{pct(nsT)}%</Td></tr>
-                          <tr><Td bold bg="#ECFDF5">Total</Td><Td right bold bg="#ECFDF5">{maleT}</Td><Td right bold bg="#ECFDF5">{femaleT}</Td><Td right bold bg="#ECFDF5">{grand}</Td><Td right bold bg="#ECFDF5">100%</Td></tr>
-                        </tbody>
-                      </table>
-                      <div className="mt-2 text-xs" style={{ color: '#1F1B16', fontWeight: 600 }}>
-                        Budget {HEADCOUNT_BUDGET} · Filled {grand} · Vacant {vacant}
-                      </div>
-                    </div>
+                    <>
+                      <tr><DCell left strong>Saudi</DCell><DCell>{g.saudiMale}</DCell><DCell>{g.saudiFemale}</DCell><DCell strong>{sT}</DCell><DCell>{pct(sT)}%</DCell></tr>
+                      <tr><DCell left strong>Non-Saudi</DCell><DCell>{g.nonSaudiMale}</DCell><DCell>{g.nonSaudiFemale}</DCell><DCell strong>{nT}</DCell><DCell>{pct(nT)}%</DCell></tr>
+                      <tr><DCell left strong top>Total</DCell><DCell strong top>{g.saudiMale + g.nonSaudiMale}</DCell><DCell strong top>{g.saudiFemale + g.nonSaudiFemale}</DCell><DCell strong top>{tot}</DCell><DCell strong top>100%</DCell></tr>
+                    </>
                   );
                 })()}
-              </div>
-            );
-          })()}
-        </div>
+              </tbody>
+            </table>
+          </div>
+        </section>
 
-        {/* HQ Personnel Statistic — budget (set by HQ) vs current, per
-            location/department, with balance and remarks. Copies as a real
-            table for the official report. */}
-        <div className="mt-4 rounded-xl border p-5"
-             style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF', fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
+        {/* Personnel Statistic — HQ budget vs current */}
+        <section>
           <div className="flex items-center justify-between mb-1">
-            <div className="text-[11px]" style={{ color: '#1F1B16', letterSpacing: '0.18em', fontWeight: 700 }}>
-              THE PERSONNEL STATISTIC OF ESAU
-            </div>
+            <div className="text-[10px] uppercase font-bold" style={{ color: '#1F1B16', letterSpacing: '0.22em' }}>Personnel Statistic &middot; HQ Budget</div>
             <button type="button" onClick={copyPersonnel}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs border"
-              style={{ borderColor: psCopied ? '#1F4530' : 'var(--border-soft)', background: psCopied ? '#ECFDF5' : 'transparent', color: psCopied ? '#1F4530' : '#0A0A0A', fontWeight: 600, cursor: 'pointer' }}>
-              {psCopied ? <><Check className="w-3.5 h-3.5" /> Copied</> : <><Copy className="w-3.5 h-3.5" /> Copy for email</>}
+              className="inline-flex items-center gap-1.5 text-[11px]"
+              style={{ color: psCopied ? '#0F4C2A' : '#1F1B16', opacity: psCopied ? 1 : 0.65, fontWeight: 600, cursor: 'pointer' }}>
+              {psCopied ? <><Check className="w-3.5 h-3.5" /> Copied</> : <><Copy className="w-3.5 h-3.5" /> Copy</>}
             </button>
           </div>
-          <div className="text-[11px] mb-3" style={{ color: '#1F1B16', fontWeight: 600 }}>
-            STATUS: {new Date().toISOString().slice(0, 10).replace(/-/g, '.')}
+          <div className="text-[11px] mb-3" style={{ color: '#1F1B16', opacity: 0.5 }}>
+            Status {new Date().toISOString().slice(0, 10).replace(/-/g, '.')} &middot; balance = current &minus; budget
           </div>
-          {(() => {
-            const { rows, gt } = personnel;
-            const Th = ({ children, span, left }) => (
-              <th colSpan={span} style={{ background: '#0F4C2A', color: '#fff', padding: '5px 9px', textAlign: left ? 'left' : 'center', fontSize: '11px', fontWeight: 600, border: '1px solid #0F4C2A', whiteSpace: 'nowrap' }}>{children}</th>
-            );
-            const Td = ({ children, left, bold, bg, bal }) => (
-              <td style={{ padding: '4px 9px', textAlign: left ? 'left' : 'center', fontSize: '12px', fontWeight: (bold || bal) ? 700 : 400, border: '1px solid #D1D5DB', color: bal && children < 0 ? '#B91C1C' : '#1F2937', background: bg || '#FFFFFF', whiteSpace: 'nowrap' }}>{children}</td>
-            );
-            return (
-              <div className="overflow-x-auto">
-                <table style={{ borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr><Th left>DEPT.</Th><Th>BUDGET</Th><Th span={3}>CURRENT PERSONNEL</Th><Th>BALANCE</Th><Th>REMARKS</Th></tr>
-                    <tr><Th></Th><Th></Th><Th>MALE</Th><Th>FEMALE</Th><Th>TOTAL</Th><Th></Th><Th></Th></tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((r, i) => {
-                      const bg = i % 2 ? '#F3F4F6' : '#FFFFFF';
-                      return (
-                        <tr key={r.key}>
-                          <Td left bold bg={bg}>{r.label}</Td><Td bg={bg}>{r.budget}</Td>
-                          <Td bg={bg}>{r.male}</Td><Td bg={bg}>{r.female}</Td><Td bold bg={bg}>{r.total}</Td>
-                          <Td bal bg={bg}>{r.balance}</Td><Td bg={bg}></Td>
-                        </tr>
-                      );
-                    })}
-                    <tr>
-                      <Td left bold bg="#ECFDF5">GRAND TOTAL</Td><Td bold bg="#ECFDF5">{gt.budget}</Td>
-                      <Td bold bg="#ECFDF5">{gt.male}</Td><Td bold bg="#ECFDF5">{gt.female}</Td><Td bold bg="#ECFDF5">{gt.total}</Td>
-                      <Td bal bold bg="#ECFDF5">{gt.balance}</Td><Td bold bg="#ECFDF5"></Td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            );
-          })()}
-        </div>
+          <div className="overflow-x-auto">
+            <table style={{ borderCollapse: 'collapse', minWidth: '100%' }}>
+              <thead><tr>
+                <HCol left>Dept</HCol><HCol>Budget</HCol><HCol>Men</HCol><HCol>Women</HCol><HCol>Total</HCol><HCol>Balance</HCol>
+              </tr></thead>
+              <tbody>
+                {personnel.rows.map(r => (
+                  <tr key={r.key}>
+                    <DCell left strong>{r.label}</DCell>
+                    <DCell>{r.budget}</DCell><DCell>{r.male}</DCell><DCell>{r.female}</DCell><DCell strong>{r.total}</DCell>
+                    <DCell strong danger={r.balance < 0}>{r.balance > 0 ? `+${r.balance}` : r.balance}</DCell>
+                  </tr>
+                ))}
+                <tr>
+                  <DCell left strong top>Grand total</DCell>
+                  <DCell strong top>{personnel.gt.budget}</DCell>
+                  <DCell strong top>{personnel.gt.male}</DCell>
+                  <DCell strong top>{personnel.gt.female}</DCell>
+                  <DCell strong top>{personnel.gt.total}</DCell>
+                  <DCell strong top danger={personnel.gt.balance < 0}>{personnel.gt.balance > 0 ? `+${personnel.gt.balance}` : personnel.gt.balance}</DCell>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
       </details>
 
       {/* Three column summary */}
