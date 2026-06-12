@@ -1261,7 +1261,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
       lines.push('');
       lines.push(`Today so far: ${inCount} signed in (${lateCount} late shift staff), ${notIn} not yet in, ${leaveCount} on leave.`);
       lines.push('');
-      lines.push(`Please see the attached Excel file for the complete report.`);
+      lines.push(`Please see the attached Excel file which has two sheets: "${sheet1}" (arrivals) and "${sheet2}", the complete report for ${dayDate(yday)} (in/out, total hours, late and early departures).`);
     } else {
       const periodLabel = from === to ? fmtDateLong(from) : `${fmtDate(from)} – ${fmtDate(to)}`;
       const scopeLabel = reportScope === 'all'
@@ -1357,7 +1357,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
   <p style="margin:0 0 12px 0">Dear Mr. John,</p>
   <p style="margin:0 0 12px 0">Please find today's morning attendance for check-in time as of ${escapeHtml(clock)} (${escapeHtml(dayDate(t))}). Sign-outs and total hours finalise at end of day, so this report shows arrivals only.</p>
   <p style="margin:0 0 12px 0">Today so far: ${inCount} signed in (${lateCount} late shift staff), ${notIn} not yet in, ${leaveCount} on leave.</p>
-  <p style="margin:0 0 12px 0">Please see the attached Excel file for the complete report. A short summary is below.</p>
+  <p style="margin:0 0 12px 0">Please see the attached Excel file which has two sheets: "${escapeHtml(sheet1)}" (arrivals) and "${escapeHtml(sheet2)}", the complete report for ${escapeHtml(dayDate(y))} (in/out, total hours, late and early departures). A short summary is below.</p>
   <p style="margin:14px 0 2px 0;font-weight:700">Today's late arrivals &mdash; ${escapeHtml(fmtDateLong(t))}</p>
   ${tbl(['Employee', 'Department', 'In', 'Expected', 'Late by'], lateB)}
   <p style="margin:14px 0 2px 0;font-weight:700">Yesterday's early departures &mdash; ${escapeHtml(fmtDateLong(y))}</p>
