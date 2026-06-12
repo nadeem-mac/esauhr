@@ -633,56 +633,12 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
         .esau-pending-pulse { animation: esau-pending-pulse 1.8s ease-in-out infinite; }
       `}</style>
 
-      {/* Live header bar — sits above the hero. Shows today's date on
-          the left and a live-data freshness indicator on the right.
-          The pulsing green dot signals that the dashboard is wired
-          to Supabase realtime, so admin knows the numbers are
-          current without having to manually refresh. The relative
-          time auto-updates every minute. */}
+      {/* Header bar — today's date only. (Org chart moved into the
+          AT A GLANCE card; the LIVE freshness pill was removed.) */}
       <div className="flex items-center justify-between gap-3 flex-wrap pb-1"
            style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
         <div className="text-[10px]" style={{ color: '#9D6B53', letterSpacing: '0.3em', fontWeight: 600 }}>
           {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase()}
-        </div>
-        <div className="inline-flex items-center gap-2">
-          {/* Org chart trigger — admin (Nadeem) and HR reviewer
-              (Bashaier) only. Opens the OrgChartView modal that
-              renders the live tree from employees.manager_id and
-              offers Summary/Full toggle plus standalone HTML export. */}
-          {onOpenOrgChart && (me?.is_admin || me?.is_hr_reviewer) && (
-            <button
-              onClick={onOpenOrgChart}
-              title="Generate the company organization chart"
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full"
-              style={{
-                background: '#FFFFFF',
-                border: '1px solid #C49B61',
-                fontSize: 10,
-                letterSpacing: '0.16em',
-                color: '#8B5A1F',
-                fontWeight: 700,
-                cursor: 'pointer',
-              }}
-            >
-              <span aria-hidden="true">🏢</span>
-              <span>ORG CHART</span>
-            </button>
-          )}
-          <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full"
-               title={`Last refreshed at ${new Date(lastUpdated).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`}
-               style={{
-                 background: '#ECFDF5',
-                 border: '1px solid #A7F3D0',
-                 fontSize: '10px',
-                 letterSpacing: '0.16em',
-                 color: '#0F4C2A',
-                 fontWeight: 700,
-               }}>
-            <span className="esau-live-dot" aria-hidden="true"/>
-            <span>LIVE</span>
-            <span style={{ opacity: 0.5 }}>·</span>
-            <span style={{ letterSpacing: '0.04em', fontWeight: 600 }}>updated {updatedRel}</span>
-          </div>
         </div>
       </div>
 
@@ -752,29 +708,29 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
         />
       )}
 
-      {/* MINIMAL stat surface — replaces the four-tile strip Bashaier
-          had before. Only PENDING APPROVAL keeps a tile (it's the one
-          actionable count and it pulses when items wait on her). The
-          other three counts collapse into a single muted strip below.
-          PIN REQUESTS stays as a small chip on the right when relevant.
-          Nadeem 2026-05-17: 'make it minimal'. */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 items-stretch"
-           style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
-        {/* PENDING — primary action tile (pulses when count > 0) */}
-        <Tile label="PENDING APPROVAL" sublabel="Awaiting your decision" count={pending.length}
-              pulse={pending.length > 0}
-              accentDark="#C2410C" accentTint="#FFFBEB" onClick={onGoToReviews || onGoToRequests}>
-          <div className="text-[20px]">⏳</div>
-        </Tile>
-
-        {/* AT-A-GLANCE — the three secondary counts in one compact card */}
-        <div className="sm:col-span-2 rounded-xl border p-5 esau-card"
+      {/* AT A GLANCE — secondary counts + org chart + headcount, full width.
+          PENDING APPROVAL tile removed; its count now lives as the
+          pulsing badge on the Reviews tab. Nadeem 2026-06-12. */}
+      <div style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
+        <div className="rounded-xl border p-5 esau-card"
              style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-1.5 h-1.5 rounded-full" style={{ background: '#1F1B16' }}/>
-            <span className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.18em', fontWeight: 700 }}>
-              AT A GLANCE
-            </span>
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-1.5 h-1.5 rounded-full" style={{ background: '#1F1B16' }}/>
+              <span className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.18em', fontWeight: 700 }}>
+                AT A GLANCE
+              </span>
+            </div>
+            {onOpenOrgChart && (me?.is_admin || me?.is_hr_reviewer) && (
+              <button
+                onClick={onOpenOrgChart}
+                title="Generate the company organization chart"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full"
+                style={{ background: '#FFFFFF', border: '1px solid #C49B61', fontSize: 10, letterSpacing: '0.16em', color: '#8B5A1F', fontWeight: 700, cursor: 'pointer' }}>
+                <span aria-hidden="true">🏢</span>
+                <span>ORG CHART</span>
+              </button>
+            )}
           </div>
           <div className="grid grid-cols-3 gap-4">
             <div>

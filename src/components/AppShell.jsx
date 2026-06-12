@@ -1094,6 +1094,13 @@ export default function AppShell({ session, me, onRefreshMe }) {
         {/* Tabs — span the full page width so all tabs are visible; the
             horizontal scroller only kicks in once there are more tabs
             than fit across the page. Nadeem 2026-05-31. */}
+        <style>{`
+          @keyframes esau-reviews-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.45); }
+            70%      { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
+          }
+          .esau-reviews-pulse { animation: esau-reviews-pulse 1.8s ease-in-out infinite; }
+        `}</style>
         <div className="w-full px-3 sm:px-6 flex gap-1 overflow-x-auto">
           {TABS.map(t => {
             const isLogbook = t.id === 'logbook';
@@ -1138,7 +1145,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
                 </span>
               )}
               {t.id === 'reviews' && reviewQueueCount > 0 && (
-                <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full font-bold"
+                <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full font-bold esau-reviews-pulse"
                   style={{ background: '#DC2626', color: '#FFFFFF', minWidth: '18px', textAlign: 'center' }}
                   title={`${reviewQueueCount} request${reviewQueueCount === 1 ? '' : 's'} awaiting your review`}>
                   {reviewQueueCount}
