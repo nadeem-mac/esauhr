@@ -383,7 +383,7 @@ function computeTaskStatus(taskKey, today) {
 
 // Leave & Availability — who's on leave this month (current / upcoming /
 // returned), in the Leave Report style Bashaier prefers. (Nadeem 2026-06-08)
-function buildLeaveAvailability({ requests, employees, year, month, today }) {
+function buildLeaveAvailability({ requests, employees, year, month, today, lastPunch = {} }) {
   const ms = pad2(month);
   const monthStart = `${year}-${ms}-01`;
   const lastDay = new Date(year, month, 0).getDate();
@@ -416,9 +416,18 @@ function buildLeaveAvailability({ requests, employees, year, month, today }) {
   const upcoming = rows.filter(r => r.status === 'upcoming').length;
   const STATUS_TEXT = { now: 'OUT NOW', upcoming: 'UPCOMING', returned: 'RETURNED', ended: 'ENDED' };
 
-  const headers = ['PSN', 'Name', 'Dept', 'Loc', 'Leave Type', 'From', 'To', 'Days', 'Status'];
-  const widths  = [8, 28, 6, 5, 12, 11, 11, 6, 9];
-  const plainRows = rows.map(r => [r.psn, r.name, r.dept, r.loc, r.typeName, fmtDateShort(r.from), fmtDateShort(r.to), r.days.toFixed(1) + (r.isHalf ? ' \u00BD' : ''), STATUS_TEXT[r.status]]);
+  // Last punch (date + time), only when it's on/after the leave end — i.e.
+  // genuine return evidence — and only for returned/ended rows.
+  const punchFor = (r) => {
+    if (r.status !== 'returned' && r.status !== 'ended') return '';
+    const lp = lastPunch[r.psn];
+    if (!lp || !r.to || lp.date < r.to) return '';
+    return `${fmtDateShort(lp.date)} \u00B7 ${String(lp.time).slice(0, 5)}`;
+  };
+
+  const headers = ['PSN', 'Name', 'Dept', 'Loc', 'Leave Type', 'From', 'To', 'Days', 'Status', 'Last Punch'];
+  const widths  = [8, 28, 6, 5, 12, 11, 11, 6, 9, 14];
+  const plainRows = rows.map(r => [r.psn, r.name, r.dept, r.loc, r.typeName, fmtDateShort(r.from), fmtDateShort(r.to), r.days.toFixed(1) + (r.isHalf ? ' \u00BD' : ''), STATUS_TEXT[r.status], punchFor(r) || '-']);
   const tablePlain = rows.length ? plainTable(headers, plainRows, widths) : '(No approved leave overlapping this month.)';
 
   // HTML in the Leave Report style — status pills kept (the look Bashaier likes).
@@ -431,11 +440,11 @@ function buildLeaveAvailability({ requests, employees, year, month, today }) {
   const LEAVE_TINT = { annual: '#3B82F6', sick: '#EF4444', emergency: '#F59E0B', hajj: '#10B981', maternity: '#EC4899', paternity: '#8B5CF6', marriage: '#14B8A6', bereavement: '#6B7280', unpaid: '#9CA3AF', other: '#84CC16' };
   const swatch = (id) => `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${LEAVE_TINT[id] || '#94A3B8'};margin-right:6px;vertical-align:middle"></span>`;
   const th = (t, align = 'left') => `<th style="background:#334155;color:#fff;padding:4px 9px;text-align:${align};font-size:12px;font-weight:700;border:1px solid #334155;white-space:nowrap">${t}</th>`;
-  const headRow = `<tr>${th('PSN')}${th('Name')}${th('Dept')}${th('Loc')}${th('Leave Type')}${th('From')}${th('To')}${th('Days', 'right')}${th('Status')}</tr>`;
+  const headRow = `<tr>${th('PSN')}${th('Name')}${th('Dept')}${th('Loc')}${th('Leave Type')}${th('From')}${th('To')}${th('Days', 'right')}${th('Status')}${th('Last Punch')}</tr>`;
   const bodyRows = rows.map((r, i) => {
     const bg = i % 2 ? '#F3F4F6' : '#FFFFFF';
     const td = (c, align = 'left') => `<td style="padding:3px 9px;border:1px solid #D1D5DB;color:#1F2937;font-size:12px;background:${bg};text-align:${align};white-space:nowrap">${c}</td>`;
-    return `<tr>${td(escapeHtml(r.psn))}${td(escapeHtml(r.name))}${td(escapeHtml(r.dept))}${td(escapeHtml(r.loc))}${td(swatch(r.typeId) + escapeHtml(r.typeName))}${td(escapeHtml(fmtDateShort(r.from)))}${td(escapeHtml(fmtDateShort(r.to)))}${td(r.days.toFixed(1) + (r.isHalf ? ' \u00BD' : ''), 'right')}${td(pill(r.status))}</tr>`;
+    return `<tr>${td(escapeHtml(r.psn))}${td(escapeHtml(r.name))}${td(escapeHtml(r.dept))}${td(escapeHtml(r.loc))}${td(swatch(r.typeId) + escapeHtml(r.typeName))}${td(escapeHtml(fmtDateShort(r.from)))}${td(escapeHtml(fmtDateShort(r.to)))}${td(r.days.toFixed(1) + (r.isHalf ? ' \u00BD' : ''), 'right')}${td(pill(r.status))}${td(escapeHtml(punchFor(r) || '\u2014'))}</tr>`;
   }).join('');
   const tableHtml = rows.length
     ? `<table style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;margin:10px 0"><thead>${headRow}</thead><tbody>${bodyRows}</tbody></table>`
@@ -514,6 +523,51 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
     })();
     return () => { mounted = false; };
   }, [passedPerms]);
+
+  // Last-punch lookup for staff whose leave has ended this month (returned
+  // or ended) — so the Leave & Availability report can show genuine return
+  // evidence. (Nadeem 2026-06-12)
+  const [leavePunch, setLeavePunch] = useState({});
+  const eligiblePunchKey = useMemo(() => {
+    const ms = pad2(month);
+    const monthStart = `${year}-${ms}-01`;
+    const lastDay = new Date(year, month, 0).getDate();
+    const monthEnd = `${year}-${ms}-${pad2(lastDay)}`;
+    const t = new Date();
+    const todayStr = `${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())}`;
+    return Array.from(new Set((requests || []).filter(r => {
+      const stage = r.stage || r.status;
+      if (stage !== 'approved' || !r.start_date || !r.end_date) return false;
+      if (!(r.start_date <= monthEnd && r.end_date >= monthStart)) return false;
+      return r.end_date < todayStr;  // leave has ended (returned or ended)
+    }).map(r => r.employee_id))).sort().join(',');
+  }, [requests, month, year]);
+
+  useEffect(() => {
+    const ids = eligiblePunchKey ? eligiblePunchKey.split(',') : [];
+    if (ids.length === 0) { setLeavePunch({}); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const inList = ids.map(encodeURIComponent).join(',');
+        const rows = await directGet(
+          'attendance_daily',
+          `select=employee_id,attendance_date,first_punch,last_punch&employee_id=in.(${inList})`
+          + `&order=attendance_date.desc&limit=1500`,
+          { timeoutMs: 12000 },
+        );
+        const map = {};
+        for (const r of (rows || [])) {
+          if (map[r.employee_id]) continue;
+          const time = r.first_punch || r.last_punch;
+          if (!time) continue;
+          map[r.employee_id] = { date: r.attendance_date, time };
+        }
+        if (!cancelled) setLeavePunch(map);
+      } catch { if (!cancelled) setLeavePunch({}); }
+    })();
+    return () => { cancelled = true; };
+  }, [eligiblePunchKey]);
 
   // Pending shift approvals used to render here (state, realtime sub, action
   // handler, and a collapsible panel above the monthly tasks). It's now its
@@ -800,7 +854,7 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
       subtitle: `Who's on leave this month — ${MONTH_FULL[month-1]} ${year}`,
       icon: <Plane className="w-4 h-4" />,
       tone: '#334155',
-      build: () => buildLeaveAvailability({ requests, employees, year, month, today }),
+      build: () => buildLeaveAvailability({ requests, employees, year, month, today, lastPunch: leavePunch }),
     },
     {
       key: 'mid_month_perms',
@@ -834,7 +888,7 @@ export default function BashaierTasksCard({ employees, requests, permissions: pa
       tone: '#7E22CE',
       build: () => buildShiftStaffReminder({ year, month }),
     },
-  ], [perms, employees, requests, month, year, prevMonth, prevYear, today]);
+  ], [perms, employees, requests, month, year, prevMonth, prevYear, today, leavePunch]);
 
   const open = (task) => {
     const built = task.build();
