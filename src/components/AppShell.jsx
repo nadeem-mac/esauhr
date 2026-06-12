@@ -1308,8 +1308,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
           /* REPORTS tab — Morning report (John) at the top, then the Mr John
              report drafting card. Leave & Availability lives inside the list. */
           <div className="space-y-6">
-            <ShiftStaffAttendanceReportCard me={me} employees={employees} compact />
-            <BashaierTasksCard me={me} employees={employees} requests={requests} permissions={permissions} leaveTypes={leaveTypes} balances={balances} />
+            <BashaierTasksCard me={me} employees={employees} requests={requests} permissions={permissions} leaveTypes={leaveTypes} balances={balances} morningReport={<ShiftStaffAttendanceReportCard me={me} employees={employees} compact />} />
           </div>
         )}
         {tab === 'reviews' && (

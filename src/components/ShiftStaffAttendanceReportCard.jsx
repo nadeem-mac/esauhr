@@ -414,7 +414,8 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
   const [morningMode, setMorningMode] = useState(false);            // 10AM two-part report
   const [pendingMorningGenerate, setPendingMorningGenerate] = useState(false);
   const [morningCopied, setMorningCopied] = useState(false);        // "copied to Outlook" feedback (compact mode)
-  const [mrCollapsed, setMrCollapsed] = useState(true);             // compact card starts collapsed (click to open)
+  const [mrCollapsed, setMrCollapsed] = useState(true);             // (legacy) collapsible variant
+  const [mrOpen, setMrOpen] = useState(false);                      // compact tile → modal open
 
   // Shift-flagged staff only. We also compute a stable string key
   // of just the IDs so the load() callback can depend on the SET of
@@ -1522,81 +1523,102 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
       </div>
     );
     return (
-      <div className="rounded-2xl border bg-white p-5"
-           style={{ borderColor: ACCENT_BD, boxShadow: '0 1px 2px rgba(31,27,22,0.04), 0 4px 14px rgba(31,27,22,0.06)' }}>
-        <button type="button" onClick={() => setMrCollapsed(c => !c)}
-                className="w-full flex items-center justify-between gap-3 text-left">
-          <div className="flex items-center gap-2 min-w-0">
-            <Clock className="w-5 h-5 flex-shrink-0" style={{ color: ACCENT }} />
-            <div className="min-w-0">
-              <div style={{ fontSize: 18, color: '#1F1B16', fontWeight: 600 }}>Morning report (John)</div>
-              <div className="text-[11px] mt-0.5 truncate" style={{ color: '#1F1B16', opacity: 0.7 }}>
-                {mrCollapsed
-                  ? (active
-                      ? `${morningData.late.length} late · ${morningData.early.length} early · ${morningData.missed.length} missed — click to open`
-                      : 'Click to open · updates on each daily upload')
-                  : `${fmtDateLong(to)} arrivals · ${fmtDateLong(from)} detail`}
+      <>
+        {/* Tile — styled exactly like the other "Reports for Mr John" rows. */}
+        <button type="button" onClick={() => setMrOpen(true)}
+                className="w-full flex items-center gap-3 px-3 py-3 rounded-xl border hover:bg-[var(--paper-soft,#F8F8F2)] transition-colors text-left group"
+                style={{ borderColor: 'var(--border-soft)' }}>
+          <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+               style={{ background: ACCENT + '15', color: ACCENT, border: '1px solid ' + ACCENT + '40' }}>
+            <Clock className="w-4 h-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold truncate" style={{ color: 'var(--ink)' }}>Morning report (John)</div>
+            <div className="text-[11px] opacity-70 truncate">
+              {active
+                ? `${morningData.late.length} late · ${morningData.early.length} early · ${morningData.missed.length} missed — today's arrivals`
+                : 'Updates automatically on each daily upload'}
+            </div>
+          </div>
+          <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
+                style={{ background: active ? ACCENT_BG : '#F4F4EE', color: active ? ACCENT : '#9A9A92',
+                         border: `1px solid ${active ? ACCENT_BD : '#E5E5E0'}` }}>
+            {loading ? 'LOADING…' : active ? `ACTIVE · ${clock}` : 'WAITING'}
+          </span>
+          <ChevronRight className="w-4 h-4 opacity-30 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all flex-shrink-0" />
+        </button>
+
+        {/* Modal — opens the same way the other report previews do. */}
+        {mrOpen && (
+          <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-6 overflow-y-auto"
+               style={{ background: 'rgba(20,30,25,0.55)', backdropFilter: 'blur(2px)' }}
+               onClick={() => setMrOpen(false)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-8" onClick={(e) => e.stopPropagation()}>
+              <div className="px-5 sm:px-6 py-4 sticky top-0 z-10 rounded-t-2xl flex items-start justify-between gap-3"
+                   style={{ background: `linear-gradient(135deg, ${ACCENT} 0%, ${ACCENT}DD 100%)`, color: '#fff' }}>
+                <div>
+                  <div className="text-[10px] tracking-[0.25em] opacity-80 mb-1">— MORNING REPORT</div>
+                  <h2 className="text-xl font-serif">Morning report (John)</h2>
+                  <div className="text-[11px] opacity-80 mt-0.5">{fmtDateLong(to)} arrivals · {fmtDateLong(from)} detail</div>
+                </div>
+                <button onClick={() => setMrOpen(false)}
+                        className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-white/20 flex-shrink-0"
+                        style={{ color: '#fff' }} aria-label="Close">
+                  <span style={{ fontSize: 18, lineHeight: 1 }}>×</span>
+                </button>
+              </div>
+
+              <div className="px-5 sm:px-6 py-4 max-h-[72vh] overflow-y-auto">
+                {!loading && !todayHas && (
+                  <div className="text-[11px] mb-3 p-2.5 rounded-lg"
+                       style={{ background: '#FEF3C7', color: '#7C2D12', border: '1px solid #F59E0B' }}>
+                    No time card uploaded for today yet. Upload today's Time Card in the Attendance tab — this report updates automatically.
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 flex-wrap mb-4">
+                  <button type="button" onClick={() => handleExcel({ morning: true })} disabled={!active}
+                          style={btn({ background: '#107C41', color: '#fff', opacity: active ? 1 : 0.5 })}>
+                    <FileSpreadsheet className="w-3.5 h-3.5" /> Download Excel
+                  </button>
+                  <button type="button" onClick={async () => { try { await handleExcel({ morning: true }); } catch {} emailJohn({ morning: true }); }} disabled={!active}
+                          style={btn({ background: ACCENT, color: '#fff', opacity: active ? 1 : 0.5 })}>
+                    <Mail className="w-3.5 h-3.5" /> Email to John
+                  </button>
+                  <button type="button" onClick={copyMorningHtml} disabled={!active}
+                          style={btn({ background: morningCopied ? '#0F4C2A' : '#FFFFFF', color: morningCopied ? '#fff' : ACCENT, borderColor: ACCENT_BD, opacity: active ? 1 : 0.5 })}>
+                    {morningCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    {morningCopied ? 'Copied' : 'Copy HTML to Outlook'}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                  <MiniTable title={`Today's late arrivals`} heads={['Name', 'In', 'Exp', 'Late']} rows={morningData.late}
+                    render={(r) => (<>
+                      <td className="py-1 pr-2 font-medium">{r.emp.name}</td><td className="py-1 pr-2">{r.in || '—'}</td>
+                      <td className="py-1 pr-2">{r.exp || '—'}</td><td className="py-1" style={{ color: '#854F0B', fontWeight: 600 }}>{r.late}m</td>
+                    </>)} />
+                  <MiniTable title={`Yesterday early departures`} heads={['Name', 'Out', 'End', 'Early']} rows={morningData.early}
+                    render={(r) => (<>
+                      <td className="py-1 pr-2 font-medium">{r.emp.name}</td><td className="py-1 pr-2">{r.out || '—'}</td>
+                      <td className="py-1 pr-2">{r.exp || '—'}</td><td className="py-1" style={{ color: '#9D174D', fontWeight: 600 }}>{r.early}m</td>
+                    </>)} />
+                  <MiniTable title={`Yesterday missed punches`} heads={['Name', 'Issue', 'Punch']} rows={morningData.missed}
+                    render={(r) => (<>
+                      <td className="py-1 pr-2 font-medium">{r.emp.name}</td><td className="py-1 pr-2" style={{ color: '#991B1B' }}>{r.label}</td>
+                      <td className="py-1">{r.detail}</td>
+                    </>)} />
+                  <MiniTable title={`Shift staff today`} heads={['Name', 'In', 'Out', 'Status']} rows={morningData.shift}
+                    render={(r) => (<>
+                      <td className="py-1 pr-2 font-medium">{r.emp.name}</td><td className="py-1 pr-2">{r.in}</td>
+                      <td className="py-1 pr-2">{r.out}</td><td className="py-1">{r.status}</td>
+                    </>)} />
+                </div>
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <span className="text-[10px] px-2 py-1 rounded-full font-bold"
-                  style={{ background: active ? ACCENT_BG : '#F4F4EE', color: active ? ACCENT : '#9A9A92',
-                           border: `1px solid ${active ? ACCENT_BD : '#E5E5E0'}` }}>
-              {loading ? 'LOADING…' : active ? `ACTIVE · ${clock}` : 'WAITING FOR UPLOAD'}
-            </span>
-            <ChevronDown className="w-4 h-4" style={{ color: '#1F1B16', opacity: 0.5, transform: mrCollapsed ? 'none' : 'rotate(180deg)', transition: 'transform .15s' }} />
-          </div>
-        </button>
-
-        {!mrCollapsed && (<>
-        {!loading && !todayHas && (
-          <div className="text-[11px] mt-2 mb-3 p-2.5 rounded-lg"
-               style={{ background: '#FEF3C7', color: '#7C2D12', border: '1px solid #F59E0B' }}>
-            No time card uploaded for today yet. Upload today's Time Card in the Attendance tab — this report updates automatically.
-          </div>
         )}
-
-        <div className="flex items-center gap-2 flex-wrap my-3">
-          <button type="button" onClick={() => handleExcel({ morning: true })} disabled={!active}
-                  style={btn({ background: '#107C41', color: '#fff', opacity: active ? 1 : 0.5 })}>
-            <FileSpreadsheet className="w-3.5 h-3.5" /> Download Excel
-          </button>
-          <button type="button" onClick={async () => { try { await handleExcel({ morning: true }); } catch {} emailJohn({ morning: true }); }} disabled={!active}
-                  style={btn({ background: ACCENT, color: '#fff', opacity: active ? 1 : 0.5 })}>
-            <Mail className="w-3.5 h-3.5" /> Email to John
-          </button>
-          <button type="button" onClick={copyMorningHtml} disabled={!active}
-                  style={btn({ background: morningCopied ? '#0F4C2A' : '#FFFFFF', color: morningCopied ? '#fff' : ACCENT, borderColor: ACCENT_BD, opacity: active ? 1 : 0.5 })}>
-            {morningCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-            {morningCopied ? 'Copied' : 'Copy HTML to Outlook'}
-          </button>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          <MiniTable title={`Today's late arrivals`} heads={['Name', 'In', 'Exp', 'Late']} rows={morningData.late}
-            render={(r) => (<>
-              <td className="py-1 pr-2 font-medium">{r.emp.name}</td><td className="py-1 pr-2">{r.in || '—'}</td>
-              <td className="py-1 pr-2">{r.exp || '—'}</td><td className="py-1" style={{ color: '#854F0B', fontWeight: 600 }}>{r.late}m</td>
-            </>)} />
-          <MiniTable title={`Yesterday early departures`} heads={['Name', 'Out', 'End', 'Early']} rows={morningData.early}
-            render={(r) => (<>
-              <td className="py-1 pr-2 font-medium">{r.emp.name}</td><td className="py-1 pr-2">{r.out || '—'}</td>
-              <td className="py-1 pr-2">{r.exp || '—'}</td><td className="py-1" style={{ color: '#9D174D', fontWeight: 600 }}>{r.early}m</td>
-            </>)} />
-          <MiniTable title={`Yesterday missed punches`} heads={['Name', 'Issue', 'Punch']} rows={morningData.missed}
-            render={(r) => (<>
-              <td className="py-1 pr-2 font-medium">{r.emp.name}</td><td className="py-1 pr-2" style={{ color: '#991B1B' }}>{r.label}</td>
-              <td className="py-1">{r.detail}</td>
-            </>)} />
-          <MiniTable title={`Shift staff today`} heads={['Name', 'In', 'Out', 'Status']} rows={morningData.shift}
-            render={(r) => (<>
-              <td className="py-1 pr-2 font-medium">{r.emp.name}</td><td className="py-1 pr-2">{r.in}</td>
-              <td className="py-1 pr-2">{r.out}</td><td className="py-1">{r.status}</td>
-            </>)} />
-        </div>
-        </>)}
-      </div>
+      </>
     );
   }
 

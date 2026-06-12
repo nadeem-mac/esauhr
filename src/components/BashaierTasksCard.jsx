@@ -668,7 +668,7 @@ function buildShiftStaffReminder({ year, month }) {
 // =============================================================================
 // MAIN COMPONENT
 // =============================================================================
-export default function BashaierTasksCard({ me, employees, requests, permissions: passedPerms, leaveTypes = [], balances = [] }) {
+export default function BashaierTasksCard({ me, employees, requests, permissions: passedPerms, leaveTypes = [], balances = [], morningReport = null }) {
   // Baby-pink header = Bashaier's signature on the reports she prepares
   // (black text on pink). Anyone else gets the neutral slate header.
   const hdr = me?.id === 'H94830'
@@ -1140,7 +1140,7 @@ export default function BashaierTasksCard({ me, employees, requests, permissions
             <h3 className="serif text-lg" style={{ fontWeight: 500 }}>Reports for Mr John</h3>
           </div>
           <div className="text-xs opacity-60 flex items-center gap-1.5">
-            <ClipboardCheck className="w-3 h-3" /> {tasks.length} reports
+            <ClipboardCheck className="w-3 h-3" /> {tasks.length + (morningReport ? 1 : 0)} reports
           </div>
         </div>
 
@@ -1492,6 +1492,7 @@ export default function BashaierTasksCard({ me, employees, requests, permissions
         )}
 
         <div className="space-y-2.5">
+          {morningReport}
           {tasks.map(task => {
             const st = computeTaskStatus(task.key, today);
             return (
