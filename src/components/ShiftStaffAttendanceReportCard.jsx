@@ -1378,53 +1378,70 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
       `<th style="background:${hdr.bg};color:${hdr.fg};padding:3px 6px;border:1px solid ${headBorder};font-weight:700;font-size:10pt;text-align:${center ? 'center' : 'left'}">${escapeHtml(h)}</th>`;
     const detHeads = [['#',1],['Employee',0],['Shift',1],['PSN',0],['Department',0],['Location',0],['Date',0],['Day',0],['Assigned shift',1],['Check in',1],['Check Out',1],['Total (h:m)',1],['Late (mm:ss)',1],['Status',0]];
 
-    const yFlat = [];
-    reportSummaries.forEach(s => s.rows.forEach(r => { if (r.attendance_date === y) yFlat.push({ s, r }); }));
-    let yN = 0, ySumMin = 0;
-    const detBody = yFlat.map(({ s, r }) => {
-      yN += 1; ySumMin += Number(r.total_minutes || 0);
-      const lms = lateMMSS(r);
-      const holName = holidays.get(r.attendance_date);
-      const worked = (r.punch_count || 0) > 0 || r.first_punch || r.last_punch;
-      const statusText = holName ? (worked ? `${detailedStatusLabel(r)} · Holiday: ${holName}` : `Holiday: ${holName}`)
-        : (r._mgt ? 'MGT' : r._approvedEarly ? r._remark : detailedStatusLabel(r));
-      const statusC = holName ? HOLc : r._mgt ? { bg:'#DCFCE7', fg:'#166534' } : r._approvedEarly ? { bg:'#CCFBF1', fg:'#115E59' } : (SF[r.status] || NEUTc);
-      const empC = s.isShift ? EMPc : s.is84 ? EMP84c : null;
-      const badgeC = s.isShift ? SHIFTc : s.is84 ? SUP84c : null;
-      const shiftTag = s.isShift ? 'SHIFT' : (s.is84 ? '8-4' : '');
-      const totalC = (!holName && isShortfall(r)) ? REDc : (!holName && r._approvedEarly) ? AMBERc : null;
-      const checkOut = fmtTime(r.effective_out) ? fmtTime(r.effective_out) + (r.isOvernight ? ' (+1)' : '') : '';
-      return '<tr>'
-        + dcell(yN, { center: true })
-        + dcell(s.emp.name, empC ? { bg: empC.bg, fg: empC.fg, bold: true } : { bold: true })
-        + dcell(shiftTag, badgeC ? { bg: badgeC.bg, fg: badgeC.fg, bold: true, center: true } : { center: true })
-        + dcell(s.emp.id)
-        + dcell(s.emp.department || '')
-        + dcell(s.emp.location || '')
-        + dcell(fmtDate(r.attendance_date))
-        + dcell(fmtDayShort(r.attendance_date))
-        + dcell(fmtShiftWindow(r.expected_start, r.expected_end) || '', { center: true })
-        + dcell(fmtTime(r.effective_in) || '', { center: true })
-        + dcell(checkOut, { center: true })
-        + dcell(fmtHoursMins(r.total_minutes), totalC ? { bg: totalC.bg, fg: totalC.fg, bold: true, center: true } : { center: true })
-        + dcell(lms, lms ? { bg: REDc.bg, fg: REDc.fg, bold: true, center: true } : { center: true })
-        + dcell(statusText, { bg: statusC.bg, fg: statusC.fg, bold: true })
-        + '</tr>';
-    }).join('');
-    const detSub = yFlat.length
-      ? `<tr style="background:#FAFAF6">${[dcell(''), dcell(`${yN} staff`, { bold: true }), dcell(''), dcell(''), dcell(''), dcell(''), dcell(fmtDate(y)), dcell(''), dcell(''), dcell(''), dcell('TOTAL →', { bold: true, center: true }), dcell(fmtHoursMins(ySumMin), { bold: true, center: true }), dcell(''), dcell('')].join('')}</tr>`
-      : '';
-    const detailTable = yFlat.length
-      ? `<table style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;font-size:10pt;margin:0 0 12pt 0"><thead><tr>${detHeads.map(([h, c]) => dhead(h, c)).join('')}</tr></thead><tbody>${detBody}${detSub}</tbody></table>`
-      : `<p style="margin:4px 0 12pt 0;color:#6B7280;font-size:10pt">No records for ${escapeHtml(fmtDateLong(y))}.</p>`;
+    // Reusable Excel-style detail table (14 cols, colours, SL# renumbered).
+    const buildDetailTable = (rows) => {
+      if (!rows.length) return `<p style="margin:4px 0 12pt 0;color:#6B7280;font-size:10pt">None.</p>`;
+      let n = 0;
+      const body = rows.map(({ s, r }) => {
+        n += 1;
+        const lms = lateMMSS(r);
+        const holName = holidays.get(r.attendance_date);
+        const worked = (r.punch_count || 0) > 0 || r.first_punch || r.last_punch;
+        const statusText = holName ? (worked ? `${detailedStatusLabel(r)} · Holiday: ${holName}` : `Holiday: ${holName}`)
+          : (r._mgt ? 'MGT' : r._approvedEarly ? r._remark : detailedStatusLabel(r));
+        const statusC = holName ? HOLc : r._mgt ? { bg:'#DCFCE7', fg:'#166534' } : r._approvedEarly ? { bg:'#CCFBF1', fg:'#115E59' } : (SF[r.status] || NEUTc);
+        const empC = s.isShift ? EMPc : s.is84 ? EMP84c : null;
+        const badgeC = s.isShift ? SHIFTc : s.is84 ? SUP84c : null;
+        const shiftTag = s.isShift ? 'SHIFT' : (s.is84 ? '8-4' : '');
+        const totalC = (!holName && isShortfall(r)) ? REDc : (!holName && r._approvedEarly) ? AMBERc : null;
+        const checkOut = fmtTime(r.effective_out) ? fmtTime(r.effective_out) + (r.isOvernight ? ' (+1)' : '') : '';
+        return '<tr>'
+          + dcell(n, { center: true })
+          + dcell(s.emp.name, empC ? { bg: empC.bg, fg: empC.fg, bold: true } : { bold: true })
+          + dcell(shiftTag, badgeC ? { bg: badgeC.bg, fg: badgeC.fg, bold: true, center: true } : { center: true })
+          + dcell(s.emp.id)
+          + dcell(s.emp.department || '')
+          + dcell(s.emp.location || '')
+          + dcell(fmtDate(r.attendance_date))
+          + dcell(fmtDayShort(r.attendance_date))
+          + dcell(fmtShiftWindow(r.expected_start, r.expected_end) || '', { center: true })
+          + dcell(fmtTime(r.effective_in) || '', { center: true })
+          + dcell(checkOut, { center: true })
+          + dcell(fmtHoursMins(r.total_minutes), totalC ? { bg: totalC.bg, fg: totalC.fg, bold: true, center: true } : { center: true })
+          + dcell(lms, lms ? { bg: REDc.bg, fg: REDc.fg, bold: true, center: true } : { center: true })
+          + dcell(statusText, { bg: statusC.bg, fg: statusC.fg, bold: true })
+          + '</tr>';
+      }).join('');
+      return `<table style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;font-size:10pt;margin:0 0 12pt 0"><thead><tr>${detHeads.map(([h, c]) => dhead(h, c)).join('')}</tr></thead><tbody>${body}</tbody></table>`;
+    };
+
+    // Gather DEFAULTERS only (same logic as the on-screen summary): today's
+    // late arrivals, yesterday's early departures, yesterday's missed punches.
+    const todayLate = [], yEarly = [], yMissed = [];
+    reportSummaries.forEach(s => {
+      if (managementNoAttendance(s.emp.id)) return;
+      const tr = s.rows.find(r => r.attendance_date === t);
+      const yr = s.rows.find(r => r.attendance_date === y);
+      if (tr && (tr.first_punch || (tr.punch_count || 0) > 0) && tr.status !== 'absent' && _isLateMR(tr)) todayLate.push({ s, r: tr });
+      if (yr) {
+        const hasIn = !!yr.first_punch, hasOut = !!yr.last_punch;
+        if (hasIn && !hasOut) yMissed.push({ s, r: yr });
+        else if (!hasIn && hasOut) yMissed.push({ s, r: yr });
+        else if (!yr._approvedEarly && (yr.status === 'short' || Number(yr.early_leave_minutes) > 0)) yEarly.push({ s, r: yr });
+      }
+    });
 
     const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:10pt;color:#0A0A0A;line-height:1.4;max-width:1100px">
   <p style="margin:0 0 10pt 0">Dear Mr. John,</p>
   <p style="margin:0 0 10pt 0">Please find today's morning attendance for check-in time as of ${escapeHtml(clock)} (${escapeHtml(dayDate(t))}). Sign-outs and total hours finalise at end of day, so this report shows arrivals only.</p>
   <p style="margin:0 0 10pt 0">Today so far: ${inCount} signed in (${lateCount} late shift staff), ${notIn} not yet in, ${leaveCount} on leave.</p>
-  <p style="margin:0 0 10pt 0">Please see the attached Excel file which has two sheets: "${escapeHtml(sheet1)}" (arrivals) and "${escapeHtml(sheet2)}", the complete report for ${escapeHtml(dayDate(y))} (in/out, total hours, late and early departures). The full detail for ${escapeHtml(dayDate(y))} is shown below.</p>
-  <p style="margin:12pt 0 4pt 0;font-weight:700">Yesterday detail &mdash; ${escapeHtml(fmtDateLong(y))}</p>
-  ${detailTable}
+  <p style="margin:0 0 10pt 0">Please see the attached Excel file which has two sheets: "${escapeHtml(sheet1)}" (arrivals) and "${escapeHtml(sheet2)}", the complete report for ${escapeHtml(dayDate(y))} (in/out, total hours, late and early departures). A short summary is below.</p>
+  <p style="margin:12pt 0 4pt 0;font-weight:700">Today's late arrivals &mdash; ${escapeHtml(fmtDateLong(t))}</p>
+  ${buildDetailTable(todayLate)}
+  <p style="margin:12pt 0 4pt 0;font-weight:700">Yesterday's early departures &mdash; ${escapeHtml(fmtDateLong(y))}</p>
+  ${buildDetailTable(yEarly)}
+  <p style="margin:12pt 0 4pt 0;font-weight:700">Yesterday's missed punches &mdash; ${escapeHtml(fmtDateLong(y))}</p>
+  ${buildDetailTable(yMissed)}
   ${renderHrSignatureHtml()}
 </div>`;
     const plain = `Daily attendance — ${fmtDateLong(t)}`;
