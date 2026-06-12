@@ -849,8 +849,7 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
         spacer(20),
         sectionBanner('RETURN DETAILS', 'تفاصيل العودة'),
         returnTable,
-        spacer(700),   // breathing room after RETURN DETAILS; pushes the
-        spacer(200),   // signature grid further down to fill the page
+        spacer(160),   // modest gap after RETURN DETAILS — keeps it on one A4 page
         sigTable,
         footerBlock,
       ],
@@ -896,9 +895,9 @@ export async function downloadRejoiningReportForRequest(request, empMap, manual 
   // an unresolvable UUID would leave the DEPT MGR signature box blank
   // — exactly the bug the user just hit.
   const manager =
-       resolveApprover(request.return_manager_decided_by, empMap)
-    || resolveApprover(request.manager_decided_by,        empMap)
-    || (employee.manager_id ? empMap[employee.manager_id] : null);
+       (employee.manager_id ? empMap[employee.manager_id] : null)
+    || resolveApprover(request.return_manager_decided_by, empMap)
+    || resolveApprover(request.manager_decided_by,        empMap);
 
   const hrApprover =
        resolveApprover(request.return_hr_decided_by, empMap)
@@ -949,14 +948,14 @@ export function buildRejoiningEmailDraft({ employee, request, manager, hrApprove
   const body = [
     `Dear ${firstName},`,
     '',
-    `Welcome back. Your rejoining following the ${leaveTypeLabel.toLowerCase()} from ${dateRange} has been approved by management. Your return on duty is recorded as ${returnDate} and your payroll has been resumed accordingly.`,
+    `Your rejoining following the ${leaveTypeLabel.toLowerCase()} from ${dateRange} has been approved by management. Your return on duty is recorded as ${returnDate} and your payroll has been resumed accordingly.`,
     request.balance_after && Number(request.balance_after) > 0
       ? `\n${request.balance_after} day${request.balance_after === 1 ? '' : 's'} have been credited back to your leave balance for the early return.`
       : null,
     '',
-    `The signed rejoining report is attached for your records, kindly print it, get it signed by yourself and your department head, and submit a hard copy to the HR office at your earliest convenience.`,
+    `The signed rejoining report is attached, kindly print it, get it signed by yourself and your department head, and submit a hard copy to the HR office.`,
     '',
-    `If you have any questions, please contact HR.`,
+    `For any questions, please contact HR.`,
     '',
     `Thanks and regards,`,
     '',
@@ -988,9 +987,9 @@ export function composeRejoiningEmailForRequest(request, empMap) {
   // the email's Cc and signature blocks line up with what the report
   // shows.
   const manager =
-       resolveApprover(request.return_manager_decided_by, empMap)
-    || resolveApprover(request.manager_decided_by,        empMap)
-    || (employee.manager_id ? empMap[employee.manager_id] : null);
+       (employee.manager_id ? empMap[employee.manager_id] : null)
+    || resolveApprover(request.return_manager_decided_by, empMap)
+    || resolveApprover(request.manager_decided_by,        empMap);
   const hrApprover =
        resolveApprover(request.return_hr_decided_by, empMap)
     || resolveApprover(request.hr_decided_by,        empMap);
