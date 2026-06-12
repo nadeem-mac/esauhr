@@ -5,6 +5,7 @@ import {
 , Clock , BarChart3, UserPlus, Database, Loader2, NotebookPen, CalendarDays, Plane } from 'lucide-react';
 import { supabase, directGet, directPatch, directPost } from '../supabaseClient.js';
 import { loadTemplates as loadEmailTemplates } from '../lib/emailTemplates.js';
+import { dailyMessage } from '../lib/dailyMessage.js';
 // EAGER — landing destinations, must paint immediately after sign-in.
 // These are the three dashboards (one of which always renders on first
 // load), the Requests tab (a common follow-up navigation), small
@@ -295,6 +296,9 @@ export default function AppShell({ session, me, onRefreshMe }) {
     document.body.classList.toggle('bashaier-theme', on);
     return () => document.body.classList.remove('bashaier-theme');
   }, [me?.id]);
+
+  // Daily rotating affirmation shown by Bashaier's name in the header.
+  const bashaierMsg = useMemo(() => dailyMessage(), []);
   const isManager  = useMemo(
     () => (employees || []).some(e => e.manager_id === me?.id),
     [employees, me?.id]
@@ -993,6 +997,14 @@ export default function AppShell({ session, me, onRefreshMe }) {
                         style={{ background: 'var(--evergreen-800)', color: 'var(--paper)' }}>ADMIN</span>
                     )}
                   </div>
+                  {me.id === 'H94830' && (
+                    <div className="hidden lg:block italic mt-1"
+                         style={{ fontSize: 11, color: '#993556', maxWidth: 340, lineHeight: 1.3,
+                                  direction: bashaierMsg.lang === 'ar' ? 'rtl' : 'ltr',
+                                  fontFamily: bashaierMsg.lang === 'ar' ? '"Segoe UI", "Tahoma", Georgia, serif' : 'inherit' }}>
+                      "{bashaierMsg.text}" 🧚
+                    </div>
+                  )}
                 </>
               ) : (
                 <div className="text-base font-semibold truncate max-w-[180px]">{session.user.email}</div>
