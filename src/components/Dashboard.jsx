@@ -61,6 +61,55 @@ const DCell = ({ children, left, strong, danger, top }) => (
       style={{ color: danger ? '#B91C1C' : '#1F1B16', borderBottom: '1px solid #F2F2F2', borderTop: top ? '1px solid #D4D4D4' : undefined }}>{children}</td>
 );
 const DEPT_DOT = { CSD: '#1D4ED8', LOG: '#047857', BIZ: '#D97706', FIN: '#6D28D9', SUP: '#C2410C', MGT: '#0F4C2A' };
+
+// ── Modern headcount visuals ──────────────────────────────────────────
+const HcStat = ({ label, value, accent }) => (
+  <div className="transition-all hover:-translate-y-0.5"
+       style={{ background: '#FAFAF7', border: '1px solid #ECEAE0', borderRadius: 12, padding: '12px 14px' }}>
+    <div style={{ fontSize: 24, fontWeight: 600, color: accent, letterSpacing: '-0.01em', lineHeight: 1 }}>{value}</div>
+    <div className="mt-1" style={{ fontSize: 10, letterSpacing: '0.1em', fontWeight: 700, color: '#1F1B16', opacity: 0.6, textTransform: 'uppercase' }}>{label}</div>
+  </div>
+);
+
+// Horizontal stacked proportion bar with a small legend underneath.
+const SplitBar = ({ title, segs }) => {
+  const total = segs.reduce((a, s) => a + s.value, 0) || 1;
+  return (
+    <div>
+      <div className="text-[10px] uppercase font-bold mb-2" style={{ color: '#1F1B16', letterSpacing: '0.18em', opacity: 0.7 }}>{title}</div>
+      <div className="flex w-full overflow-hidden" style={{ height: 12, borderRadius: 999, background: '#F0EFEA' }}>
+        {segs.map(s => (
+          <div key={s.label} title={`${s.label}: ${s.value}`} style={{ width: `${(s.value / total) * 100}%`, background: s.color }} />
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
+        {segs.map(s => (
+          <div key={s.label} className="flex items-center gap-1.5">
+            <span className="inline-block rounded-full" style={{ width: 8, height: 8, background: s.color }} />
+            <span style={{ fontSize: 11.5, color: '#1F1B16' }}>
+              <strong style={{ fontWeight: 600 }}>{s.value}</strong> {s.label}
+              <span style={{ opacity: 0.5 }}> · {Math.round((s.value / total) * 100)}%</span>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// Vacancy/over-budget balance chip.
+const BalancePill = ({ v }) => {
+  const neg = v < 0, zero = v === 0;
+  return (
+    <span className="inline-block ml-2" style={{
+      fontSize: 10.5, fontWeight: 700, letterSpacing: '0.02em',
+      padding: '1px 7px', borderRadius: 999,
+      color: zero ? '#0F4C2A' : neg ? '#9A3412' : '#1D4ED8',
+      background: zero ? '#ECFDF5' : neg ? '#FFF7ED' : '#EFF6FF',
+    }}>{v > 0 ? `+${v}` : v}</span>
+  );
+};
+
 import HrLandingCard from './HrLandingCard.jsx';
 import QuickActionsCard from './QuickActionsCard.jsx';
 import PendingSubstitutionsCard from './PendingSubstitutionsCard.jsx';
@@ -697,87 +746,76 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           </div>
         </summary>
 
-      <div className="space-y-8 pt-1" style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
+      <div className="space-y-7 pt-1" style={{ fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif' }}>
 
-        {/* Summary figures */}
-        <div className="flex flex-wrap gap-x-10 gap-y-3">
-          {[
-            ['Active', activeEmployees.length],
-            ['Saudi', byNationality.saudi],
-            ['Non-Saudi', activeEmployees.length - byNationality.saudi],
-            ['Men', byGender.male],
-            ['Women', byGender.female],
-          ].map(([label, value]) => (
-            <div key={label} className="flex items-baseline gap-2">
-              <span style={{ fontSize: 22, fontWeight: 600, color: '#1F1B16', letterSpacing: '-0.01em' }}>{value}</span>
-              <span className="text-[11px] uppercase tracking-wider" style={{ color: '#1F1B16', opacity: 0.5 }}>{label}</span>
-            </div>
-          ))}
+        {/* Metric cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+          <HcStat label="Active"      value={activeEmployees.length} accent="#1F1B16" />
+          <HcStat label="Saudi"       value={byNationality.saudi} accent="#0F4C2A" />
+          <HcStat label="Non-Saudi"   value={activeEmployees.length - byNationality.saudi} accent="#475569" />
+          <HcStat label="Men"         value={byGender.male} accent="#1D4ED8" />
+          <HcStat label="Women"       value={byGender.female} accent="#BE3A6B" />
+          <HcStat label="Saudization" value={`${activeEmployees.length ? Math.round((byNationality.saudi / activeEmployees.length) * 100) : 0}%`} accent="#0F4C2A" />
         </div>
 
-        {/* Saudization — by department + cross-tab */}
+        {/* Split bars */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <SplitBar title="Nationality" segs={[
+            { label: 'Saudi',     value: byNationality.saudi, color: '#0F4C2A' },
+            { label: 'Non-Saudi', value: activeEmployees.length - byNationality.saudi, color: '#9AA3A0' },
+          ]} />
+          <SplitBar title="Gender" segs={[
+            { label: 'Men',   value: byGender.male, color: '#1D4ED8' },
+            { label: 'Women', value: byGender.female, color: '#BE3A6B' },
+          ]} />
+        </div>
+
+        {/* By department — proportion bars (green = Saudi share, length = headcount) */}
         <section>
           <div className="flex items-center justify-between mb-3">
-            <div className="text-[10px] uppercase font-bold" style={{ color: '#1F1B16', letterSpacing: '0.22em' }}>Saudization</div>
+            <div className="text-[10px] uppercase font-bold" style={{ color: '#1F1B16', letterSpacing: '0.22em' }}>By department</div>
             <button type="button" onClick={copyHeadcount}
               className="inline-flex items-center gap-1.5 text-[11px]"
               style={{ color: hcCopied ? '#0F4C2A' : '#1F1B16', opacity: hcCopied ? 1 : 0.65, fontWeight: 600, cursor: 'pointer' }}>
               {hcCopied ? <><Check className="w-3.5 h-3.5" /> Copied</> : <><Copy className="w-3.5 h-3.5" /> Copy</>}
             </button>
           </div>
-          <div className="overflow-x-auto">
-            <table style={{ borderCollapse: 'collapse', minWidth: '100%' }}>
-              <thead><tr>
-                <HCol left>Department</HCol><HCol>Total</HCol><HCol>Saudi</HCol><HCol>Non-Saudi</HCol><HCol>Men</HCol><HCol>Women</HCol>
-              </tr></thead>
-              <tbody>
-                {byDept.map(([dept, count]) => {
-                  const n = byDeptNat[dept] || { saudi: 0, nonSaudi: 0, total: 0 };
-                  const g = byDeptGender[dept] || { male: 0, female: 0 };
-                  return (
-                    <tr key={dept}>
-                      <DCell left><span className="inline-block w-1.5 h-1.5 rounded-full mr-2 align-middle" style={{ background: DEPT_DOT[dept] || '#475569' }} />{dept}</DCell>
-                      <DCell strong>{count}</DCell><DCell>{n.saudi}</DCell><DCell>{n.nonSaudi}</DCell><DCell>{g.male}</DCell><DCell>{g.female}</DCell>
-                    </tr>
-                  );
-                })}
-                <tr>
-                  <DCell left strong top>Total</DCell>
-                  <DCell strong top>{activeEmployees.length}</DCell>
-                  <DCell strong top>{byNationality.saudi}</DCell>
-                  <DCell strong top>{activeEmployees.length - byNationality.saudi}</DCell>
-                  <DCell strong top>{byGender.male}</DCell>
-                  <DCell strong top>{byGender.female}</DCell>
-                </tr>
-              </tbody>
-            </table>
+          <div className="space-y-2.5">
+            {(() => {
+              const maxDept = Math.max(1, ...byDept.map(([, c]) => c));
+              return byDept.map(([dept, count]) => {
+                const n = byDeptNat[dept] || { saudi: 0, nonSaudi: 0, total: 0 };
+                const g = byDeptGender[dept] || { male: 0, female: 0 };
+                const trackW = (count / maxDept) * 100;
+                const saudiShare = count ? (n.saudi / count) * 100 : 0;
+                return (
+                  <div key={dept} className="flex items-center gap-3 group/row">
+                    <div className="flex items-center gap-2 flex-shrink-0" style={{ width: 70 }}>
+                      <span className="inline-block rounded-full" style={{ width: 7, height: 7, background: DEPT_DOT[dept] || '#475569' }} />
+                      <span style={{ fontSize: 13, fontWeight: 600, color: '#1F1B16' }}>{dept}</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="overflow-hidden transition-all group-hover/row:opacity-90"
+                           style={{ height: 12, borderRadius: 999, background: '#EAE8E0', width: `${trackW}%`, minWidth: 30 }}>
+                        <div style={{ height: '100%', width: `${saudiShare}%`, background: '#0F4C2A' }} />
+                      </div>
+                    </div>
+                    <div className="flex-shrink-0 text-right" style={{ width: 150, fontSize: 12, color: '#1F1B16' }}>
+                      <strong style={{ fontWeight: 700 }}>{count}</strong>
+                      <span style={{ opacity: 0.55 }}> · {n.saudi} SA · {g.male}M / {g.female}W</span>
+                    </div>
+                  </div>
+                );
+              });
+            })()}
           </div>
-
-          <div className="overflow-x-auto mt-6">
-            <table style={{ borderCollapse: 'collapse' }}>
-              <thead><tr>
-                <HCol left>Nationality</HCol><HCol>Men</HCol><HCol>Women</HCol><HCol>Total</HCol><HCol>Share</HCol>
-              </tr></thead>
-              <tbody>
-                {(() => {
-                  const g = natGender;
-                  const sT = g.saudiMale + g.saudiFemale, nT = g.nonSaudiMale + g.nonSaudiFemale;
-                  const tot = sT + nT;
-                  const pct = (x) => (tot ? Math.round((x / tot) * 100) : 0);
-                  return (
-                    <>
-                      <tr><DCell left strong>Saudi</DCell><DCell>{g.saudiMale}</DCell><DCell>{g.saudiFemale}</DCell><DCell strong>{sT}</DCell><DCell>{pct(sT)}%</DCell></tr>
-                      <tr><DCell left strong>Non-Saudi</DCell><DCell>{g.nonSaudiMale}</DCell><DCell>{g.nonSaudiFemale}</DCell><DCell strong>{nT}</DCell><DCell>{pct(nT)}%</DCell></tr>
-                      <tr><DCell left strong top>Total</DCell><DCell strong top>{g.saudiMale + g.nonSaudiMale}</DCell><DCell strong top>{g.saudiFemale + g.nonSaudiFemale}</DCell><DCell strong top>{tot}</DCell><DCell strong top>100%</DCell></tr>
-                    </>
-                  );
-                })()}
-              </tbody>
-            </table>
+          <div className="flex flex-wrap items-center gap-4 mt-3">
+            <div className="flex items-center gap-1.5"><span className="inline-block rounded-full" style={{ width: 8, height: 8, background: '#0F4C2A' }} /><span style={{ fontSize: 11, color: '#1F1B16', opacity: 0.6 }}>Saudi share</span></div>
+            <div className="flex items-center gap-1.5"><span className="inline-block rounded-full" style={{ width: 8, height: 8, background: '#EAE8E0' }} /><span style={{ fontSize: 11, color: '#1F1B16', opacity: 0.6 }}>Non-Saudi · bar length = headcount</span></div>
           </div>
         </section>
 
-        {/* Personnel Statistic — HQ budget vs current */}
+        {/* Personnel Statistic — budget fill + balance pill */}
         <section>
           <div className="flex items-center justify-between mb-1">
             <div className="text-[10px] uppercase font-bold" style={{ color: '#1F1B16', letterSpacing: '0.22em' }}>Personnel Statistic &middot; HQ Budget</div>
@@ -788,31 +826,39 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
             </button>
           </div>
           <div className="text-[11px] mb-3" style={{ color: '#1F1B16', opacity: 0.5 }}>
-            Status {new Date().toISOString().slice(0, 10).replace(/-/g, '.')} &middot; balance = current &minus; budget
+            Status {new Date().toISOString().slice(0, 10).replace(/-/g, '.')} &middot; bar = filled vs budget &middot; balance = current &minus; budget
           </div>
-          <div className="overflow-x-auto">
-            <table style={{ borderCollapse: 'collapse', minWidth: '100%' }}>
-              <thead><tr>
-                <HCol left>Dept</HCol><HCol>Budget</HCol><HCol>Men</HCol><HCol>Women</HCol><HCol>Total</HCol><HCol>Balance</HCol>
-              </tr></thead>
-              <tbody>
-                {personnel.rows.map(r => (
-                  <tr key={r.key}>
-                    <DCell left strong>{r.label}</DCell>
-                    <DCell>{r.budget}</DCell><DCell>{r.male}</DCell><DCell>{r.female}</DCell><DCell strong>{r.total}</DCell>
-                    <DCell strong danger={r.balance < 0}>{r.balance > 0 ? `+${r.balance}` : r.balance}</DCell>
-                  </tr>
-                ))}
-                <tr>
-                  <DCell left strong top>Grand total</DCell>
-                  <DCell strong top>{personnel.gt.budget}</DCell>
-                  <DCell strong top>{personnel.gt.male}</DCell>
-                  <DCell strong top>{personnel.gt.female}</DCell>
-                  <DCell strong top>{personnel.gt.total}</DCell>
-                  <DCell strong top danger={personnel.gt.balance < 0}>{personnel.gt.balance > 0 ? `+${personnel.gt.balance}` : personnel.gt.balance}</DCell>
-                </tr>
-              </tbody>
-            </table>
+          <div className="space-y-2.5">
+            {personnel.rows.map(r => {
+              const fill = r.budget ? Math.min(100, (r.total / r.budget) * 100) : 0;
+              const under = r.balance < 0;
+              return (
+                <div key={r.key} className="flex items-center gap-3">
+                  <div className="flex-shrink-0" style={{ width: 92, fontSize: 13, fontWeight: 600, color: '#1F1B16' }}>{r.label}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="overflow-hidden" style={{ height: 12, borderRadius: 999, background: '#EAE8E0' }}>
+                      <div style={{ height: '100%', width: `${fill}%`, background: under ? '#D97706' : '#0F4C2A' }} />
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0 text-right" style={{ width: 170, fontSize: 12, color: '#1F1B16' }}>
+                    <span style={{ opacity: 0.55 }}>{r.male}M/{r.female}W · </span>
+                    <strong style={{ fontWeight: 700 }}>{r.total}</strong>
+                    <span style={{ opacity: 0.5 }}>/{r.budget}</span>
+                    <BalancePill v={r.balance} />
+                  </div>
+                </div>
+              );
+            })}
+            <div className="flex items-center gap-3 pt-2" style={{ borderTop: '1px solid #E5E5E5' }}>
+              <div className="flex-shrink-0" style={{ width: 92, fontSize: 13, fontWeight: 700, color: '#1F1B16' }}>Grand total</div>
+              <div className="flex-1" />
+              <div className="flex-shrink-0 text-right" style={{ width: 170, fontSize: 12, color: '#1F1B16' }}>
+                <span style={{ opacity: 0.55 }}>{personnel.gt.male}M/{personnel.gt.female}W · </span>
+                <strong style={{ fontWeight: 700 }}>{personnel.gt.total}</strong>
+                <span style={{ opacity: 0.5 }}>/{personnel.gt.budget}</span>
+                <BalancePill v={personnel.gt.balance} />
+              </div>
+            </div>
           </div>
         </section>
       </div>
