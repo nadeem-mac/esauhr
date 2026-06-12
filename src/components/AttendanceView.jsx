@@ -1600,6 +1600,11 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // button in the Monthly Overview header. Wraps AttendanceBackfillPanel
   // with a date-window banner so Bashaier knows the allowed range.
   const [backfillModalOpen, setBackfillModalOpen] = useState(false);
+  // File handed to the backfill modal when the daily "Upload Time Card"
+  // button detects a historical / multi-month file. One upload button
+  // therefore covers both jobs: recent files run the daily review,
+  // historical files auto-open the backfill preview pre-loaded.
+  const [pendingBackfillFile, setPendingBackfillFile] = useState(null);
 
   // Daily-review modal — opens automatically when a time card finishes
   // parsing and shows the entire detection workspace (action tiles, file
@@ -3710,6 +3715,31 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         .join('');
 
       const result = await parseTimeCardXlsx(buf);
+
+      // One upload button, both jobs. A normal daily export covers
+      // today (+ yesterday); the daily recorder only persists those
+      // two dates. If the file instead spans a long range or reaches
+      // well into the past, it's a catch-up/historical import — route
+      // it straight into the backfill pipeline (full per-date
+      // classification + preview before commit) instead of the daily
+      // review. Threshold is deliberately loose so weekend gaps in a
+      // normal daily file never trip it.
+      try {
+        const fileDates = (result.rows || []).map(r => r.date).filter(Boolean);
+        if (fileDates.length) {
+          const minIso = fileDates.reduce((a, b) => (a < b ? a : b));
+          const maxIso = fileDates.reduce((a, b) => (a > b ? a : b));
+          const DAY = 86400000;
+          const spanDays      = (new Date(maxIso) - new Date(minIso)) / DAY;
+          const oldestAgeDays = (new Date(todayInLocal()) - new Date(minIso)) / DAY;
+          if (spanDays > 7 || oldestAgeDays > 10) {
+            setPendingBackfillFile(file);
+            setBackfillModalOpen(true);
+            return;
+          }
+        }
+      } catch { /* detection is best-effort — fall through to daily */ }
+
       setParsedData(result);
       setXlsxFileName(file.name);
       setFileSha256(hashHex);
@@ -4219,6 +4249,9 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
 
   // ─── Render ────────────────────────────────────────────────────────────
   const hasFile = !!xlsxFileName;
+  // Bashaier (H94830) — pink-themed action buttons to match the rest
+  // of her app theme. Others keep the default green/indigo/amber.
+  const isPink = me?.id === 'H94830';
 
   // Auto-open the daily-review modal as soon as a file is parsed.
   // Triggered on the transition from no-file to has-file so we don't
@@ -6320,7 +6353,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         return (
           <div className="fixed inset-0 z-50 flex items-start justify-center p-4 overflow-y-auto"
             style={{ background: 'rgba(31,27,22,0.5)' }}
-            onClick={() => setBackfillModalOpen(false)}>
+            onClick={() => { setBackfillModalOpen(false); setPendingBackfillFile(null); }}>
             <div className="rounded-xl shadow-lg w-full max-w-5xl my-8 overflow-hidden"
               style={{ background: '#FFFFFF', border: '1px solid #EEEAE0' }}
               onClick={(e) => e.stopPropagation()}>
@@ -6337,7 +6370,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
                     Allowed window: <strong style={{ color: '#0A0A0A' }}>{allowedStart}</strong> → <strong style={{ color: '#0A0A0A' }}>{allowedEnd}</strong> (Sep 1 last year through today). Files outside this window will be rejected.
                   </div>
                 </div>
-                <button onClick={() => setBackfillModalOpen(false)}
+                <button onClick={() => { setBackfillModalOpen(false); setPendingBackfillFile(null); }}
                   className="p-1.5 rounded hover:bg-[#FAFAF9] flex-shrink-0"
                   style={{ color: '#7A7A7A' }}>
                   <X className="w-4 h-4"/>
@@ -6351,6 +6384,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
                     embedded
                     allowedStart={allowedStart}
                     allowedEnd={allowedEnd}
+                    initialFile={pendingBackfillFile}
                     onChanged={() => setCalendarRefreshTick(t => t + 1)}
                   />
                 </AttendanceErrorBoundary>
@@ -6448,14 +6482,15 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1.5"
+              className="flex items-center justify-center gap-1.5"
               style={{
-                background: '#0F4C2A',
+                minWidth: 168, height: 38, padding: '0 16px',
+                borderRadius: 8, fontSize: 12, fontWeight: 700,
+                background: isPink ? '#993556' : '#0F4C2A',
                 color: '#FFFFFF',
-                fontWeight: 600,
-                border: '1px solid #0F4C2A',
+                border: `1px solid ${isPink ? '#993556' : '#0F4C2A'}`,
               }}
-              title="Upload the Time Card .xlsx export from the fingerprint device."
+              title="Upload the Time Card .xlsx export. A normal daily file runs today's review; a historical/multi-month file opens the backfill preview automatically."
             >
               ⬆ Upload Time Card
             </button>
@@ -6471,17 +6506,15 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             <button
               type="button"
               onClick={() => setShiftReportOpen(v => !v)}
-              className="px-3.5 py-1.5 rounded-full flex items-center gap-1.5"
+              className="flex items-center justify-center gap-1.5"
               style={{
-                fontSize: '12px',
-                letterSpacing: '0.06em',
-                background: shiftReportOpen ? '#3730A3' : '#4338CA',
-                color:      '#FFFFFF',
-                fontWeight: 800,
-                border:     `1px solid ${shiftReportOpen ? '#3730A3' : '#4338CA'}`,
-                boxShadow:  shiftReportOpen
-                  ? 'inset 0 1px 3px rgba(0,0,0,0.3)'
-                  : '0 2px 6px rgba(67,56,202,0.45)',
+                minWidth: 168, height: 38, padding: '0 16px',
+                borderRadius: 8, fontSize: 12, fontWeight: 700, letterSpacing: '0.04em',
+                background: isPink ? (shiftReportOpen ? '#7A2E47' : '#C16085')
+                                   : (shiftReportOpen ? '#3730A3' : '#4338CA'),
+                color: '#FFFFFF',
+                border: `1px solid ${isPink ? (shiftReportOpen ? '#7A2E47' : '#C16085')
+                                             : (shiftReportOpen ? '#3730A3' : '#4338CA')}`,
               }}
               title="Open the Attendance Report — search a date range and export an enriched report (HTML / Print / Excel)."
             >
@@ -6491,12 +6524,13 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
               <button
                 type="button"
                 onClick={() => setDailyReviewOpen(true)}
-                className="text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1.5"
+                className="flex items-center justify-center gap-1.5"
                 style={{
-                  background: '#FEF3C7',
-                  color: '#854F0B',
-                  fontWeight: 600,
-                  border: '1px solid #FCD34D',
+                  minWidth: 168, height: 38, padding: '0 16px',
+                  borderRadius: 8, fontSize: 12, fontWeight: 700,
+                  background: isPink ? '#FDEFF4' : '#FEF3C7',
+                  color: isPink ? '#993556' : '#854F0B',
+                  border: `1px solid ${isPink ? '#F3C9DB' : '#FCD34D'}`,
                 }}
                 title="Reopen the daily review for the loaded time card."
               >
@@ -6577,12 +6611,13 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             <button
               type="button"
               onClick={() => setBackfillModalOpen(true)}
-              className="text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1.5"
+              className="flex items-center justify-center gap-1.5"
               style={{
-                background: '#5B21B6',
+                minWidth: 168, height: 38, padding: '0 16px',
+                borderRadius: 8, fontSize: 12, fontWeight: 700,
+                background: isPink ? '#7A2E47' : '#5B21B6',
                 color: '#FFFFFF',
-                border: '1px solid #5B21B6',
-                fontWeight: 600,
+                border: `1px solid ${isPink ? '#7A2E47' : '#5B21B6'}`,
               }}
               title="Import historical attendance — Sep 1 last year through today. One-shot bulk import for catching up on past months."
             >

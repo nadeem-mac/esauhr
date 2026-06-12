@@ -36,7 +36,7 @@
 //   animation each time the state advances.
 // =============================================================================
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import {
   Upload, ChevronDown, AlertTriangle, CheckCircle2, Loader2,
   FileSpreadsheet, Calendar, Users, Layers, RefreshCw, Sparkles,
@@ -70,7 +70,7 @@ const ANIM_CSS = `
 }
 `;
 
-export default function AttendanceBackfillPanel({ me, employees, embedded = false, onChanged }) {
+export default function AttendanceBackfillPanel({ me, employees, embedded = false, onChanged, initialFile = null }) {
   // When embedded inside the AttendanceView sidebar layout the panel
   // is always "open" — there's no point in collapsing it since the
   // user already chose to navigate here. The header chrome (decorative
@@ -178,6 +178,15 @@ export default function AttendanceBackfillPanel({ me, employees, embedded = fals
       setParsing(false);
     }
   }, [employees, me?.id, reset]);
+
+  // When the daily "Upload Time Card" button detects a historical /
+  // multi-month file, it opens this modal and hands the file straight
+  // here via initialFile — so the same one upload that does the daily
+  // job also runs the backfill preview without a second file pick.
+  useEffect(() => {
+    if (initialFile) handleFile(initialFile);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialFile]);
 
   const handleImport = useCallback(async () => {
     if (!preview?.rows?.length) return;
