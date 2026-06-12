@@ -150,6 +150,7 @@ export default function HrLandingCard({
   requests = [],
   permissions = [],
   leaveTypes = [],
+  headcount = null,
   onGoToReviews,
   onGoToAttendance,
 }) {
@@ -537,6 +538,13 @@ export default function HrLandingCard({
           </ul>
         )}
       </div>
+
+      {/* ── HEADCOUNT (number tables, collapsible) ────────────────── */}
+      {headcount && (
+        <div className="px-6 py-5 sm:px-8 sm:py-6" style={{ borderTop: '1px solid #F4F4EE' }}>
+          {headcount}
+        </div>
+      )}
     </section>
   );
 }
