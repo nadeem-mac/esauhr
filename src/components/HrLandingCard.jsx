@@ -294,6 +294,27 @@ export default function HrLandingCard({
     ).length;
   }, [requests]);
 
+  // Full list behind the PENDING chip — revealed inline when she taps it.
+  const pendingList = useMemo(() => {
+    return (requests || [])
+      .filter(r => r.stage === 'pending' || r.stage === 'pending_manager' || r.stage === 'pending_hr')
+      .map(r => {
+        const emp = (employees || []).find(e => e.id === r.employee_id);
+        const tp  = typeMap[r.leave_type_id];
+        return {
+          key: r.id,
+          name: emp?.name || r.employee_id,
+          typeName: tp?.name || r.leave_type_id || 'Leave',
+          color: tp?.color || '#C2410C',
+          days: r.days,
+          date: r.start_date ? fmtDateShort(r.start_date) : '',
+          stageLabel: r.stage === 'pending_manager' ? 'Manager' : r.stage === 'pending_hr' ? 'HR' : 'New',
+        };
+      })
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  }, [requests, employees, typeMap]);
+  const [showPending, setShowPending] = useState(false);
+
   // Empty-state shorthand — when there's literally nothing in any of
   // the four life-event categories AND no actions, we collapse the
   // card to a single warm line rather than show a wall of zero rows.
@@ -314,40 +335,6 @@ export default function HrLandingCard({
         overflow: 'hidden',
       }}
     >
-      {/* ── AT A GLANCE ───────────────────────────────────────────── */}
-      <div className="px-6 py-5 sm:px-8 sm:py-6" style={{ borderBottom: '1px solid #F4F4EE' }}>
-        <div className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.3em', fontWeight: 700 }}>
-          — AT A GLANCE
-        </div>
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2.5 mt-3">
-          <GlanceChip value={outToday.length}      label="OUT TODAY"  color="#7C2D12" />
-          <GlanceChip value={returnsThisWeek.length} label="RETURNING" color="#0F4C2A" />
-          <GlanceChip value={startsThisWeek.length}  label="STARTING"  color="#7C2D12" />
-          <GlanceChip value={pendingDecisions}       label="PENDING"   color="#C2410C" onClick={onGoToReviews} />
-          <GlanceChip value={pendingCertCount}       label="SICK CERTS" color="#BE123C" onClick={onGoToReviews} />
-          <GlanceChip value={(evalZoneCounts?.review || 0) + (evalZoneCounts?.watch || 0)} label="EVAL FLAGS" color="#A16207" onClick={onGoToReviews} />
-        </div>
-
-        {outToday.length > 0 && (
-          <div className="mt-5">
-            <div className="flex items-center gap-2 mb-2">
-              <Palmtree className="w-3.5 h-3.5" style={{ color: '#0E7490' }} />
-              <span className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.18em', fontWeight: 700 }}>
-                OUT OF OFFICE TODAY
-              </span>
-            </div>
-            <ul className="space-y-1">
-              {outToday.slice(0, 5).map(o => <OutTodayRow key={o.key} o={o} />)}
-            </ul>
-            {outToday.length > 5 && (
-              <div className="text-[11px] mt-1.5 pl-2" style={{ color: '#1F1B16', opacity: 0.6 }}>
-                +{outToday.length - 5} more out today
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
       {/* ── THIS WEEK ─────────────────────────────────────────────── */}
       <div className="px-6 py-5 sm:px-8 sm:py-6" style={{ borderBottom: '1px solid #F4F4EE' }}>
         <div className="flex items-baseline justify-between flex-wrap gap-2 mb-4">
@@ -379,8 +366,7 @@ export default function HrLandingCard({
             A quiet week. No anniversaries, returns, or holidays in the next seven days — a good window to catch up on the things that always wait.
           </p>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Anniversaries column */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <LifeEventColumn
               icon={Award}
               accent="#A16207"
@@ -398,8 +384,6 @@ export default function HrLandingCard({
                 special: a.milestone,
               }))}
             />
-
-            {/* Public holidays column */}
             <LifeEventColumn
               icon={CalendarCheck}
               accent="#0E7490"
@@ -412,8 +396,6 @@ export default function HrLandingCard({
                 badge: h.daysFromNow === 0 ? 'TODAY' : `IN ${h.daysFromNow}D`,
               }))}
             />
-
-            {/* Returns column */}
             <LifeEventColumn
               icon={Plane}
               accent="#0F4C2A"
@@ -431,8 +413,6 @@ export default function HrLandingCard({
                 };
               })}
             />
-
-            {/* Starts column */}
             <LifeEventColumn
               icon={Sparkles}
               accent="#7C2D12"
@@ -453,19 +433,44 @@ export default function HrLandingCard({
         )}
       </div>
 
-      {/* ── NEEDS YOUR ATTENTION ──────────────────────────────────── */}
-      <div className="px-6 py-5 sm:px-8 sm:py-6" style={{ background: '#FCFCF9', borderBottom: '1px solid #F4F4EE' }}>
-        <div className="flex items-baseline justify-between flex-wrap gap-2 mb-4">
-          <div>
-            <div className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.3em', fontWeight: 700 }}>
-              — NEEDS YOUR ATTENTION
+      {/* ── OUT OF OFFICE TODAY ───────────────────────────────────── */}
+      {outToday.length > 0 && (
+        <div className="px-6 py-4 sm:px-8 sm:py-5" style={{ borderBottom: '1px solid #F4F4EE' }}>
+          <div className="flex items-center gap-2 mb-3">
+            <Palmtree className="w-3.5 h-3.5" style={{ color: '#0E7490' }} />
+            <span className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.18em', fontWeight: 700 }}>
+              OUT OF OFFICE TODAY
+            </span>
+            <span className="text-[11px]" style={{ color: '#1F1B16', opacity: 0.5 }}>
+              · {outToday.length} {outToday.length === 1 ? 'person' : 'people'}
+            </span>
+          </div>
+          {outToday.length > 4 ? (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {outToday.map(o => (
+                <div
+                  key={o.key}
+                  title={`${o.emp.name} · ${o.typeName} · until ${fmtDateShort(o.endDate)}`}
+                  className="flex-shrink-0 rounded-full flex items-center justify-center transition-transform hover:-translate-y-0.5"
+                  style={{ width: 32, height: 32, background: '#FBEAF0', color: '#993556', fontSize: 11, fontWeight: 600, cursor: 'default' }}
+                >
+                  {initials(o.emp.name)}
+                </div>
+              ))}
             </div>
-            <h2 className="serif" style={{
-              fontSize: '22px', color: '#1F1B16', marginTop: '4px',
-              fontWeight: 500, letterSpacing: '-0.01em',
-            }}>
-              Action queue
-            </h2>
+          ) : (
+            <ul className="space-y-1">
+              {outToday.map(o => <OutTodayRow key={o.key} o={o} />)}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* ── AT A GLANCE (merged action queue) ─────────────────────── */}
+      <div className="px-6 py-5 sm:px-8 sm:py-6" style={{ background: '#FCFCF9' }}>
+        <div className="flex items-baseline justify-between flex-wrap gap-2 mb-3">
+          <div className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.3em', fontWeight: 700 }}>
+            — AT A GLANCE
           </div>
           {!hasActions && (
             <div className="text-[11px]" style={{ color: '#0F4C2A', fontWeight: 700, letterSpacing: '0.06em' }}>
@@ -474,55 +479,62 @@ export default function HrLandingCard({
           )}
         </div>
 
-        {!hasActions ? (
-          <p className="text-[13px]" style={{ color: '#1F1B16', opacity: 0.7, fontStyle: 'italic' }}>
-            No outstanding decisions, no sick certificates pending, no evaluation flags. Use this window for the proactive work the queue normally swallows.
-          </p>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <ActionPill
-              label="LEAVE DECISIONS"
-              count={pendingDecisions}
-              icon={ClipboardList}
-              accentDark="#C2410C"
-              accentTint="#FFFBEB"
-              caption="awaiting decision"
-              onClick={onGoToReviews}
-            />
-            <ActionPill
-              label="SICK CERTIFICATES"
-              count={pendingCertCount}
-              loading={pendingCertCount === null && loading}
-              icon={Heart}
-              accentDark="#BE123C"
-              accentTint="#FFF1F2"
-              caption="Sehhaty awaited"
-              onClick={onGoToReviews}
-            />
-            <ActionPill
-              label="EVALUATION FLAGS"
-              count={(evalZoneCounts?.review || 0) + (evalZoneCounts?.watch || 0)}
-              loading={evalZoneCounts === null && loading}
-              icon={ShieldAlert}
-              accentDark={(evalZoneCounts?.review || 0) > 0 ? '#7F1D1D' : '#A16207'}
-              accentTint={(evalZoneCounts?.review || 0) > 0 ? '#FEE2E2' : '#FEF3C7'}
-              caption={
-                evalZoneCounts
-                  ? `${evalZoneCounts.review} review · ${evalZoneCounts.watch} watch`
-                  : 'this month'
-              }
-              onClick={onGoToReviews}
-            />
-            <ActionPill
-              label="SHIFT COMPLIANCE"
-              count={null}
-              icon={FileWarning}
-              accentDark="#1F4530"
-              accentTint="#ECFDF5"
-              caption="open Attendance to review"
-              onClick={onGoToAttendance}
-            />
-          </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+          <GlanceChip
+            value={pendingDecisions} label="PENDING" color="#C2410C"
+            caption={pendingDecisions > 0 ? (showPending ? 'tap to hide' : 'tap to see who') : 'awaiting decision'}
+            active={showPending}
+            onClick={pendingDecisions > 0 ? () => setShowPending(s => !s) : onGoToReviews}
+          />
+          <GlanceChip
+            value={pendingCertCount} label="SICK CERTS" color="#BE123C"
+            loading={pendingCertCount === null && loading}
+            caption="Sehhaty awaited" onClick={onGoToReviews}
+          />
+          <GlanceChip
+            value={(evalZoneCounts?.review || 0) + (evalZoneCounts?.watch || 0)} label="EVAL FLAGS" color="#A16207"
+            loading={evalZoneCounts === null && loading}
+            caption={evalZoneCounts ? `${evalZoneCounts.review} review · ${evalZoneCounts.watch} watch` : 'this month'}
+            onClick={onGoToReviews}
+          />
+          <GlanceChip
+            linkOnly label="SHIFT" color="#1F4530"
+            caption="open Attendance" onClick={onGoToAttendance}
+          />
+        </div>
+
+        {showPending && pendingList.length > 0 && (
+          <ul className="mt-3 space-y-1">
+            {pendingList.slice(0, 6).map(p => (
+              <li
+                key={p.key}
+                className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-[#F1F0E9] cursor-pointer"
+                onClick={onGoToReviews}
+              >
+                <div className="flex-shrink-0 rounded-full flex items-center justify-center"
+                     style={{ width: 26, height: 26, background: '#FFEDD5', color: '#C2410C', fontSize: 10, fontWeight: 600 }}>
+                  {initials(p.name)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13px] truncate" style={{ color: '#1F1B16', fontWeight: 500 }}>{p.name}</div>
+                  <div className="text-[11px]" style={{ color: '#1F1B16', opacity: 0.6 }}>
+                    <span style={{ color: p.color, fontWeight: 600 }}>{p.typeName}</span>
+                    {p.days ? ` · ${p.days}d` : ''}{p.date ? ` · ${p.date}` : ''}
+                  </div>
+                </div>
+                <span className="text-[9px] flex-shrink-0" style={{ color: '#C2410C', background: '#FFF7ED', padding: '1px 7px', borderRadius: 999, fontWeight: 700, letterSpacing: '0.06em' }}>
+                  {p.stageLabel}
+                </span>
+              </li>
+            ))}
+            {pendingList.length > 6 && (
+              <li className="pl-2">
+                <button onClick={onGoToReviews} className="text-[11px] flex items-center gap-1" style={{ color: '#C2410C', fontWeight: 600 }}>
+                  See all {pendingList.length} in the review queue <ArrowRight className="w-3 h-3" />
+                </button>
+              </li>
+            )}
+          </ul>
         )}
       </div>
     </section>
@@ -533,15 +545,23 @@ export default function HrLandingCard({
 
 function LifeEventColumn({ icon: Icon, accent, label, empty, items }) {
   return (
-    <div>
-      <div className="flex items-center gap-2 mb-2">
-        <Icon className="w-3.5 h-3.5" style={{ color: accent }} />
-        <span className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.18em', fontWeight: 700 }}>
+    <div
+      className="rounded-xl p-3.5 transition-all hover:-translate-y-0.5"
+      style={{ background: '#FFFFFF', border: '1px solid #ECEAE0' }}
+    >
+      <div className="flex items-center gap-2 mb-2.5">
+        <span
+          className="flex items-center justify-center rounded-lg flex-shrink-0"
+          style={{ width: 24, height: 24, background: `${accent}14` }}
+        >
+          <Icon className="w-3.5 h-3.5" style={{ color: accent }} />
+        </span>
+        <span className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.14em', fontWeight: 700 }}>
           {label}
         </span>
       </div>
       {items.length === 0 ? (
-        <div className="text-[12px]" style={{ color: '#1F1B16', opacity: 0.5, fontStyle: 'italic' }}>
+        <div className="text-[12px]" style={{ color: '#1F1B16', opacity: 0.45, fontStyle: 'italic' }}>
           {empty}
         </div>
       ) : (
@@ -549,13 +569,13 @@ function LifeEventColumn({ icon: Icon, accent, label, empty, items }) {
           {items.map(it => (
             <li key={it.key}>
               <div className="flex items-baseline justify-between gap-2">
-                <div className="text-[13px]" style={{ color: '#1F1B16', fontWeight: 500 }}>
+                <div className="text-[13px] truncate" style={{ color: '#1F1B16', fontWeight: 500 }}>
                   {it.title}
                 </div>
                 <div className="text-[9px] flex-shrink-0"
                      style={{
                        color: accent,
-                       background: it.special ? '#FEF3C7' : 'transparent',
+                       background: it.special ? `${accent}1A` : 'transparent',
                        padding: it.special ? '1px 6px' : 0,
                        borderRadius: 999,
                        fontWeight: 700,
@@ -622,26 +642,43 @@ function initials(name) {
 }
 
 // Compact stat chip for the AT A GLANCE strip. Lifts + greens its border
-// on hover; only navigates when an onClick is supplied and the count is
-// actionable (non-zero, loaded).
-function GlanceChip({ value, label, color, onClick }) {
-  const loading = value === null || value === undefined;
-  const isZero  = value === 0;
-  const tone    = (loading || isZero) ? '#9CA3AF' : color;
-  const clickable = !!onClick && !isZero && !loading;
+// on hover; shows a count, an optional caption, and either navigates or
+// (for PENDING) toggles an inline list. linkOnly chips show an arrow
+// instead of a number (e.g. SHIFT → open Attendance).
+function GlanceChip({ value, label, color, caption, onClick, active, loading, linkOnly }) {
+  const isNull = value === null || value === undefined;
+  const isZero = value === 0;
+  const tone   = (!linkOnly && (isZero || (isNull && !loading))) ? '#9CA3AF' : color;
   return (
     <button
       type="button"
-      onClick={clickable ? onClick : undefined}
-      className="text-left rounded-xl px-3 py-2.5 border border-[#E8E5D8] transition-all hover:-translate-y-0.5 hover:border-[#0F4C2A] hover:bg-[#F6FAF4]"
-      style={{ background: '#FFFFFF', cursor: clickable ? 'pointer' : 'default' }}
+      onClick={onClick}
+      className="text-left rounded-xl px-3 py-2.5 border transition-all hover:-translate-y-0.5 hover:bg-[#F6FAF4]"
+      style={{
+        background: active ? '#F6FAF4' : '#FFFFFF',
+        borderColor: active ? '#0F4C2A' : '#E8E5D8',
+        cursor: onClick ? 'pointer' : 'default',
+      }}
     >
-      <div className="serif" style={{ fontSize: '21px', lineHeight: 1, fontWeight: 600, color: tone }}>
-        {loading ? '–' : value}
+      <div className="flex items-center gap-1.5" style={{ minHeight: 22 }}>
+        {linkOnly ? (
+          <ArrowRight className="w-5 h-5" style={{ color }} />
+        ) : loading ? (
+          <Loader2 className="w-4 h-4 animate-spin" style={{ color }} />
+        ) : (
+          <span className="serif" style={{ fontSize: '21px', lineHeight: 1, fontWeight: 600, color: tone }}>
+            {isNull ? '–' : value}
+          </span>
+        )}
       </div>
       <div className="text-[10px] mt-1" style={{ color: '#1F1B16', letterSpacing: '0.08em', fontWeight: 700 }}>
         {label}
       </div>
+      {caption && (
+        <div className="text-[10px] mt-0.5 truncate" style={{ color: '#1F1B16', opacity: 0.55 }}>
+          {caption}
+        </div>
+      )}
     </button>
   );
 }

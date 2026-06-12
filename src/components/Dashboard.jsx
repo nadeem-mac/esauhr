@@ -585,24 +585,10 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
       </div>
       )}
 
-      {/* QUICK ACTIONS — Bashaier's daily-work command center. Sits
-          above HrLandingCard so the cross-tab shortcuts she reaches
-          for every morning (apply leave for staff, review queue,
-          print form, sick cert upload, org chart) plus an inline
-          staff search are the first interactive surface after the
-          hero. Nadeem 2026-05-17. */}
-      {bashaierMode && (
-        <QuickActionsCard
-          me={me}
-          employees={employees}
-          pendingCount={pending.length}
-          onNewRequest={onNewRequest}
-          onGoToReviews={onGoToReviews}
-          onGoToRequests={onGoToRequests}
-          onOpenOrgChart={onOpenOrgChart}
-          onUploadCert={onUploadCert}
-        />
-      )}
+      {/* QUICK ACTIONS removed per Nadeem 2026-06-12 — the shortcuts
+          (apply leave, review queue, print form, sick cert, org chart)
+          duplicated entry points already reachable from the nav and the
+          consolidated HrLandingCard hub below. */}
 
       {/* HR daily-digest card — Bashaier's editorial 'This Week' +
           'Needs Your Attention' surface. Consolidates the human
