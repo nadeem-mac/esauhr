@@ -26,7 +26,11 @@ export default function Employees({ employees, leaveTypes, requests, balances, o
     [employees]
   );
   const filtered = useMemo(() => employees.filter(e => {
-    if (!showInactive && !isActiveEmployee(e)) return false;
+    // Active staff ALWAYS show. Inactive show only when the toggle is on —
+    // toggling 'Show inactive' ADDS the archived rows, it never hides the
+    // active ones.
+    const active = isActiveEmployee(e);
+    if (!active && !showInactive) return false;
     if (location !== 'ALL' && e.location !== location) return false;
     if (department !== 'ALL' && e.department !== department) return false;
     if (search) {
@@ -36,6 +40,9 @@ export default function Employees({ employees, leaveTypes, requests, balances, o
     return true;
   }), [employees, location, department, search, showInactive]);
 
+  const shownActive   = filtered.filter(isActiveEmployee).length;
+  const shownInactive = filtered.length - shownActive;
+
   const annualType = leaveTypes.find(t => t.id === 'annual');
 
   return (
@@ -44,9 +51,9 @@ export default function Employees({ employees, leaveTypes, requests, balances, o
         <div className="text-[10px] tracking-[0.25em] opacity-50 mb-2">ROSTER</div>
         <h1 className="serif text-4xl" style={{ fontWeight: 500, letterSpacing: '-0.02em' }}>
           {filtered.length} {filtered.length === 1 ? 'person' : 'people'}
-          {showInactive && inactiveCount > 0 && (
+          {showInactive && (
             <span className="text-base ml-3 opacity-50" style={{ fontWeight: 400 }}>
-              · including {inactiveCount} inactive
+              · {shownActive} active · {shownInactive} inactive
             </span>
           )}
         </h1>
