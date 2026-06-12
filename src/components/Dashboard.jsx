@@ -747,7 +747,6 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           requests={requests}
           permissions={permissions}
           leaveTypes={leaveTypes}
-          headcount={headcountBlock}
           onGoToReviews={onGoToReviews || onGoToRequests}
           onGoToAttendance={() => { /* parent doesn't wire this yet; safe no-op until they do */ }}
         />
@@ -812,16 +811,13 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
           {/* Always mount PinRequestsCard so the realtime subscription
               keeps the count current — kept in a hidden tree (display:none)
               while the modal is closed. Same pattern as before. */}
+
+          {/* Headcount by department — collapsible, lives inside this card. */}
+          <div className="mt-4 pt-4" style={{ borderTop: '1px solid #F1F0EA' }}>
+            {headcountBlock}
+          </div>
         </div>
       </div>
-
-      {/* Headcount — for Bashaier this renders inside the at-a-glance hub
-          above (passed as a prop); admin sees it standalone here. */}
-      {!bashaierMode && (
-        <div className="pt-7" style={{ borderTop: '1px solid #E5E5E5' }}>
-          {headcountBlock}
-        </div>
-      )}
 
       {/* Three column summary — for Bashaier this is folded into the
           consolidated HrLandingCard hub above (Out today / Pending /
