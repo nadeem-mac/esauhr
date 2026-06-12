@@ -489,27 +489,29 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
   // Bashaier can paste straight into Outlook (keeps table + signature
   // formatting). Copies both rich HTML and a plain-text fallback.
   const copyManagerHtml = useCallback(async (summary) => {
+    // Baby-pink header = Bashaier's signature; neutral green for others.
+    const hdr = me?.id === 'H94830' ? { bg: '#F7C5D0', fg: '#0A0A0A' } : { bg: '#2D5F3F', fg: '#FFFFFF' };
     const emp     = summary.emp;
     const manager = emp.manager_id ? empMap[emp.manager_id] : null;
     const periodLabel = `${fmtDate(from)} – ${fmtDate(to)}`;
     const rowsHtml = (summary.problemRows.length ? summary.problemRows : summary.rows).map((r, i) => {
       const bg = i % 2 === 0 ? '#FFFFFF' : '#F7F7F2';
       return `<tr>
-        <td style="padding:6px 12px;border:1px solid #D1D5DB;font-size:13px;background:${bg};white-space:nowrap;font-weight:600;color:#1F2937">${escapeHtml(fmtDateLong(r.attendance_date))}</td>
-        <td style="padding:6px 12px;border:1px solid #D1D5DB;font-size:13px;background:${bg};white-space:nowrap;color:#1F2937">${escapeHtml(fmtShiftWindow(r.expected_start, r.expected_end) || '—')}</td>
-        <td style="padding:6px 12px;border:1px solid #D1D5DB;font-size:13px;background:${bg};white-space:nowrap;color:#1F2937">${escapeHtml(fmtTime(r.effective_in) || '—')}</td>
-        <td style="padding:6px 12px;border:1px solid #D1D5DB;font-size:13px;background:${bg};white-space:nowrap;color:#1F2937">${escapeHtml(fmtTime(r.effective_out) || '—')}</td>
-        <td style="padding:6px 12px;border:1px solid #D1D5DB;font-size:13px;background:${bg};white-space:nowrap;color:#1F2937">${escapeHtml(fmtHoursMins(r.total_minutes))}</td>
-        <td style="padding:6px 12px;border:1px solid #D1D5DB;font-size:13px;background:${bg};color:#1F2937">${escapeHtml(detailedStatusLabel(r))}</td>
+        <td style="padding:1px 8px;border:1px solid #D1D5DB;font-size:10pt;background:${bg};white-space:nowrap;font-weight:600;color:#1F2937">${escapeHtml(fmtDateLong(r.attendance_date))}</td>
+        <td style="padding:1px 8px;border:1px solid #D1D5DB;font-size:10pt;background:${bg};white-space:nowrap;color:#1F2937">${escapeHtml(fmtShiftWindow(r.expected_start, r.expected_end) || '—')}</td>
+        <td style="padding:1px 8px;border:1px solid #D1D5DB;font-size:10pt;background:${bg};white-space:nowrap;color:#1F2937">${escapeHtml(fmtTime(r.effective_in) || '—')}</td>
+        <td style="padding:1px 8px;border:1px solid #D1D5DB;font-size:10pt;background:${bg};white-space:nowrap;color:#1F2937">${escapeHtml(fmtTime(r.effective_out) || '—')}</td>
+        <td style="padding:1px 8px;border:1px solid #D1D5DB;font-size:10pt;background:${bg};white-space:nowrap;color:#1F2937">${escapeHtml(fmtHoursMins(r.total_minutes))}</td>
+        <td style="padding:1px 8px;border:1px solid #D1D5DB;font-size:10pt;background:${bg};color:#1F2937">${escapeHtml(detailedStatusLabel(r))}</td>
       </tr>`;
     }).join('');
-    const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:14px;color:#0A0A0A;line-height:1.5;max-width:820px">
+    const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:10pt;color:#0A0A0A;line-height:1.5;max-width:820px">
   <p style="margin:0 0 12px 0">Dear ${escapeHtml(salutationFor(manager || {}))},</p>
   <p style="margin:0 0 12px 0">Please review the attendance record below for <strong>${escapeHtml(emp.name)} (${escapeHtml(emp.id)})</strong> covering <strong>${escapeHtml(periodLabel)}</strong>, pulled from the fingerprint records.</p>
   <p style="margin:0 0 12px 0">Summary: ${summary.daysLate} late · ${summary.daysShort} short · ${summary.daysAbsent} absent · ${summary.daysPresent} days present in window.</p>
   <table style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;margin:12px 0">
     <thead><tr>
-      ${['Date','Assigned shift','In','Out','Total','Status'].map(h => `<th style="background:#2D5F3F;color:#fff;padding:7px 12px;text-align:left;font-weight:600;font-size:13px;border:1px solid #1F4530">${h}</th>`).join('')}
+      ${['Date','Assigned shift','In','Out','Total','Status'].map(h => `<th style="background:${hdr.bg};color:${hdr.fg};padding:2px 8px;text-align:left;font-weight:700;font-size:10pt;border:1px solid ${hdr.bg}">${h}</th>`).join('')}
     </tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table>
@@ -1683,6 +1685,10 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me }) {
  * stamps. Print-stylesheet collapses to letter-format margins.
  */
 function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
+  // Baby-pink header = Bashaier's signature; neutral brand-green otherwise.
+  const hdr = me?.id === 'H94830'
+    ? { bg: '#F7C5D0', fg: '#0A0A0A', border: '#E59FB4' }
+    : { bg: '#0F4C2A', fg: '#FFFFFF', border: '#0B3A20' };
   const now = new Date();
   const generatedAt = now.toLocaleString('en-GB', {
     weekday: 'long', day: '2-digit', month: 'short', year: 'numeric',
@@ -1873,10 +1879,10 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
   .dot.good { background: #15803D; }
   .dot.bad  { background: #B91C1C; }
   .dot.na   { background: #D1D5DB; }
-  table.grid { width: 100%; border-collapse: collapse; font-size: 9.5pt; margin: 4px 0 22px; }
+  table.grid { width: 100%; border-collapse: collapse; font-size: 10pt; margin: 4px 0 22px; }
   table.grid thead th {
-    text-align: left; padding: 7px 10px; background: #0F4C2A; color: #FFFFFF;
-    border: 1px solid #0B3A20; font-weight: 600; white-space: nowrap;
+    text-align: left; padding: 7px 10px; background: ${hdr.bg}; color: ${hdr.fg};
+    border: 1px solid ${hdr.border}; font-weight: 700; white-space: nowrap;
   }
   table.grid thead th.num { text-align: right; }
   table.grid thead th.ctr { text-align: center; }
@@ -1900,8 +1906,8 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
   .pill.approved { background: #CCFBF1; color: #115E59; font-weight: 700; }
   thead th {
     text-align: left; padding: 9px 14px;
-    background: #0F4C2A; color: #FFFFFF; border: 1px solid #0B3A20;
-    font-weight: 600; letter-spacing: 0.02em; white-space: nowrap;
+    background: ${hdr.bg}; color: ${hdr.fg}; border: 1px solid ${hdr.border};
+    font-weight: 700; letter-spacing: 0.02em; white-space: nowrap;
   }
   tbody td { padding: 8px 14px; border: 1px solid #E5E0D2; vertical-align: middle; }
   tbody tr:nth-child(even) td { background: #FAF8F1; }

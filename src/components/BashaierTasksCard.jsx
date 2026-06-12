@@ -39,8 +39,8 @@ const SIGNATURE_PLAIN = [
 ].join('\n');
 
 const SIGNATURE_HTML = `
-<p style="margin:18px 0 0;color:#1F2937;font-family:Arial,sans-serif;font-size:11pt">Thanks and regards,</p>
-<p style="margin:14px 0 0;color:#1F2937;font-family:Arial,sans-serif;font-size:11pt;line-height:1.45">
+<p style="margin:18px 0 0;color:#1F2937;font-family:Calibri,sans-serif;font-size:10pt">Thanks and regards,</p>
+<p style="margin:14px 0 0;color:#1F2937;font-family:Calibri,sans-serif;font-size:10pt;line-height:1.45">
   <strong>BASHAIER ALI</strong><br/>
   Evergreen Shipping Agency Saudi Co.,(L.L.C)<br/>
   ESAU - SADMN SUP/ HR DEPT<br/>
@@ -82,13 +82,13 @@ function plainTable(headers, rows, widths) {
 
 // Build an HTML table for clipboard
 function htmlTable(headers, rows, hdr = { bg: '#334155', fg: '#FFFFFF' }) {
-  const th = headers.map(h => `<th style="background:${hdr.bg};color:${hdr.fg};padding:1px 6px;text-align:left;font-family:Arial,sans-serif;font-weight:700;font-size:11pt;border:1px solid ${hdr.bg};white-space:nowrap">${escapeHtml(h)}</th>`).join('');
+  const th = headers.map(h => `<th style="background:${hdr.bg};color:${hdr.fg};padding:1px 6px;text-align:left;font-family:Calibri,sans-serif;font-weight:700;font-size:10pt;border:1px solid ${hdr.bg};white-space:nowrap">${escapeHtml(h)}</th>`).join('');
   const trs = rows.map((r, i) => {
     const bg = i % 2 === 0 ? '#FFFFFF' : '#F3F4F6';
-    const tds = r.map(c => `<td style="padding:0 6px;border:1px solid #D1D5DB;color:#1F2937;font-family:Arial,sans-serif;font-size:11pt;background:${bg};white-space:nowrap">${escapeHtml(c == null ? '' : String(c))}</td>`).join('');
+    const tds = r.map(c => `<td style="padding:0 6px;border:1px solid #D1D5DB;color:#1F2937;font-family:Calibri,sans-serif;font-size:10pt;background:${bg};white-space:nowrap">${escapeHtml(c == null ? '' : String(c))}</td>`).join('');
     return `<tr>${tds}</tr>`;
   }).join('');
-  return `<table style="border-collapse:collapse;font-family:Arial,sans-serif;margin:10px 0">
+  return `<table style="border-collapse:collapse;font-family:Calibri,sans-serif;margin:10px 0">
     <thead><tr>${th}</tr></thead>
     <tbody>${trs}</tbody>
   </table>`;
@@ -188,7 +188,7 @@ function buildMidMonthPermissions({ permissions, employees, year, month, today, 
   const bodyPlain = intro + tablePlain + '\n\n' + totalsLine + closing + SIGNATURE_PLAIN;
 
   const bodyHtml = `
-    <div style="font-family:Arial,sans-serif;color:#1F2937;font-size:11pt;line-height:1.5">
+    <div style="font-family:Calibri,sans-serif;color:#1F2937;font-size:10pt;line-height:1.5">
       <p>Dear Mr John,</p>
       <p>Please find below the mid-month report of permission applications submitted by staff so far this month (${escapeHtml(range)}). The list covers all late arrivals and early leaves recorded, with hours and approval status against the monthly quota of 3 hours per employee.</p>
       ${tableHtml}
@@ -259,7 +259,7 @@ function buildEndOfMonthPermissions({ permissions, employees, year, month, hdr }
   const bodyPlain = intro + tablePlain + '\n\n' + totalsLine + closing + SIGNATURE_PLAIN;
 
   const bodyHtml = `
-    <div style="font-family:Arial,sans-serif;color:#1F2937;font-size:11pt;line-height:1.5">
+    <div style="font-family:Calibri,sans-serif;color:#1F2937;font-size:10pt;line-height:1.5">
       <p>Dear Mr John,</p>
       <p>Please find below the full month-end report of permission applications submitted by staff during ${escapeHtml(monthName + ' ' + year)}. The list covers all late arrivals and early leaves recorded for the month, with hours and approval status against the monthly quota of 3 hours per employee.</p>
       ${tableHtml}
@@ -327,7 +327,7 @@ function buildVacationSummary({ requests, employees, year, month, hdr }) {
   const bodyPlain = intro + tablePlain + '\n\n' + totalsLine + closing + SIGNATURE_PLAIN;
 
   const bodyHtml = `
-    <div style="font-family:Arial,sans-serif;color:#1F2937;font-size:11pt;line-height:1.5">
+    <div style="font-family:Calibri,sans-serif;color:#1F2937;font-size:10pt;line-height:1.5">
       <p>Dear Mr John,</p>
       <p>Please find below the summary of vacation applications taken by staff during ${escapeHtml(monthName + ' ' + year)}, including their return dates. This covers all approved leaves that overlap with the month.</p>
       ${tableHtml}
@@ -440,15 +440,15 @@ function buildLeaveAvailability({ requests, employees, year, month, today, lastP
   const LEAVE_TINT = { annual: '#3B82F6', sick: '#EF4444', emergency: '#F59E0B', hajj: '#10B981', maternity: '#EC4899', paternity: '#8B5CF6', marriage: '#14B8A6', bereavement: '#6B7280', unpaid: '#9CA3AF', other: '#84CC16' };
   const swatch = (id) => `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${LEAVE_TINT[id] || '#94A3B8'};margin-right:4px;vertical-align:middle"></span>`;
   const typeColored = (r) => `<span style="color:${LEAVE_TINT[r.typeId] || '#94A3B8'};font-weight:600">${escapeHtml(r.typeName)}</span>`;
-  const th = (t, align = 'left') => `<th style="background:${hdr.bg};color:${hdr.fg};padding:1px 6px;text-align:${align};font-family:Arial,sans-serif;font-size:11pt;font-weight:700;border:1px solid ${hdr.bg};white-space:nowrap">${t}</th>`;
+  const th = (t, align = 'left') => `<th style="background:${hdr.bg};color:${hdr.fg};padding:1px 6px;text-align:${align};font-family:Calibri,sans-serif;font-size:10pt;font-weight:700;border:1px solid ${hdr.bg};white-space:nowrap">${t}</th>`;
   const headRow = `<tr>${th('PSN')}${th('Name')}${th('Dept')}${th('Loc')}${th('Leave Type')}${th('From')}${th('To')}${th('Days', 'right')}${th('Status')}${th('Last Punch')}</tr>`;
   const bodyRows = rows.map((r, i) => {
     const bg = i % 2 ? '#F3F4F6' : '#FFFFFF';
-    const td = (c, align = 'left') => `<td style="padding:0 6px;border:1px solid #D1D5DB;color:#1F2937;font-family:Arial,sans-serif;font-size:11pt;background:${bg};text-align:${align};white-space:nowrap">${c}</td>`;
+    const td = (c, align = 'left') => `<td style="padding:0 6px;border:1px solid #D1D5DB;color:#1F2937;font-family:Calibri,sans-serif;font-size:10pt;background:${bg};text-align:${align};white-space:nowrap">${c}</td>`;
     return `<tr>${td(escapeHtml(r.psn))}${td(escapeHtml(r.name))}${td(escapeHtml(r.dept))}${td(escapeHtml(r.loc))}${td(typeColored(r))}${td(escapeHtml(fmtDateShort(r.from)))}${td(escapeHtml(fmtDateShort(r.to)))}${td(r.days.toFixed(1) + (r.isHalf ? ' \u00BD' : ''), 'right')}${td(pill(r.status))}${td(escapeHtml(punchFor(r) || '\u2014'))}</tr>`;
   }).join('');
   const tableHtml = rows.length
-    ? `<table style="border-collapse:collapse;font-family:Arial,sans-serif;margin:10px 0"><thead>${headRow}</thead><tbody>${bodyRows}</tbody></table>`
+    ? `<table style="border-collapse:collapse;font-family:Calibri,sans-serif;margin:10px 0"><thead>${headRow}</thead><tbody>${bodyRows}</tbody></table>`
     : '<p style="color:#6B7280;font-style:italic">No approved leave overlapping this month.</p>';
 
   const subject = `Leave & Availability - ${monthName} ${year}`;
@@ -460,7 +460,7 @@ function buildLeaveAvailability({ requests, employees, year, month, today, lastP
   const closing = ['', `Please let me know if you would like a breakdown by department or location.`].join('\n');
   const bodyPlain = intro + tablePlain + '\n\n' + totalsLine + closing + SIGNATURE_PLAIN;
   const bodyHtml = `
-    <div style="font-family:Arial,sans-serif;color:#1F2937;font-size:11pt;line-height:1.5">
+    <div style="font-family:Calibri,sans-serif;color:#1F2937;font-size:10pt;line-height:1.5">
       <p>Dear Mr John,</p>
       <p>Please find below the staff on leave for ${escapeHtml(monthName + ' ' + year)}. The list shows current, upcoming and returned leave, with type, dates and duration.</p>
       ${tableHtml}
@@ -486,7 +486,7 @@ function buildShiftStaffReminder({ year, month }) {
     'Thank you for keeping the records accurate \u2014 it makes a real difference for fair attendance handling and payroll.\n\n' +
     HR_SIGNATURE;
   const bodyHtml =
-    `<div style="font-family:Arial,sans-serif;font-size:11pt;color:#1F2937;line-height:1.55">
+    `<div style="font-family:Calibri,sans-serif;font-size:10pt;color:#1F2937;line-height:1.55">
       <p>Dear team,</p>
       <p>I hope you are well. This is the monthly reminder from HR to please review and update the shift-based working hours for any team member who works on a non-standard schedule.</p>
       <p><strong>Why this matters:</strong> Our daily attendance check applies the standard 08:00 \u2013 17:00 schedule (or 08:00 \u2013 16:00 for the SUP/HR team) to detect late arrivals and early departures. If a team member is on a different shift and we do not have it on file, the system will incorrectly flag them as late or early.</p>
