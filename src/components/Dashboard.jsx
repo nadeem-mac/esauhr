@@ -186,26 +186,27 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
 
     const deptRows = depts.map((d, i) => {
       const n = byDeptNat[d] || { saudi: 0, nonSaudi: 0, total: 0 };
+      const g = byDeptGender[d] || { male: 0, female: 0 };
       const bg = i % 2 ? '#F3F4F6' : '#FFFFFF';
-      return `<tr>${cell(d, 'left', true, bg)}${cell(n.saudi, 'right', false, bg)}${cell(n.nonSaudi, 'right', false, bg)}${cell(n.total, 'right', true, bg)}</tr>`;
+      return `<tr>${cell(d, 'left', true, bg)}${cell(n.saudi, 'right', false, bg)}${cell(n.nonSaudi, 'right', false, bg)}${cell(g.male, 'right', false, bg)}${cell(g.female, 'right', false, bg)}${cell(n.total, 'right', true, bg)}</tr>`;
     }).join('');
-    const deptTable = `<table style="border-collapse:collapse;margin:0 0 14px"><thead><tr>${th('Department')}${th('Saudi', 'right')}${th('Non-Saudi', 'right')}${th('Total', 'right')}</tr></thead><tbody>${deptRows}<tr>${cell('TOTAL', 'left', true, '#ECFDF5')}${cell(saudi, 'right', true, '#ECFDF5')}${cell(nonSaudi, 'right', true, '#ECFDF5')}${cell(total, 'right', true, '#ECFDF5')}</tr></tbody></table>`;
+    const deptTable = `<table style="border-collapse:collapse;margin:0 0 14px"><thead><tr>${th('Department')}${th('Saudi', 'right')}${th('Non-Saudi', 'right')}${th('Male', 'right')}${th('Female', 'right')}${th('Total', 'right')}</tr></thead><tbody>${deptRows}<tr>${cell('TOTAL', 'left', true, '#ECFDF5')}${cell(saudi, 'right', true, '#ECFDF5')}${cell(nonSaudi, 'right', true, '#ECFDF5')}${cell(byGender.male, 'right', true, '#ECFDF5')}${cell(byGender.female, 'right', true, '#ECFDF5')}${cell(total, 'right', true, '#ECFDF5')}</tr></tbody></table>`;
 
-    const sumTable = `<table style="border-collapse:collapse"><thead><tr>${th('')}${th('Budget', 'right')}${th('Saudi', 'right')}${th('Non-Saudi', 'right')}${th('Total', 'right')}</tr></thead><tbody>`
-      + `<tr>${cell('Headcount', 'left', true)}${cell(HEADCOUNT_BUDGET, 'right')}${cell(saudi, 'right')}${cell(nonSaudi, 'right')}${cell(total, 'right', true)}</tr>`
-      + `<tr>${cell('Ratio', 'left', true, '#F3F4F6')}${cell('-', 'right', false, '#F3F4F6')}${cell(pct(saudi) + '%', 'right', false, '#F3F4F6')}${cell(pct(nonSaudi) + '%', 'right', false, '#F3F4F6')}${cell('100%', 'right', true, '#F3F4F6')}</tr>`
+    const sumTable = `<table style="border-collapse:collapse"><thead><tr>${th('')}${th('Budget', 'right')}${th('Saudi', 'right')}${th('Non-Saudi', 'right')}${th('Male', 'right')}${th('Female', 'right')}${th('Total', 'right')}</tr></thead><tbody>`
+      + `<tr>${cell('Headcount', 'left', true)}${cell(HEADCOUNT_BUDGET, 'right')}${cell(saudi, 'right')}${cell(nonSaudi, 'right')}${cell(byGender.male, 'right')}${cell(byGender.female, 'right')}${cell(total, 'right', true)}</tr>`
+      + `<tr>${cell('Ratio', 'left', true, '#F3F4F6')}${cell('-', 'right', false, '#F3F4F6')}${cell(pct(saudi) + '%', 'right', false, '#F3F4F6')}${cell(pct(nonSaudi) + '%', 'right', false, '#F3F4F6')}${cell(pct(byGender.male) + '%', 'right', false, '#F3F4F6')}${cell(pct(byGender.female) + '%', 'right', false, '#F3F4F6')}${cell('100%', 'right', true, '#F3F4F6')}</tr>`
       + `</tbody></table>`;
 
     const html = `<div style="font-family:Calibri,Arial,sans-serif">${deptTable}${sumTable}</div>`;
     const plain = [
       'Headcount by department',
-      'Department\tSaudi\tNon-Saudi\tTotal',
-      ...depts.map(d => { const n = byDeptNat[d] || {}; return `${d}\t${n.saudi || 0}\t${n.nonSaudi || 0}\t${n.total || 0}`; }),
-      `TOTAL\t${saudi}\t${nonSaudi}\t${total}`,
+      'Department\tSaudi\tNon-Saudi\tMale\tFemale\tTotal',
+      ...depts.map(d => { const n = byDeptNat[d] || {}; const g = byDeptGender[d] || {}; return `${d}\t${n.saudi || 0}\t${n.nonSaudi || 0}\t${g.male || 0}\t${g.female || 0}\t${n.total || 0}`; }),
+      `TOTAL\t${saudi}\t${nonSaudi}\t${byGender.male}\t${byGender.female}\t${total}`,
       '',
-      `\tBudget\tSaudi\tNon-Saudi\tTotal`,
-      `Headcount\t${HEADCOUNT_BUDGET}\t${saudi}\t${nonSaudi}\t${total}`,
-      `Ratio\t-\t${pct(saudi)}%\t${pct(nonSaudi)}%\t100%`,
+      `\tBudget\tSaudi\tNon-Saudi\tMale\tFemale\tTotal`,
+      `Headcount\t${HEADCOUNT_BUDGET}\t${saudi}\t${nonSaudi}\t${byGender.male}\t${byGender.female}\t${total}`,
+      `Ratio\t-\t${pct(saudi)}%\t${pct(nonSaudi)}%\t${pct(byGender.male)}%\t${pct(byGender.female)}%\t100%`,
     ].join('\n');
 
     try {
@@ -688,27 +689,28 @@ export default function Dashboard({ me, employees, requests, typeMap, empMap, pe
               <div className="overflow-x-auto space-y-4">
                 {/* By department */}
                 <table style={{ borderCollapse: 'collapse' }}>
-                  <thead><tr><Th>Department</Th><Th right>Saudi</Th><Th right>Non-Saudi</Th><Th right>Total</Th></tr></thead>
+                  <thead><tr><Th>Department</Th><Th right>Saudi</Th><Th right>Non-Saudi</Th><Th right>Male</Th><Th right>Female</Th><Th right>Total</Th></tr></thead>
                   <tbody>
                     {depts.map((d, i) => {
                       const n = byDeptNat[d] || { saudi: 0, nonSaudi: 0, total: 0 };
+                      const g = byDeptGender[d] || { male: 0, female: 0 };
                       const bg = i % 2 ? '#F3F4F6' : '#FFFFFF';
                       return (
                         <tr key={d}>
-                          <Td bold bg={bg}>{d}</Td><Td right bg={bg}>{n.saudi}</Td><Td right bg={bg}>{n.nonSaudi}</Td><Td right bold bg={bg}>{n.total}</Td>
+                          <Td bold bg={bg}>{d}</Td><Td right bg={bg}>{n.saudi}</Td><Td right bg={bg}>{n.nonSaudi}</Td><Td right bg={bg}>{g.male}</Td><Td right bg={bg}>{g.female}</Td><Td right bold bg={bg}>{n.total}</Td>
                         </tr>
                       );
                     })}
-                    <tr><Td bold bg="#ECFDF5">TOTAL</Td><Td right bold bg="#ECFDF5">{saudi}</Td><Td right bold bg="#ECFDF5">{nonSaudi}</Td><Td right bold bg="#ECFDF5">{total}</Td></tr>
+                    <tr><Td bold bg="#ECFDF5">TOTAL</Td><Td right bold bg="#ECFDF5">{saudi}</Td><Td right bold bg="#ECFDF5">{nonSaudi}</Td><Td right bold bg="#ECFDF5">{byGender.male}</Td><Td right bold bg="#ECFDF5">{byGender.female}</Td><Td right bold bg="#ECFDF5">{total}</Td></tr>
                   </tbody>
                 </table>
 
-                {/* Saudization summary */}
+                {/* Saudization + gender summary */}
                 <table style={{ borderCollapse: 'collapse' }}>
-                  <thead><tr><Th></Th><Th right>Budget</Th><Th right>Saudi</Th><Th right>Non-Saudi</Th><Th right>Total</Th></tr></thead>
+                  <thead><tr><Th></Th><Th right>Budget</Th><Th right>Saudi</Th><Th right>Non-Saudi</Th><Th right>Male</Th><Th right>Female</Th><Th right>Total</Th></tr></thead>
                   <tbody>
-                    <tr><Td bold>Headcount</Td><Td right>{HEADCOUNT_BUDGET}</Td><Td right>{saudi}</Td><Td right>{nonSaudi}</Td><Td right bold>{total}</Td></tr>
-                    <tr><Td bold bg="#F3F4F6">Ratio</Td><Td right bg="#F3F4F6">-</Td><Td right bg="#F3F4F6">{pct(saudi)}%</Td><Td right bg="#F3F4F6">{pct(nonSaudi)}%</Td><Td right bold bg="#F3F4F6">100%</Td></tr>
+                    <tr><Td bold>Headcount</Td><Td right>{HEADCOUNT_BUDGET}</Td><Td right>{saudi}</Td><Td right>{nonSaudi}</Td><Td right>{byGender.male}</Td><Td right>{byGender.female}</Td><Td right bold>{total}</Td></tr>
+                    <tr><Td bold bg="#F3F4F6">Ratio</Td><Td right bg="#F3F4F6">-</Td><Td right bg="#F3F4F6">{pct(saudi)}%</Td><Td right bg="#F3F4F6">{pct(nonSaudi)}%</Td><Td right bg="#F3F4F6">{pct(byGender.male)}%</Td><Td right bg="#F3F4F6">{pct(byGender.female)}%</Td><Td right bold bg="#F3F4F6">100%</Td></tr>
                   </tbody>
                 </table>
               </div>
