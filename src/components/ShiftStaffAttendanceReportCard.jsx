@@ -1366,16 +1366,16 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
       emergency_leave:{bg:'#FEE2E2',fg:'#7F1D1D'}, iddah_leave:{bg:'#F3E8FF',fg:'#6B21A8'}, off_day:{bg:'#F3F4F6',fg:'#374151'}, off_roster:{bg:'#F3F4F6',fg:'#374151'},
     };
     const HOLc = { bg:'#EDE9FE', fg:'#5B21B6' }, NEUTc = { bg:'#F3F4F6', fg:'#374151' };
-    const EMPc = { bg:'#DBEAFE', fg:'#1E3A8A' }, SHIFTc = { bg:'#1D4ED8', fg:'#FFFFFF' };
+    const EMPc = { bg:'#DBEAFE', fg:'#1E3A8A' }, SHIFTc = { bg:'#BFDBFE', fg:'#1E40AF' };
     const EMP84c = { bg:'#FEF3C7', fg:'#92400E' }, SUP84c = { bg:'#D97706', fg:'#FFFFFF' };
     const REDc = { bg:'#FEE2E2', fg:'#B91C1C' }, AMBERc = { bg:'#FEF3C7', fg:'#92400E' };
     const headBorder = me?.id === 'H94830' ? '#E59FB4' : hdr.bg;
     const dcell = (v, o = {}) =>
-      `<td style="padding:2px 6px;border:1px solid #D1D5DB;font-size:10pt;white-space:nowrap;`
+      `<td style="padding:2px 6px;border:1px solid #D1D5DB;font-size:10pt;line-height:1.15;mso-line-height-rule:exactly;white-space:nowrap;`
       + `${o.center ? 'text-align:center;' : ''}${o.bg ? `background:${o.bg};` : ''}color:${o.fg || '#1F2937'};${o.bold ? 'font-weight:700;' : ''}">`
       + `${escapeHtml(String(v ?? ''))}</td>`;
     const dhead = (h, center) =>
-      `<th style="background:${hdr.bg};color:${hdr.fg};padding:3px 6px;border:1px solid ${headBorder};font-weight:700;font-size:10pt;text-align:${center ? 'center' : 'left'}">${escapeHtml(h)}</th>`;
+      `<th style="background:${hdr.bg};color:${hdr.fg};padding:3px 6px;border:1px solid ${headBorder};font-weight:700;font-size:10pt;line-height:1.15;mso-line-height-rule:exactly;text-align:${center ? 'center' : 'left'}">${escapeHtml(h)}</th>`;
     const detHeads = [['#',1],['Employee',0],['Shift',1],['PSN',0],['Department',0],['Location',0],['Date',0],['Day',0],['Assigned shift',1],['Check in',1],['Check Out',1],['Total (h:m)',1],['Late (mm:ss)',1],['Status',0]];
 
     // Reusable Excel-style detail table (14 cols, colours, SL# renumbered).
@@ -1412,7 +1412,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
           + dcell(statusText, { bg: statusC.bg, fg: statusC.fg, bold: true })
           + '</tr>';
       }).join('');
-      return `<table style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;font-size:10pt;margin:0 0 12pt 0"><thead><tr>${detHeads.map(([h, c]) => dhead(h, c)).join('')}</tr></thead><tbody>${body}</tbody></table>`;
+      return `<table cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;font-family:Calibri,Arial,sans-serif;font-size:10pt;margin:0 0 12pt 0"><thead><tr>${detHeads.map(([h, c]) => dhead(h, c)).join('')}</tr></thead><tbody>${body}</tbody></table>`;
     };
 
     // Gather DEFAULTERS only (same logic as the on-screen summary): today's
