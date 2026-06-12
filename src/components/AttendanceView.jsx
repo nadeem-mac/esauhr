@@ -6520,7 +6520,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             >
               🕐 ATTENDANCE REPORT {shiftReportOpen ? '·  hide' : ''}
             </button>
-            {hasFile && !dailyReviewOpen && (
+            {hasFile && (
               <button
                 type="button"
                 onClick={() => setDailyReviewOpen(true)}
