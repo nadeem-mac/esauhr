@@ -399,7 +399,10 @@ function buildLeaveAvailability({ requests, employees, year, month, today }) {
     return r.start_date <= monthEnd && r.end_date >= monthStart;
   }).map(r => {
     const e = empMap[r.employee_id];
-    const status = r.end_date < todayStr ? 'returned' : r.start_date > todayStr ? 'upcoming' : 'now';
+    const status = r.return_stage === 'approved' ? 'returned'
+                 : r.start_date > todayStr ? 'upcoming'
+                 : r.end_date < todayStr ? (r.leave_type_id === 'sick' ? 'returned' : 'ended')
+                 : 'now';
     return {
       psn: r.employee_id, name: e?.name || r.employee_id, dept: e?.department || '', loc: e?.location || '',
       typeId: r.leave_type_id, typeName: leaveTypeLabel(r.leave_type_id), from: r.start_date, to: r.end_date,
@@ -411,7 +414,7 @@ function buildLeaveAvailability({ requests, employees, year, month, today }) {
   const peopleSet = new Set(rows.map(r => r.psn));
   const outNow = rows.filter(r => r.status === 'now').length;
   const upcoming = rows.filter(r => r.status === 'upcoming').length;
-  const STATUS_TEXT = { now: 'OUT NOW', upcoming: 'UPCOMING', returned: 'RETURNED' };
+  const STATUS_TEXT = { now: 'OUT NOW', upcoming: 'UPCOMING', returned: 'RETURNED', ended: 'ENDED' };
 
   const headers = ['PSN', 'Name', 'Dept', 'Loc', 'Leave Type', 'From', 'To', 'Days', 'Status'];
   const widths  = [8, 28, 6, 5, 12, 11, 11, 6, 9];
@@ -420,7 +423,7 @@ function buildLeaveAvailability({ requests, employees, year, month, today }) {
 
   // HTML in the Leave Report style — status pills kept (the look Bashaier likes).
   const pill = (st) => {
-    const m = { now: { bg: '#FEE2E2', fg: '#991B1B', label: 'OUT NOW' }, upcoming: { bg: '#DBEAFE', fg: '#1D4ED8', label: 'UPCOMING' }, returned: { bg: '#D1FAE5', fg: '#065F46', label: 'RETURNED' } }[st] || { bg: '#EEE', fg: '#333', label: st };
+    const m = { now: { bg: '#FEE2E2', fg: '#991B1B', label: 'OUT NOW' }, upcoming: { bg: '#DBEAFE', fg: '#1D4ED8', label: 'UPCOMING' }, returned: { bg: '#D1FAE5', fg: '#065F46', label: 'RETURNED' }, ended: { bg: '#E5E7EB', fg: '#374151', label: 'ENDED' } }[st] || { bg: '#EEE', fg: '#333', label: st };
     return `<span style="background:${m.bg};color:${m.fg};padding:1px 6px;border-radius:3px;font-size:11px;font-weight:700">${m.label}</span>`;
   };
   // Each leave type has its own colour swatch so the kind of leave is

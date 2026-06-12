@@ -144,8 +144,14 @@ export default function LeaveReport({
       if (!(r.start_date <= monthEnd && r.end_date >= monthStart)) continue;
       if (!inScope(r.employee_id)) continue;
       const e = empById[r.employee_id];
-      const status = r.end_date < todayStr ? 'returned'
+      // RETURNED only when a rejoining is actually confirmed. If the leave
+      // dates have passed but no rejoining is on file, it's ENDED (not
+      // RETURNED). Sick leaves don't go through rejoining, so an ended sick
+      // leave is treated as returned.
+      const rejoined = r.return_stage === 'approved';
+      const status = rejoined ? 'returned'
                    : r.start_date > todayStr ? 'upcoming'
+                   : r.end_date < todayStr ? (r.leave_type_id === 'sick' ? 'returned' : 'ended')
                    : 'now';
       out.push({
         psn: r.employee_id,
@@ -173,7 +179,7 @@ export default function LeaveReport({
   // (latest day with a check-in) so the report shows when they were last
   // seen at work. (Nadeem 2026-06-12)
   const [lastPunch, setLastPunch] = useState({});  // psn -> { date, time }
-  const returnedKey = leaveRows.filter(r => r.status === 'returned').map(r => r.psn).sort().join(',');
+  const returnedKey = leaveRows.filter(r => r.status === 'returned' || r.status === 'ended').map(r => r.psn).sort().join(',');
   useEffect(() => {
     const ids = returnedKey ? returnedKey.split(',') : [];
     if (ids.length === 0) { setLastPunch({}); return; }
@@ -201,11 +207,13 @@ export default function LeaveReport({
     return () => { cancelled = true; };
   }, [returnedKey]);
 
-  // "11 Jun · 08:02" — last punch date + time for returned staff only.
+  // "11 Jun · 08:02" — last punch, but only when it's ON OR AFTER the leave
+  // end date (genuine return evidence). A punch from before/during the
+  // leave is not a return, so it's suppressed.
   const fmtPunch = (r) => {
-    if (r.status !== 'returned') return '—';
+    if (r.status !== 'returned' && r.status !== 'ended') return '—';
     const lp = lastPunch[r.psn];
-    if (!lp) return '—';
+    if (!lp || !r.to || lp.date < r.to) return '—';
     return `${fmtShort(lp.date)} · ${String(lp.time).slice(0, 5)}`;
   };
 
@@ -375,6 +383,7 @@ export default function LeaveReport({
         now:      { bg: '#FEE2E2', fg: '#991B1B', label: 'OUT NOW' },
         upcoming: { bg: '#DBEAFE', fg: '#1D4ED8', label: 'UPCOMING' },
         returned: { bg: '#D1FAE5', fg: '#065F46', label: 'RETURNED' },
+        ended:    { bg: '#E5E7EB', fg: '#374151', label: 'ENDED' },
       }[st] || {};
       return `<span style="background:${m.bg};color:${m.fg};padding:2px 6px;border-radius:3px;font-size:9px;font-weight:700">${m.label}</span>`;
     };
@@ -623,7 +632,7 @@ export default function LeaveReport({
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     const FONT = 'Calibri,Arial,sans-serif';
     const pill = (st) => {
-      const m = { now: { bg: '#FEE2E2', fg: '#991B1B', label: 'OUT NOW' }, upcoming: { bg: '#DBEAFE', fg: '#1D4ED8', label: 'UPCOMING' }, returned: { bg: '#D1FAE5', fg: '#065F46', label: 'RETURNED' } }[st] || { bg: '#EEE', fg: '#333', label: String(st || '') };
+      const m = { now: { bg: '#FEE2E2', fg: '#991B1B', label: 'OUT NOW' }, upcoming: { bg: '#DBEAFE', fg: '#1D4ED8', label: 'UPCOMING' }, returned: { bg: '#D1FAE5', fg: '#065F46', label: 'RETURNED' }, ended: { bg: '#E5E7EB', fg: '#374151', label: 'ENDED' } }[st] || { bg: '#EEE', fg: '#333', label: String(st || '') };
       return `<span style="background:${m.bg};color:${m.fg};padding:1px 6px;border-radius:3px;font-size:11px;font-weight:700">${m.label}</span>`;
     };
     const th = (t, align = 'left') => `<th style="background:#0F4C2A;color:#fff;padding:4px 9px;text-align:${align};font-family:${FONT};font-size:12px;font-weight:700;border:1px solid #0F4C2A;white-space:nowrap">${t}</th>`;
@@ -668,7 +677,7 @@ export default function LeaveReport({
     const wb = XLSX.utils.book_new();
 
     // Sheet 1 — On leave
-    const STATUS_LABEL = { now: 'OUT NOW', upcoming: 'UPCOMING', returned: 'RETURNED' };
+    const STATUS_LABEL = { now: 'OUT NOW', upcoming: 'UPCOMING', returned: 'RETURNED', ended: 'ENDED' };
     const leaveAoa = [['Staff ID','Name','Department','Location','Leave Type','From','To','Days','Half','Status','Last Punch']];
     for (const r of leaveRows) {
       const lp = fmtPunch(r);
@@ -676,7 +685,7 @@ export default function LeaveReport({
     }
     const ws1 = XLSX.utils.aoa_to_sheet(leaveAoa);
     styleSheet(XLSX, ws1, leaveAoa, hStyle, c, 9 /*status col*/, {
-      'OUT NOW': { bg:'FEE2E2', fg:'991B1B' }, 'UPCOMING': { bg:'DBEAFE', fg:'1D4ED8' }, 'RETURNED': { bg:'D1FAE5', fg:'065F46' },
+      'OUT NOW': { bg:'FEE2E2', fg:'991B1B' }, 'UPCOMING': { bg:'DBEAFE', fg:'1D4ED8' }, 'RETURNED': { bg:'D1FAE5', fg:'065F46' }, 'ENDED': { bg:'E5E7EB', fg:'374151' },
     });
     ws1['!cols'] = [{wch:9},{wch:28},{wch:12},{wch:9},{wch:14},{wch:12},{wch:12},{wch:7},{wch:7},{wch:11},{wch:16}];
     // Colour-code the Leave Type cell (col E) by type.
@@ -1038,6 +1047,7 @@ function StatusPill({ status }) {
     now:      { bg: '#FEE2E2', fg: '#991B1B', label: 'OUT NOW' },
     upcoming: { bg: '#DBEAFE', fg: '#1D4ED8', label: 'UPCOMING' },
     returned: { bg: '#D1FAE5', fg: '#065F46', label: 'RETURNED' },
+    ended:    { bg: '#E5E7EB', fg: '#374151', label: 'ENDED' },
   }[status] || {};
   return <span className="text-[9px] px-1.5 py-0.5 rounded font-bold" style={{ background: m.bg, color: m.fg }}>{m.label}</span>;
 }
