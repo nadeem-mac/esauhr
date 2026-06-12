@@ -199,6 +199,9 @@ export default function LeaveReport({
     if (!lp) return '—';
     return `${fmtShort(lp.date)} · ${String(lp.time).slice(0, 5)}`;
   };
+
+  // ── Permission rows for the month ──────────────────────────────────
+  const permRows = useMemo(() => {
     const out = [];
     // For quota: order each staff's approved permissions in the month
     // chronologically and number them.
