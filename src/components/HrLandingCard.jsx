@@ -127,15 +127,19 @@ function anniversariesInRange(employees, daysAhead = 14) {
   return rows;
 }
 
-// Holidays in the next 60 days. Sorted ascending. Skipped if 0.
-function upcomingHolidays(daysAhead = 60) {
+// Upcoming holidays. Returns those within `daysAhead`, but always
+// surfaces at least the next one so the card never falsely reads
+// "None" when the next holiday is just beyond the window.
+function upcomingHolidays(daysAhead = 120) {
   const t = todayMidnight();
   const horizon = new Date(t);
   horizon.setDate(horizon.getDate() + daysAhead);
-  return ALL_HOLIDAYS
+  const future = ALL_HOLIDAYS
     .map(h => ({ ...h, dateObj: new Date(h.date), daysFromNow: daysBetween(t, new Date(h.date)) }))
-    .filter(h => h.dateObj >= t && h.dateObj <= horizon)
+    .filter(h => h.dateObj >= t)
     .sort((a, b) => a.daysFromNow - b.daysFromNow);
+  const within = future.filter(h => h.dateObj <= horizon);
+  return within.length ? within : future.slice(0, 1);
 }
 
 // ─── card ─────────────────────────────────────────────────────────────
@@ -216,9 +220,13 @@ export default function HrLandingCard({
   // We re-derive from the passed-in requests array so the card sees
   // exactly the same data the rest of the dashboard does — no extra
   // round-trip, no risk of drift between two views.
+  // Leave returns + starts in the next 14 days (matches the anniversaries
+  // window) so the card shows upcoming moments, not just the tail of the
+  // current week. (Nadeem 2026-06-12)
   const { returnsThisWeek, startsThisWeek } = useMemo(() => {
     const today = todayMidnight();
-    const weekEnd = endOfWeek(today);
+    const windowEnd = new Date(today);
+    windowEnd.setDate(windowEnd.getDate() + 14);
     const r = [];
     const s = [];
     for (const req of (requests || [])) {
@@ -226,12 +234,11 @@ export default function HrLandingCard({
       const start = req.start_date ? new Date(req.start_date) : null;
       const end   = req.end_date   ? new Date(req.end_date)   : start;
       if (!start) continue;
-      if (end >= today && end <= weekEnd) {
-        // 'Returns' = day after end_date. If today == day-after-end,
-        // they're back today.
+      // 'Returning' = still out, ends within the window AND not yet rejoined.
+      if (end >= today && end <= windowEnd && req.return_stage !== 'approved') {
         r.push({ req, returnDate: new Date(new Date(end).getTime() + 86400000) });
       }
-      if (start >= today && start <= weekEnd) {
+      if (start >= today && start <= windowEnd) {
         s.push({ req, startDate: start });
       }
     }
@@ -328,7 +335,7 @@ export default function HrLandingCard({
               icon={CalendarCheck}
               accent="#0E7490"
               label="NEXT HOLIDAY"
-              empty="None in 60 days"
+              empty="None scheduled"
               items={holidays.slice(0, 1).map(h => ({
                 key:   h.date,
                 title: h.name,
