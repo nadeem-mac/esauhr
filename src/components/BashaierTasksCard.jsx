@@ -347,37 +347,103 @@ function buildVacationSummary({ requests, employees, year, month, hdr }) {
   return { subject, bodyPlain, bodyHtml, count: rows.length };
 }
 
-// Task: Headcount snapshot — active staff by location + department.
+// Task: Headcount snapshot — enriched. Active staff with Saudization
+// (Saudi vs Non-Saudi) ratio, gender split, and location/department
+// breakdowns that each carry the nationality + gender split.
 function buildHeadcountSnapshot({ employees, hdr }) {
   const active = (employees || []).filter(e => {
     const s = String(e.employment_status || '').toLowerCase();
     return !['deactivated', 'departed', 'terminated', 'resigned', 'inactive'].includes(s);
   });
-  const byLoc = {}, byDept = {};
-  active.forEach(e => {
-    const loc = e.location || '—';   byLoc[loc]  = (byLoc[loc]  || 0) + 1;
-    const dep = e.department || '—'; byDept[dep] = (byDept[dep] || 0) + 1;
-  });
-  const locRows = Object.entries(byLoc).sort((a, b) => b[1] - a[1]).map(([k, v]) => [k, String(v)]);
-  const depRows = Object.entries(byDept).sort((a, b) => b[1] - a[1]).map(([k, v]) => [k, String(v)]);
-  const locPlain = plainTable(['Location', 'Staff'], locRows, [20, 8]);
-  const depPlain = plainTable(['Department', 'Staff'], depRows, [20, 8]);
-  const locHtml = htmlTable(['Location', 'Staff'], locRows, hdr);
-  const depHtml = htmlTable(['Department', 'Staff'], depRows, hdr);
+  const total = active.length || 0;
+  const isSaudi = (e) => /saudi/i.test(String(e.nationality_full || e.nationality || ''));
+  const genderOf = (e) => {
+    const g = String(e.gender || '').trim().toLowerCase();
+    if (g.startsWith('f') || g === 'female' || g === 'w') return 'Female';
+    if (g.startsWith('m') || g === 'male') return 'Male';
+    return 'Unspecified';
+  };
+  const pct = (n) => total ? `${Math.round((n / total) * 1000) / 10}%` : '0%';
+
+  // Headline counts
+  const saudis = active.filter(isSaudi).length;
+  const nonSaudis = total - saudis;
+  const females = active.filter(e => genderOf(e) === 'Female').length;
+  const males = active.filter(e => genderOf(e) === 'Male').length;
+  const unspec = total - females - males;
+
+  // Group helper → { key: {n, saudi, non, f, m} }
+  const group = (keyFn) => {
+    const map = {};
+    active.forEach(e => {
+      const k = keyFn(e) || '—';
+      const g = map[k] || (map[k] = { n: 0, saudi: 0, non: 0, f: 0, m: 0 });
+      g.n += 1;
+      if (isSaudi(e)) g.saudi += 1; else g.non += 1;
+      const gen = genderOf(e);
+      if (gen === 'Female') g.f += 1; else if (gen === 'Male') g.m += 1;
+    });
+    return map;
+  };
+  const locG = group(e => e.location);
+  const depG = group(e => e.department);
+  const toRows = (map) => Object.entries(map)
+    .sort((a, b) => b[1].n - a[1].n)
+    .map(([k, v]) => [k, String(v.n), pct(v.n), String(v.saudi), String(v.non), String(v.f), String(v.m)]);
+  const locRows = toRows(locG);
+  const depRows = toRows(depG);
+
+  const natRows = [
+    ['Saudi', String(saudis), pct(saudis)],
+    ['Non-Saudi', String(nonSaudis), pct(nonSaudis)],
+  ];
+  const genRows = [
+    ['Female', String(females), pct(females)],
+    ['Male', String(males), pct(males)],
+    ...(unspec ? [['Unspecified', String(unspec), pct(unspec)]] : []),
+  ];
+
+  const SPLIT_HEAD = ['', 'Staff', 'Share', 'Saudi', 'Non-Saudi', 'F', 'M'];
+  const locHead = ['Location', ...SPLIT_HEAD.slice(1)];
+  const depHead = ['Department', ...SPLIT_HEAD.slice(1)];
+
+  // Plain-text
+  const locPlain = plainTable(locHead, locRows, [16, 7, 7, 7, 10, 5, 5]);
+  const depPlain = plainTable(depHead, depRows, [16, 7, 7, 7, 10, 5, 5]);
+  const natPlain = plainTable(['Nationality', 'Staff', 'Share'], natRows, [16, 8, 8]);
+  const genPlain = plainTable(['Gender', 'Staff', 'Share'], genRows, [16, 8, 8]);
+  // HTML
+  const locHtml = htmlTable(locHead, locRows, hdr);
+  const depHtml = htmlTable(depHead, depRows, hdr);
+  const natHtml = htmlTable(['Nationality', 'Staff', 'Share'], natRows, hdr);
+  const genHtml = htmlTable(['Gender', 'Staff', 'Share'], genRows, hdr);
+
+  const saudiRatio = total ? Math.round((saudis / total) * 1000) / 10 : 0;
   const subject = `Headcount Snapshot - ${fmtDateShort(todayISO())}`;
-  const totalsLine = `Total active staff: ${active.length}`;
-  const intro = [`Dear Mr John,`, '', `Please find below the current headcount snapshot of active staff, broken down by location and department.`, ''].join('\n');
-  const bodyPlain = intro + 'By location:\n' + locPlain + '\n\nBy department:\n' + depPlain + '\n\n' + totalsLine + SIGNATURE_PLAIN;
+  const kpiLine = `Total active staff: ${total}  ·  Saudization ratio: ${saudiRatio}% (Saudi ${saudis} / Non-Saudi ${nonSaudis})  ·  Female ${females} (${pct(females)}) / Male ${males} (${pct(males)})`;
+
+  const intro = [`Dear Mr John,`, '',
+    `Please find below the current headcount snapshot of active staff, with the Saudization ratio, gender split, and breakdowns by location and department (each showing the nationality and gender split).`, ''].join('\n');
+  const bodyPlain = intro
+    + kpiLine + '\n\n'
+    + 'Saudization (nationality) ratio:\n' + natPlain + '\n\n'
+    + 'Gender split:\n' + genPlain + '\n\n'
+    + 'By location:\n' + locPlain + '\n\n'
+    + 'By department:\n' + depPlain + SIGNATURE_PLAIN;
   const bodyHtml = emailBody([
     `<p style="margin:0">Dear Mr John,</p>`,
-    `<p style="margin:0">Please find below the current headcount snapshot of active staff, broken down by location and department.</p>`,
+    `<p style="margin:0">Please find below the current headcount snapshot of active staff, with the Saudization ratio, gender split, and breakdowns by location and department (each showing the nationality and gender split).</p>`,
+    `<p style="margin:0;font-weight:700;color:#334155">${escapeHtml(kpiLine)}</p>`,
+    `<p style="margin:0;font-weight:600">Saudization (nationality) ratio</p>`,
+    natHtml,
+    `<p style="margin:0;font-weight:600">Gender split</p>`,
+    genHtml,
     `<p style="margin:0;font-weight:600">By location</p>`,
     locHtml,
     `<p style="margin:0;font-weight:600">By department</p>`,
     depHtml,
-    `<p style="margin:0;font-weight:600;color:#334155">${escapeHtml(totalsLine)}</p>`,
   ]);
-  return { subject, bodyPlain, bodyHtml, count: active.length };
+  return { subject, bodyPlain, bodyHtml, count: total };
 }
 
 // Task: Upcoming leaves — approved leaves starting in the next 30 days.
