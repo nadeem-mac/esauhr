@@ -55,6 +55,7 @@ import { generateVacationFormBlob, buildEmailDraft, downloadBlob } from '../lib/
 import LeaveApprovedModal from './LeaveApprovedModal.jsx';
 import LogbookPermissionEntry from './LogbookPermissionEntry.jsx';
 import LogbookRejoiningEntry from './LogbookRejoiningEntry.jsx';
+import LeaveHistoryImportCard from './LeaveHistoryImportCard.jsx';
 
 export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }) {
   const [mode, setMode] = useState('leave');   // 'leave' | 'permission'
@@ -452,7 +453,7 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
 
       {/* Leave / Permission / Rejoining mode switch — equal rounded boxes */}
       <div className="flex gap-2">
-        {[['leave', 'Leave'], ['permission', 'Permission'], ['rejoining', 'Rejoining']].map(([k, lbl]) => (
+        {[['leave', 'Leave'], ['permission', 'Permission'], ['rejoining', 'Rejoining'], ['import', 'Import']].map(([k, lbl]) => (
           <button key={k} type="button" onClick={() => setMode(k)}
             className="flex-1 text-center text-sm font-semibold border transition"
             style={{
@@ -472,6 +473,10 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
 
       {mode === 'rejoining' && (
         <LogbookRejoiningEntry me={me} employees={employees} onSaved={onSaved} />
+      )}
+
+      {mode === 'import' && (
+        <LeaveHistoryImportCard me={me} employees={employees} onSaved={onSaved} />
       )}
 
       {mode === 'leave' && (<>
