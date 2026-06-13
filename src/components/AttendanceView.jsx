@@ -6482,13 +6482,17 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center justify-center gap-1.5"
+              className="text-[11px] px-3.5 py-1.5 rounded-full flex items-center gap-1.5 transition-all duration-150 hover:-translate-y-0.5 hover:brightness-110"
               style={{
-                minWidth: 168, height: 38, padding: '0 16px',
-                borderRadius: 8, fontSize: 12, fontWeight: 700,
-                background: isPink ? '#993556' : '#0F4C2A',
+                background: isPink
+                  ? 'linear-gradient(135deg, #7A2E47 0%, #993556 55%, #C16085 120%)'
+                  : 'linear-gradient(135deg, #0F4C2A 0%, #1a7a47 55%, #2E9B5B 120%)',
                 color: '#FFFFFF',
-                border: `1px solid ${isPink ? '#993556' : '#0F4C2A'}`,
+                border: `1px solid ${isPink ? 'rgba(255,200,220,0.5)' : 'rgba(200,160,36,0.5)'}`,
+                fontWeight: 700, letterSpacing: '0.02em',
+                boxShadow: isPink
+                  ? '0 1px 2px rgba(122,46,71,0.35), inset 0 1px 0 rgba(255,255,255,0.18)'
+                  : '0 1px 2px rgba(15,76,42,0.35), inset 0 1px 0 rgba(255,255,255,0.18)',
               }}
               title="Upload the Time Card .xlsx export. A normal daily file runs today's review; a historical/multi-month file opens the backfill preview automatically."
             >
@@ -6506,15 +6510,17 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             <button
               type="button"
               onClick={() => setShiftReportOpen(v => !v)}
-              className="flex items-center justify-center gap-1.5"
+              className="text-[11px] px-3.5 py-1.5 rounded-full flex items-center gap-1.5 transition-all duration-150 hover:-translate-y-0.5 hover:brightness-110"
               style={{
-                minWidth: 168, height: 38, padding: '0 16px',
-                borderRadius: 8, fontSize: 12, fontWeight: 700, letterSpacing: '0.04em',
-                background: isPink ? (shiftReportOpen ? '#7A2E47' : '#C16085')
-                                   : (shiftReportOpen ? '#3730A3' : '#4338CA'),
+                background: isPink
+                  ? (shiftReportOpen ? 'linear-gradient(135deg,#5E2238 0%,#7A2E47 55%,#993556 120%)' : 'linear-gradient(135deg,#7A2E47 0%,#993556 55%,#C16085 120%)')
+                  : (shiftReportOpen ? 'linear-gradient(135deg,#312E81 0%,#3730A3 55%,#4F46E5 120%)' : 'linear-gradient(135deg,#312E81 0%,#4338CA 55%,#6366F1 120%)'),
                 color: '#FFFFFF',
-                border: `1px solid ${isPink ? (shiftReportOpen ? '#7A2E47' : '#C16085')
-                                             : (shiftReportOpen ? '#3730A3' : '#4338CA')}`,
+                fontWeight: 700, letterSpacing: '0.04em',
+                border: `1px solid ${isPink ? 'rgba(255,200,220,0.5)' : 'rgba(129,140,248,0.55)'}`,
+                boxShadow: isPink
+                  ? '0 1px 2px rgba(122,46,71,0.35), inset 0 1px 0 rgba(255,255,255,0.18)'
+                  : '0 1px 2px rgba(49,46,129,0.35), inset 0 1px 0 rgba(255,255,255,0.18)',
               }}
               title="Open the Attendance Report — search a date range and export an enriched report (HTML / Print / Excel)."
             >
@@ -6656,7 +6662,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
               <button
                 type="button"
                 onClick={() => setHqExportOpen(v => !v)}
-                className="text-[11px] px-3.5 py-1.5 rounded-full flex items-center gap-1.5"
+                className="text-[11px] px-3.5 py-1.5 rounded-full flex items-center gap-1.5 transition-all duration-150 hover:-translate-y-0.5 hover:brightness-110"
                 style={{
                   background: hqExportOpen
                     ? 'linear-gradient(135deg, #0F4C2A 0%, #14663a 60%, #B8860B 130%)'
