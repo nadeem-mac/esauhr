@@ -19,7 +19,7 @@ const STARS = [];
   for (let x = 1; x <= 99; x += 2.2) {
     const baseY = 78 - 0.7 * (x + 20);                  // along the swoop (vh)
     const delay = ((x + 20) / 138) * (FLY_MS / 1000);   // seconds
-    const count = 2 + (idx % 2 === 0 ? 2 : 1);          // 3–4 stars per step
+    const count = 3 + (idx % 2 === 0 ? 2 : 1);          // 4–5 stars per step
     for (let k = 0; k < count; k++) {
       const spreadY = (((idx * 7 + k * 13) % 15) - 7) + (k === 1 ? -11 : k === 2 ? 11 : k === 3 ? -5 : 0);
       const spreadX = (((idx * 5 + k * 9) % 9) - 4);
@@ -45,30 +45,14 @@ function Star({ size }) {
 }
 
 function Pixie() {
-  // Original stylised flying fairy — green tunic, peach skin, little cap
-  // with a pink feather, gold sparkle wand. Flying toward the upper-right.
+  // Bashaier's fairy — the 🧚 emoji, flying with a soft glow.
   return (
-    <svg viewBox="0 0 260 170" width="210" height="137" aria-hidden="true"
-         style={{ filter: 'drop-shadow(0 4px 9px rgba(153,53,86,0.32))' }}>
-      {/* wing */}
-      <path d="M150 70 q-34 -22 -50 2 q24 20 50 8 z" fill="#FFFFFF" opacity="0.7" />
-      <path d="M150 74 q-30 6 -46 26 q26 6 46 -12 z" fill="#FFFFFF" opacity="0.5" />
-      {/* trailing leg */}
-      <path d="M150 78 q-16 10 -34 10 q-5 0 -4 -5 q16 -7 32 -12 z" fill="#2F7D4F" />
-      <path d="M150 82 q-10 12 -24 18 q-4 1 -4 -4 q12 -9 22 -18 z" fill="#2F7D4F" />
-      {/* tunic / body */}
-      <path d="M150 62 q22 -11 44 -4 q7 2 9 9 q-4 12 -18 13 q-20 3 -33 -8 q-7 -6 -2 -10 z" fill="#36925E" />
-      <path d="M188 66 q8 4 6 12 q-10 3 -18 -1 q6 -7 12 -11 z" fill="#2F7D4F" />
-      {/* forward arm */}
-      <path d="M190 58 q15 -11 28 -24 q5 4 1 9 q-11 13 -24 22 q-7 3 -5 -7 z" fill="#F2C9A5" />
-      {/* head */}
-      <circle cx="208" cy="40" r="12" fill="#F4CDAA" />
-      {/* cap + feather */}
-      <path d="M196 36 q10 -16 26 -10 q-2 9 -10 12 q-9 3 -16 -2 z" fill="#2F7D4F" />
-      <path d="M220 24 q9 -3 13 1 q-5 6 -13 6 z" fill="#C9466B" />
-      {/* sparkle at fingertip */}
-      <path d="M216 18 l2.6 5.6 6 .9-4.3 4.2 1 6-5.3-2.8-5.3 2.8 1-6-4.3-4.2 6-.9z" fill="#F6C544" />
-    </svg>
+    <span style={{
+      fontSize: '132px', lineHeight: 1, display: 'inline-block',
+      filter: 'drop-shadow(0 5px 12px rgba(153,53,86,0.35))',
+    }}>
+      🧚‍♀️
+    </span>
   );
 }
 
