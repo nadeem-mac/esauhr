@@ -25,6 +25,14 @@ const CC_LIST = [
 ];
 const CC_STR = CC_LIST.join(',');
 
+// HQ-approved headcount budget, per department code (as it appears in the
+// employee `department` field). Fill in the numbers HQ provides; the
+// headcount report shows a "vs HQ budget" table only when this is set.
+// e.g. { BIZ: 12, CSD: 18, FIN: 6, LOG: 20, SUP: 6 }
+const HQ_BUDGET = {
+  // BIZ: 0, CSD: 0, FIN: 0, LOG: 0, SUP: 0,
+};
+
 const MONTH_FULL = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 const SIGNATURE_PLAIN = [
@@ -428,13 +436,37 @@ function buildHeadcountSnapshot({ employees, hdr }) {
   const genHtml = htmlTable(['Gender', 'Staff', 'Share'], genRows, hdr, genTotal);
 
   const saudiRatio = total ? Math.round((saudis / total) * 1000) / 10 : 0;
+
+  // Headcount vs HQ budget (by department) — only when HQ_BUDGET is filled.
+  const budgetKeys = Object.keys(HQ_BUDGET || {});
+  const hasBudget = budgetKeys.length > 0;
+  let budgetHtml = '', budgetPlain = '', budgetKpi = '';
+  if (hasBudget) {
+    const deptKeys = [...new Set([...budgetKeys, ...Object.keys(depG)])].sort();
+    let budTot = 0, actTot = 0;
+    const bRows = deptKeys.map(d => {
+      const bud = Number(HQ_BUDGET[d] || 0);
+      const act = depG[d]?.n || 0;
+      budTot += bud; actTot += act;
+      const variance = act - bud;
+      const fill = bud ? `${Math.round((act / bud) * 1000) / 10}%` : '—';
+      return [d, String(bud), String(act), (variance > 0 ? '+' : '') + variance, fill];
+    });
+    const bHead = ['Department', 'Budget', 'Actual', 'Variance', 'Fill %'];
+    const bTotal = ['Total', String(budTot), String(actTot), (actTot - budTot > 0 ? '+' : '') + (actTot - budTot), budTot ? `${Math.round((actTot / budTot) * 1000) / 10}%` : '—'];
+    budgetPlain = plainTable(bHead, bRows, [16, 8, 8, 9, 8], bTotal);
+    budgetHtml = htmlTable(bHead, bRows, hdr, bTotal);
+    budgetKpi = `  ·  Budget ${budTot} / Actual ${actTot} (${budTot ? Math.round((actTot / budTot) * 1000) / 10 : 0}% filled)`;
+  }
+
   const subject = `Headcount Snapshot - ${fmtDateShort(todayISO())}`;
-  const kpiLine = `Total active staff: ${total}  ·  Saudization ratio: ${saudiRatio}% (Saudi ${saudis} / Non-Saudi ${nonSaudis})  ·  Female ${females} (${pct(females)}) / Male ${males} (${pct(males)})`;
+  const kpiLine = `Total active staff: ${total}  ·  Saudization ratio: ${saudiRatio}% (Saudi ${saudis} / Non-Saudi ${nonSaudis})  ·  Female ${females} (${pct(females)}) / Male ${males} (${pct(males)})${budgetKpi}`;
 
   const intro = [`Dear Mr John,`, '',
     `Please find below the current headcount snapshot of active staff, with the Saudization ratio, gender split, and breakdowns by location and department (each showing the nationality and gender split).`, ''].join('\n');
   const bodyPlain = intro
     + kpiLine + '\n\n'
+    + (hasBudget ? 'Headcount vs HQ budget (by department):\n' + budgetPlain + '\n\n' : '')
     + 'Saudization (nationality) ratio:\n' + natPlain + '\n\n'
     + 'Gender split:\n' + genPlain + '\n\n'
     + 'By location:\n' + locPlain + '\n\n'
@@ -443,6 +475,7 @@ function buildHeadcountSnapshot({ employees, hdr }) {
     `<p style="margin:0">Dear Mr John,</p>`,
     `<p style="margin:0">Please find below the current headcount snapshot of active staff, with the Saudization ratio, gender split, and breakdowns by location and department (each showing the nationality and gender split).</p>`,
     `<p style="margin:0;font-weight:700;color:#334155">${escapeHtml(kpiLine)}</p>`,
+    ...(hasBudget ? [`<p style="margin:0;font-weight:600">Headcount vs HQ budget (by department)</p>`, budgetHtml] : []),
     `<p style="margin:0;font-weight:600">Saudization (nationality) ratio</p>`,
     natHtml,
     `<p style="margin:0;font-weight:600">Gender split</p>`,
