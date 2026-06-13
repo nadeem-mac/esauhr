@@ -124,6 +124,42 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
     window.open(`mailto:${selectedEmp.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
   }
 
+  // Quota already COMPLETED before this entry → logging more is blocked.
+  const quotaCompleted = !!empId && (
+    monthSummary.occurrences >= PERMISSION_QUOTA.monthlyOccurrences ||
+    monthSummary.hoursUsed   >= PERMISSION_QUOTA.monthlyHours
+  );
+
+  // Reminder email for the BLOCKED case — the staff has used the full
+  // monthly allowance, so this permission cannot be logged. Lists only the
+  // permissions already counted (not the blocked attempt).
+  function emailQuotaCompleted() {
+    if (!selectedEmp?.email) { setMsg({ kind: 'err', text: 'No email on file for this employee.' }); return; }
+    const monthLabel = new Date(date + 'T00:00:00').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+    const counted = monthRows.filter(r => r.status === 'pending' || r.status === 'approved');
+    const lines = counted
+      .sort((a, b) => String(a.permission_date).localeCompare(String(b.permission_date)))
+      .map(r => `  • ${r.permission_date}  ·  ${PERMISSION_TYPES[r.type]?.label || r.type}  ·  ${String(r.time_from || '').slice(0,5)}–${String(r.time_to || '').slice(0,5)}`);
+    const totalH = Math.round(monthSummary.hoursUsed * 10) / 10;
+    const totalN = monthSummary.occurrences;
+    const firstRaw = (selectedEmp.name || '').trim().split(/\s+/)[0] || selectedEmp.name || '';
+    const first = firstRaw.charAt(0).toUpperCase() + firstRaw.slice(1).toLowerCase();
+    const body = [
+      `Dear ${first},`, '',
+      `This is a reminder regarding your permission (late arrival / early departure) usage for ${monthLabel}.`, '',
+      `You have already used your full monthly allowance:`, '',
+      ...lines, '',
+      `Total this month: ${totalH} hour(s) across ${totalN} permission(s) — the monthly limit is ${PERMISSION_QUOTA.monthlyOccurrences} permissions (${PERMISSION_QUOTA.monthlyHours} hours).`, '',
+      `As your quota for ${monthLabel} is now complete, no further permissions can be accommodated this month. Any additional late arrival or early departure may be recorded as a violation and reflected in your attendance evaluation and personal score. Kindly plan accordingly, and for any genuine emergency please coordinate in advance with your manager and HR.`, '',
+      `Thanks and regards,`,
+      `BASHAIER ALI`,
+      `Evergreen Shipping Agency Saudi Co., (L.L.C)`,
+      `ESAU - SADMN SUP / HR DEPT`,
+    ].join('\n');
+    const subject = `Permission quota completed — ${monthLabel}`;
+    window.open(`mailto:${selectedEmp.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
+  }
+
   const timeError =
     Number.isNaN(durationMin) ? 'Pick a start and end time.' :
     durationMin <= 0          ? 'End time must be after start time.' :
@@ -131,7 +167,7 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
     durationMin > 60          ? 'Each permission must not exceed 60 minutes (company policy).' :
     '';
 
-  const canSave = !!empId && !!date && !timeError && !busy;
+  const canSave = !!empId && !!date && !timeError && !busy && !quotaCompleted;
 
   // Recent manual permission entries
   useEffect(() => {
@@ -153,6 +189,10 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
 
   async function save() {
     if (!canSave) return;
+    if (quotaCompleted) {
+      setMsg({ kind: 'err', text: `${selectedEmp?.name || 'This employee'} has completed the monthly permission quota — this cannot be logged. Please send the reminder email instead.` });
+      return;
+    }
     setBusy(true); setMsg(null);
     try {
       const now = new Date().toISOString();
@@ -326,8 +366,30 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
         )}
       </div>
 
-      {/* Soft (non-blocking) over-quota notice for HR */}
-      {empId && hours > 0 && exceed.willExceed && (
+      {/* Hard block — quota already completed: cannot log, remind instead */}
+      {quotaCompleted && (
+        <div className="rounded px-3 py-2.5 text-xs" style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B' }}>
+          <div className="flex items-start gap-2">
+            <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />
+            <div className="flex-1">
+              <strong>{selectedEmp?.name}</strong> has already completed the monthly permission quota
+              {' '}({Math.round(monthSummary.hoursUsed * 10) / 10} h / {monthSummary.occurrences} permissions · limit {PERMISSION_QUOTA.monthlyHours} h · {PERMISSION_QUOTA.monthlyOccurrences} permissions).
+              {' '}This permission <strong>cannot be logged</strong>. Please remind the employee that their quota for this month is complete.
+              <div className="mt-2">
+                <button type="button" onClick={emailQuotaCompleted}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[11px] font-semibold"
+                  style={{ background: '#FFFFFF', color: '#991B1B', border: '1px solid #FCA5A5' }}>
+                  <Mail size={12} /> Email {selectedEmp?.name?.split(' ')[0] || 'staff'} — quota completed
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Soft (non-blocking) over-quota notice — only when this entry would
+          tip them over but the quota is not already fully used. */}
+      {empId && hours > 0 && !quotaCompleted && exceed.willExceed && (
         <div className="rounded px-3 py-2.5 text-xs" style={{ background: '#FFFBEB', border: '1px solid #FCD34D', color: '#854F0B' }}>
           <div className="flex items-start gap-2">
             <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />
@@ -356,10 +418,11 @@ export default function LogbookPermissionEntry({ me, employees = [], onSaved }) 
 
       <div className="flex justify-end">
         <button onClick={save} disabled={!canSave}
+          title={quotaCompleted ? 'Monthly permission quota already completed — cannot log' : undefined}
           className="flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold text-white disabled:opacity-50"
           style={{ background: '#0F4C2A' }}>
           {busy ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-          {busy ? 'Saving…' : 'Log permission'}
+          {busy ? 'Saving…' : quotaCompleted ? 'Quota completed' : 'Log permission'}
         </button>
       </div>
 
