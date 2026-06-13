@@ -122,20 +122,35 @@ export default function LeaveHistoryImportCard({ me, employees = [], onSaved }) 
       }
       if (!entries.length) throw new Error('No importable leave rows were found.');
 
-      // Skip anything already imported (re-run safe). Expand existing imported
-      // leave_requests into a covered set of emp|date.
+      // Skip any date that ALREADY has a leave on record — whether it was
+      // logged manually in the Logbook or brought in by a prior import. The
+      // importer only ADDS; it never edits or deletes existing entries, and
+      // this guard makes sure it never duplicates a day you've already
+      // entered. Bound the query to the file's own date span.
+      const isoList = entries.map(e => e.iso);
+      const minISO = isoList.reduce((m, x) => (x < m ? x : m), isoList[0]);
+      const maxISO = isoList.reduce((m, x) => (x > m ? x : m), isoList[0]);
       const covered = new Set();
+      let importedCovered = 0;
+      const isDead = (row) => /reject|cancel|withdraw/i.test(`${row.status || ''} ${row.stage || ''}`);
       try {
         const existing = await directGet('leave_requests',
-          `select=employee_id,start_date,end_date,reason&reason=ilike.${encodeURIComponent(IMPORT_MARK)}*`,
+          `select=employee_id,start_date,end_date,status,stage,reason`
+          + `&end_date=gte.${minISO}&start_date=lte.${maxISO}`,
           { timeoutMs: 12000 });
         for (const row of (existing || [])) {
+          if (isDead(row)) continue;                 // rejected/cancelled don't reserve the date
+          const wasImport = String(row.reason || '').startsWith(IMPORT_MARK);
           let d = String(row.start_date).slice(0, 10);
           const end = String(row.end_date).slice(0, 10);
           let guard = 0;
-          while (d <= end && guard++ < 400) { covered.add(`${String(row.employee_id).toUpperCase()}|${d}`); d = addDaysISO(d, 1); }
+          while (d <= end && guard++ < 400) {
+            const k = `${String(row.employee_id).toUpperCase()}|${d}`;
+            if (!covered.has(k)) { covered.add(k); if (wasImport) importedCovered++; }
+            d = addDaysISO(d, 1);
+          }
         }
-      } catch (e) { /* if this fails we still preview; import will just dedupe less */ }
+      } catch (e) { /* if this fails we still preview; import will dedupe less */ }
 
       const fresh = entries.filter(e => !covered.has(`${e.psn}|${e.iso}`));
       const skippedAlready = entries.length - fresh.length;
@@ -302,7 +317,7 @@ export default function LeaveHistoryImportCard({ me, employees = [], onSaved }) 
           {(s.skippedAlready || s.unknownPsn || s.unknownCode || s.badDate || s.dupInFile) ? (
             <div className="rounded px-3 py-2 text-xs" style={{ background: '#FFFBEB', border: '1px solid #FCD34D', color: '#854F0B' }}>
               <strong>From {s.fileRows} parsed rows ({s.sheet}):</strong>{' '}
-              {s.skippedAlready ? `${s.skippedAlready} already imported (skipped); ` : ''}
+              {s.skippedAlready ? `${s.skippedAlready} already on record — logbook entry or prior import (skipped); ` : ''}
               {s.unknownPsn ? `${s.unknownPsn} unknown PSN; ` : ''}
               {s.unknownCode ? `${s.unknownCode} unknown leave code; ` : ''}
               {s.badDate ? `${s.badDate} unreadable date; ` : ''}
