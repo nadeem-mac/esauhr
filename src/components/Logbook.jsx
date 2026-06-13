@@ -431,7 +431,8 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
   };
   // Bashaier (H94830) — pink themed; everyone else keeps the green.
   const isPink   = me?.id === 'H94830';
-  const ACCENT   = isPink ? '#993556' : '#0F4C2A';   // primary fill / kicker  const ACCENT_BG= isPink ? '#FBEAF0' : 'rgba(15,76,42,0.05)'; // soft wash
+  const ACCENT   = isPink ? '#993556' : '#0F4C2A';   // primary fill / kicker
+  const ACCENT_BG= isPink ? '#FBEAF0' : 'rgba(15,76,42,0.05)'; // soft wash
   const ACCENT_BD= isPink ? '#F4C0D1' : 'rgba(15,76,42,0.18)'; // soft border
   // Leave-history import is an HR/admin-only tool (Bashaier included).
   const isAdminHr = !!(me?.is_admin || me?.is_hr_reviewer || me?.id === 'H94830');
