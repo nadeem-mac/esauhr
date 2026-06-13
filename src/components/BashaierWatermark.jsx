@@ -16,18 +16,18 @@ const FLY_MS = 8200;
 const STARS = [];
 {
   let idx = 0;
-  for (let x = 1; x <= 98; x += 3.2) {
+  for (let x = 1; x <= 99; x += 2.2) {
     const baseY = 78 - 0.7 * (x + 20);                  // along the swoop (vh)
     const delay = ((x + 20) / 138) * (FLY_MS / 1000);   // seconds
-    const count = 1 + (idx % 3 === 0 ? 2 : 1);          // 2–3 stars per step
+    const count = 2 + (idx % 2 === 0 ? 2 : 1);          // 3–4 stars per step
     for (let k = 0; k < count; k++) {
-      const spreadY = (((idx * 7 + k * 13) % 11) - 5) + (k === 1 ? -9 : k === 2 ? 9 : 0);
-      const spreadX = (((idx * 5 + k * 9) % 7) - 3);
+      const spreadY = (((idx * 7 + k * 13) % 15) - 7) + (k === 1 ? -11 : k === 2 ? 11 : k === 3 ? -5 : 0);
+      const spreadX = (((idx * 5 + k * 9) % 9) - 4);
       STARS.push({
         x: x + spreadX,
         y: Math.max(1, baseY + spreadY),
-        delay: delay + k * 0.1,
-        size: 7 + ((idx + k) % 4) * 5,
+        delay: delay + k * 0.08,
+        size: 6 + ((idx + k) % 5) * 5,
         key: `s${idx}_${k}`,
       });
     }
