@@ -29,7 +29,7 @@ const STARS = [];
         x: x + spreadX,
         y: Math.max(1, Math.min(96, baseY + spreadY)),
         delay: delay + k * 0.06,
-        size: 6 + ((idx + k) % 5) * 5,
+        size: 10 + ((idx + k) % 5) * 6,
         key: `s${idx}_${k}`,
       });
     }
@@ -57,10 +57,10 @@ export default function BashaierWatermark() {
     }
     let startTimer, endTimer;
     const schedule = () => {
-      const delay = 30000 + Math.random() * 38000; // every 30–68s
+      const delay = 80000 + Math.random() * 70000; // every ~80–150s
       startTimer = setTimeout(() => {
         setFlying(true);
-        endTimer = setTimeout(() => { setFlying(false); schedule(); }, FLY_MS + 400);
+        endTimer = setTimeout(() => { setFlying(false); schedule(); }, FLY_MS + 2800);
       }, delay);
     };
     schedule();
@@ -94,9 +94,10 @@ export default function BashaierWatermark() {
           50%      { transform: scaleX(0.74) rotate(-5deg); }
         }
         @keyframes bwTwinkle {
-          0%   { opacity: 0; transform: scale(0.3) rotate(0deg); }
-          30%  { opacity: 1; transform: scale(1)   rotate(25deg); }
-          100% { opacity: 0; transform: scale(0.5) rotate(60deg); }
+          0%   { opacity: 0; transform: scale(0.2) rotate(0deg); }
+          25%  { opacity: 1; transform: scale(1.1) rotate(25deg); }
+          60%  { opacity: 1; transform: scale(0.95) rotate(45deg); }
+          100% { opacity: 0; transform: scale(0.5) rotate(70deg); }
         }
         .bw-pixie {
           position: fixed; top: 0; left: 0;
@@ -112,7 +113,8 @@ export default function BashaierWatermark() {
         .bw-star {
           position: fixed;
           opacity: 0;
-          animation: bwTwinkle 1.6s ease-out forwards;
+          filter: drop-shadow(0 0 4px rgba(246,197,68,0.9));
+          animation: bwTwinkle 2.4s ease-out forwards;
         }
       `}</style>
 
