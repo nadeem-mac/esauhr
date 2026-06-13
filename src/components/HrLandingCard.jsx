@@ -259,9 +259,20 @@ export default function HrLandingCard({
       special: true,
     }));
 
+    // Star of the month — among clean records, the longest-serving (a fair,
+    // data-backed tie-breaker until evaluation scores feed in here too).
+    const star = clean.length
+      ? [...clean].sort((a, b) => (monthsOfService(b.join_date) || 0) - (monthsOfService(a.join_date) || 0))[0]
+      : null;
+    const starObj = star ? {
+      title: salutationFor(star),
+      sub: `${star.department || ''}${star.location ? ' · ' + star.location : ''} · ${Math.floor((monthsOfService(star.join_date) || 0) / 12)}y service`.replace(/^ · /, ''),
+    } : null;
+
     return {
       mostLate,
       cleanItems,
+      star: starObj,
       cleanCount: clean.length,
       activeCount: active.length,
       lateTotal: monthStats.perEmp.filter(s => s.lateCount > 0).length,
@@ -371,6 +382,8 @@ export default function HrLandingCard({
   // card to a single warm line rather than show a wall of zero rows.
   const hasLifeEvents = anniversaries.length > 0 || holidays.length > 0
                       || returnsThisWeek.length > 0 || startsThisWeek.length > 0;
+  const hasPunctuality = !!punctuality && (punctuality.cleanItems.length > 0 || punctuality.mostLate.length > 0);
+  const hasAnything = hasLifeEvents || hasPunctuality;
   const hasActions    = pendingDecisions > 0
                       || (pendingCertCount ?? 0) > 0
                       || (evalZoneCounts?.watch || 0) + (evalZoneCounts?.review || 0) > 0;
@@ -431,12 +444,13 @@ export default function HrLandingCard({
           ))}
         </div>
 
-        {!hasLifeEvents ? (
+        {!hasAnything ? (
           <p className="text-[13px]" style={{ color: '#1F1B16', opacity: 0.7, fontStyle: 'italic' }}>
             A quiet week. No anniversaries, returns, or holidays in the next seven days — a good window to catch up on the things that always wait.
           </p>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
+            {hasLifeEvents && (<>
             <LifeEventColumn
               icon={Award}
               accent="#A16207"
@@ -499,44 +513,12 @@ export default function HrLandingCard({
                 };
               })}
             />
+            </>)}
+            {hasPunctuality && <PunctualityColumn data={punctuality} />}
           </div>
         )}
       </div>
 
-      {/* ── PUNCTUALITY · THIS MONTH ──────────────────────────────── */}
-      {punctuality && (punctuality.cleanItems.length > 0 || punctuality.mostLate.length > 0) && (
-        <div className="px-6 py-5 sm:px-8 sm:py-6" style={{ borderBottom: '1px solid #F4F4EE' }}>
-          <div className="flex items-baseline justify-between flex-wrap gap-2 mb-4">
-            <div>
-              <div className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.3em', fontWeight: 700 }}>
-                — PUNCTUALITY · THIS MONTH
-              </div>
-              <h2 className="serif" style={{ fontSize: '22px', color: '#1F1B16', marginTop: '4px', fontWeight: 500, letterSpacing: '-0.01em' }}>
-                Who to recognise, who to nudge
-              </h2>
-            </div>
-            <div className="text-[11px]" style={{ color: '#1F1B16', opacity: 0.6 }}>
-              {punctuality.cleanCount} of {punctuality.activeCount} on time · {punctuality.lateTotal} with late days
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <LifeEventColumn
-              icon={Star}
-              accent="#0F4C2A"
-              label={`ON TIME ALL MONTH · ${punctuality.cleanCount}`}
-              empty="No clean records yet this month"
-              items={punctuality.cleanItems}
-            />
-            <LifeEventColumn
-              icon={Clock}
-              accent="#B91C1C"
-              label="MOST LATE THIS MONTH"
-              empty="No late arrivals this month — excellent."
-              items={punctuality.mostLate}
-            />
-          </div>
-        </div>
-      )}
       {outToday.length > 0 && (
         <div className="px-6 py-4 sm:px-8 sm:py-5" style={{ borderBottom: '1px solid #F4F4EE' }}>
           <div className="flex items-center gap-2 mb-3">
@@ -573,6 +555,64 @@ export default function HrLandingCard({
 }
 
 // ─── sub-components ───────────────────────────────────────────────────
+
+function PunctualityColumn({ data }) {
+  const { star, mostLate, cleanCount, activeCount } = data;
+  const ratio = activeCount ? Math.round((cleanCount / activeCount) * 100) : 0;
+  const GREEN = '#0F4C2A', RED = '#B91C1C';
+  return (
+    <div className="rounded-xl p-3.5 transition-all hover:-translate-y-0.5"
+         style={{ background: '#FFFFFF', border: '1px solid #ECEAE0' }}>
+      <div className="flex items-center gap-2 mb-2.5">
+        <span className="flex items-center justify-center rounded-lg flex-shrink-0"
+              style={{ width: 24, height: 24, background: `${GREEN}14` }}>
+          <Star className="w-3.5 h-3.5" style={{ color: GREEN }} />
+        </span>
+        <span className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.14em', fontWeight: 700 }}>
+          PUNCTUALITY
+        </span>
+      </div>
+
+      {/* On-time ratio + bar */}
+      <div className="flex items-baseline gap-1.5">
+        <span style={{ fontSize: 22, fontWeight: 700, color: GREEN, lineHeight: 1 }}>{cleanCount}</span>
+        <span className="text-[11px]" style={{ color: '#1F1B16', opacity: 0.6 }}>/ {activeCount} on time · {ratio}%</span>
+      </div>
+      <div className="mt-1.5 mb-2.5 rounded-full overflow-hidden" style={{ height: 4, background: '#EFEDE4' }}>
+        <div style={{ height: '100%', width: `${ratio}%`, background: GREEN, borderRadius: 999 }} />
+      </div>
+
+      {/* Star of the month */}
+      {star && (
+        <div className="rounded-lg px-2.5 py-2 mb-2.5" style={{ background: `${GREEN}0D`, border: `1px solid ${GREEN}22` }}>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[13px] truncate" style={{ color: '#1F1B16', fontWeight: 600 }}>{star.title}</div>
+            <span className="text-[8.5px] flex-shrink-0" style={{ color: GREEN, background: `${GREEN}1A`, padding: '1px 6px', borderRadius: 999, fontWeight: 800, letterSpacing: '0.06em' }}>★ STAR</span>
+          </div>
+          <div className="text-[11px] mt-0.5 truncate" style={{ color: '#1F1B16', opacity: 0.7 }}>{star.sub}</div>
+        </div>
+      )}
+
+      {/* Most late */}
+      <div className="text-[9px] mb-1.5" style={{ color: RED, letterSpacing: '0.12em', fontWeight: 700 }}>NEEDS A NUDGE</div>
+      {mostLate.length === 0 ? (
+        <div className="text-[12px]" style={{ color: '#1F1B16', opacity: 0.45, fontStyle: 'italic' }}>No late arrivals — excellent.</div>
+      ) : (
+        <ul className="space-y-1.5">
+          {mostLate.slice(0, 3).map(it => (
+            <li key={it.key} className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-[12.5px] truncate" style={{ color: '#1F1B16', fontWeight: 500 }}>{it.title}</div>
+                <div className="text-[10.5px]" style={{ color: '#1F1B16', opacity: 0.6 }}>{it.sub}</div>
+              </div>
+              <span className="text-[9px] flex-shrink-0" style={{ color: RED, background: `${RED}12`, padding: '1px 6px', borderRadius: 999, fontWeight: 800 }}>{it.badge}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 function LifeEventColumn({ icon: Icon, accent, label, empty, items }) {
   return (
