@@ -730,15 +730,31 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                 // pieces are presented changes. Nadeem 2026-05-21: 'easy
                 // to understand … ensuring all information is correct'.
                 const adjVal     = Number(balance.adjustment || 0);
-                const prePortal  = adjVal < 0 ? -adjVal : 0;
+                const legacyPre  = adjVal < 0 ? -adjVal : 0;   // legacy negative adj
                 const bonus      = adjVal > 0 ?  adjVal : 0;
+
+                // Split approved usage into PRE-PORTAL (imported from the old
+                // leave tracker) vs PORTAL-recorded, using the import marker
+                // on the reason. Imported leaves are real dated rows but
+                // represent leave taken before the portal went live.
+                const rnd = (x) => Math.round(x * 100) / 100;
+                const importedUsed = (requests || []).filter(r =>
+                  r.employee_id === employee.id &&
+                  r.leave_type_id === type.id &&
+                  r.status === 'approved' &&
+                  new Date(r.start_date).getFullYear() === year &&
+                  String(r.reason || '').startsWith('Imported from leave tracker')
+                ).reduce((s, r) => s + Number(r.days || 0), 0);
+                const portalUsed = Math.max(0, rnd(balance.used - importedUsed));
+                const prePortal  = rnd(legacyPre + importedUsed);  // shown as 'before portal'
+
                 const dispTotal  = balance.entitlement + balance.carried + bonus;
-                const dispUsed   = balance.used + balance.pending + prePortal;
+                const dispUsed   = balance.used + balance.pending + legacyPre;
                 const dispAvail  = dispTotal - dispUsed;
 
                 const hasCarry      = balance.carried > 0;
                 const hasPrePortal  = prePortal > 0;
-                const hasPortalUsed = balance.used > 0;
+                const hasPortalUsed = portalUsed > 0;
                 const hasBonus      = bonus > 0;
                 const isHighlighted = hasCarry || hasPrePortal;
 
@@ -758,7 +774,7 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                       (hasBonus      ? `Bonus / adjustment:    +${bonus}\n`              : '') +
                       `── Total pool:         ${dispTotal}\n` +
                       (hasPrePortal  ? `Used before portal:    −${prePortal}\n` : '') +
-                      (hasPortalUsed ? `Used in portal:        −${balance.used}\n` : '') +
+                      (hasPortalUsed ? `Used in portal:        −${portalUsed}\n` : '') +
                       (balance.pending > 0 ? `Pending:               −${balance.pending}\n` : '') +
                       `── Available:          ${dispAvail}`
                     }
@@ -853,7 +869,7 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                               width: 5, height: 5, borderRadius: '50%',
                               background: '#737373', flexShrink: 0,
                             }} />
-                            <span><strong style={{ fontWeight: 700 }}>{balance.used}</strong> used in {year}</span>
+                            <span><strong style={{ fontWeight: 700 }}>{portalUsed}</strong> used in {year}</span>
                           </div>
                         )}
                       </div>
@@ -879,11 +895,20 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                   style={{ borderColor: 'var(--border-soft)', background: '#FFFFFF' }}>
                 {history.map(r => {
                   const tp = typeMap[r.leave_type_id];
+                  const imported = String(r.reason || '').startsWith('Imported from leave tracker');
                   return (
                     <li key={r.id} className="flex items-center gap-3 px-4 py-3">
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: tp?.color }}/>
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm" style={{ fontWeight: 500 }}>{tp?.name || r.leave_type_id}</div>
+                        <div className="text-sm flex items-center gap-1.5" style={{ fontWeight: 500 }}>
+                          {tp?.name || r.leave_type_id}
+                          {imported && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full"
+                              style={{ background: '#F1ECE4', color: '#1F1B16', fontWeight: 700, letterSpacing: '0.03em' }}>
+                              PRE-PORTAL
+                            </span>
+                          )}
+                        </div>
                         <div className="text-xs opacity-60">{fmtDateShort(r.start_date)} → {fmtDateShort(r.end_date)} · {r.days}d</div>
                       </div>
                       <Pill color={r.status === 'approved' ? 'var(--evergreen-500)' : r.status === 'rejected' ? 'var(--clay)' : 'var(--copper)'}>

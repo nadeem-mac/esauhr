@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { Upload, AlertCircle, CheckCircle2, Loader2, FileSpreadsheet, Info, ChevronRight, ChevronDown } from 'lucide-react';
-import { directGet, directPost } from '../supabaseClient.js';
+import { directGet, directPost, directPatch } from '../supabaseClient.js';
 
 // =============================================================================
 // LeaveHistoryImportCard
@@ -57,6 +57,28 @@ export default function LeaveHistoryImportCard({ me, employees = [], onSaved }) 
   const [msg, setMsg] = useState(null);
   const [adjWarn, setAdjWarn] = useState([]);  // employees with prior migration adjustments
   const [openEmp, setOpenEmp] = useState(() => new Set()); // expanded date lists
+  const [clearingAdj, setClearingAdj] = useState(false);
+
+  // Zero out the legacy "migration / pre-portal" balance adjustments now that
+  // the real dated leave rows exist — otherwise that usage is counted twice.
+  async function clearAdjustments() {
+    if (!adjWarn.length || clearingAdj) return;
+    setClearingAdj(true);
+    const today = new Date().toISOString().slice(0, 10);
+    let ok = 0, fail = 0;
+    for (const a of adjWarn) {
+      try {
+        await directPatch('leave_balances', 'id', a.id,
+          { adjustment: 0, adjustment_note: `${a.note || ''} · cleared after leave import ${today}`.trim() },
+          { timeoutMs: 8000 });
+        ok++;
+      } catch { fail++; }
+    }
+    setClearingAdj(false);
+    setAdjWarn([]);
+    setMsg({ kind: fail ? 'err' : 'ok', text: `Cleared ${ok} migration adjustment(s)${fail ? `; ${fail} failed` : ''}. Balances now count the imported dates only.` });
+    onSaved?.();
+  }
 
   const fmtDay = (iso) => {
     const [y, m, d] = String(iso).split('-').map(Number);
@@ -187,10 +209,11 @@ export default function LeaveHistoryImportCard({ me, employees = [], onSaved }) 
       // double-count once these real rows exist.
       try {
         const bals = await directGet('leave_balances',
-          'select=employee_id,leave_type_id,year,adjustment,adjustment_note&adjustment=neq.0',
+          'select=id,employee_id,leave_type_id,year,adjustment,adjustment_note&adjustment=neq.0',
           { timeoutMs: 10000 });
         const flagged = (bals || []).filter(b => /migrat|excel|pre-?portal|pre portal/i.test(String(b.adjustment_note || '')));
         setAdjWarn(flagged.map(b => ({
+          id: b.id, employee_id: b.employee_id,
           name: empById[String(b.employee_id).toUpperCase()]?.name || b.employee_id,
           type: b.leave_type_id, year: b.year, adjustment: b.adjustment, note: b.adjustment_note,
         })));
@@ -333,6 +356,15 @@ export default function LeaveHistoryImportCard({ me, employees = [], onSaved }) 
               balance adjustment noted as a prior Excel/migration entry. Once these real leave dates are
               imported, those manual adjustments should be cleared or they'll be counted twice
               ({adjWarn.slice(0, 4).map(a => `${a.name} (${a.type} ${a.year}: ${a.adjustment})`).join(', ')}{adjWarn.length > 4 ? '…' : ''}).
+              <div className="mt-2">
+                <button type="button" onClick={clearAdjustments} disabled={clearingAdj}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[11px] font-semibold disabled:opacity-50"
+                  style={{ background: '#FFFFFF', color: '#991B1B', border: '1px solid #FCA5A5' }}>
+                  {clearingAdj ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+                  {clearingAdj ? 'Clearing…' : `Clear ${adjWarn.length} migration adjustment(s)`}
+                </button>
+                <span className="ml-2 opacity-70">Do this after importing.</span>
+              </div>
             </div>
           )}
 
