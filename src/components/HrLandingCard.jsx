@@ -2,11 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Cake, Award, Plane, CalendarCheck, AlertCircle, ClipboardList,
   Heart, FileWarning, ShieldAlert, TrendingUp, ArrowRight, Sparkles,
-  Loader2, MapPin, Inbox, Palmtree,
+  Loader2, MapPin, Inbox, Palmtree, Clock, AlertTriangle, Star,
 } from 'lucide-react';
 import { directGet } from '../supabaseClient.js';
 import { monthsOfService, fmtDateShort } from '../lib/leaveLogic.js';
 import { salutationFor } from '../lib/salutations.js';
+import { managementNoAttendance } from '../lib/attendanceExceptions.js';
 
 // =============================================================================
 // HrLandingCard
@@ -157,6 +158,7 @@ export default function HrLandingCard({
   // Internal fetches — kept lazy so the page hero paints first.
   const [pendingCertCount, setPendingCertCount]   = useState(null);
   const [evalZoneCounts, setEvalZoneCounts]       = useState(null);
+  const [monthStats, setMonthStats]               = useState(null);
   const [loading, setLoading]                     = useState(true);
 
   useEffect(() => {
@@ -189,23 +191,26 @@ export default function HrLandingCard({
             byEmp.set(v.employee_id, arr);
           }
           let watch = 0, review = 0, chronic = 0; // chronic future-proofing
-          for (const [, rows] of byEmp) {
+          const perEmp = [];
+          for (const [eid, rows] of byEmp) {
             // Lightweight version of summariseViolations to avoid an
             // extra import — same weight table.
-            let d = 0;
+            let d = 0, lateCount = 0, lateMin = 0, earlyCount = 0, missed = 0, absent = 0;
             for (const v of rows) {
               const m = Math.abs(Number(v.minutes_off) || 0);
-              if (v.violation_type === 'unauthorized_absence') d += 5;
-              else if (v.violation_type === 'missed_out')      d += 3;
-              else if (v.violation_type === 'missed_in')       d += 2;
-              else if (v.violation_type === 'late')            d += m > 30 ? 3 : 2;
-              else if (v.violation_type === 'early' || v.violation_type === 'early_leave') d += m > 30 ? 3 : 1;
-              else                                              d += 1;
+              if (v.violation_type === 'unauthorized_absence')      { d += 5; absent += 1; }
+              else if (v.violation_type === 'missed_out')           { d += 3; missed += 1; }
+              else if (v.violation_type === 'missed_in')            { d += 2; missed += 1; }
+              else if (v.violation_type === 'late')                 { d += m > 30 ? 3 : 2; lateCount += 1; lateMin += m; }
+              else if (v.violation_type === 'early' || v.violation_type === 'early_leave') { d += m > 30 ? 3 : 1; earlyCount += 1; }
+              else                                                   { d += 1; }
             }
+            perEmp.push({ employee_id: eid, deductions: d, lateCount, lateMin, earlyCount, missed, absent });
             if (d >= 10)     review += 1;
             else if (d >= 5) watch += 1;
           }
           setEvalZoneCounts({ watch, review, chronic });
+          setMonthStats({ perEmp, flaggedIds: new Set(byEmp.keys()) });
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -217,6 +222,51 @@ export default function HrLandingCard({
   // Derived rows (cheap — memoised so a parent re-render doesn't churn).
   const anniversaries = useMemo(() => anniversariesInRange(employees, 14), [employees]);
   const holidays      = useMemo(() => upcomingHolidays(60), []);
+
+  // Punctuality recognition for the current month, derived from the
+  // attendance_violations roll-up. "On time all month" = active, tracked
+  // staff with zero violations; "Most late" = ranked by late days then
+  // minutes. Management (no-attendance) staff are excluded.
+  const punctuality = useMemo(() => {
+    if (!monthStats) return null;
+    const byId = new Map();
+    const active = (employees || []).filter(e => {
+      const s = String(e.employment_status || '').toLowerCase();
+      if (['deactivated', 'departed', 'terminated', 'resigned', 'inactive'].includes(s)) return false;
+      if (managementNoAttendance(e.id)) return false;
+      byId.set(e.id, e);
+      return true;
+    });
+    const nameOf = (id) => salutationFor(byId.get(id) || { id, name: id });
+
+    const mostLate = monthStats.perEmp
+      .filter(s => s.lateCount > 0 && byId.has(s.employee_id))
+      .sort((a, b) => b.lateCount - a.lateCount || b.lateMin - a.lateMin)
+      .slice(0, 4)
+      .map(s => ({
+        key: s.employee_id,
+        title: nameOf(s.employee_id),
+        sub: `${s.lateCount} late day${s.lateCount === 1 ? '' : 's'} · ${s.lateMin} min total`,
+        badge: `${s.lateCount}\u00d7`,
+      }));
+
+    const clean = active.filter(e => !monthStats.flaggedIds.has(e.id));
+    const cleanItems = clean.slice(0, 4).map(e => ({
+      key: e.id,
+      title: salutationFor(e),
+      sub: `Clean record${e.department ? ' · ' + e.department : ''}${e.location ? ' · ' + e.location : ''}`,
+      badge: 'ON TIME',
+      special: true,
+    }));
+
+    return {
+      mostLate,
+      cleanItems,
+      cleanCount: clean.length,
+      activeCount: active.length,
+      lateTotal: monthStats.perEmp.filter(s => s.lateCount > 0).length,
+    };
+  }, [monthStats, employees]);
 
   // Leave returns this week (people coming back) + starts this week.
   // We re-derive from the passed-in requests array so the card sees
@@ -453,7 +503,40 @@ export default function HrLandingCard({
         )}
       </div>
 
-      {/* ── OUT OF OFFICE TODAY ───────────────────────────────────── */}
+      {/* ── PUNCTUALITY · THIS MONTH ──────────────────────────────── */}
+      {punctuality && (punctuality.cleanItems.length > 0 || punctuality.mostLate.length > 0) && (
+        <div className="px-6 py-5 sm:px-8 sm:py-6" style={{ borderBottom: '1px solid #F4F4EE' }}>
+          <div className="flex items-baseline justify-between flex-wrap gap-2 mb-4">
+            <div>
+              <div className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.3em', fontWeight: 700 }}>
+                — PUNCTUALITY · THIS MONTH
+              </div>
+              <h2 className="serif" style={{ fontSize: '22px', color: '#1F1B16', marginTop: '4px', fontWeight: 500, letterSpacing: '-0.01em' }}>
+                Who to recognise, who to nudge
+              </h2>
+            </div>
+            <div className="text-[11px]" style={{ color: '#1F1B16', opacity: 0.6 }}>
+              {punctuality.cleanCount} of {punctuality.activeCount} on time · {punctuality.lateTotal} with late days
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <LifeEventColumn
+              icon={Star}
+              accent="#0F4C2A"
+              label={`ON TIME ALL MONTH · ${punctuality.cleanCount}`}
+              empty="No clean records yet this month"
+              items={punctuality.cleanItems}
+            />
+            <LifeEventColumn
+              icon={Clock}
+              accent="#B91C1C"
+              label="MOST LATE THIS MONTH"
+              empty="No late arrivals this month — excellent."
+              items={punctuality.mostLate}
+            />
+          </div>
+        </div>
+      )}
       {outToday.length > 0 && (
         <div className="px-6 py-4 sm:px-8 sm:py-5" style={{ borderBottom: '1px solid #F4F4EE' }}>
           <div className="flex items-center gap-2 mb-3">
