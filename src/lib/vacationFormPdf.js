@@ -22,6 +22,7 @@
 
 import jsPDF from 'jspdf';
 import QRCode from 'qrcode';
+import { designationOf } from './designation.js';
 
 // ─── module-scope caches ───────────────────────────────────────────────────
 let logoDataUrl = null;
@@ -235,7 +236,7 @@ export async function generateVacationFormPdfBlob({
   const ltKey = LEAVE_TYPE_LABEL[request.leave_type_id] ? request.leave_type_id : 'annual';
   const dept  = DEPT_NAMES[employee?.department] || employee?.department || '—';
   const loc   = LOC_NAMES[employee?.location]    || employee?.location    || '—';
-  const designation = employee?.designation || 'Department Member';
+  const designation = designationOf(employee?.designation);
 
   const submitted14d = request.requested_at && request.start_date
     ? (new Date(request.start_date).getTime() - new Date(request.requested_at).getTime()) >= 14 * 24 * 3600 * 1000

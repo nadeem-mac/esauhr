@@ -30,6 +30,7 @@
 // joiningReportPdf.js, not here).
 // =============================================================================
 
+import { designationOf } from './designation.js';
 import {
   newPdf, loadLogoDataUrl, generateQRCode,
   drawHeader, drawTitle, drawSectionHeader, drawSingleRow,
@@ -227,9 +228,7 @@ export async function generateRejoiningReportPdfBlob({
   // Designation falls back to 'Department Member' the same way the
   // vacation form does — that's the default non-supervisory title at
   // ESAU so we never have to show a dash where a real role belongs.
-  const designation    = position.designation
-                       || employee.designation
-                       || 'Department Member';
+  const designation = designationOf(position.designation, employee.designation);
 
   const deptCombined   = position.department
     ? `${DEPT_NAMES[position.department] || position.department}${position.location ? '   ·   ' + (LOC_NAMES[position.location] || position.location) : ''}`

@@ -23,6 +23,7 @@
 // without overflowing the bottom-anchored signature grid.
 // =============================================================================
 
+import { designationOf } from './designation.js';
 import {
   newPdf, loadLogoDataUrl, generateQRCode,
   drawHeader, drawTitle, drawSectionHeader, drawSingleRow, drawTwoColTable,
@@ -635,7 +636,7 @@ export async function generateLeaveApplicationPdfBlob({
     y = drawTwoColTable(pdf, y, [
       [['Full name',   employee.name || '—'],
        ['PSN ID',      employee.id   || '—']],
-      [['Designation', position.designation || employee.designation || '—'],
+      [['Designation', designationOf(position.designation, employee.designation)],
        ['Department',  deptLocLabel]],
       [['Joined',      joinedTenureLabel],
        ['Reports to',  manager?.name || '—']],
@@ -645,7 +646,7 @@ export async function generateLeaveApplicationPdfBlob({
     // marriage, bereavement, study, unpaid, iddah, other, emergency.
     y = drawSingleRow(pdf, y, 'Full name',       employee.name || '—', { emphasis: true });
     y = drawSingleRow(pdf, y, 'PSN ID',          employee.id   || '—');
-    y = drawSingleRow(pdf, y, 'Designation',     position.designation || employee.designation || '—');
+    y = drawSingleRow(pdf, y, 'Designation',     designationOf(position.designation, employee.designation));
     y = drawSingleRow(pdf, y, 'Department',      deptLocLabel);
     y = drawSingleRow(pdf, y, 'Joined / Tenure', joinedTenureLabel);
     y = drawSingleRow(pdf, y, 'Reports to',      manager?.name || '—');
@@ -852,7 +853,7 @@ export async function generateLogbookPdfBlob({
     y = drawTwoColTable(pdf, y, [
       [['Employee',     employee.name || '—'],
        ['PSN ID',       employee.id || '—']],
-      [['Designation',  position.designation || employee.designation || '—'],
+      [['Designation',  designationOf(position.designation, employee.designation)],
        ['Department',   position.department || employee.department || '—']],
       [['Branch',       position.location || employee.location || '—'],
        ['Reports to',   manager?.name || '—']],
@@ -860,7 +861,7 @@ export async function generateLogbookPdfBlob({
   } else {
     y = drawSingleRow(pdf, y, 'Employee',     employee.name || '—', { emphasis: true });
     y = drawSingleRow(pdf, y, 'PSN ID',       employee.id || '—');
-    y = drawSingleRow(pdf, y, 'Designation',  position.designation || employee.designation || '—');
+    y = drawSingleRow(pdf, y, 'Designation',  designationOf(position.designation, employee.designation));
     y = drawSingleRow(pdf, y, 'Department',   position.department || employee.department || '—');
     y = drawSingleRow(pdf, y, 'Branch',       position.location || employee.location || '—');
     y = drawSingleRow(pdf, y, 'Reports to',   manager?.name || '—');

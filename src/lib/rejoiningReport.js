@@ -22,6 +22,7 @@ import QRCode from 'qrcode';
 // notifications. Single source of truth for who gets CC'd: any change
 // to EXEC_CC in permissionLetter.js automatically applies here too.
 import { resolveExecCcEmails } from './permissionLetter.js';
+import { designationOf } from './designation.js';
 
 const VERIFY_BASE_URL = (typeof window !== 'undefined' && window.location?.origin)
   ? window.location.origin
@@ -438,7 +439,7 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
 
   const dept = DEPT_NAMES[employee?.department] || employee?.department || '—';
   const loc  = LOCATION_NAMES[employee?.location] || employee?.location || '—';
-  const designation = employee?.designation || 'Department Member';
+  const designation = designationOf(employee?.designation);
   const today = new Date().toISOString();
 
   const dayCount = Number(request.days || 0);

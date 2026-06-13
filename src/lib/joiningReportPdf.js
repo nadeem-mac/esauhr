@@ -17,6 +17,7 @@
 
 import jsPDF from 'jspdf';
 import QRCode from 'qrcode';
+import { designationOf } from './designation.js';
 
 let logoDataUrl = null;
 
@@ -567,7 +568,7 @@ export async function generateJoiningReportPdfBlob({
     ? `${position.location}${LOC_NAMES[position.location] ? ` — ${LOC_NAMES[position.location]}` : ''}`
     : '—';
   y = drawTwoColTable(pdf, y, [
-    [['Designation',   position.designation],   ['Department',    deptLabel]],
+    [['Designation', designationOf(position.designation, employee.designation)],   ['Department',    deptLabel]],
     [['Location',      locLabel],               ['Reports to',    manager?.name]],
   ]);
   y += 3;

@@ -3,6 +3,7 @@ import { X, Mail, AlertTriangle, Check, Loader2, Calendar, ExternalLink } from '
 import { directPost } from '../supabaseClient.js';
 import { parseEmailAddress } from '../lib/emailTemplates.js';
 import { salutationFor } from '../lib/salutations.js';
+import { designationOf } from '../lib/designation.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EvaluationReviewModal
@@ -282,7 +283,7 @@ export default function EvaluationReviewModal({ row, employee, manager, onClose,
                 {employee?.name || row.employeeId}
               </h2>
               <div className="text-xs mt-0.5" style={{ color: '#1F1B16' }}>
-                {employee?.designation || employee?.department || '—'}
+                {designationOf(employee?.designation)}
               </div>
             </div>
           </div>

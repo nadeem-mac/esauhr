@@ -24,6 +24,7 @@ import {
   VerticalAlign, ShadingType,
 } from 'docx';
 import QRCode from 'qrcode';
+import { designationOf } from './designation.js';
 
 const VERIFY_BASE_URL = (typeof window !== 'undefined' && window.location?.origin)
   ? window.location.origin
@@ -592,7 +593,7 @@ export async function generateVacationFormBlob({ employee, request, manager, hrA
 
   const dept = DEPT_NAMES[employee?.department] || employee?.department || '—';
   const loc  = LOCATION_NAMES[employee?.location] || employee?.location || '—';
-  const designation = employee?.designation || 'Department Member';
+  const designation = designationOf(employee?.designation);
   const today = new Date().toISOString();
   const isApproved = request.stage === 'approved';
 

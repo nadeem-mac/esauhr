@@ -10,6 +10,7 @@
 //   • Planned (at least 24h notice) or Urgent (<24h)
 // =============================================================================
 
+import { designationOf } from './designation.js';
 import {
   newPdf, loadLogoDataUrl, generateQRCode,
   drawHeader, drawTitle, drawPolicyBullets, drawSignatures, drawGeneratedStamp,
@@ -106,9 +107,7 @@ export async function generatePermissionRequestPdfBlob({
   const locLabel = position.location
     ? `${position.location}${LOC_NAMES[position.location] ? '  —  ' + LOC_NAMES[position.location] : ''}`
     : '—';
-  const designation = position.designation
-                   || employee.designation
-                   || 'Department Member';
+  const designation = designationOf(position.designation, employee.designation);
   y = drawSingleRow(pdf, y, 'Full name',   employee.name, { emphasis: true });
   y = drawSingleRow(pdf, y, 'PSN ID',      employee.id);
   y = drawSingleRow(pdf, y, 'Designation', designation);

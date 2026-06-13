@@ -6,6 +6,7 @@ import {
   calculateBalance, fmtDate, fmtDateShort, yearsOfService, monthsOfService, LOCATION_LABELS,
 } from '../lib/leaveLogic.js';
 import { downloadMonthlyAttendanceReport } from '../lib/monthlyAttendanceReport.js';
+import { designationOf } from '../lib/designation.js';
 
 // Full English display names for ESAU department codes. Used everywhere the
 // department is rendered to staff/HR — the codes themselves are kept
@@ -259,7 +260,7 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
   <div class="info">
     <div class="row"><span class="k">PSN ID</span><span class="v">${esc(employee.id)}</span></div>
     <div class="row"><span class="k">Department</span><span class="v">${esc(employee.department || '—')}</span></div>
-    <div class="row"><span class="k">Designation</span><span class="v">${esc(employee.designation || '—')}</span></div>
+    <div class="row"><span class="k">Designation</span><span class="v">${esc(designationOf(employee.designation))}</span></div>
     <div class="row"><span class="k">Location</span><span class="v">${esc(employee.location || '—')}</span></div>
     <div class="row"><span class="k">Date joined</span><span class="v">${esc(d2(employee.join_date))}</span></div>
     <div class="row"><span class="k">Tenure</span><span class="v">${yos} yr${yos === 1 ? '' : 's'} ${mos} mo</span></div>
