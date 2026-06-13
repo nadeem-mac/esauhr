@@ -50,6 +50,17 @@ const SIGNATURE_HTML = `
   <strong>Email:</strong> <a href="mailto:bashaier.alsubaie@evergreen-shipping.com.sa" style="color:#2D5F3F">bashaier.alsubaie@evergreen-shipping.com.sa</a>
 </p>`;
 
+// Blank spacer paragraph — Outlook strips <p> margins on paste, so real
+// spacing between blocks must be an empty paragraph it will keep.
+const PSP = '<p style="margin:0;font-size:10pt;line-height:1;mso-line-height-rule:exactly">&nbsp;</p>';
+// Assemble an email body from HTML blocks, separated by blank spacers, with
+// the signature appended once (one spacer before it — no extra blank line
+// inside the signature itself).
+function emailBody(blocks) {
+  const inner = blocks.filter(Boolean).join(PSP);
+  return `<div style="font-family:Calibri,sans-serif;color:#1F2937;font-size:10pt;line-height:1.4">${inner}${PSP}${SIGNATURE_HTML}</div>`;
+}
+
 // =============================================================================
 // HELPERS
 // =============================================================================
@@ -89,7 +100,7 @@ function htmlTable(headers, rows, hdr = { bg: '#334155', fg: '#FFFFFF' }) {
     const tds = r.map(c => `<td style="padding:0 6px;border:1px solid #D1D5DB;color:#1F2937;font-family:Calibri,sans-serif;font-size:10pt;background:${bg};white-space:nowrap">${escapeHtml(c == null ? '' : String(c))}</td>`).join('');
     return `<tr>${tds}</tr>`;
   }).join('');
-  return `<table style="border-collapse:collapse;font-family:Calibri,sans-serif;margin:10px 0">
+  return `<table cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;font-family:Calibri,sans-serif;margin:0">
     <thead><tr>${th}</tr></thead>
     <tbody>${trs}</tbody>
   </table>`;
@@ -188,15 +199,13 @@ function buildMidMonthPermissions({ permissions, employees, year, month, today, 
 
   const bodyPlain = intro + tablePlain + '\n\n' + totalsLine + closing + SIGNATURE_PLAIN;
 
-  const bodyHtml = `
-    <div style="font-family:Calibri,sans-serif;color:#1F2937;font-size:10pt;line-height:1.5">
-      <p>Dear Mr John,</p>
-      <p>Please find below the mid-month report of permission applications submitted by staff so far this month (${escapeHtml(range)}). The list covers all late arrivals and early leaves recorded, with hours and approval status against the monthly quota of 3 hours per employee.</p>
-      ${tableHtml}
-      <p style="font-weight:600;color:#334155">${escapeHtml(totalsLine)}</p>
-      <p>The full month-end report will follow at month-end.</p>
-      ${SIGNATURE_HTML}
-    </div>`;
+  const bodyHtml = emailBody([
+    `<p style="margin:0">Dear Mr John,</p>`,
+    `<p style="margin:0">Please find below the mid-month report of permission applications submitted by staff so far this month (${escapeHtml(range)}). The list covers all late arrivals and early leaves recorded, with hours and approval status against the monthly quota of 3 hours per employee.</p>`,
+    tableHtml,
+    `<p style="margin:0;font-weight:600;color:#334155">${escapeHtml(totalsLine)}</p>`,
+    `<p style="margin:0">The full month-end report will follow at month-end.</p>`,
+  ]);
 
   return { subject, bodyPlain, bodyHtml, count: rows.length };
 }
@@ -259,15 +268,13 @@ function buildEndOfMonthPermissions({ permissions, employees, year, month, hdr }
 
   const bodyPlain = intro + tablePlain + '\n\n' + totalsLine + closing + SIGNATURE_PLAIN;
 
-  const bodyHtml = `
-    <div style="font-family:Calibri,sans-serif;color:#1F2937;font-size:10pt;line-height:1.5">
-      <p>Dear Mr John,</p>
-      <p>Please find below the full month-end report of permission applications submitted by staff during ${escapeHtml(monthName + ' ' + year)}. The list covers all late arrivals and early leaves recorded for the month, with hours and approval status against the monthly quota of 3 hours per employee.</p>
-      ${tableHtml}
-      <p style="font-weight:600;color:#334155">${escapeHtml(totalsLine)}</p>
-      <p>Please let me know if you would like any breakdown by department, by type, or by individual employee.</p>
-      ${SIGNATURE_HTML}
-    </div>`;
+  const bodyHtml = emailBody([
+    `<p style="margin:0">Dear Mr John,</p>`,
+    `<p style="margin:0">Please find below the full month-end report of permission applications submitted by staff during ${escapeHtml(monthName + ' ' + year)}. The list covers all late arrivals and early leaves recorded for the month, with hours and approval status against the monthly quota of 3 hours per employee.</p>`,
+    tableHtml,
+    `<p style="margin:0;font-weight:600;color:#334155">${escapeHtml(totalsLine)}</p>`,
+    `<p style="margin:0">Please let me know if you would like any breakdown by department, by type, or by individual employee.</p>`,
+  ]);
 
   return { subject, bodyPlain, bodyHtml, count: rows.length };
 }
@@ -361,15 +368,15 @@ function buildHeadcountSnapshot({ employees, hdr }) {
   const totalsLine = `Total active staff: ${active.length}`;
   const intro = [`Dear Mr John,`, '', `Please find below the current headcount snapshot of active staff, broken down by location and department.`, ''].join('\n');
   const bodyPlain = intro + 'By location:\n' + locPlain + '\n\nBy department:\n' + depPlain + '\n\n' + totalsLine + SIGNATURE_PLAIN;
-  const bodyHtml = `
-    <div style="font-family:Calibri,sans-serif;color:#1F2937;font-size:10pt;line-height:1.5">
-      <p>Dear Mr John,</p>
-      <p>Please find below the current headcount snapshot of active staff, broken down by location and department.</p>
-      <p style="font-weight:600;margin-bottom:2px">By location</p>${locHtml}
-      <p style="font-weight:600;margin:10px 0 2px">By department</p>${depHtml}
-      <p style="font-weight:600;color:#334155">${escapeHtml(totalsLine)}</p>
-      ${SIGNATURE_HTML}
-    </div>`;
+  const bodyHtml = emailBody([
+    `<p style="margin:0">Dear Mr John,</p>`,
+    `<p style="margin:0">Please find below the current headcount snapshot of active staff, broken down by location and department.</p>`,
+    `<p style="margin:0;font-weight:600">By location</p>`,
+    locHtml,
+    `<p style="margin:0;font-weight:600">By department</p>`,
+    depHtml,
+    `<p style="margin:0;font-weight:600;color:#334155">${escapeHtml(totalsLine)}</p>`,
+  ]);
   return { subject, bodyPlain, bodyHtml, count: active.length };
 }
 
@@ -479,14 +486,14 @@ function buildDeptHeadLeaveReports({ employees, requests, balances, leaveTypes, 
       '',
     ].join('\n');
     const bodyPlain = intro + 'Annual balances:\n' + balPlain + '\n\nLeave applications this year:\n' + appPlain + '\n' + SIGNATURE_PLAIN;
-    const bodyHtml = `
-      <div style="font-family:Calibri,sans-serif;color:#1F2937;font-size:10pt;line-height:1.5">
-        <p>Dear ${escapeHtml(salutationFor(manager))},</p>
-        <p>Please find below the annual-leave balances and the leave applications recorded this year for your team (including your own), for your review and planning.</p>
-        <p style="font-weight:600;margin-bottom:2px">Annual balances</p>${balHtmlT}
-        <p style="font-weight:600;margin:10px 0 2px">Leave applications this year</p>${appHtmlT}
-        ${SIGNATURE_HTML}
-      </div>`;
+    const bodyHtml = emailBody([
+      `<p style="margin:0">Dear ${escapeHtml(salutationFor(manager))},</p>`,
+      `<p style="margin:0">Please find below the annual-leave balances and the leave applications recorded this year for your team (including your own), for your review and planning.</p>`,
+      `<p style="margin:0;font-weight:600">Annual balances</p>`,
+      balHtmlT,
+      `<p style="margin:0;font-weight:600">Leave applications this year</p>`,
+      appHtmlT,
+    ]);
 
     // CC oversight list, minus the manager themselves if present.
     const cc = ccBase.filter(addr => addr && addr.toLowerCase() !== String(manager.email || '').toLowerCase());
@@ -615,8 +622,8 @@ function buildLeaveAvailability({ requests, employees, year, month, today, lastP
     return `<tr>${td(escapeHtml(r.psn))}${td(escapeHtml(r.name))}${td(escapeHtml(r.dept))}${td(escapeHtml(r.loc))}${td(typeColored(r))}${td(escapeHtml(fmtDateShort(r.from)))}${td(escapeHtml(fmtDateShort(r.to)))}${td(r.days.toFixed(1) + (r.isHalf ? ' \u00BD' : ''), 'right')}${td(pill(r.status))}${td(escapeHtml(punchFor(r) || '\u2014'))}</tr>`;
   }).join('');
   const tableHtml = rows.length
-    ? `<table style="border-collapse:collapse;font-family:Calibri,sans-serif;margin:10px 0"><thead>${headRow}</thead><tbody>${bodyRows}</tbody></table>`
-    : '<p style="color:#6B7280;font-style:italic">No approved leave overlapping this month.</p>';
+    ? `<table cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;font-family:Calibri,sans-serif;margin:0"><thead>${headRow}</thead><tbody>${bodyRows}</tbody></table>`
+    : '<p style="margin:0;color:#6B7280;font-style:italic">No approved leave overlapping this month.</p>';
 
   const subject = `Leave & Availability - ${monthName} ${year}`;
   const totalsLine = `On leave this month: ${peopleSet.size} staff \u00B7 ${rows.length} leave record${rows.length === 1 ? '' : 's'} \u00B7 Out now: ${outNow} \u00B7 Upcoming: ${upcoming}`;
@@ -626,15 +633,13 @@ function buildLeaveAvailability({ requests, employees, year, month, today, lastP
   ].join('\n');
   const closing = ['', `Please let me know if you would like a breakdown by department or location.`].join('\n');
   const bodyPlain = intro + tablePlain + '\n\n' + totalsLine + closing + SIGNATURE_PLAIN;
-  const bodyHtml = `
-    <div style="font-family:Calibri,sans-serif;color:#1F2937;font-size:10pt;line-height:1.5">
-      <p>Dear Mr John,</p>
-      <p>Please find below the staff on leave for ${escapeHtml(monthName + ' ' + year)}. The list shows current, upcoming and returned leave, with type, dates and duration.</p>
-      ${tableHtml}
-      <p style="font-weight:600;color:#334155">${escapeHtml(totalsLine)}</p>
-      <p>Please let me know if you would like a breakdown by department or location.</p>
-      ${SIGNATURE_HTML}
-    </div>`;
+  const bodyHtml = emailBody([
+    `<p style="margin:0">Dear Mr John,</p>`,
+    `<p style="margin:0">Please find below the staff on leave for ${escapeHtml(monthName + ' ' + year)}. The list shows current, upcoming and returned leave, with type, dates and duration.</p>`,
+    tableHtml,
+    `<p style="margin:0;font-weight:600;color:#334155">${escapeHtml(totalsLine)}</p>`,
+    `<p style="margin:0">Please let me know if you would like a breakdown by department or location.</p>`,
+  ]);
   return { subject, bodyPlain, bodyHtml, count: rows.length };
 }
 
@@ -652,16 +657,14 @@ function buildShiftStaffReminder({ year, month }) {
     'If you have no shift staff or all schedules are already correct, a quick reply confirming that is all I need.\n\n' +
     'Thank you for keeping the records accurate \u2014 it makes a real difference for fair attendance handling and payroll.\n\n' +
     HR_SIGNATURE;
-  const bodyHtml =
-    `<div style="font-family:Calibri,sans-serif;font-size:10pt;color:#1F2937;line-height:1.55">
-      <p>Dear team,</p>
-      <p>I hope you are well. This is the monthly reminder from HR to please review and update the shift-based working hours for any team member who works on a non-standard schedule.</p>
-      <p><strong>Why this matters:</strong> Our daily attendance check applies the standard 08:00 \u2013 17:00 schedule (or 08:00 \u2013 16:00 for the SUP/HR team) to detect late arrivals and early departures. If a team member is on a different shift and we do not have it on file, the system will incorrectly flag them as late or early.</p>
-      <p><strong>What I am asking:</strong> Please open the HR portal, find any team member whose schedule is not the standard 08:00 \u2013 17:00, and either confirm their existing shift entry is still correct, or update it. Once saved, the team member will acknowledge the schedule, and HR will be notified.</p>
-      <p>If you have no shift staff or all schedules are already correct, a quick reply confirming that is all I need.</p>
-      <p>Thank you for keeping the records accurate \u2014 it makes a real difference for fair attendance handling and payroll.</p>
-      ${SIGNATURE_HTML}
-    </div>`;
+  const bodyHtml = emailBody([
+    `<p style="margin:0">Dear team,</p>`,
+    `<p style="margin:0">I hope you are well. This is the monthly reminder from HR to please review and update the shift-based working hours for any team member who works on a non-standard schedule.</p>`,
+    `<p style="margin:0"><strong>Why this matters:</strong> Our daily attendance check applies the standard 08:00 \u2013 17:00 schedule (or 08:00 \u2013 16:00 for the SUP/HR team) to detect late arrivals and early departures. If a team member is on a different shift and we do not have it on file, the system will incorrectly flag them as late or early.</p>`,
+    `<p style="margin:0"><strong>What I am asking:</strong> Please open the HR portal, find any team member whose schedule is not the standard 08:00 \u2013 17:00, and either confirm their existing shift entry is still correct, or update it. Once saved, the team member will acknowledge the schedule, and HR will be notified.</p>`,
+    `<p style="margin:0">If you have no shift staff or all schedules are already correct, a quick reply confirming that is all I need.</p>`,
+    `<p style="margin:0">Thank you for keeping the records accurate \u2014 it makes a real difference for fair attendance handling and payroll.</p>`,
+  ]);
   return { subject, bodyPlain, bodyHtml, count: 0 };
 }
 
