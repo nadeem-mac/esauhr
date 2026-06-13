@@ -1434,16 +1434,23 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
     });
 
     const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:10pt;color:#0A0A0A;line-height:1.4;max-width:1100px">
-  <p style="margin:0 0 10pt 0">Dear Mr. John,</p>
-  <p style="margin:0 0 10pt 0">Please find today's morning attendance for check-in time as of ${escapeHtml(clock)} (${escapeHtml(dayDate(t))}). Sign-outs and total hours finalise at end of day, so this report shows arrivals only.</p>
-  <p style="margin:0 0 10pt 0">Today so far: ${inCount} signed in (${lateCount} late shift staff), ${notIn} not yet in, ${leaveCount} on leave.</p>
-  <p style="margin:0 0 10pt 0">Please see the attached Excel file which has two sheets: "${escapeHtml(sheet1)}" (arrivals) and "${escapeHtml(sheet2)}", the complete report for ${escapeHtml(dayDate(y))} (in/out, total hours, late and early departures). A short summary is below.</p>
-  <p style="margin:12pt 0 4pt 0;font-weight:700">Today's late arrivals &mdash; ${escapeHtml(fmtDateLong(t))}</p>
+  <p style="margin:0">Dear Mr. John,</p>
+  <p style="margin:0">&nbsp;</p>
+  <p style="margin:0">Please find today's morning attendance for check-in time as of ${escapeHtml(clock)} (${escapeHtml(dayDate(t))}). Sign-outs and total hours finalise at end of day, so this report shows arrivals only.</p>
+  <p style="margin:0">&nbsp;</p>
+  <p style="margin:0">Today so far: ${inCount} signed in (${lateCount} late shift staff), ${notIn} not yet in, ${leaveCount} on leave.</p>
+  <p style="margin:0">&nbsp;</p>
+  <p style="margin:0">Please see the attached Excel file which has two sheets: "${escapeHtml(sheet1)}" (arrivals) and "${escapeHtml(sheet2)}", the complete report for ${escapeHtml(dayDate(y))} (in/out, total hours, late and early departures). A short summary is below.</p>
+  <p style="margin:0">&nbsp;</p>
+  <p style="margin:0;font-weight:700">Today's late arrivals &mdash; ${escapeHtml(fmtDateLong(t))}</p>
   ${buildDetailTable(todayLate)}
-  <p style="margin:12pt 0 4pt 0;font-weight:700">Yesterday's early departures &mdash; ${escapeHtml(fmtDateLong(y))}</p>
+  <p style="margin:0">&nbsp;</p>
+  <p style="margin:0;font-weight:700">Yesterday's early departures &mdash; ${escapeHtml(fmtDateLong(y))}</p>
   ${buildDetailTable(yEarly)}
-  <p style="margin:12pt 0 4pt 0;font-weight:700">Yesterday's missed punches &mdash; ${escapeHtml(fmtDateLong(y))}</p>
+  <p style="margin:0">&nbsp;</p>
+  <p style="margin:0;font-weight:700">Yesterday's missed punches &mdash; ${escapeHtml(fmtDateLong(y))}</p>
   ${buildDetailTable(yMissed)}
+  <p style="margin:0">&nbsp;</p>
   ${renderHrSignatureHtml()}
 </div>`;
     const plain = `Daily attendance — ${fmtDateLong(t)}`;
