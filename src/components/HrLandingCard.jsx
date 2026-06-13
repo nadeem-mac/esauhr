@@ -376,6 +376,7 @@ export default function HrLandingCard({
       .sort((a, b) => String(a.date).localeCompare(String(b.date)));
   }, [requests, employees, typeMap]);
   const [showPending, setShowPending] = useState(false);
+  const [detailKey, setDetailKey] = useState(null);
 
   // Empty-state shorthand — when there's literally nothing in any of
   // the four life-event categories AND no actions, we collapse the
@@ -425,23 +426,27 @@ export default function HrLandingCard({
           )}
         </div>
 
-        {/* Week-at-a-glance metrics — quick numbers above the moment
-            columns so the section leads with data, not just names. */}
+        {/* Week-at-a-glance metrics — clickable: each opens a detail popup. */}
         <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-5">
           {[
-            ['Out today',      outToday.length,            '#0E7490'],
-            ['Returning',      returnsThisWeek.length,     '#0F4C2A'],
-            ['Leave starting', startsThisWeek.length,      '#7C2D12'],
-            ['Anniversaries',  anniversaries.length,       '#A16207'],
-            ['Pending',        (pendingDecisions?.length ?? 0), '#993556'],
-            ['Next holidays',  holidays.length,            '#0E7490'],
-          ].map(([label, val, c]) => (
-            <div key={label} className="rounded-xl px-3 py-2.5 text-center"
-                 style={{ background: '#FBFAF6', border: '1px solid #F0EEE6' }}>
-              <div style={{ fontSize: 24, fontWeight: 700, color: c, lineHeight: 1 }}>{val}</div>
-              <div className="text-[10px] mt-1.5 uppercase tracking-wider" style={{ color: '#1F1B16', opacity: 0.65 }}>{label}</div>
-            </div>
-          ))}
+            ['out',       'Out today',      outToday.length,        '#0E7490'],
+            ['returning', 'Returning',      returnsThisWeek.length, '#0F4C2A'],
+            ['starting',  'Leave starting', startsThisWeek.length,  '#7C2D12'],
+            ['anniv',     'Anniversaries',  anniversaries.length,   '#A16207'],
+            ['pending',   'Pending',        pendingDecisions,       '#993556'],
+            ['holidays',  'Next holidays',  holidays.length,        '#0E7490'],
+          ].map(([key, label, val, c]) => {
+            const clickable = val > 0;
+            return (
+              <button key={key} type="button" disabled={!clickable}
+                      onClick={() => clickable && setDetailKey(key)}
+                      className={`rounded-xl px-3 py-2.5 text-center transition-all ${clickable ? 'hover:-translate-y-0.5 cursor-pointer' : 'cursor-default'}`}
+                      style={{ background: '#FBFAF6', border: '1px solid #F0EEE6', opacity: clickable ? 1 : 0.7 }}>
+                <div style={{ fontSize: 24, fontWeight: 700, color: c, lineHeight: 1 }}>{val}</div>
+                <div className="text-[10px] mt-1.5 uppercase tracking-wider" style={{ color: '#1F1B16', opacity: 0.65 }}>{label}</div>
+              </button>
+            );
+          })}
         </div>
 
         {!hasAnything ? (
@@ -519,37 +524,76 @@ export default function HrLandingCard({
         )}
       </div>
 
-      {outToday.length > 0 && (
-        <div className="px-6 py-4 sm:px-8 sm:py-5" style={{ borderBottom: '1px solid #F4F4EE' }}>
-          <div className="flex items-center gap-2 mb-3">
-            <Palmtree className="w-3.5 h-3.5" style={{ color: '#0E7490' }} />
-            <span className="text-[10px]" style={{ color: '#1F1B16', letterSpacing: '0.18em', fontWeight: 700 }}>
-              OUT OF OFFICE TODAY
-            </span>
-            <span className="text-[11px]" style={{ color: '#1F1B16', opacity: 0.5 }}>
-              · {outToday.length} {outToday.length === 1 ? 'person' : 'people'}
-            </span>
-          </div>
-          {outToday.length > 4 ? (
-            <div className="flex flex-wrap items-center gap-1.5">
-              {outToday.map(o => (
-                <div
-                  key={o.key}
-                  title={`${o.emp.name} · ${o.typeName} · until ${fmtDateShort(o.endDate)}`}
-                  className="flex-shrink-0 rounded-full flex items-center justify-center transition-transform hover:-translate-y-0.5"
-                  style={{ width: 32, height: 32, background: '#FBEAF0', color: '#993556', fontSize: 11, fontWeight: 600, cursor: 'default' }}
-                >
-                  {initials(o.emp.name)}
-                </div>
-              ))}
+      {detailKey && (() => {
+        const DETAILS = {
+          out: {
+            title: 'Out of office today', accent: '#0E7490',
+            rows: outToday.map(o => ({ key: o.key, title: salutationFor(o.emp), sub: [o.emp.department, o.emp.location].filter(Boolean).join(' · '), badge: `${o.typeName} · until ${fmtDateShort(o.endDate)}` })),
+          },
+          returning: {
+            title: 'Returning (next 14 days)', accent: '#0F4C2A',
+            rows: returnsThisWeek.map(r => {
+              const emp = (employees || []).find(e => e.id === r.req.employee_id);
+              return { key: r.req.id, title: salutationFor(emp || { name: r.req.employee_id }), sub: `${r.req.leave_type_id || 'leave'}${emp?.department ? ' · ' + emp.department : ''}`, badge: `Back ${fmtDateShort(r.returnDate)}` };
+            }),
+          },
+          starting: {
+            title: 'Leave starting (next 14 days)', accent: '#7C2D12',
+            rows: startsThisWeek.map(s => {
+              const emp = (employees || []).find(e => e.id === s.req.employee_id);
+              return { key: s.req.id, title: salutationFor(emp || { name: s.req.employee_id }), sub: `${s.req.leave_type_id || 'leave'} · ${s.req.days || '?'}d`, badge: `Out ${fmtDateShort(s.startDate)}` };
+            }),
+          },
+          anniv: {
+            title: 'Work anniversaries (next 14 days)', accent: '#A16207',
+            rows: anniversaries.map(a => ({ key: a.employee.id, title: salutationFor(a.employee), sub: `${a.yearsCompleted} year${a.yearsCompleted === 1 ? '' : 's'}${a.milestone ? ' · milestone' : ''}`, badge: a.daysFromNow === 0 ? 'TODAY' : a.daysFromNow === 1 ? 'TOMORROW' : `in ${a.daysFromNow}d` })),
+          },
+          pending: {
+            title: 'Pending decisions', accent: '#993556',
+            rows: pendingList.map(p => ({ key: p.key, title: p.name, sub: `${p.typeName}${p.days ? ' · ' + p.days + 'd' : ''}${p.date ? ' · ' + p.date : ''}`, badge: p.stageLabel })),
+          },
+          holidays: {
+            title: 'Upcoming holidays', accent: '#0E7490',
+            rows: holidays.map(h => ({ key: h.date, title: h.name, sub: new Date(h.date).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }) + (h.est ? ' · pending moon-sighting' : ''), badge: h.daysFromNow === 0 ? 'TODAY' : `in ${h.daysFromNow}d` })),
+          },
+        };
+        const d = DETAILS[detailKey];
+        if (!d) return null;
+        return (
+          <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-6 overflow-y-auto"
+               style={{ background: 'rgba(20,30,25,0.5)', backdropFilter: 'blur(2px)' }}
+               onClick={() => setDetailKey(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md my-10" onClick={(e) => e.stopPropagation()}>
+              <div className="px-5 py-4 flex items-center justify-between gap-3 rounded-t-2xl"
+                   style={{ background: `${d.accent}0D`, borderBottom: `1px solid ${d.accent}22` }}>
+                <h3 className="serif" style={{ fontSize: 18, color: '#1F1B16', fontWeight: 500 }}>
+                  {d.title} <span style={{ color: d.accent, fontWeight: 700 }}>· {d.rows.length}</span>
+                </h3>
+                <button onClick={() => setDetailKey(null)} className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-black/5" aria-label="Close" style={{ color: '#1F1B16' }}>
+                  <span style={{ fontSize: 17, lineHeight: 1 }}>×</span>
+                </button>
+              </div>
+              <div className="px-5 py-3 max-h-[60vh] overflow-y-auto">
+                {d.rows.length === 0 ? (
+                  <p className="text-[13px] py-2" style={{ color: '#1F1B16', opacity: 0.5, fontStyle: 'italic' }}>Nothing to show.</p>
+                ) : (
+                  <ul className="divide-y" style={{ borderColor: '#F1EFE7' }}>
+                    {d.rows.map(r => (
+                      <li key={r.key} className="flex items-center justify-between gap-3 py-2.5">
+                        <div className="min-w-0">
+                          <div className="text-[13.5px] truncate" style={{ color: '#1F1B16', fontWeight: 500 }}>{r.title}</div>
+                          {r.sub && <div className="text-[11.5px] mt-0.5 truncate" style={{ color: '#1F1B16', opacity: 0.65 }}>{r.sub}</div>}
+                        </div>
+                        <span className="text-[10px] flex-shrink-0" style={{ color: d.accent, background: `${d.accent}14`, padding: '2px 8px', borderRadius: 999, fontWeight: 700, letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>{r.badge}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
-          ) : (
-            <ul className="space-y-1">
-              {outToday.map(o => <OutTodayRow key={o.key} o={o} />)}
-            </ul>
-          )}
-        </div>
-      )}
+          </div>
+        );
+      })()}
     </section>
   );
 }
