@@ -65,6 +65,8 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
   }, [durationMin]);
 
   const summary = summariseMonth(monthRows);
+  // Allowance already fully used this month → block new requests.
+  const quotaCompleted = summary.atQuota;
   const exceeds = useMemo(() => checkExceeds(monthRows, hours), [monthRows, hours]);
   const Icon    = type === 'late_arrival' ? Sunrise : Sunset;
   const cfg     = PERMISSION_TYPES[type];
@@ -133,6 +135,10 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
 
   async function submit(e) {
     e.preventDefault();
+    if (quotaCompleted) {
+      setError(`You have completed your monthly permission allowance (${PERMISSION_QUOTA.monthlyOccurrences} permissions / ${PERMISSION_QUOTA.monthlyHours} hours). No further requests can be submitted this month.`);
+      return;
+    }
     if (timeError) {
       setError(timeError);
       return;
@@ -364,8 +370,26 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
             )}
           </div>
 
-          {/* Quota warning */}
-          {exceeds.willExceed && (
+          {/* Quota completed — hard block */}
+          {quotaCompleted && (
+            <div className="rounded-xl p-4 flex items-start gap-3 text-sm"
+              style={{ background: 'rgba(184,74,62,0.10)', border: '1px solid var(--clay)' }}>
+              <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: 'var(--clay)' }} />
+              <div>
+                <div className="font-medium mb-1" style={{ color: 'var(--clay)' }}>
+                  Monthly permission quota completed
+                </div>
+                <div className="opacity-80 text-xs leading-relaxed">
+                  You have used {summary.hoursUsed}h / {summary.occurrences} permission(s) — the limit is
+                  {' '}{PERMISSION_QUOTA.monthlyHours}h · {PERMISSION_QUOTA.monthlyOccurrences} permissions.
+                  No further requests can be submitted this month. For a genuine emergency, please contact your manager or HR directly.
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Quota warning — this request would tip over, but not yet full */}
+          {!quotaCompleted && exceeds.willExceed && (
             <div className="rounded-xl p-4 flex items-start gap-3 text-sm"
               style={{ background: 'rgba(184,74,62,0.08)', border: '1px solid var(--clay)' }}>
               <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" style={{ color: 'var(--clay)' }} />
@@ -390,14 +414,15 @@ export default function PermissionRequestModal({ me, type = 'late_arrival', mont
               className="px-5 py-2.5 rounded-full text-sm opacity-70 hover:opacity-100">
               Cancel
             </button>
-            <button type="submit" disabled={busy}
+            <button type="submit" disabled={busy || quotaCompleted}
+              title={quotaCompleted ? 'Monthly permission quota already completed' : undefined}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full text-sm disabled:opacity-50"
               style={{
-                background: exceeds.willExceed ? 'var(--clay)' : 'var(--ink)',
+                background: (exceeds.willExceed || quotaCompleted) ? 'var(--clay)' : 'var(--ink)',
                 color: 'var(--paper)',
               }}>
               {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-              {busy ? 'Submitting…' : exceeds.willExceed ? 'Submit anyway (will be flagged)' : 'Submit request'}
+              {busy ? 'Submitting…' : quotaCompleted ? 'Quota completed' : exceeds.willExceed ? 'Submit anyway (will be flagged)' : 'Submit request'}
             </button>
           </div>
         </form>
