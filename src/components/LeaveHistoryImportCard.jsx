@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import * as XLSX from 'xlsx';
-import { Upload, AlertCircle, CheckCircle2, Loader2, FileSpreadsheet, Info } from 'lucide-react';
+import { Upload, AlertCircle, CheckCircle2, Loader2, FileSpreadsheet, Info, ChevronRight, ChevronDown } from 'lucide-react';
 import { directGet, directPost } from '../supabaseClient.js';
 
 // =============================================================================
@@ -56,6 +56,14 @@ export default function LeaveHistoryImportCard({ me, employees = [], onSaved }) 
   const [progress, setProgress] = useState({ done: 0, total: 0, failed: 0 });
   const [msg, setMsg] = useState(null);
   const [adjWarn, setAdjWarn] = useState([]);  // employees with prior migration adjustments
+  const [openEmp, setOpenEmp] = useState(() => new Set()); // expanded date lists
+
+  const fmtDay = (iso) => {
+    const [y, m, d] = String(iso).split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+  };
+  const fmtRange = (r) => `${r.start === r.end ? fmtDay(r.start) : `${fmtDay(r.start)} – ${fmtDay(r.end)}`} · ${r.code} · ${Math.round(r.days * 10) / 10}d`;
+  const toggleEmp = (psn) => setOpenEmp(prev => { const n = new Set(prev); n.has(psn) ? n.delete(psn) : n.add(psn); return n; });
 
   const empById = React.useMemo(() => {
     const m = {};
@@ -154,8 +162,9 @@ export default function LeaveHistoryImportCard({ me, employees = [], onSaved }) 
       const byEmp = {};
       let totalDays = 0;
       for (const r of ranges) {
-        const slot = (byEmp[r.psn] ||= { psn: r.psn, name: r.name, dept: empById[r.psn]?.department, days: 0, rows: 0, types: {} });
+        const slot = (byEmp[r.psn] ||= { psn: r.psn, name: r.name, dept: empById[r.psn]?.department, days: 0, rows: 0, types: {}, items: [] });
         slot.days += r.days; slot.rows += 1; slot.types[r.code] = (slot.types[r.code] || 0) + r.days;
+        slot.items.push(r);
         totalDays += r.days;
       }
 
@@ -324,15 +333,42 @@ export default function LeaveHistoryImportCard({ me, employees = [], onSaved }) 
                 </tr>
               </thead>
               <tbody>
-                {plan.byEmp.map(e => (
-                  <tr key={e.psn} className="border-t border-black/5">
-                    <td className="py-1.5 px-2">{e.name} <span className="opacity-50">{e.psn}</span></td>
-                    <td className="py-1.5 px-2">{e.dept || '—'}</td>
-                    <td className="py-1.5 px-2 text-right">{e.rows}</td>
-                    <td className="py-1.5 px-2 text-right">{Math.round(e.days * 10) / 10}</td>
-                    <td className="py-1.5 px-2">{Object.entries(e.types).map(([c, d]) => `${c}:${Math.round(d * 10) / 10}`).join('  ')}</td>
-                  </tr>
-                ))}
+                {plan.byEmp.map(e => {
+                  const open = openEmp.has(e.psn);
+                  return (
+                    <React.Fragment key={e.psn}>
+                      <tr className="border-t border-black/5 cursor-pointer hover:bg-black/[0.02]" onClick={() => toggleEmp(e.psn)}>
+                        <td className="py-1.5 px-2">
+                          <span className="inline-flex items-center gap-1">
+                            {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                            {e.name} <span className="opacity-50">{e.psn}</span>
+                          </span>
+                        </td>
+                        <td className="py-1.5 px-2">{e.dept || '—'}</td>
+                        <td className="py-1.5 px-2 text-right">{e.rows}</td>
+                        <td className="py-1.5 px-2 text-right">{Math.round(e.days * 10) / 10}</td>
+                        <td className="py-1.5 px-2">{Object.entries(e.types).map(([c, d]) => `${c}:${Math.round(d * 10) / 10}`).join('  ')}</td>
+                      </tr>
+                      {open && (
+                        <tr className="border-t border-black/5" style={{ background: '#FAFAF9' }}>
+                          <td colSpan={5} className="py-2 px-2">
+                            <div className="text-[11px]" style={{ color: '#1F1B16' }}>
+                              <span className="opacity-60">Leave dates taken:</span>
+                              <ul className="mt-1 grid sm:grid-cols-2 gap-x-6 gap-y-0.5">
+                                {e.items.map((r, i) => (
+                                  <li key={i} className="flex items-start gap-1.5">
+                                    <span style={{ color: ACCENT }}>•</span>
+                                    <span>{fmtRange(r)}{r.reason ? <span className="opacity-50"> — {r.reason}</span> : null}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
