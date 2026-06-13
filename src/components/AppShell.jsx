@@ -11,6 +11,7 @@ import { dailyMessage } from '../lib/dailyMessage.js';
 // load), the Requests tab (a common follow-up navigation), small
 // chrome elements, and the success toast.
 import Dashboard from './Dashboard.jsx';
+import BashaierWatermark from './BashaierWatermark.jsx';
 import PersonalDashboard from './PersonalDashboard.jsx';
 import ManagerDashboard  from './ManagerDashboard.jsx';
 import Requests from './Requests.jsx';
@@ -940,6 +941,7 @@ export default function AppShell({ session, me, onRefreshMe }) {
 
   return (
     <div className="min-h-screen">
+      {me?.id === 'H94830' && <BashaierWatermark />}
       {/* Refresh overlay — fades in over the whole UI while the global
           refresh button is in flight. Shows the Evergreen ship animation
           + 'Refreshing your dashboard…' caption so the user has clear
