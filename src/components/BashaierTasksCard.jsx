@@ -80,7 +80,7 @@ function padR(s, n) {
 }
 
 // Build a plain-text monospaced table
-function plainTable(headers, rows, widths) {
+function plainTable(headers, rows, widths, totalRow = null) {
   const sep = '+' + widths.map(w => '-'.repeat(w + 2)).join('+') + '+';
   const renderRow = (cols) => '| ' + cols.map((c, i) => padR(c, widths[i])).join(' | ') + ' |';
   return [
@@ -88,21 +88,25 @@ function plainTable(headers, rows, widths) {
     renderRow(headers),
     sep,
     ...rows.map(renderRow),
+    ...(totalRow ? [sep, renderRow(totalRow)] : []),
     sep,
   ].join('\n');
 }
 
 // Build an HTML table for clipboard
-function htmlTable(headers, rows, hdr = { bg: '#334155', fg: '#FFFFFF' }) {
+function htmlTable(headers, rows, hdr = { bg: '#334155', fg: '#FFFFFF' }, totalRow = null) {
   const th = headers.map(h => `<th style="background:${hdr.bg};color:${hdr.fg};padding:1px 6px;text-align:left;font-family:Calibri,sans-serif;font-weight:700;font-size:10pt;border:1px solid ${hdr.bg};white-space:nowrap">${escapeHtml(h)}</th>`).join('');
   const trs = rows.map((r, i) => {
     const bg = i % 2 === 0 ? '#FFFFFF' : '#F3F4F6';
     const tds = r.map(c => `<td style="padding:0 6px;border:1px solid #D1D5DB;color:#1F2937;font-family:Calibri,sans-serif;font-size:10pt;background:${bg};white-space:nowrap">${escapeHtml(c == null ? '' : String(c))}</td>`).join('');
     return `<tr>${tds}</tr>`;
   }).join('');
+  const totalTr = totalRow
+    ? `<tr>${totalRow.map(c => `<td style="padding:1px 6px;border:1px solid #D1D5DB;color:#0A0A0A;font-family:Calibri,sans-serif;font-size:10pt;font-weight:700;background:#FBEAF0;white-space:nowrap">${escapeHtml(c == null ? '' : String(c))}</td>`).join('')}</tr>`
+    : '';
   return `<table cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;font-family:Calibri,sans-serif;margin:0">
     <thead><tr>${th}</tr></thead>
-    <tbody>${trs}</tbody>
+    <tbody>${trs}${totalTr}</tbody>
   </table>`;
 }
 
@@ -407,16 +411,21 @@ function buildHeadcountSnapshot({ employees, hdr }) {
   const locHead = ['Location', ...SPLIT_HEAD.slice(1)];
   const depHead = ['Department', ...SPLIT_HEAD.slice(1)];
 
+  const locTotal = ['Total', String(total), '100%', String(saudis), String(nonSaudis), String(females), String(males)];
+  const depTotal = ['Total', String(total), '100%', String(saudis), String(nonSaudis), String(females), String(males)];
+  const natTotal = ['Total', String(total), '100%'];
+  const genTotal = ['Total', String(total), '100%'];
+
   // Plain-text
-  const locPlain = plainTable(locHead, locRows, [16, 7, 7, 7, 10, 5, 5]);
-  const depPlain = plainTable(depHead, depRows, [16, 7, 7, 7, 10, 5, 5]);
-  const natPlain = plainTable(['Nationality', 'Staff', 'Share'], natRows, [16, 8, 8]);
-  const genPlain = plainTable(['Gender', 'Staff', 'Share'], genRows, [16, 8, 8]);
+  const locPlain = plainTable(locHead, locRows, [16, 7, 7, 7, 10, 5, 5], locTotal);
+  const depPlain = plainTable(depHead, depRows, [16, 7, 7, 7, 10, 5, 5], depTotal);
+  const natPlain = plainTable(['Nationality', 'Staff', 'Share'], natRows, [16, 8, 8], natTotal);
+  const genPlain = plainTable(['Gender', 'Staff', 'Share'], genRows, [16, 8, 8], genTotal);
   // HTML
-  const locHtml = htmlTable(locHead, locRows, hdr);
-  const depHtml = htmlTable(depHead, depRows, hdr);
-  const natHtml = htmlTable(['Nationality', 'Staff', 'Share'], natRows, hdr);
-  const genHtml = htmlTable(['Gender', 'Staff', 'Share'], genRows, hdr);
+  const locHtml = htmlTable(locHead, locRows, hdr, locTotal);
+  const depHtml = htmlTable(depHead, depRows, hdr, depTotal);
+  const natHtml = htmlTable(['Nationality', 'Staff', 'Share'], natRows, hdr, natTotal);
+  const genHtml = htmlTable(['Gender', 'Staff', 'Share'], genRows, hdr, genTotal);
 
   const saudiRatio = total ? Math.round((saudis / total) * 1000) / 10 : 0;
   const subject = `Headcount Snapshot - ${fmtDateShort(todayISO())}`;
