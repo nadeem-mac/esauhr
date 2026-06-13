@@ -31,7 +31,7 @@
 // =============================================================================
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Clock, Download, ChevronDown, ChevronRight, FileText, Users, Mail, FileSpreadsheet, ClipboardCopy, Printer, Check, Copy } from 'lucide-react';
+import { Clock, Download, ChevronDown, ChevronRight, FileText, Users, Mail, FileSpreadsheet, ClipboardCopy, Printer, Check, Copy, Eye } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import XLSXStyle from 'xlsx-js-style';
 import ExcelJS from 'exceljs';
@@ -416,6 +416,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
   const [morningCopied, setMorningCopied] = useState(false);        // "copied to Outlook" feedback (compact mode)
   const [mrCollapsed, setMrCollapsed] = useState(true);             // (legacy) collapsible variant
   const [mrOpen, setMrOpen] = useState(false);                      // compact tile → modal open
+  const [mrPreview, setMrPreview] = useState(null);                 // rendered email HTML for review
 
   // Shift-flagged staff only. We also compute a stable string key
   // of just the IDs so the load() callback can depend on the SET of
@@ -1325,7 +1326,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reportSummaries, from, to]);
 
-  const copyMorningHtml = async () => {
+  const buildMorningEmail = () => {
     const t = to, y = from;
     const hdr = me?.id === 'H94830' ? { bg: '#F7C5D0', fg: '#0A0A0A' } : { bg: '#2D5F3F', fg: '#FFFFFF' };
     const dept = (e) => `${e.department || '—'}${e.location ? ' · ' + e.location : ''}`;
@@ -1446,6 +1447,11 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
   ${renderHrSignatureHtml()}
 </div>`;
     const plain = `Daily attendance — ${fmtDateLong(t)}`;
+    return { html, plain };
+  };
+
+  const copyMorningHtml = async () => {
+    const { html, plain } = buildMorningEmail();
     try {
       if (navigator.clipboard && window.ClipboardItem) {
         await navigator.clipboard.write([new window.ClipboardItem({
@@ -1552,7 +1558,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
         {mrOpen && (
           <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-6 overflow-y-auto"
                style={{ background: 'rgba(20,30,25,0.55)', backdropFilter: 'blur(2px)' }}
-               onClick={() => setMrOpen(false)}>
+               onClick={() => { setMrOpen(false); setMrPreview(null); }}>
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-8" onClick={(e) => e.stopPropagation()}>
               <div className="px-5 sm:px-6 py-4 sticky top-0 z-10 rounded-t-2xl flex items-start justify-between gap-3"
                    style={{ background: `linear-gradient(135deg, ${ACCENT} 0%, ${ACCENT}DD 100%)`, color: '#fff' }}>
@@ -1561,7 +1567,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
                   <h2 className="text-xl font-serif">Morning report (John)</h2>
                   <div className="text-[11px] opacity-80 mt-0.5">{fmtDateLong(to)} arrivals · {fmtDateLong(from)} detail</div>
                 </div>
-                <button onClick={() => setMrOpen(false)}
+                <button onClick={() => { setMrOpen(false); setMrPreview(null); }}
                         className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-white/20 flex-shrink-0"
                         style={{ color: '#fff' }} aria-label="Close">
                   <span style={{ fontSize: 18, lineHeight: 1 }}>×</span>
@@ -1590,7 +1596,33 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
                     {morningCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                     {morningCopied ? 'Copied' : 'Copy HTML to Outlook'}
                   </button>
+                  <button type="button" onClick={() => { try { setMrPreview(buildMorningEmail().html); } catch {} }} disabled={!active}
+                          style={btn({ background: '#FFFFFF', color: ACCENT, borderColor: ACCENT_BD, opacity: active ? 1 : 0.5 })}>
+                    <Eye className="w-3.5 h-3.5" /> Email review
+                  </button>
                 </div>
+
+                {mrPreview && (
+                  <div className="mb-4 rounded-xl border overflow-hidden" style={{ borderColor: ACCENT_BD }}>
+                    <div className="px-3 py-2 flex items-center justify-between gap-2"
+                         style={{ background: ACCENT_BG, borderBottom: `1px solid ${ACCENT_BD}` }}>
+                      <span className="text-[11px] font-bold" style={{ color: ACCENT }}>Email preview — exactly what pastes into Outlook</span>
+                      <span className="flex items-center gap-1.5">
+                        <button type="button" onClick={copyMorningHtml}
+                                className="text-[11px] font-semibold px-2.5 py-1 rounded-lg inline-flex items-center gap-1"
+                                style={{ background: morningCopied ? '#0F4C2A' : ACCENT, color: '#fff' }}>
+                          {morningCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                          {morningCopied ? 'Copied' : 'Copy'}
+                        </button>
+                        <button type="button" onClick={() => setMrPreview(null)}
+                                className="text-[11px] font-semibold px-2 py-1 rounded-lg border"
+                                style={{ borderColor: ACCENT_BD, color: '#1F1B16' }}>Hide</button>
+                      </span>
+                    </div>
+                    <div className="p-3 bg-white overflow-x-auto" style={{ maxHeight: '40vh', overflowY: 'auto' }}
+                         dangerouslySetInnerHTML={{ __html: mrPreview }} />
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                   <MiniTable title={`Today's late arrivals`} heads={['Name', 'In', 'Exp', 'Late']} rows={morningData.late}
