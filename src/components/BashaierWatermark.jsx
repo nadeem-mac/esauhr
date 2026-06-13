@@ -10,16 +10,30 @@ import React, { useEffect, useState } from 'react';
 // and disabled under reduced-motion.
 // =============================================================================
 
-// Stars sprinkled along the flight path. x in vw; y follows the swoop; the
-// delay is timed so each star twinkles just as the sprite passes it.
+// Stars sprinkled along the flight path — a rich, scattered trail. Each is
+// timed (delay) so it twinkles just as the sprite sweeps past it.
 const FLY_MS = 8200;
-const STAR_XS = [4, 15, 26, 37, 48, 59, 70, 81, 92];
-const STARS = STAR_XS.map((x, i) => {
-  const y = 78 - 0.7 * (x + 20);                 // roughly along the path (vh)
-  const delay = ((x + 20) / 138) * (FLY_MS / 1000); // seconds
-  const size = 9 + (i % 3) * 4;
-  return { x, y: Math.max(2, y), delay, size, key: `s${i}` };
-});
+const STARS = [];
+{
+  let idx = 0;
+  for (let x = 1; x <= 98; x += 3.2) {
+    const baseY = 78 - 0.7 * (x + 20);                  // along the swoop (vh)
+    const delay = ((x + 20) / 138) * (FLY_MS / 1000);   // seconds
+    const count = 1 + (idx % 3 === 0 ? 2 : 1);          // 2–3 stars per step
+    for (let k = 0; k < count; k++) {
+      const spreadY = (((idx * 7 + k * 13) % 11) - 5) + (k === 1 ? -9 : k === 2 ? 9 : 0);
+      const spreadX = (((idx * 5 + k * 9) % 7) - 3);
+      STARS.push({
+        x: x + spreadX,
+        y: Math.max(1, baseY + spreadY),
+        delay: delay + k * 0.1,
+        size: 7 + ((idx + k) % 4) * 5,
+        key: `s${idx}_${k}`,
+      });
+    }
+    idx++;
+  }
+}
 
 function Star({ size }) {
   return (
@@ -34,8 +48,8 @@ function Pixie() {
   // Original stylised flying fairy — green tunic, peach skin, little cap
   // with a pink feather, gold sparkle wand. Flying toward the upper-right.
   return (
-    <svg viewBox="0 0 260 170" width="118" height="77" aria-hidden="true"
-         style={{ filter: 'drop-shadow(0 3px 7px rgba(153,53,86,0.30))' }}>
+    <svg viewBox="0 0 260 170" width="210" height="137" aria-hidden="true"
+         style={{ filter: 'drop-shadow(0 4px 9px rgba(153,53,86,0.32))' }}>
       {/* wing */}
       <path d="M150 70 q-34 -22 -50 2 q24 20 50 8 z" fill="#FFFFFF" opacity="0.7" />
       <path d="M150 74 q-30 6 -46 26 q26 6 46 -12 z" fill="#FFFFFF" opacity="0.5" />
