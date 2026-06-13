@@ -26,6 +26,7 @@ const CODE_MAP = {
 };
 
 const IMPORT_MARK = 'Imported from leave tracker';
+const IMPORT_SOURCE = 'leave_tracker_import';
 
 const ACCENT = '#0F4C2A';
 
@@ -58,6 +59,43 @@ export default function LeaveHistoryImportCard({ me, employees = [], onSaved }) 
   const [adjWarn, setAdjWarn] = useState([]);  // employees with prior migration adjustments
   const [openEmp, setOpenEmp] = useState(() => new Set()); // expanded date lists
   const [clearingAdj, setClearingAdj] = useState(false);
+  const [recon, setRecon] = useState(null);        // reconciliation rows
+  const [reconciling, setReconciling] = useState(false);
+
+  // Compare tracker totals to what's actually in the system now — per staff,
+  // tracker days vs approved system days (incl. balance available). Run any
+  // time: before import the gap shows what's outstanding; after a full import
+  // it should tie out to ~0 (any leftover = portal leaves not in the tracker).
+  async function reconcile() {
+    if (!plan || reconciling) return;
+    setReconciling(true); setRecon(null);
+    try {
+      const yStart = `${plan.yearsInFile[0]}-01-01`;
+      const yEnd = `${plan.yearsInFile[plan.yearsInFile.length - 1]}-12-31`;
+      const rows = await directGet('leave_requests',
+        `select=employee_id,start_date,days,status,stage&start_date=gte.${yStart}&start_date=lte.${yEnd}`,
+        { timeoutMs: 15000 });
+      const dead = (r) => /reject|cancel|withdraw/i.test(`${r.status || ''} ${r.stage || ''}`);
+      const live = (r) => /approved/i.test(`${r.status || ''} ${r.stage || ''}`) && !dead(r);
+      const sys = {};
+      for (const r of (rows || [])) {
+        const y = String(r.start_date).slice(0, 4);
+        if (!plan.yearsInFile.includes(y) || !live(r)) continue;
+        const p = String(r.employee_id).toUpperCase();
+        sys[p] = (sys[p] || 0) + Number(r.days || 0);
+      }
+      const r1 = (x) => Math.round(x * 10) / 10;
+      const out = plan.trackerByEmp.map(t => {
+        const system = r1(sys[t.psn] || 0);
+        return { ...t, tracker: r1(t.days), system, diff: r1(system - t.days) };
+      }).sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff) || a.name.localeCompare(b.name));
+      setRecon(out);
+    } catch (e) {
+      setMsg({ kind: 'err', text: `Reconcile failed: ${e?.message || e}` });
+    } finally {
+      setReconciling(false);
+    }
+  }
 
   // Zero out the legacy "migration / pre-portal" balance adjustments now that
   // the real dated leave rows exist — otherwise that usage is counted twice.
@@ -157,12 +195,12 @@ export default function LeaveHistoryImportCard({ me, employees = [], onSaved }) 
       const isDead = (row) => /reject|cancel|withdraw/i.test(`${row.status || ''} ${row.stage || ''}`);
       try {
         const existing = await directGet('leave_requests',
-          `select=employee_id,start_date,end_date,status,stage,reason`
+          `select=employee_id,start_date,end_date,status,stage,reason,source`
           + `&end_date=gte.${minISO}&start_date=lte.${maxISO}`,
           { timeoutMs: 12000 });
         for (const row of (existing || [])) {
           if (isDead(row)) continue;                 // rejected/cancelled don't reserve the date
-          const wasImport = String(row.reason || '').startsWith(IMPORT_MARK);
+          const wasImport = row.source === IMPORT_SOURCE || String(row.reason || '').startsWith(IMPORT_MARK);
           let d = String(row.start_date).slice(0, 10);
           const end = String(row.end_date).slice(0, 10);
           let guard = 0;
@@ -219,9 +257,21 @@ export default function LeaveHistoryImportCard({ me, employees = [], onSaved }) 
         })));
       } catch { setAdjWarn([]); }
 
+      // Per-employee TRACKER totals across ALL importable rows (whether or
+      // not already imported) — the basis for reconciliation against the
+      // live system later. Each full day = 1, each HDL = 0.5.
+      const trackerByEmp = {};
+      for (const e of entries) {
+        const t = (trackerByEmp[e.psn] ||= { psn: e.psn, name: e.name, dept: empById[e.psn]?.department, days: 0 });
+        t.days += e.half ? 0.5 : 1;
+      }
+      const yearsInFile = Array.from(new Set(entries.map(e => e.iso.slice(0, 4)))).sort();
+
       setPlan({
         ranges,
         byEmp: Object.values(byEmp).sort((a, b) => a.name.localeCompare(b.name)),
+        trackerByEmp: Object.values(trackerByEmp),
+        yearsInFile, minISO, maxISO,
         stats: {
           sheet: sheetName, fileRows: entries.length, skippedAlready,
           employees: Object.keys(byEmp).length, records: ranges.length, totalDays,
@@ -255,6 +305,7 @@ export default function LeaveHistoryImportCard({ me, employees = [], onSaved }) 
           days:               r.days,
           is_half_day:        r.half || null,
           reason:             r.reason ? `${IMPORT_MARK} · ${r.reason}` : IMPORT_MARK,
+          source:             IMPORT_SOURCE,
           stage:              'approved',
           status:             'approved',
           requested_at:       startIso,
@@ -424,13 +475,59 @@ export default function LeaveHistoryImportCard({ me, employees = [], onSaved }) 
             <div className="text-xs" style={{ color: '#1F1B16' }}>
               {importing ? `Importing ${progress.done}/${progress.total}${progress.failed ? ` · ${progress.failed} failed` : ''}…` : 'Review above, then import.'}
             </div>
-            <button type="button" onClick={runImport} disabled={importing || !plan.records}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-semibold text-white disabled:opacity-50"
-              style={{ background: ACCENT }}>
-              {importing ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
-              {importing ? 'Importing…' : `Import ${s.records} record(s)`}
-            </button>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={reconcile} disabled={reconciling || importing}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-semibold disabled:opacity-50"
+                style={{ background: '#FFFFFF', color: ACCENT, border: `1px solid ${ACCENT}` }}>
+                {reconciling ? <Loader2 size={15} className="animate-spin" /> : <Info size={15} />}
+                {reconciling ? 'Checking…' : 'Reconcile vs system'}
+              </button>
+              <button type="button" onClick={runImport} disabled={importing || !plan.records}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-semibold text-white disabled:opacity-50"
+                style={{ background: ACCENT }}>
+                {importing ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
+                {importing ? 'Importing…' : `Import ${s.records} record(s)`}
+              </button>
+            </div>
           </div>
+
+          {/* Reconciliation: tracker days vs system approved days */}
+          {recon && (
+            <div className="rounded-lg border border-black/10 overflow-hidden">
+              <div className="px-3 py-2 text-xs font-semibold" style={{ background: '#F7F7F5', color: '#1F1B16' }}>
+                Reconciliation ({plan.yearsInFile.join(', ')}) — tracker vs system.
+                {' '}{recon.filter(r => Math.abs(r.diff) > 0.01).length} of {recon.length} differ.
+                <span className="font-normal opacity-70"> A negative diff = still to import; positive = extra system leave not in the tracker.</span>
+              </div>
+              <div className="max-h-64 overflow-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0" style={{ background: '#FFFFFF' }}>
+                    <tr className="text-left border-b border-black/10" style={{ color: '#1F1B16' }}>
+                      <th className="py-1.5 px-2 font-semibold">Employee</th>
+                      <th className="py-1.5 px-2 font-semibold text-right">Tracker</th>
+                      <th className="py-1.5 px-2 font-semibold text-right">System</th>
+                      <th className="py-1.5 px-2 font-semibold text-right">Diff</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recon.map(r => {
+                      const off = Math.abs(r.diff) > 0.01;
+                      return (
+                        <tr key={r.psn} className="border-t border-black/5" style={off ? { background: '#FFFBEB' } : undefined}>
+                          <td className="py-1.5 px-2">{r.name} <span className="opacity-50">{r.psn}</span></td>
+                          <td className="py-1.5 px-2 text-right">{r.tracker}</td>
+                          <td className="py-1.5 px-2 text-right">{r.system}</td>
+                          <td className="py-1.5 px-2 text-right" style={{ color: off ? '#92400E' : '#0A0A0A', fontWeight: off ? 700 : 400 }}>
+                            {r.diff > 0 ? `+${r.diff}` : r.diff}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

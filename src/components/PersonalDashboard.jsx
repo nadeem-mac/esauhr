@@ -319,6 +319,11 @@ export default function PersonalDashboard({
   const evalZone    = zoneForDeduction(evalSummary.deduction);
   const lateUsed  = lateRows .filter(r => r.status === 'pending' || r.status === 'approved').reduce((s,r) => s + Number(r.hours||0), 0);
   const earlyUsed = earlyRows.filter(r => r.status === 'pending' || r.status === 'approved').reduce((s,r) => s + Number(r.hours||0), 0);
+  // Combined monthly permission quota (late + early share one bucket).
+  const permMonth = permissions.filter(p => p.status === 'pending' || p.status === 'approved');
+  const permHoursUsed = permMonth.reduce((s, p) => s + Number(p.hours || 0), 0);
+  const permOccUsed   = permMonth.length;
+  const permQuotaDone = permOccUsed >= PERMISSION_QUOTA.monthlyOccurrences || permHoursUsed >= PERMISSION_QUOTA.monthlyHours;
   const nextLeave = requests.find(r => r.status === 'approved' && new Date(r.start_date) >= startOfDay(new Date()));
   const recent    = requests.slice(0, 5);
   const pendingCount = requests.filter(r => r.status === 'pending').length;
@@ -450,14 +455,14 @@ export default function PersonalDashboard({
           accent="#FF4E6A"
           label="LATE ARRIVAL" icon={Sunrise}
           stat={lateUsed} unit={`h / ${PERMISSION_QUOTA.monthlyHours}h`}
-          desc="Combined cap: late + early. 3 occurrences."
+          desc={permQuotaDone ? '⚠ Quota completed — none left this month.' : 'Combined cap: late + early. 3 occurrences.'}
           progress={Math.min(100, (lateUsed/PERMISSION_QUOTA.monthlyHours)*100)}
         />
         <ColorTile
           accent="#DB2777"
           label="EARLY LEAVING" icon={Sunset}
           stat={earlyUsed} unit="h used"
-          desc="Shared bucket with late arrivals this month."
+          desc={permQuotaDone ? '⚠ Quota completed — none left this month.' : 'Shared bucket with late arrivals this month.'}
           progress={Math.min(100, (earlyUsed/PERMISSION_QUOTA.monthlyHours)*100)}
         />
         {/* EID SHIFTS — only renders when the staff has at least one
