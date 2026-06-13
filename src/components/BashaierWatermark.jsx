@@ -1,32 +1,34 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 // =============================================================================
 // BashaierWatermark
 //
-// A whimsical flying-pixie animation shown ONLY for Bashaier (H94830) on
-// every page. An original little fairy/sprite (not any trademarked
-// character) flies across the page every so often, leaving a trail of
-// twinkling stars behind. Purely decorative: fixed, pointer-events off,
-// and disabled under reduced-motion.
+// Whimsical flying fairy shown ONLY for Bashaier (H94830). The 🧚 emoji
+// swirls across the page every so often — wings fluttering — leaving a dense
+// weaving trail of twinkling stars. Decorative only: fixed, pointer-events
+// off, disabled under reduced-motion.
 // =============================================================================
 
-// Stars sprinkled along the flight path — a rich, scattered trail. Each is
-// timed (delay) so it twinkles just as the sprite sweeps past it.
-const FLY_MS = 8200;
+const FLY_MS = 9000;
+
+// Dense star trail. y weaves with a sine wave so the sprinkle follows the
+// fairy's swirling path rather than a straight line. Each star's delay is
+// timed to roughly when she sweeps past that x.
 const STARS = [];
 {
   let idx = 0;
-  for (let x = 1; x <= 99; x += 2.2) {
-    const baseY = 78 - 0.7 * (x + 20);                  // along the swoop (vh)
-    const delay = ((x + 20) / 138) * (FLY_MS / 1000);   // seconds
-    const count = 3 + (idx % 2 === 0 ? 2 : 1);          // 4–5 stars per step
+  for (let x = 1; x <= 99; x += 1.8) {
+    const wave = Math.sin((x / 99) * Math.PI * 3) * 16;     // weave ±16vh
+    const baseY = 50 - 0.28 * (x - 50) + wave;
+    const delay = (x / 99) * (FLY_MS / 1000);
+    const count = 4 + (idx % 2 === 0 ? 2 : 1);              // 5–6 per step
     for (let k = 0; k < count; k++) {
-      const spreadY = (((idx * 7 + k * 13) % 15) - 7) + (k === 1 ? -11 : k === 2 ? 11 : k === 3 ? -5 : 0);
+      const spreadY = (((idx * 7 + k * 13) % 19) - 9) + (k === 1 ? -13 : k === 2 ? 13 : 0);
       const spreadX = (((idx * 5 + k * 9) % 9) - 4);
       STARS.push({
         x: x + spreadX,
-        y: Math.max(1, baseY + spreadY),
-        delay: delay + k * 0.08,
+        y: Math.max(1, Math.min(96, baseY + spreadY)),
+        delay: delay + k * 0.06,
         size: 6 + ((idx + k) % 5) * 5,
         key: `s${idx}_${k}`,
       });
@@ -44,18 +46,6 @@ function Star({ size }) {
   );
 }
 
-function Pixie() {
-  // Bashaier's fairy — the 🧚 emoji, flying with a soft glow.
-  return (
-    <span style={{
-      fontSize: '132px', lineHeight: 1, display: 'inline-block',
-      filter: 'drop-shadow(0 5px 12px rgba(153,53,86,0.35))',
-    }}>
-      🧚‍♀️
-    </span>
-  );
-}
-
 export default function BashaierWatermark() {
   const [flying, setFlying] = useState(false);
 
@@ -67,7 +57,7 @@ export default function BashaierWatermark() {
     }
     let startTimer, endTimer;
     const schedule = () => {
-      const delay = 32000 + Math.random() * 40000; // every 32–72s
+      const delay = 30000 + Math.random() * 38000; // every 30–68s
       startTimer = setTimeout(() => {
         setFlying(true);
         endTimer = setTimeout(() => { setFlying(false); schedule(); }, FLY_MS + 400);
@@ -83,13 +73,25 @@ export default function BashaierWatermark() {
     <div aria-hidden="true"
          style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 45, overflow: 'hidden' }}>
       <style>{`
-        @keyframes bwFly {
-          0%   { transform: translate(-20vw, 80vh) rotate(-6deg)  scale(0.85); opacity: 0; }
-          10%  { opacity: 1; }
-          35%  { transform: translate(28vw, 44vh) rotate(-13deg) scale(1.0); }
-          60%  { transform: translate(58vw, 26vh) rotate(-7deg)  scale(1.05); }
-          90%  { opacity: 1; }
-          100% { transform: translate(120vw, -16vh) rotate(-4deg) scale(0.9); opacity: 0; }
+        /* Swirling flight path — weaves up and down while crossing, with
+           rolling rotation, instead of a straight corner-to-corner line. */
+        @keyframes bwSwirl {
+          0%   { transform: translate(-16vw, 86vh) rotate(0deg)   scale(0.7); opacity: 0; }
+          8%   { opacity: 1; }
+          18%  { transform: translate(10vw, 52vh)  rotate(-22deg) scale(1.0); }
+          30%  { transform: translate(26vw, 72vh)  rotate(14deg)  scale(0.95); }
+          43%  { transform: translate(44vw, 34vh)  rotate(-26deg) scale(1.05); }
+          56%  { transform: translate(60vw, 60vh)  rotate(18deg)  scale(1.0); }
+          69%  { transform: translate(76vw, 26vh)  rotate(-20deg) scale(1.05); }
+          82%  { transform: translate(92vw, 48vh)  rotate(12deg)  scale(1.0); }
+          92%  { opacity: 1; }
+          100% { transform: translate(122vw, 6vh)  rotate(-8deg)  scale(0.82); opacity: 0; }
+        }
+        /* Wing flap — fast flutter (narrow/widen + tiny roll) layered on the
+           inner element so it runs independently of the flight path. */
+        @keyframes bwFlap {
+          0%, 100% { transform: scaleX(1)    rotate(0deg); }
+          50%      { transform: scaleX(0.74) rotate(-5deg); }
         }
         @keyframes bwTwinkle {
           0%   { opacity: 0; transform: scale(0.3) rotate(0deg); }
@@ -99,7 +101,13 @@ export default function BashaierWatermark() {
         .bw-pixie {
           position: fixed; top: 0; left: 0;
           will-change: transform, opacity;
-          animation: bwFly ${FLY_MS}ms ease-in-out forwards;
+          animation: bwSwirl ${FLY_MS}ms ease-in-out forwards;
+        }
+        .bw-flap {
+          display: inline-block;
+          font-size: 132px; line-height: 1;
+          filter: drop-shadow(0 5px 12px rgba(153,53,86,0.35));
+          animation: bwFlap 0.28s ease-in-out infinite;
         }
         .bw-star {
           position: fixed;
@@ -115,7 +123,7 @@ export default function BashaierWatermark() {
         </span>
       ))}
 
-      <span className="bw-pixie"><Pixie /></span>
+      <span className="bw-pixie"><span className="bw-flap">🧚‍♀️</span></span>
     </div>
   );
 }
