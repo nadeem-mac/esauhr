@@ -431,9 +431,12 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
   };
   // Bashaier (H94830) — pink themed; everyone else keeps the green.
   const isPink   = me?.id === 'H94830';
-  const ACCENT   = isPink ? '#993556' : '#0F4C2A';   // primary fill / kicker
-  const ACCENT_BG= isPink ? '#FBEAF0' : 'rgba(15,76,42,0.05)'; // soft wash
+  const ACCENT   = isPink ? '#993556' : '#0F4C2A';   // primary fill / kicker  const ACCENT_BG= isPink ? '#FBEAF0' : 'rgba(15,76,42,0.05)'; // soft wash
   const ACCENT_BD= isPink ? '#F4C0D1' : 'rgba(15,76,42,0.18)'; // soft border
+  // Leave-history import is an HR/admin-only tool (Bashaier included).
+  const isAdminHr = !!(me?.is_admin || me?.is_hr_reviewer || me?.id === 'H94830');
+  const MODES = [['leave', 'Leave'], ['permission', 'Permission'], ['rejoining', 'Rejoining'],
+    ...(isAdminHr ? [['import', 'Import']] : [])];
   const REQ_BD   = isPink ? '#ED93B1' : '#FCD34D';   // required-field border
   const REQ_BG   = isPink ? '#FBEAF0' : '#FFFBEB';   // required-field bg
   const REQ_FG   = isPink ? '#993556' : '#854F0B';   // required-field text
@@ -453,7 +456,7 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
 
       {/* Leave / Permission / Rejoining mode switch — equal rounded boxes */}
       <div className="flex gap-2">
-        {[['leave', 'Leave'], ['permission', 'Permission'], ['rejoining', 'Rejoining'], ['import', 'Import']].map(([k, lbl]) => (
+        {MODES.map(([k, lbl]) => (
           <button key={k} type="button" onClick={() => setMode(k)}
             className="flex-1 text-center text-sm font-semibold border transition"
             style={{
@@ -475,7 +478,7 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
         <LogbookRejoiningEntry me={me} employees={employees} onSaved={onSaved} />
       )}
 
-      {mode === 'import' && (
+      {mode === 'import' && isAdminHr && (
         <LeaveHistoryImportCard me={me} employees={employees} onSaved={onSaved} />
       )}
 
