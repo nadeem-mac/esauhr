@@ -22,7 +22,7 @@ INSERT INTO leave_types (
 
   -- Annual paid leave — KSA Art. 109 (21 days, 30 after 5 yrs service).
   ('annual', 'Annual leave', 21, 'annual_grant', '#0F4C2A', true,
-   false, 0, NULL, NULL, true,
+   false, 0, NULL, NULL, false,
    'Paid annual leave. Entitlement is 21 days/year (or 30 days/year after 5 years of service). Requires manager + HR approval.',
    10, true),
 
@@ -40,43 +40,43 @@ INSERT INTO leave_types (
 
   -- Paternity — KSA Art. 113. 3 days, male only.
   ('paternity', 'Paternity leave', 3, 'per_event', '#075985', true,
-   false, 0, NULL, 'male', true,
+   false, 0, NULL, 'male', false,
    'Paid paternity leave for the birth of a child — 3 working days under Saudi Labor Law Art. 113.',
    40, true),
 
   -- Hajj — KSA Art. 114. 10-15 days, once per career, 2 yrs min service.
   ('hajj', 'Hajj leave', 15, 'per_event', '#854F0B', true,
-   false, 24, 1, NULL, true,
+   false, 24, 1, NULL, false,
    'Paid pilgrimage leave — 10 to 15 days. Once per employment under Saudi Labor Law Art. 114. Requires at least 2 years of service.',
    50, true),
 
   -- Marriage — 5 days, once per service.
   ('marriage', 'Marriage leave', 5, 'per_event', '#7E22CE', true,
-   false, 0, 1, NULL, true,
+   false, 0, 1, NULL, false,
    'Paid marriage leave — 5 days. Once per employment. Requires manager + HR approval.',
    60, true),
 
   -- Bereavement — KSA Art. 113. 5 days for spouse/parent/child, 3 for others.
   ('bereavement', 'Bereavement leave', 5, 'per_event', '#374151', true,
-   false, 0, NULL, NULL, true,
+   false, 0, NULL, NULL, false,
    'Paid leave for the death of a close family member — 5 days for spouse/parent/child, 3 days for sibling/grandparent. Per Saudi Labor Law Art. 113.',
    70, true),
 
   -- Emergency — non-statutory, manager + HR discretion.
   ('emergency', 'Emergency leave', 3, 'per_event', '#7F1D1D', false,
-   false, 0, NULL, NULL, true,
+   false, 0, NULL, NULL, false,
    'Urgent personal or family emergency that cannot be scheduled in advance. Subject to manager + HR approval; may be paid or unpaid depending on circumstances.',
    80, true),
 
   -- Unpaid — no salary, formal approval still required.
   ('unpaid', 'Unpaid leave', 0, 'per_event', '#525252', false,
-   false, 0, NULL, NULL, true,
+   false, 0, NULL, NULL, false,
    'Leave without pay. Requires manager + HR approval. Used when paid balances are exhausted or for extended personal reasons.',
    90, true),
 
   -- Other — catch-all with free-text description.
   ('other', 'Other', 0, 'per_event', '#475569', false,
-   false, 0, NULL, NULL, true,
+   false, 0, NULL, NULL, false,
    'Other leave type not listed above (e.g. educational leave, exam leave, compassionate). Specify the reason in the request — manager + HR approval required.',
    100, true)
 

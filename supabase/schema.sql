@@ -39,7 +39,7 @@ create table if not exists public.leave_types (
   min_service_months  integer     default 0,    -- e.g. Hajj requires 2 years service
   max_per_service     numeric,                  -- e.g. Hajj = 1 time per service
   applies_to_gender   text,                     -- 'male' | 'female' | null (both)
-  counts_working_days_only boolean default true,
+  counts_working_days_only boolean default false, -- KSA default: calendar days (Art. 109)
   description         text,
   sort_order          integer     default 100,
   active              boolean     default true
@@ -206,16 +206,16 @@ create policy "auth_write_audit"       on public.audit_log       for insert to a
 -- SEED: leave types (Saudi Labor Law defaults)
 -- ══════════════════════════════════════════════════════════════════════════
 insert into public.leave_types (id, name, default_days, accrual_method, color, is_paid, requires_attachment, min_service_months, max_per_service, applies_to_gender, counts_working_days_only, description, sort_order) values
-  ('annual',      'Annual Leave',      21,  'monthly_accrual', '#2D5F3F', true,  false, 12, null,  null,     true,  '21 days under 5 years service, 30 days after. Accrues monthly.', 10),
+  ('annual',      'Annual Leave',      21,  'monthly_accrual', '#2D5F3F', true,  false, 12, null,  null,     false,  '21 days under 5 years service, 30 days after. Accrues monthly.', 10),
   ('sick',        'Sick Leave',        120, 'annual_grant',    '#B84A3E', true,  true,  0,  null,  null,     false, '30 days full pay + 60 days at 3/4 pay + 30 days unpaid per year. Medical certificate required.', 20),
-  ('emergency',   'Emergency Leave',   5,   'annual_grant',    '#D4875C', true,  false, 0,  null,  null,     true,  'Unforeseen personal emergencies.', 30),
+  ('emergency',   'Emergency Leave',   5,   'annual_grant',    '#D4875C', true,  false, 0,  null,  null,     false,  'Unforeseen personal emergencies.', 30),
   ('hajj',        'Hajj Leave',        15,  'per_event',       '#8B6B3E', true,  false, 24, 1,     'muslim', false, 'Pilgrimage — granted once per employment, after 2 years of service.', 40),
   ('maternity',   'Maternity Leave',   70,  'per_event',       '#C97B84', true,  true,  0,  null,  'female', false, '10 weeks — up to 4 before and the rest after delivery.', 50),
-  ('paternity',   'Paternity Leave',   3,   'per_event',       '#5A7A9B', true,  false, 0,  null,  'male',   true,  '3 days on the birth of a child.', 60),
-  ('marriage',    'Marriage Leave',    5,   'per_event',       '#A67FB5', true,  false, 0,  1,     null,     true,  '5 days for the employee''s own marriage.', 70),
-  ('bereavement', 'Bereavement Leave', 5,   'per_event',       '#6B6B6B', true,  false, 0,  null,  null,     true,  '5 days — spouse, parent, child. 3 days — sibling, grandparent.', 80),
+  ('paternity',   'Paternity Leave',   3,   'per_event',       '#5A7A9B', true,  false, 0,  null,  'male',   false,  '3 days on the birth of a child.', 60),
+  ('marriage',    'Marriage Leave',    5,   'per_event',       '#A67FB5', true,  false, 0,  1,     null,     false,  '5 days for the employee''s own marriage.', 70),
+  ('bereavement', 'Bereavement Leave', 5,   'per_event',       '#6B6B6B', true,  false, 0,  null,  null,     false,  '5 days — spouse, parent, child. 3 days — sibling, grandparent.', 80),
   ('exam',        'Exam Leave',        15,  'annual_grant',    '#7A9B5A', true,  true,  0,  null,  null,     true,  'For employees studying at accredited institutions.', 90),
-  ('unpaid',      'Unpaid Leave',      0,   'per_event',       '#9B9B9B', false, false, 0,  null,  null,     true,  'Leave without pay.', 100)
+  ('unpaid',      'Unpaid Leave',      0,   'per_event',       '#9B9B9B', false, false, 0,  null,  null,     false,  'Leave without pay.', 100)
 on conflict (id) do update set
   name = excluded.name,
   default_days = excluded.default_days,

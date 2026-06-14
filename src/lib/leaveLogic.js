@@ -56,10 +56,20 @@ export const countCalendarDays = (startDate, endDate) => daysBetweenInclusive(st
 
 // ──────────────────────────────────────────────────────────────────────
 //  REQUEST DURATION — picks working or calendar days depending on leave type
+//
+//  DEFAULT: calendar days (per KSA Labor Law Art. 109/151/etc — weekly
+//  rest days and public holidays falling inside a leave period are
+//  counted as part of the leave). Working-days mode is opt-in via
+//  leave_types.counts_working_days_only = true.
+//
+//  Previously this defaulted to working days when the flag was null /
+//  undefined, which produced under-counted annual leave (e.g. a 28-day
+//  KSA annual leave was being saved as 20 "days"). Calendar days is the
+//  correct KSA default. (Nadeem 2026-06-14.)
 // ──────────────────────────────────────────────────────────────────────
 export function calculateRequestDays(startDate, endDate, leaveType, holidays = [], isHalfDay = false) {
   if (isHalfDay) return 0.5;
-  const workingOnly = leaveType?.counts_working_days_only !== false;
+  const workingOnly = leaveType?.counts_working_days_only === true;
   const days = workingOnly
     ? countWorkingDays(startDate, endDate, holidays)
     : countCalendarDays(startDate, endDate);
