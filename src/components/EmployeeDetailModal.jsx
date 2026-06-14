@@ -731,17 +731,22 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                 // pieces are presented changes. Nadeem 2026-05-21: 'easy
                 // to understand … ensuring all information is correct'.
                 const adjVal     = Number(balance.adjustment || 0);
-                const prePortal  = adjVal < 0 ? -adjVal : 0;
-                const bonus      = adjVal > 0 ?  adjVal : 0;
+                const bonus      = adjVal > 0 ? adjVal : 0;
+                // Simple, correct balance: entitlement (+ carryover + any HR
+                // bonus) minus what's been used and what's pending. Negative
+                // "pre-portal" adjustments are NOT shown as extra usage here
+                // — actual leave rows already carry the real usage, so adding
+                // the old migration placeholder double-counted and produced
+                // confusing negatives. (Nadeem 2026-06-14: keep it simple —
+                // "30 / 7 days available", remaining in green.)
                 const dispTotal  = balance.entitlement + balance.carried + bonus;
-                const dispUsed   = balance.used + balance.pending + prePortal;
+                const dispUsed   = balance.used + balance.pending;
                 const dispAvail  = dispTotal - dispUsed;
 
                 const hasCarry      = balance.carried > 0;
-                const hasPrePortal  = prePortal > 0;
                 const hasPortalUsed = balance.used > 0;
                 const hasBonus      = bonus > 0;
-                const isHighlighted = hasCarry || hasPrePortal;
+                const isHighlighted = false;
 
                 return (
                   <div
@@ -758,8 +763,7 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                       (hasCarry      ? `Carried from ${year - 1}: +${balance.carried}\n` : '') +
                       (hasBonus      ? `Bonus / adjustment:    +${bonus}\n`              : '') +
                       `── Total pool:         ${dispTotal}\n` +
-                      (hasPrePortal  ? `Used before portal:    −${prePortal}\n` : '') +
-                      (hasPortalUsed ? `Used in portal:        −${balance.used}\n` : '') +
+                      (hasPortalUsed ? `Used in ${year}:         −${balance.used}\n` : '') +
                       (balance.pending > 0 ? `Pending:               −${balance.pending}\n` : '') +
                       `── Available:          ${dispAvail}`
                     }
@@ -787,7 +791,7 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                     <div className="flex items-baseline gap-0.5 font-mono" style={{ lineHeight: 1 }}>
                       <span style={{
                         fontSize: 20, fontWeight: 700,
-                        color: exhausted ? 'var(--clay)' : '#1F1B16',
+                        color: exhausted || dispAvail <= 0 ? 'var(--clay)' : '#065F46',
                       }}>
                         {unlimited ? '∞' : dispAvail}
                       </span>
@@ -819,7 +823,7 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                         line with a coloured marker. Only render when
                         the relevant figure is non-zero, so simple
                         tiles stay clean. */}
-                    {(hasCarry || hasPrePortal || hasBonus || hasPortalUsed) && (
+                    {(hasCarry || hasBonus || hasPortalUsed) && (
                       <div style={{ marginTop: 6, lineHeight: 1.6 }}>
                         {hasCarry && (
                           <div className="flex items-center gap-1.5" style={{ fontSize: 9.5, color: '#0A0A0A' }}>
@@ -837,15 +841,6 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
                               background: '#0F4C2A', flexShrink: 0,
                             }} />
                             <span><strong style={{ fontWeight: 700 }}>+{bonus}</strong> HR adjustment</span>
-                          </div>
-                        )}
-                        {hasPrePortal && (
-                          <div className="flex items-center gap-1.5" style={{ fontSize: 9.5, color: '#0A0A0A' }}>
-                            <span style={{
-                              width: 5, height: 5, borderRadius: '50%',
-                              background: '#9D6B53', flexShrink: 0,
-                            }} />
-                            <span><strong style={{ fontWeight: 700 }}>{prePortal}</strong> used before portal</span>
                           </div>
                         )}
                         {hasPortalUsed && (

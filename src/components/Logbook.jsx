@@ -71,6 +71,7 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
   // one approved leave_request per run (so 15 & 18 → two 1-day rows).
   const [multiMode, setMultiMode] = useState(false);
   const [extraDates, setExtraDates] = useState([]);   // ISO 'YYYY-MM-DD'
+  const [holidays, setHolidays] = useState([]);       // public_holidays {date,name}
   const [newDate, setNewDate] = useState('');
   const [reason, setReason] = useState('');
   // Required — date the paper/email application was received from
@@ -133,11 +134,12 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
     () => (leaveTypes || []).find(t => t.id === leaveType) || { id: 'annual' },
     [leaveType, leaveTypes]
   );
-  // Auto-calc (MOL Article 113 — working days, excludes Fri/Sat + public holidays)
+  // Auto-calc — calendar days, with official public holidays (Eid etc.)
+  // inside the period automatically NOT deducted (KSA Labor Law).
   const autoDays = useMemo(() => {
     if (!startDate || !endDate) return 0;
-    return calculateRequestDays(startDate, endDate, lt, [], isHalfDay);
-  }, [startDate, endDate, lt, isHalfDay]);
+    return calculateRequestDays(startDate, endDate, lt, holidays, isHalfDay);
+  }, [startDate, endDate, lt, isHalfDay, holidays]);
   // Final days to insert — manual override takes precedence
   const days = multiMode
     ? extraDates.length
@@ -163,6 +165,20 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
     if (run) runs.push(run);
     return runs;
   };
+
+  // ── Public holidays — so the day count auto-excludes Eid etc. ──────
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await directGet('public_holidays', 'select=date,name&order=date', { timeoutMs: 8000 });
+        if (!cancelled) setHolidays(rows || []);
+      } catch (e) {
+        console.warn('logbook holidays load failed:', e?.message || e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // ── Recent entries — last 10 manual entries Bashaier logged ────────
   useEffect(() => {
@@ -785,10 +801,10 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
               {fmtDate(new Date(startDate))} → {fmtDate(new Date(endDate))}
               {' · '}
               {daysOverride == null
-                ? `auto-computed working days (MOL Art. 113, excludes Fri+Sat + holidays)`
+                ? `auto-computed calendar days (KSA Art. 109 — weekends counted, official Eid/public holidays not deducted)`
                 : Number(daysOverride) !== autoDays
-                  ? `manual override · auto was ${autoDays} working days`
-                  : `auto-computed working days (MOL Art. 113, excludes Fri+Sat + holidays)`}
+                  ? `manual override · auto was ${autoDays} days`
+                  : `auto-computed calendar days (KSA Art. 109 — weekends counted, official Eid/public holidays not deducted)`}
             </div>
           </div>
         )}

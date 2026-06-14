@@ -70,10 +70,20 @@ export const countCalendarDays = (startDate, endDate) => daysBetweenInclusive(st
 export function calculateRequestDays(startDate, endDate, leaveType, holidays = [], isHalfDay = false) {
   if (isHalfDay) return 0.5;
   const workingOnly = leaveType?.counts_working_days_only === true;
-  const days = workingOnly
-    ? countWorkingDays(startDate, endDate, holidays)
-    : countCalendarDays(startDate, endDate);
-  return days;
+  if (workingOnly) return countWorkingDays(startDate, endDate, holidays);
+  // Calendar days, but official public holidays (Eid, National Day, …)
+  // falling INSIDE the period are NOT deducted — KSA Labor Law does not
+  // charge them against annual leave. Weekend rest-days inside the period
+  // ARE counted. If no holiday list is supplied, falls back to plain
+  // calendar days. (Nadeem 2026-06-14.)
+  const cal = countCalendarDays(startDate, endDate);
+  const s = String(startDate).slice(0, 10);
+  const e = String(endDate).slice(0, 10);
+  const holsInPeriod = (holidays || []).reduce((n, h) => {
+    const d = String(h?.date || h).slice(0, 10);
+    return (d >= s && d <= e) ? n + 1 : n;
+  }, 0);
+  return Math.max(0, cal - holsInPeriod);
 }
 
 // ──────────────────────────────────────────────────────────────────────
