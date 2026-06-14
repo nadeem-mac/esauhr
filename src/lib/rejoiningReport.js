@@ -451,7 +451,16 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
   const actualReturn = request.actual_return_date || null;
   const returnedAt   = request.returned_at || null;
   const diffLabel    = returnDiffLabel(actualReturn, request.end_date);
-  const returnStatus = (request.return_status || 'pending').toUpperCase();
+  // Status priority: an explicit return_status wins; otherwise derive it
+  // from the actual rejoining workflow fields. A logged rejoining sets
+  // return_stage='approved' + actual_return_date, which means RETURNED.
+  // A rejected return reads NO_SHOW; anything still in flight is PENDING.
+  const returnStatus = (
+    request.return_status
+    || (request.return_stage === 'approved' && actualReturn ? 'returned'
+      : request.return_stage === 'rejected' ? 'no_show'
+      : 'pending')
+  ).toUpperCase();
 
   const logoBytes = await loadLogoBytes();
   // QR points to the rejoining-specific verify page (NOT the
