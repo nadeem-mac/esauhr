@@ -17,6 +17,7 @@ import {
   VerticalAlign, ShadingType,
 } from 'docx';
 import QRCode from 'qrcode';
+import { directGet } from '../supabaseClient.js';
 // Reuse the executive-CC resolver from the permission-letter flow so
 // the rejoining email Cc list stays in lockstep with permission-letter
 // notifications. Single source of truth for who gets CC'd: any change
@@ -433,7 +434,7 @@ const yearsOfService = (joinDate) => {
 };
 
 // ─── main generator ──────────────────────────────────────────────────────────
-export async function generateRejoiningReportBlob({ employee, request, manager, hrApprover, returnConfirmer, manual = false }) {
+export async function generateRejoiningReportBlob({ employee, request, manager, hrApprover, returnConfirmer, manual = false, holidays = [] }) {
   const ltKey  = LEAVE_TYPE[request.leave_type_id] ? request.leave_type_id : 'annual';
   const ltBoth = LEAVE_TYPE[ltKey];
 
@@ -443,7 +444,20 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
   const today = new Date().toISOString();
 
   const dayCount = Number(request.days || 0);
-  const daysLabel = `${dayCount} day${dayCount === 1 ? '' : 's'}${request.is_half_day ? '   (half day)' : ''}`;
+  // Public holidays falling INSIDE the leave period (e.g. Eid). The day
+  // count itself is already correct (calendar days), so this is just a
+  // faithful annotation matching what staff write on the application —
+  // e.g. "28 days (including Eid holidays)". System checks stay unchanged.
+  const holsInPeriod = (holidays || []).filter(h => {
+    const d = String(h.date || h).slice(0, 10);
+    return d >= String(request.start_date).slice(0, 10) && d <= String(request.end_date).slice(0, 10);
+  });
+  let holNote = '';
+  if (holsInPeriod.length && !request.is_half_day) {
+    const names = holsInPeriod.map(h => String(h.name || '')).join(' ');
+    holNote = /eid/i.test(names) ? '  (including Eid holidays)' : '  (including public holidays)';
+  }
+  const daysLabel = `${dayCount} day${dayCount === 1 ? '' : 's'}${request.is_half_day ? '   (half day)' : ''}${holNote}`;
   const periodValue = request.start_date === request.end_date
     ? fmtDateLong(request.start_date)
     : `${fmtDateLong(request.start_date)}  →  ${fmtDateLong(request.end_date)}`;
@@ -915,8 +929,18 @@ export async function downloadRejoiningReportForRequest(request, empMap, manual 
 
   const returnConfirmer = resolveApprover(request.return_confirmed_by, empMap) || hrApprover;
 
+  // Public holidays inside the leave period — annotates the duration
+  // ("…including Eid holidays"). Best-effort: if the lookup fails the
+  // report still generates, just without the holiday note.
+  let holidays = [];
+  try {
+    holidays = await directGet('public_holidays',
+      `select=date,name&date=gte.${String(request.start_date).slice(0, 10)}&date=lte.${String(request.end_date).slice(0, 10)}`,
+      { timeoutMs: 8000 }) || [];
+  } catch { holidays = []; }
+
   const blob = await generateRejoiningReportBlob({
-    request, employee, manager, hrApprover, returnConfirmer, manual,
+    request, employee, manager, hrApprover, returnConfirmer, manual, holidays,
   });
   const safeName = (employee.name || request.employee_id).replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '');
   const filename = `Rejoining_Report_${safeName}_${request.end_date}.docx`;
