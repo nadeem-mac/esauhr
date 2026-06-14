@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   Upload, FileText, Clock, AlertTriangle, Mail, CheckCircle2,
   X, Calendar, Briefcase, Users, Send, Sparkles, Anchor, FileSpreadsheet,
-  ShieldAlert, Eye, Copy,
+  ShieldAlert, Eye, Copy, Check,
 } from 'lucide-react';
 import { directGet, directPost } from '../supabaseClient.js';
 import { renderHrSignatureHtml } from '../lib/emailTemplates.js';
