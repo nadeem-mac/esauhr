@@ -3,9 +3,10 @@ import { createPortal } from 'react-dom';
 import {
   Upload, FileText, Clock, AlertTriangle, Mail, CheckCircle2,
   X, Calendar, Briefcase, Users, Send, Sparkles, Anchor, FileSpreadsheet,
-  ShieldAlert,
+  ShieldAlert, Eye, Copy,
 } from 'lucide-react';
 import { directGet, directPost } from '../supabaseClient.js';
+import { renderHrSignatureHtml } from '../lib/emailTemplates.js';
 import { parseTimeCardXlsx, TimeCardParseError } from '../lib/timeCard.js';
 import { buildAttendanceRows, recordAttendanceRows } from '../lib/attendanceRecorder.js';
 // Phase A re-eval entry point — used by Phase C for the post-upload
@@ -5584,7 +5585,81 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     window.location.href = url;
   }, [weekendSorted, csvDate, yesterdayDate, availableWeekends, selectedWeekendKey]);
 
-  // Weekend panel — custom layout (not a FlaggedSection). Grouped
+  // Email preview — builds an Outlook-safe HTML body (the full grouped
+  // weekend table) that Bashaier can copy and paste straight into Outlook,
+  // mirroring the "Email review" flow on the Reports-for-Mr-John tab.
+  const [weekendPreview, setWeekendPreview] = useState(null);
+  const [weekendCopied, setWeekendCopied] = useState(false);
+
+  const buildWeekendEmail = useCallback(() => {
+    const isPink = me?.id === 'H94830';
+    const HEAD_BG = isPink ? '#F7C5D0' : '#0F4C2A';
+    const HEAD_FG = isPink ? '#0A0A0A' : '#FFFFFF';
+    const ACC     = isPink ? '#993556' : '#0F4C2A';
+    const LITE    = isPink ? '#FDF2F6' : '#ECFDF5';
+    const LINE    = isPink ? '#E7C9D5' : '#CBE5D6';
+    const dayName = (iso) => { const [y, m, d] = String(iso).split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-GB', { weekday: 'long' }); };
+    const sel = availableWeekends.find(w => w.key === selectedWeekendKey) || availableWeekends[0];
+    const rangeLbl = sel ? `${formatDateLong(sel.fridayKey)} \u2013 ${formatDateLong(sel.saturdayKey)}` : '';
+    const esc = (v) => String(v == null ? '' : v).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+    const groups = new Map();
+    weekendSorted.forEach(e => { if (!groups.has(e.dateLabel)) groups.set(e.dateLabel, []); groups.get(e.dateLabel).push(e); });
+
+    const th = `padding:6px 9px;font-size:10px;text-align:left;color:${HEAD_FG};background:${HEAD_BG};border:1px solid ${LINE};font-weight:bold;letter-spacing:.03em;`;
+    const thr = th + 'text-align:right;';
+    const td = `padding:5px 9px;font-size:11px;color:#0A0A0A;border:1px solid ${LINE};`;
+    const tdr = td + 'text-align:right;font-weight:bold;';
+    let grand = 0;
+    const sections = [...groups].map(([date, list]) => {
+      let dayTot = 0;
+      const body = list.map((e, i) => {
+        const h = e.hoursDecimal != null ? e.hoursDecimal : null;
+        if (h != null) { dayTot += h; grand += h; }
+        const bg = i % 2 ? '#FFFFFF' : LITE;
+        return `<tr style="background:${bg}">`
+          + `<td style="${td}">${esc(e.location)}</td>`
+          + `<td style="${td}">${esc(e.department)}</td>`
+          + `<td style="${td}color:#444">${esc(e.employee?.id)}</td>`
+          + `<td style="${td}font-weight:bold">${esc(e.employee?.name)}</td>`
+          + `<td style="${td}text-align:center">${esc(e.punchInStr)}</td>`
+          + `<td style="${td}text-align:center">${e.punchOutStr ? esc(e.punchOutStr) : '<span style="color:#A16207;font-style:italic">missing</span>'}</td>`
+          + `<td style="${tdr}">${h != null ? h.toFixed(2) + 'h' : '\u2014'}</td></tr>`;
+      }).join('');
+      return `<div style="margin:0 0 16px 0">`
+        + `<div style="font-size:11px;font-weight:bold;color:${ACC};background:${LITE};padding:6px 9px;border:1px solid ${LINE};border-bottom:none;letter-spacing:.04em">${esc(dayName(date))} \u00b7 ${esc(formatDateLong(date))} \u00b7 ${list.length} staff</div>`
+        + `<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;border:1px solid ${LINE}">`
+        + `<tr><th style="${th}">LOCATION</th><th style="${th}">DEPT</th><th style="${th}">PSN</th><th style="${th}">NAME</th><th style="${th}text-align:center">IN</th><th style="${th}text-align:center">OUT</th><th style="${thr}">HOURS</th></tr>`
+        + body
+        + `<tr><td style="${td}" colspan="6"></td><td style="${tdr}background:${LITE}">${dayTot.toFixed(2)}h</td></tr>`
+        + `</table></div>`;
+    }).join('');
+
+    const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#0A0A0A;line-height:1.4">`
+      + `<p style="margin:0 0 10px 0">Dear Mr John,</p>`
+      + `<p style="margin:0 0 14px 0">Please find below the weekend attendance for <b>${esc(rangeLbl)}</b> &mdash; ${weekendSorted.length} staff attended (total ${grand.toFixed(2)} hours).</p>`
+      + sections
+      + `<p style="margin:14px 0 0 0">Kindly find the detailed Excel report attached.</p>`
+      + renderHrSignatureHtml()
+      + `</div>`;
+    return { html };
+  }, [weekendSorted, availableWeekends, selectedWeekendKey, me]);
+
+  const copyWeekendHtml = useCallback(async () => {
+    try {
+      const { html } = buildWeekendEmail();
+      if (navigator.clipboard && window.ClipboardItem) {
+        await navigator.clipboard.write([new window.ClipboardItem({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([html.replace(/<[^>]+>/g, '')], { type: 'text/plain' }),
+        })]);
+      } else {
+        await navigator.clipboard.writeText(html);
+      }
+      setWeekendCopied(true);
+      setTimeout(() => setWeekendCopied(false), 2000);
+    } catch { /* clipboard blocked — preview still visible to copy manually */ }
+  }, [buildWeekendEmail]);
   // by weekend date with location/department/check-in sort already
   // applied via weekendSorted. Two action buttons at the top:
   // Export PDF + Email John (plus CC).
@@ -5647,8 +5722,44 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
               title="Open a draft email to Mr John (CC James + DMN SUP team) with the weekend summary in the body. Attach the exported Excel report before sending.">
               <Mail className="w-3.5 h-3.5"/> Email Mr John
             </button>
+            <button onClick={() => { try { setWeekendPreview(buildWeekendEmail().html); } catch {} }}
+              disabled={!weekendSorted.length}
+              className="text-xs px-3 py-2 rounded-full inline-flex items-center gap-1.5 transition-shadow hover:shadow"
+              style={{
+                background: '#FFFFFF',
+                color: weekendSorted.length ? '#0F4C2A' : '#0A0A0A',
+                border: '1px solid ' + (weekendSorted.length ? '#0F4C2A' : '#E5E5E5'),
+                fontWeight: 600,
+                cursor: weekendSorted.length ? 'pointer' : 'not-allowed',
+              }}
+              title="Preview the email exactly as it will paste into Outlook, then copy it.">
+              <Eye className="w-3.5 h-3.5"/> Email preview
+            </button>
           </div>
         </div>
+
+        {/* Email preview — exactly what pastes into Outlook (copy-able). */}
+        {weekendPreview && (
+          <div className="mb-4 rounded-xl border overflow-hidden" style={{ borderColor: '#E5E5E5' }}>
+            <div className="px-3 py-2 flex items-center justify-between gap-2"
+                 style={{ background: '#F7F7F5', borderBottom: '1px solid #E5E5E5' }}>
+              <span className="text-[11px] font-bold" style={{ color: '#0F4C2A' }}>Email preview — exactly what pastes into Outlook</span>
+              <span className="flex items-center gap-1.5">
+                <button type="button" onClick={copyWeekendHtml}
+                        className="text-[11px] font-semibold px-2.5 py-1 rounded-lg inline-flex items-center gap-1"
+                        style={{ background: weekendCopied ? '#0F4C2A' : '#0F4C2A', color: '#fff' }}>
+                  {weekendCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  {weekendCopied ? 'Copied' : 'Copy'}
+                </button>
+                <button type="button" onClick={() => setWeekendPreview(null)}
+                        className="text-[11px] font-semibold px-2 py-1 rounded-lg border"
+                        style={{ borderColor: '#E5E5E5', color: '#1F1B16' }}>Hide</button>
+              </span>
+            </div>
+            <div className="p-3 bg-white" style={{ maxHeight: '40vh', overflowY: 'auto' }}
+                 dangerouslySetInnerHTML={{ __html: weekendPreview }} />
+          </div>
+        )}
 
         {/* Weekend selector — appears when the file contains 2+
             weekends. Lets Bashaier pick which weekend to view, export,
