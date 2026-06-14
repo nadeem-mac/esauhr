@@ -5438,6 +5438,50 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }, [weekendSorted, csvDate, yesterdayDate, me, availableWeekends, selectedWeekendKey]);
 
+  // Excel exporter — the same weekend data as the HTML report, as a
+  // proper .xlsx (one row per staff, sorted location → dept → check-in).
+  // xlsx is imported lazily so it only loads when actually exporting.
+  const exportWeekendExcel = useCallback(async () => {
+    if (!weekendSorted.length) return;
+    const XLSX = await import('xlsx');
+    const dayName = (iso) => {
+      const [y, m, d] = String(iso).split('-').map(Number);
+      return new Date(y, m - 1, d).toLocaleDateString('en-GB', { weekday: 'long' });
+    };
+    const sel = availableWeekends.find(w => w.key === selectedWeekendKey) || availableWeekends[0];
+    const friLbl = sel ? formatDateLong(sel.fridayKey) : '';
+    const satLbl = sel ? formatDateLong(sel.saturdayKey) : '';
+    const rangeLbl = friLbl && satLbl ? `${friLbl} – ${satLbl}` : (selectedWeekendKey || '');
+
+    const header = ['Date', 'Day', 'Location', 'Department', 'PSN', 'Name', 'Check In', 'Check Out', 'Hours'];
+    const body = weekendSorted.map(e => [
+      e.dateLabel,
+      dayName(e.dateLabel),
+      e.location || '',
+      e.department || '',
+      e.employee?.id || '',
+      e.employee?.name || '',
+      e.punchInStr || '',
+      e.punchOutStr || 'missing',
+      e.hoursDecimal != null ? Number(e.hoursDecimal.toFixed(2)) : '',
+    ]);
+    const aoa = [
+      ['ESAU — Weekend Attendance Report'],
+      [`Weekend: ${rangeLbl}`],
+      [`Staff attended: ${weekendSorted.length}`],
+      [],
+      header,
+      ...body,
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [13, 11, 11, 13, 11, 26, 11, 11, 8].map(wch => ({ wch }));
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 8 } }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Weekend Attendance');
+    const safeKey = (selectedWeekendKey || 'report').replace(/[^0-9A-Za-z-]/g, '');
+    XLSX.writeFile(wb, `ESAU_Weekend_Attendance_${safeKey}.xlsx`);
+  }, [weekendSorted, availableWeekends, selectedWeekendKey]);
+
   // Email builder — TO Mr John, CC James + DMN SUP team. Body is a
   // brief summary only; the detailed staff list lives in the PDF
   // (which Bashaier attaches before sending). Per Nadeem: don't
@@ -5543,6 +5587,18 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
               }}
               title="Download a polished HTML report (sorted by location/department/check-in). Open it in a browser to view, print, or save as PDF.">
               <FileText className="w-3.5 h-3.5"/> Export Report
+            </button>
+            <button onClick={exportWeekendExcel}
+              disabled={!weekendSorted.length}
+              className="text-xs px-3 py-2 rounded-full inline-flex items-center gap-1.5 transition-shadow hover:shadow"
+              style={{
+                background: weekendSorted.length ? '#1a7a47' : '#E5E5E5',
+                color: weekendSorted.length ? '#FFFFFF' : '#0A0A0A',
+                fontWeight: 600,
+                cursor: weekendSorted.length ? 'pointer' : 'not-allowed',
+              }}
+              title="Download the weekend attendance as an Excel (.xlsx) file — one row per staff, sorted by location, department and check-in.">
+              <FileSpreadsheet className="w-3.5 h-3.5"/> Export Excel
             </button>
             <button onClick={emailWeekendReport}
               disabled={!weekendSorted.length}
