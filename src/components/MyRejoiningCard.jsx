@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { ArrowLeftCircle, Send, Loader2, Clock, CheckCircle2, AlertCircle, X } from 'lucide-react';
 import { supabase, directGet, directPatch } from '../supabaseClient.js';
 import { fmtDateShort } from '../lib/leaveLogic.js';
+import { addDaysIso, nextWorkingDayIso } from '../lib/dateUtils.js';
 import RejoiningTimelineModal from './RejoiningTimelineModal.jsx';
 
 // =============================================================================
@@ -87,13 +88,14 @@ export default function MyRejoiningCard({ me, employees = [] }) {
   const openForm = (req) => {
     setOpenId(req.id);
     setError('');
-    // Pre-fill: existing actual_return_date if resubmitting, else end_date+1
+    // Pre-fill: existing actual_return_date if resubmitting, otherwise
+    // the first KSA working day on or after end_date + 1 (no Friday /
+    // Saturday auto-proposals).
     if (req.actual_return_date) {
       setForm({ actualDate: req.actual_return_date, notes: req.return_notes || '' });
     } else {
-      const d = new Date(req.end_date);
-      d.setDate(d.getDate() + 1);
-      setForm({ actualDate: d.toISOString().slice(0, 10), notes: '' });
+      const proposed = nextWorkingDayIso(addDaysIso(req.end_date, 1));
+      setForm({ actualDate: proposed, notes: '' });
     }
   };
 

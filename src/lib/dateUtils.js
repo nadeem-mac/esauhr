@@ -101,6 +101,23 @@ export function isKsaWeekend(iso) {
   return dow === 5 || dow === 6;
 }
 
+/**
+ * Next non-KSA-weekend date (advances 0 days if `iso` is already a
+ * working day, otherwise rolls forward to the next Sunday).
+ *
+ * Used for proposing return-to-work / rejoining dates: under KSA
+ * Labor Law the working week is Sun–Thu, so a leave ending on a
+ * Thursday means the staff member's first day back is the following
+ * Sunday, not Friday. Always reach for this helper instead of a raw
+ * `addDaysIso(end_date, 1)` when defaulting a return-to-work date.
+ */
+export function nextWorkingDayIso(iso) {
+  if (!iso || typeof iso !== 'string') return null;
+  let cur = iso, guard = 0;
+  while (isKsaWeekend(cur) && guard++ < 8) cur = addDaysIso(cur, 1);
+  return cur;
+}
+
 // Back-compat alias — ymd was the original name in attendanceBackfill.js
 // before this module existed. New code should prefer localDateString.
 export const ymd = localDateString;

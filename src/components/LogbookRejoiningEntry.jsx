@@ -12,12 +12,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { directGet, directPatch } from '../supabaseClient.js';
 import { Save, Loader2, CheckCircle2, AlertCircle, Mail, FileText, Trash2 } from 'lucide-react';
 import { downloadRejoiningReportForRequest, buildRejoiningEmailDraft } from '../lib/rejoiningReport.js';
-
-const addDaysIso = (iso, n) => {
-  const d = new Date(`${iso}T00:00:00`);
-  d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
-};
+import { addDaysIso, nextWorkingDayIso } from '../lib/dateUtils.js';
 const labelFor = (id) => (id ? String(id).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Leave');
 
 export default function LogbookRejoiningEntry({ me, employees = [], onSaved }) {
@@ -67,9 +62,15 @@ export default function LogbookRejoiningEntry({ me, employees = [], onSaved }) {
     return () => { cancelled = true; };
   }, [empId, msg]);
 
-  // Default the return date to day after the leave ends.
+  // Default the return date to the first KSA working day on or after
+  // the day-after-leave-ends. End on Thursday → propose Sunday;
+  // end on Saturday → propose Sunday; end on Sunday–Wednesday →
+  // propose the next calendar day. Manual override still works.
   useEffect(() => {
-    if (selectedLeave) setReturnDate(selectedLeave.actual_return_date || addDaysIso(selectedLeave.end_date, 1));
+    if (selectedLeave) setReturnDate(
+      selectedLeave.actual_return_date
+        || nextWorkingDayIso(addDaysIso(selectedLeave.end_date, 1))
+    );
     else setReturnDate('');
   }, [selectedLeave]);
 
