@@ -41,6 +41,7 @@ import HQAttendanceExportCard from './HQAttendanceExportCard.jsx';
 // debugging.
 import { reportClientError } from '../lib/clientErrors.js';
 import { isActiveEmployee } from '../lib/leaveLogic.js';
+import { excelHeaderRgb } from '../lib/excelHeader.js';
 
 class AttendanceErrorBoundary extends React.Component {
   constructor(props) {
@@ -5438,49 +5439,94 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }, [weekendSorted, csvDate, yesterdayDate, me, availableWeekends, selectedWeekendKey]);
 
-  // Excel exporter — the same weekend data as the HTML report, as a
-  // proper .xlsx (one row per staff, sorted location → dept → check-in).
-  // xlsx is imported lazily so it only loads when actually exporting.
+  // Excel exporter — mirrors the on-screen / HTML weekend report: a title
+  // block, then a section per date (date heading + baby-pink column header +
+  // rows + per-day total), finishing with a grand total. Styled with
+  // xlsx-js-style (baby-pink theme header, thin borders, zebra rows).
   const exportWeekendExcel = useCallback(async () => {
     if (!weekendSorted.length) return;
-    const XLSX = await import('xlsx');
-    const dayName = (iso) => {
-      const [y, m, d] = String(iso).split('-').map(Number);
-      return new Date(y, m - 1, d).toLocaleDateString('en-GB', { weekday: 'long' });
-    };
-    const sel = availableWeekends.find(w => w.key === selectedWeekendKey) || availableWeekends[0];
-    const friLbl = sel ? formatDateLong(sel.fridayKey) : '';
-    const satLbl = sel ? formatDateLong(sel.saturdayKey) : '';
-    const rangeLbl = friLbl && satLbl ? `${friLbl} – ${satLbl}` : (selectedWeekendKey || '');
+    const XLSX = await import('xlsx-js-style');
 
-    const header = ['Date', 'Day', 'Location', 'Department', 'PSN', 'Name', 'Check In', 'Check Out', 'Hours'];
-    const body = weekendSorted.map(e => [
-      e.dateLabel,
-      dayName(e.dateLabel),
-      e.location || '',
-      e.department || '',
-      e.employee?.id || '',
-      e.employee?.name || '',
-      e.punchInStr || '',
-      e.punchOutStr || 'missing',
-      e.hoursDecimal != null ? Number(e.hoursDecimal.toFixed(2)) : '',
-    ]);
-    const aoa = [
-      ['ESAU — Weekend Attendance Report'],
-      [`Weekend: ${rangeLbl}`],
-      [`Staff attended: ${weekendSorted.length}`],
-      [],
-      header,
-      ...body,
-    ];
+    const isPink = me?.id === 'H94830';
+    const H = excelHeaderRgb(me);                 // baby-pink for Bashaier, green otherwise
+    const ACC_DEEP = isPink ? '993556' : '0F4C2A';
+    const ACC_LITE = isPink ? 'FDF2F6' : 'ECFDF5';
+    const INK = '0A0A0A', LINE = isPink ? 'E7C9D5' : 'CBE5D6';
+    const border = {
+      top: { style: 'thin', color: { rgb: LINE } }, bottom: { style: 'thin', color: { rgb: LINE } },
+      left: { style: 'thin', color: { rgb: LINE } }, right: { style: 'thin', color: { rgb: LINE } },
+    };
+    const dayName = (iso) => { const [y, m, d] = String(iso).split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-GB', { weekday: 'long' }); };
+    const sel = availableWeekends.find(w => w.key === selectedWeekendKey) || availableWeekends[0];
+    const rangeLbl = sel ? `${formatDateLong(sel.fridayKey)} – ${formatDateLong(sel.saturdayKey)}` : (selectedWeekendKey || '');
+
+    // Group rows by date (already sorted location→dept→check-in within).
+    const groups = new Map();
+    weekendSorted.forEach(e => { if (!groups.has(e.dateLabel)) groups.set(e.dateLabel, []); groups.get(e.dateLabel).push(e); });
+
+    const COLS = 7;
+    const rows = [];                 // { cells, kind }
+    const push = (cells, kind) => rows.push({ cells, kind });
+    push(['ESAU — Weekend Attendance Report'], 'title');
+    push([`Weekend: ${rangeLbl}`], 'sub');
+    push([`Staff attended: ${weekendSorted.length}`], 'sub');
+    push([''], 'blank');
+    let grand = 0;
+    for (const [date, list] of groups) {
+      push([`${dayName(date)} · ${formatDateLong(date)} · ${list.length} staff`], 'dateHdr');
+      push(['Location', 'Department', 'PSN', 'Name', 'Check In', 'Check Out', 'Hours'], 'colHdr');
+      let dayTot = 0;
+      list.forEach(e => {
+        const h = e.hoursDecimal != null ? Number(e.hoursDecimal.toFixed(2)) : null;
+        if (h != null) { dayTot += h; grand += h; }
+        push([e.location || '', e.department || '', e.employee?.id || '', e.employee?.name || '',
+              e.punchInStr || '', e.punchOutStr || 'missing', h != null ? h : '—'], 'data');
+      });
+      push(['', '', '', '', '', 'Day total', Number(dayTot.toFixed(2))], 'total');
+      push([''], 'blank');
+    }
+    push(['', '', '', '', '', 'Grand total', Number(grand.toFixed(2))], 'grand');
+
+    const aoa = rows.map(r => r.cells);
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [13, 11, 11, 13, 11, 26, 11, 11, 8].map(wch => ({ wch }));
-    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 8 } }];
+    ws['!cols'] = [12, 13, 11, 26, 11, 11, 9].map(wch => ({ wch }));
+    const merges = [];
+    rows.forEach((r, i) => {
+      if (r.kind === 'title' || r.kind === 'sub' || r.kind === 'dateHdr')
+        merges.push({ s: { r: i, c: 0 }, e: { r: i, c: COLS - 1 } });
+    });
+    ws['!merges'] = merges;
+
+    let zebra = 0;
+    rows.forEach((r, i) => {
+      for (let c = 0; c < COLS; c++) {
+        const addr = XLSX.utils.encode_cell({ r: i, c });
+        if (!ws[addr]) ws[addr] = { t: 's', v: '' };
+        const right = c === COLS - 1;
+        if (r.kind === 'title')
+          ws[addr].s = { font: { bold: true, sz: 14, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: ACC_DEEP } }, alignment: { horizontal: 'center', vertical: 'center' } };
+        else if (r.kind === 'sub')
+          ws[addr].s = { font: { sz: 10, color: { rgb: INK } }, alignment: { horizontal: 'center' } };
+        else if (r.kind === 'dateHdr')
+          ws[addr].s = { font: { bold: true, sz: 10, color: { rgb: ACC_DEEP } }, fill: { fgColor: { rgb: ACC_LITE } }, alignment: { horizontal: 'left', vertical: 'center' } };
+        else if (r.kind === 'colHdr')
+          ws[addr].s = { font: { bold: true, sz: 10, color: { rgb: H.fg } }, fill: { fgColor: { rgb: H.bg } }, alignment: { horizontal: right ? 'right' : 'left', vertical: 'center' }, border };
+        else if (r.kind === 'data')
+          ws[addr].s = { font: { sz: 10, color: { rgb: INK } }, fill: { fgColor: { rgb: zebra % 2 ? 'FFFFFF' : ACC_LITE } }, alignment: { horizontal: right ? 'right' : 'left', vertical: 'center' }, border };
+        else if (r.kind === 'total')
+          ws[addr].s = { font: { bold: true, sz: 10, color: { rgb: INK } }, alignment: { horizontal: right ? 'right' : 'left' }, border: { top: { style: 'thin', color: { rgb: LINE } } } };
+        else if (r.kind === 'grand')
+          ws[addr].s = { font: { bold: true, sz: 11, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: ACC_DEEP } }, alignment: { horizontal: right ? 'right' : 'left' } };
+      }
+      if (r.kind === 'data') zebra++;
+      else if (r.kind === 'dateHdr') zebra = 0;
+    });
+
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Weekend Attendance');
     const safeKey = (selectedWeekendKey || 'report').replace(/[^0-9A-Za-z-]/g, '');
     XLSX.writeFile(wb, `ESAU_Weekend_Attendance_${safeKey}.xlsx`);
-  }, [weekendSorted, availableWeekends, selectedWeekendKey]);
+  }, [weekendSorted, availableWeekends, selectedWeekendKey, me]);
 
   // Email builder — TO Mr John, CC James + DMN SUP team. Body is a
   // brief summary only; the detailed staff list lives in the PDF
