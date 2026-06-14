@@ -5622,18 +5622,6 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <button onClick={exportWeekendHtml}
-              disabled={!weekendSorted.length}
-              className="text-xs px-3 py-2 rounded-full inline-flex items-center gap-1.5 transition-shadow hover:shadow"
-              style={{
-                background: weekendSorted.length ? '#0F4C2A' : '#E5E5E5',
-                color: weekendSorted.length ? '#FFFFFF' : '#0A0A0A',
-                fontWeight: 600,
-                cursor: weekendSorted.length ? 'pointer' : 'not-allowed',
-              }}
-              title="Download a polished HTML report (sorted by location/department/check-in). Open it in a browser to view, print, or save as PDF.">
-              <FileText className="w-3.5 h-3.5"/> Export Report
-            </button>
             <button onClick={exportWeekendExcel}
               disabled={!weekendSorted.length}
               className="text-xs px-3 py-2 rounded-full inline-flex items-center gap-1.5 transition-shadow hover:shadow"
@@ -5656,7 +5644,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
                 fontWeight: 600,
                 cursor: weekendSorted.length ? 'pointer' : 'not-allowed',
               }}
-              title="Open a draft email to Mr John (CC James + DMN SUP team) with the weekend summary in the body. Attach the report (HTML or printed PDF) before sending.">
+              title="Open a draft email to Mr John (CC James + DMN SUP team) with the weekend summary in the body. Attach the exported Excel report before sending.">
               <Mail className="w-3.5 h-3.5"/> Email Mr John
             </button>
           </div>
