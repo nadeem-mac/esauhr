@@ -65,6 +65,13 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [isHalfDay, setIsHalfDay] = useState(false);
+  // Multiple separate (non-consecutive) dates in one entry — e.g. exam
+  // leave on the 15th and the 18th. Bashaier adds each date as a chip;
+  // on save the system groups consecutive dates into ranges and creates
+  // one approved leave_request per run (so 15 & 18 → two 1-day rows).
+  const [multiMode, setMultiMode] = useState(false);
+  const [extraDates, setExtraDates] = useState([]);   // ISO 'YYYY-MM-DD'
+  const [newDate, setNewDate] = useState('');
   const [reason, setReason] = useState('');
   // Required — date the paper/email application was received from
   // the staff member. Drives the 'Submitted' + 'Notice' rows on
@@ -132,7 +139,30 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
     return calculateRequestDays(startDate, endDate, lt, [], isHalfDay);
   }, [startDate, endDate, lt, isHalfDay]);
   // Final days to insert — manual override takes precedence
-  const days = daysOverride != null && daysOverride !== '' ? Number(daysOverride) : autoDays;
+  const days = multiMode
+    ? extraDates.length
+    : (daysOverride != null && daysOverride !== '' ? Number(daysOverride) : autoDays);
+
+  const addExtraDate = () => {
+    if (!newDate) return;
+    setExtraDates(prev => prev.includes(newDate) ? prev : [...prev, newDate].sort());
+    setNewDate('');
+  };
+  const removeExtraDate = (d) => setExtraDates(prev => prev.filter(x => x !== d));
+
+  // Group sorted ISO dates into consecutive runs → [{start, end, count}].
+  const groupRuns = (dates) => {
+    const sorted = [...new Set(dates)].sort();
+    const runs = [];
+    const nextIso = (iso) => { const [y, m, dd] = iso.split('-').map(Number); return new Date(Date.UTC(y, m - 1, dd + 1)).toISOString().slice(0, 10); };
+    let run = null;
+    for (const d of sorted) {
+      if (run && nextIso(run.end) === d) { run.end = d; run.count++; }
+      else { if (run) runs.push(run); run = { start: d, end: d, count: 1 }; }
+    }
+    if (run) runs.push(run);
+    return runs;
+  };
 
   // ── Recent entries — last 10 manual entries Bashaier logged ────────
   useEffect(() => {
@@ -241,7 +271,8 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
   // the Submitted row and the Notice calculation (Planned vs Urgent)
   // on the printed form, so it has to match the staff's actual
   // submission moment, not the moment Bashaier logs the entry.
-  const canSave = empId && leaveType && startDate && endDate && days > 0 && applicationDate && submissionMethod && !busy;
+  const canSave = empId && leaveType && days > 0 && applicationDate && submissionMethod && !busy
+    && (multiMode ? extraDates.length > 0 : (startDate && endDate));
 
   const save = async () => {
     if (!canSave) return;
@@ -272,6 +303,47 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
       const methodPhrase = submissionMethod === 'paper'
         ? `paper application received ${appDateLabel}`
         : `email received ${appDateLabel}`;
+
+      // ── Multiple separate dates → one approved row per consecutive run ──
+      if (multiMode) {
+        const runs = groupRuns(extraDates);
+        const baseReason = sourceNote
+          ? `Manual entry · ${methodPhrase} · ${sourceNote}`
+          : `Manual entry · ${methodPhrase}`;
+        let created = 0;
+        for (const r of runs) {
+          await directPost('leave_requests', {
+            employee_id:          empId,
+            leave_type_id:        leaveType,
+            start_date:           r.start,
+            end_date:             r.end,
+            days:                 r.count,
+            is_half_day:          null,
+            reason:               baseReason,
+            stage:                'approved',
+            status:               'approved',
+            requested_at:         requestedAtIso,
+            manager_decided_at:   requestedAtIso,
+            hr_decided_at:        requestedAtIso,
+            substitute_ids:       subIds,
+            substitute_decisions: subDecisions,
+            requested_by:         me?.id || null,
+          });
+          created++;
+        }
+        const emp = (employees || []).find(e => e.id === empId);
+        const niceDates = extraDates.map(d => new Date(d + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })).join(', ');
+        setMsg({ kind: 'ok', text: `Logged ${lt?.name || leaveType} for ${emp?.name || empId}: ${niceDates} · ${extraDates.length} day(s) in ${created} ${created === 1 ? 'entry' : 'entries'}.` });
+        setEmpQuery(''); setEmpId('');
+        setStartDate(''); setEndDate(''); setIsHalfDay(false);
+        setMultiMode(false); setExtraDates([]); setNewDate('');
+        setReason(''); setApplicationDate(''); setSubmissionMethod('');
+        setDaysOverride(null);
+        onSaved?.();
+        setBusy(false);
+        return;
+      }
+
       const payload = {
         employee_id:         empId,
         leave_type_id:       leaveType,
@@ -636,7 +708,19 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
           </select>
         </div>
 
+        {/* Multiple separate dates toggle */}
+        <label className="flex items-center gap-2 text-sm" style={{ color: '#1F1B16' }}>
+          <input
+            type="checkbox"
+            checked={multiMode}
+            onChange={(e) => { setMultiMode(e.target.checked); setDaysOverride(null); }}
+          />
+          Multiple separate dates (e.g. exam leave on the 15th &amp; 18th)
+        </label>
+
         {/* Dates + half-day */}
+        {!multiMode ? (
+        <>
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1">
             <label className="text-xs font-semibold uppercase" style={{ color: '#1F1B16' }}>
@@ -707,6 +791,44 @@ export default function Logbook({ me, employees = [], leaveTypes = [], onSaved }
                   : `auto-computed working days (MOL Art. 113, excludes Fri+Sat + holidays)`}
             </div>
           </div>
+        )}
+        </>
+        ) : (
+        <div className="space-y-2">
+          <label className="text-xs font-semibold uppercase" style={{ color: '#1F1B16' }}>Leave dates</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={newDate}
+              onChange={(e) => setNewDate(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addExtraDate(); } }}
+              className="text-sm rounded border border-black/15 bg-white px-3 py-2 outline-none"
+            />
+            <button type="button" onClick={addExtraDate} disabled={!newDate}
+              className="text-sm font-semibold px-3 py-2 rounded text-white disabled:opacity-50"
+              style={{ background: ACCENT }}>
+              + Add date
+            </button>
+          </div>
+          {extraDates.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {extraDates.map(d => (
+                <span key={d} className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-full"
+                      style={{ background: ACCENT_BG, color: ACCENT, border: `1px solid ${ACCENT_BD}` }}>
+                  {new Date(d + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' })}
+                  <button type="button" onClick={() => removeExtraDate(d)} className="font-bold" style={{ lineHeight: 1 }}>×</button>
+                </span>
+              ))}
+            </div>
+          ) : (
+            <div className="text-xs" style={{ color: '#1F1B16', opacity: 0.6 }}>Add each leave date — they need not be consecutive. Consecutive dates are merged into one entry automatically.</div>
+          )}
+          {extraDates.length > 0 && (
+            <div className="text-xs font-semibold" style={{ color: ACCENT }}>
+              {extraDates.length} day(s) · {groupRuns(extraDates).length} entr{groupRuns(extraDates).length === 1 ? 'y' : 'ies'} will be created
+            </div>
+          )}
+        </div>
         )}
 
         {/* Application received: how + when. Both required.
