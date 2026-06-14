@@ -444,18 +444,31 @@ export async function generateRejoiningReportBlob({ employee, request, manager, 
   const today = new Date().toISOString();
 
   const dayCount = Number(request.days || 0);
-  // Public holidays falling INSIDE the leave period (e.g. Eid). The day
-  // count itself is already correct (calendar days), so this is just a
-  // faithful annotation matching what staff write on the application —
-  // e.g. "28 days (including Eid holidays)". System checks stay unchanged.
+  // KSA Labor Law: official public holidays (Eid) inside an annual-leave
+  // period are NOT deducted from the balance. The leave PERIOD still spans
+  // the full calendar range; `days` is the charged amount. So when there
+  // are holidays in the window and the charged days are fewer than the
+  // calendar span, spell out the difference, e.g.:
+  //   "22 days (28 calendar days · 6 Eid Al-Adha holiday days not deducted)"
   const holsInPeriod = (holidays || []).filter(h => {
     const d = String(h.date || h).slice(0, 10);
     return d >= String(request.start_date).slice(0, 10) && d <= String(request.end_date).slice(0, 10);
   });
+  const spanDays = (() => {
+    const s = new Date(String(request.start_date).slice(0, 10) + 'T00:00:00Z');
+    const e = new Date(String(request.end_date).slice(0, 10) + 'T00:00:00Z');
+    return Math.round((e - s) / 86400000) + 1;
+  })();
   let holNote = '';
   if (holsInPeriod.length && !request.is_half_day) {
     const names = holsInPeriod.map(h => String(h.name || '')).join(' ');
-    holNote = /eid/i.test(names) ? '  (including Eid holidays)' : '  (including public holidays)';
+    const eid = /eid/i.test(names);
+    const notDeducted = spanDays - dayCount;
+    if (notDeducted > 0) {
+      holNote = `   (${spanDays} calendar days · ${notDeducted} ${eid ? 'Eid ' : ''}holiday day${notDeducted === 1 ? '' : 's'} not deducted)`;
+    } else {
+      holNote = eid ? '   (including Eid holidays)' : '   (including public holidays)';
+    }
   }
   const daysLabel = `${dayCount} day${dayCount === 1 ? '' : 's'}${request.is_half_day ? '   (half day)' : ''}${holNote}`;
   const periodValue = request.start_date === request.end_date
