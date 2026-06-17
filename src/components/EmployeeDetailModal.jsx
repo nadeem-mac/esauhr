@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { X, Building2, MapPin, Calendar, Briefcase, KeyRound, Loader2, CheckCircle2, AlertCircle, Pencil, Save, FileText, Download, Mail, Phone, UserCheck, Trash2, AlertTriangle } from 'lucide-react';
 import { Avatar, Pill } from './Dashboard.jsx';
-import { supabase, directPatch } from '../supabaseClient.js';
+import { supabase, directPatch, directPost } from '../supabaseClient.js';
 import {
   calculateBalance, fmtDate, fmtDateShort, yearsOfService, monthsOfService, LOCATION_LABELS,
 } from '../lib/leaveLogic.js';
@@ -38,6 +38,17 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
   const [pinBusy, setPinBusy] = useState(false);
   const [pinDone, setPinDone] = useState('');   // success message
   const [pinErr, setPinErr] = useState('');
+
+  // ─── Manual annual-entitlement override (HR / admin / Bashaier) ──
+  //  Lets Bashaier grant a non-standard annual entitlement (e.g. 30
+  //  days by special approval) instead of the KSA-tenure default.
+  //  Writes employees.annual_entitlement_override + an audit note.
+  const canEditEntitlement = (me?.is_admin || me?.is_hr_reviewer || me?.id === 'H94830');
+  const [entOpen, setEntOpen] = useState(false);
+  const [entVal, setEntVal]   = useState('');
+  const [entNote, setEntNote] = useState('');
+  const [entBusy, setEntBusy] = useState(false);
+  const [entMsg, setEntMsg]   = useState('');
   // Reset PIN state when the modal swaps to a different employee
   React.useEffect(() => {
     setPinOpen(false);
@@ -132,6 +143,40 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
     } catch (e) {
       setDelError(e?.message || String(e));
       setDelStage('error');
+    }
+  };
+
+  const openEntitlement = () => {
+    const cur = Number(employee?.annual_entitlement_override || 0);
+    setEntVal(cur > 0 ? String(cur) : '');
+    setEntNote('');
+    setEntMsg('');
+    setEntOpen(true);
+  };
+  const saveEntitlement = async () => {
+    const v = entVal === '' ? 0 : Number(entVal);
+    if (Number.isNaN(v) || v < 0 || v > 60) { setEntMsg('Enter a number between 0 and 60 (0 = clear override).'); return; }
+    setEntBusy(true); setEntMsg('');
+    try {
+      await directPatch('employees', 'id', employee.id, {
+        annual_entitlement_override: v > 0 ? v : null,
+      }, { timeoutMs: 8000 });
+      // Best-effort audit trail of the special approval (non-fatal).
+      try {
+        await directPost('audit_log', {
+          action: 'leave_entitlement_override',
+          actor_id: me?.id || null,
+          target_id: employee.id,
+          detail: `Annual entitlement set to ${v > 0 ? v + ' days' : 'default (cleared)'}${entNote ? ' · ' + entNote : ''}`,
+        });
+      } catch { /* audit optional */ }
+      setEntMsg(`Saved — annual entitlement ${v > 0 ? `set to ${v} days` : 'reset to KSA default'}.`);
+      onSaved?.();
+      setTimeout(() => setEntOpen(false), 900);
+    } catch (e) {
+      setEntMsg(e?.message || 'Could not save the entitlement.');
+    } finally {
+      setEntBusy(false);
     }
   };
 
@@ -708,13 +753,66 @@ export default function EmployeeDetailModal({ employee, leaveTypes, requests, ba
               <div className="text-[10px] tracking-[0.22em]" style={{ color: '#0A0A0A', fontWeight: 700, opacity: 0.7 }}>
                 LEAVE BALANCES · {year}
               </div>
-              <button onClick={buildStatement}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded text-white"
-                style={{ background: '#0F4C2A' }}
-                title="Generate a printable leave statement to send this staff member">
-                <FileText size={12} /> Leave Statement
-              </button>
+              <div className="flex items-center gap-2">
+                {canEditEntitlement && (
+                  <button onClick={openEntitlement}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded"
+                    style={{ background: '#FFFFFF', color: '#0F4C2A', border: '1px solid #0F4C2A' }}
+                    title="Set a special annual leave entitlement for this employee">
+                    Set entitlement
+                  </button>
+                )}
+                <button onClick={buildStatement}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded text-white"
+                  style={{ background: '#0F4C2A' }}
+                  title="Generate a printable leave statement to send this staff member">
+                  <FileText size={12} /> Leave Statement
+                </button>
+              </div>
             </div>
+
+            {entOpen && canEditEntitlement && (
+              <div className="mb-3 rounded-lg p-3" style={{ background: '#F7F7F2', border: '1px solid #0F4C2A33' }}>
+                <div className="text-xs font-semibold mb-2" style={{ color: '#1F1B16' }}>
+                  Annual leave entitlement — {employee?.name}
+                </div>
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-semibold uppercase block" style={{ color: '#1F1B16' }}>Days / year</label>
+                    <input type="number" min="0" max="60" value={entVal}
+                      onChange={(e) => setEntVal(e.target.value)}
+                      placeholder="e.g. 30"
+                      className="w-24 text-sm rounded border border-black/15 bg-white px-2 py-1.5 outline-none font-semibold" />
+                  </div>
+                  <div className="space-y-1 flex-1 min-w-[180px]">
+                    <label className="text-[10px] font-semibold uppercase block" style={{ color: '#1F1B16' }}>Note (special approval)</label>
+                    <input type="text" value={entNote}
+                      onChange={(e) => setEntNote(e.target.value)}
+                      placeholder="e.g. Management special approval, 12 Jun 2026"
+                      className="w-full text-sm rounded border border-black/15 bg-white px-2 py-1.5 outline-none" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={saveEntitlement} disabled={entBusy}
+                      className="text-sm font-semibold px-3 py-1.5 rounded text-white disabled:opacity-50"
+                      style={{ background: '#0F4C2A' }}>
+                      {entBusy ? 'Saving…' : 'Save'}
+                    </button>
+                    <button onClick={() => setEntOpen(false)} disabled={entBusy}
+                      className="text-sm px-3 py-1.5 rounded" style={{ color: '#1F1B16' }}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+                <div className="text-[11px] mt-2" style={{ color: '#1F1B16', opacity: 0.7 }}>
+                  Overrides the KSA tenure default (21 days &lt;5 yrs, 30 after). Set 0 to clear and revert to the default. Applies to annual leave only.
+                </div>
+                {entMsg && (
+                  <div className="text-xs mt-2 font-medium" style={{ color: entMsg.startsWith('Saved') ? '#065F46' : '#991B1B' }}>
+                    {entMsg}
+                  </div>
+                )}
+              </div>
+            )}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
               {balByType.map(({ type, balance }) => {
                 const exhausted = balance.available <= 0 && (balance.total || 0) > 0;

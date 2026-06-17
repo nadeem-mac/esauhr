@@ -214,7 +214,7 @@ insert into public.leave_types (id, name, default_days, accrual_method, color, i
   ('paternity',   'Paternity Leave',   3,   'per_event',       '#5A7A9B', true,  false, 0,  null,  'male',   false,  '3 days on the birth of a child.', 60),
   ('marriage',    'Marriage Leave',    5,   'per_event',       '#A67FB5', true,  false, 0,  1,     null,     false,  '5 days for the employee''s own marriage.', 70),
   ('bereavement', 'Bereavement Leave', 5,   'per_event',       '#6B6B6B', true,  false, 0,  null,  null,     false,  '5 days — spouse, parent, child. 3 days — sibling, grandparent.', 80),
-  ('exam',        'Exam Leave',        15,  'annual_grant',    '#7A9B5A', true,  true,  0,  null,  null,     true,  'For employees studying at accredited institutions.', 90),
+  ('exam',        'Exam Leave',        15,  'unlimited',       '#7A9B5A', true,  true,  0,  null,  null,     false, 'For employees studying at accredited institutions. Granted per approval — not deducted from a fixed pool.', 90),
   ('unpaid',      'Unpaid Leave',      0,   'per_event',       '#9B9B9B', false, false, 0,  null,  null,     false,  'Leave without pay.', 100)
 on conflict (id) do update set
   name = excluded.name,
