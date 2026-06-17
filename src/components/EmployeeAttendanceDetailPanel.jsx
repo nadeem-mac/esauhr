@@ -1775,17 +1775,38 @@ function exportAttendanceHtml(employee, range, monthly, summary, leaveRows, leav
       const hasLast  = !!r.last_punch;
       const isMissedIn  = !hasFirst && hasLast;
       const isMissedOut = hasFirst && !hasLast;
-      const detail = isMissedIn
-        ? '<strong style="color:#86198F">⚠ No clock-in recorded</strong>'
-        : isMissedOut
-          ? '<strong style="color:#3730A3">⚠ No clock-out recorded</strong>'
-          : r.status === 'late' && r.late_minutes > 0
-            ? `${r.late_minutes} min late`
-            : r.status === 'short' && r.early_leave_minutes > 0
-              ? `${r.early_leave_minutes} min early out`
-              : r.status === 'absent'
-                ? 'No punches recorded'
-                : '—';
+
+      // Lateness / early-out computed straight from the punch vs the
+      // scheduled window — independent of status, so it still shows on
+      // days where an approved permission downgraded the status to
+      // 'Present' (and zeroed late_minutes). When a coverage marker is
+      // present in notes we annotate it as covered by permission (LP/EP).
+      const inM    = rowToMins(r.first_punch);
+      const outM   = rowToMins(r.last_punch);
+      const schedS = rowToMins(r.expected_start);
+      const schedE = rowToMins(r.expected_end);
+      const lateM  = (inM  != null && schedS != null && inM  > schedS) ? inM  - schedS : 0;
+      const earlyM = (outM != null && schedE != null && outM < schedE) ? schedE - outM : 0;
+      const coveredLate  = /late arrival covered by approved permission/i.test(r.notes || '');
+      const coveredEarly = /early leave covered by approved permission/i.test(r.notes || '');
+
+      const parts = [];
+      if (isMissedIn)  parts.push('<strong style="color:#86198F">⚠ No clock-in recorded</strong>');
+      if (isMissedOut) parts.push('<strong style="color:#3730A3">⚠ No clock-out recorded</strong>');
+      if (lateM > 0) {
+        const suffix = coveredLate
+          ? ' <strong style="color:#1E40AF">· covered by permission (LP)</strong>'
+          : (r.status === 'present' ? ' <span style="color:#737373">(within grace)</span>' : '');
+        parts.push(`${lateM} min late${suffix}`);
+      }
+      if (earlyM > 0) {
+        const suffix = coveredEarly
+          ? ' <strong style="color:#1E40AF">· covered by permission (EP)</strong>'
+          : (r.status === 'present' ? ' <span style="color:#737373">(within grace)</span>' : '');
+        parts.push(`${earlyM} min early out${suffix}`);
+      }
+      if (r.status === 'absent' && !hasFirst && !hasLast) parts.push('No punches recorded');
+      const detail = parts.length ? parts.join(' · ') : '—';
       const punch = (hasFirst || hasLast)
         ? `${hasFirst ? trimTime(r.first_punch) : '<span style="color:#C026D3">—:—</span>'} → ${hasLast ? trimTime(r.last_punch) : '<span style="color:#C026D3">—:—</span>'}`
         : '—';
