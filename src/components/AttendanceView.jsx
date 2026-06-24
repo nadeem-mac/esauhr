@@ -3654,23 +3654,6 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           // Tell the monthly grid to refetch immediately — the rows are
           // now in attendance_daily even before Save & Close. Nadeem.
           try { window.dispatchEvent(new CustomEvent('esau:attendance-changed')); } catch {}
-
-          // ── Auto-rollup: normalise the just-uploaded dates the same
-          // way the Historical-backfill / "Re-evaluate last N days" pass
-          // does, so John's daily rollout report updates from a regular
-          // daily upload too — no separate historical import needed.
-          // (Nadeem 2026-06-23: stop the double job.) Best-effort.
-          try {
-            const upDates = dates.filter(Boolean).sort();
-            if (upDates.length) {
-              const startD = upDates[0];
-              const endD   = upDates[upDates.length - 1];
-              await reevaluateDateRange(startD, endD);
-              try { window.dispatchEvent(new CustomEvent('esau:attendance-changed')); } catch {}
-            }
-          } catch (reErr) {
-            console.warn('post-upload re-evaluation failed (non-fatal):', reErr);
-          }
           // Store the delta in component state so the UI can render
           // the 'what changed in this upload' banner — Bashaier needs
           // to know if her 4pm re-upload caught new late-arrivals
