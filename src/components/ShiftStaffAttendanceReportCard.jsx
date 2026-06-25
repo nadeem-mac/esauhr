@@ -106,6 +106,9 @@ function classifyShort(row) {
 // available so 'Late' becomes 'Late · 47 min' and 'Short' becomes
 // 'No out-punch' / 'No in-punch' / 'Left early · 32 min'.
 function detailedStatusLabel(row) {
+  // Shift worker with no entered shift for this date — don't present a
+  // late/early verdict computed against the default office window.
+  if (row.noShiftAssigned) return 'Shift not assigned';
   switch (row.status) {
     case 'present':      return 'Present';
     case 'late': {
@@ -502,7 +505,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
       const bg = i % 2 === 0 ? '#FFFFFF' : '#F7F7F2';
       return `<tr>
         <td style="padding:1px 8px;border:1px solid #D1D5DB;font-size:10pt;background:${bg};white-space:nowrap;font-weight:600;color:#1F2937">${escapeHtml(fmtDateLong(r.attendance_date))}</td>
-        <td style="padding:1px 8px;border:1px solid #D1D5DB;font-size:10pt;background:${bg};white-space:nowrap;color:#1F2937">${escapeHtml(fmtShiftWindow(r.expected_start, r.expected_end) || '—')}</td>
+        <td style="padding:1px 8px;border:1px solid #D1D5DB;font-size:10pt;background:${bg};white-space:nowrap;color:#1F2937">${escapeHtml((r.noShiftAssigned ? '—' : (fmtShiftWindow(r.expected_start, r.expected_end) || '—')))}</td>
         <td style="padding:1px 8px;border:1px solid #D1D5DB;font-size:10pt;background:${bg};white-space:nowrap;color:#1F2937">${escapeHtml(fmtTime(r.effective_in) || '—')}</td>
         <td style="padding:1px 8px;border:1px solid #D1D5DB;font-size:10pt;background:${bg};white-space:nowrap;color:#1F2937">${escapeHtml(fmtTime(r.effective_out) || '—')}</td>
         <td style="padding:1px 8px;border:1px solid #D1D5DB;font-size:10pt;background:${bg};white-space:nowrap;color:#1F2937">${escapeHtml(fmtHoursMins(r.total_minutes))}</td>
@@ -564,6 +567,25 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
              + `&attendance_date=lte.${toArg}`
              + `&order=attendance_date.asc`;
       const rows = await directGet('attendance_daily', q, { timeoutMs: 12000 });
+
+      // Real per-date shift assignments. The upload defaults a shift
+      // worker with NO entered shift to the office window (08:00–17:00),
+      // which makes the report evaluate them against a shift they were
+      // never on (false "Left early", overnight punches mis-paired). We
+      // load the authoritative employee_shifts so we can mark those rows
+      // "Shift not assigned" instead of inventing a status.
+      //   assignSet === null  → load failed → DON'T override (never
+      //                         over-flag a correctly-assigned worker).
+      let assignSet = null;
+      try {
+        const aq = `select=employee_id,shift_date`
+                 + `&shift_date=gte.${fromArg}&shift_date=lte.${toArg}`
+                 + `&status=neq.declined&status=neq.cancelled`;
+        const arows = await directGet('employee_shifts', aq, { timeoutMs: 9000 });
+        assignSet = new Set((Array.isArray(arows) ? arows : [])
+          .filter(a => a?.employee_id && a?.shift_date)
+          .map(a => `${a.employee_id}|${String(a.shift_date).slice(0, 10)}`));
+      } catch { assignSet = null; }
       // Group by employee + sort by date so we can pair overnight
       // shifts with the next calendar day's morning out-punch.
       const grouped = new Map();
@@ -598,6 +620,15 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
           const prevDay = prev && isNextCalendarDay(prev.attendance_date, r.attendance_date)
             ? prev : null;
           const e2 = { ...r, ...enrichForShift(r, nextDay, prevDay) };
+          // Shift worker with no entered shift for this date → the row was
+          // evaluated against the default office window, so its late/early
+          // status is not trustworthy. Flag it (only when assignments
+          // loaded successfully) so the report shows "Shift not assigned"
+          // rather than a fabricated violation. (Nadeem 2026-06-24)
+          if (assignSet !== null && shiftIdSet.has(r.employee_id)) {
+            const key = `${r.employee_id}|${String(r.attendance_date).slice(0, 10)}`;
+            if (!assignSet.has(key)) e2.noShiftAssigned = true;
+          }
           // Whole-minute late grace (as agreed): an arrival is on time up to
           // shift-start + 15 min counted in WHOLE minutes — so 08:15:xx is on
           // time, late only from 08:16:00. Rows recorded under the older
@@ -755,12 +786,18 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
   const summaries = useMemo(() => {
     return shiftStaff.map(emp => {
       const rows = byEmployee.get(emp.id) || [];
-      const present   = rows.filter(r => r.status === 'present');
-      const late      = rows.filter(r => r.status === 'late');
-      const shortRows = rows.filter(r => r.status === 'short');
-      const absentReal = rows.filter(r => r.status === 'absent' && !r._synthetic);
-      const absentSilent = rows.filter(r => r.status === 'absent' &&  r._synthetic);
-      const leaveD    = rows.filter(r => r.status === 'sick_leave' || r.status === 'annual_leave');
+      // Rows we can't fairly evaluate (shift worker, no entered shift that
+      // date) are excluded from every violation bucket — they're surfaced
+      // separately as "Shift not assigned" so managers see the data gap
+      // instead of a false late/early.
+      const notAssigned = rows.filter(r => r.noShiftAssigned);
+      const evalRows  = rows.filter(r => !r.noShiftAssigned);
+      const present   = evalRows.filter(r => r.status === 'present');
+      const late      = evalRows.filter(r => r.status === 'late');
+      const shortRows = evalRows.filter(r => r.status === 'short');
+      const absentReal = evalRows.filter(r => r.status === 'absent' && !r._synthetic);
+      const absentSilent = evalRows.filter(r => r.status === 'absent' &&  r._synthetic);
+      const leaveD    = evalRows.filter(r => r.status === 'sick_leave' || r.status === 'annual_leave');
 
       // Short sub-breakdown for the chip + per-staff email body.
       let missedIn = 0, missedOut = 0, leftEarly = 0;
@@ -777,8 +814,9 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
       const avgMin   = worked.length > 0 ? Math.round(totalMin / worked.length) : 0;
 
       // "Problem rows" — what we'd put in an escalation email to the
-      // manager. Late + short (any sub-kind) + silent absences.
-      const problemRows = rows.filter(r =>
+      // manager. Late + short (any sub-kind) + silent absences. Excludes
+      // unassigned-shift rows (not a violation — a roster gap).
+      const problemRows = evalRows.filter(r =>
         r.status === 'late' || r.status === 'short' || r.status === 'absent'
       );
 
@@ -808,6 +846,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
         missedIn, missedOut, leftEarly,
         daysAbsent:  absentReal.length + absentSilent.length,
         daysLeave:   leaveD.length,
+        daysNotAssigned: notAssigned.length,
         totalMin, avgMin,
         problemRows,
         shiftDays, cleanDays, compliancePct,
@@ -1056,7 +1095,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
           values: [
             idx + 1, s.emp.name, s.isShift ? 'SHIFT' : (s.is84 ? '8-4' : ''), s.emp.id,
             s.emp.department || '', s.emp.location || '',
-            fmtShiftWindow(tr?.expected_start, tr?.expected_end) || '',
+            (tr?.noShiftAssigned ? '—' : (fmtShiftWindow(tr?.expected_start, tr?.expected_end) || '')),
             checkIn, lms, statusText,
           ],
           rightCols: [1],
@@ -1100,7 +1139,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
             yN, s.emp.name, s.isShift ? 'SHIFT' : (s.is84 ? '8-4' : ''), s.emp.id,
             s.emp.department || '', s.emp.location || '',
             fmtDate(r.attendance_date), fmtDay(r.attendance_date),
-            fmtShiftWindow(r.expected_start, r.expected_end) || '',
+            (r.noShiftAssigned ? '—' : (fmtShiftWindow(r.expected_start, r.expected_end) || '')),
             fmtTime(r.effective_in) || '', (fmtTime(r.effective_out) ? fmtTime(r.effective_out) + (r.isOvernight ? ' (+1)' : '') : ''),
             fmtHoursMins(r.total_minutes), lms, statusText,
           ],
@@ -1189,7 +1228,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
             dN, s.emp.name, s.isShift ? 'SHIFT' : (s.is84 ? '8-4' : ''), s.emp.id,
             s.emp.department || '', s.emp.location || '',
             fmtDate(r.attendance_date), fmtDay(r.attendance_date),
-            fmtShiftWindow(r.expected_start, r.expected_end) || '',
+            (r.noShiftAssigned ? '—' : (fmtShiftWindow(r.expected_start, r.expected_end) || '')),
             fmtTime(r.effective_in) || '', (fmtTime(r.effective_out) ? fmtTime(r.effective_out) + (r.isOvernight ? ' (+1)' : '') : ''),
             fmtHoursMins(r.total_minutes), lms, statusText,
           ],
@@ -1306,12 +1345,12 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
       const mgt = !!managementNoAttendance(s.emp.id);
       const tr = s.rows.find(r => r.attendance_date === t);
       const yr = s.rows.find(r => r.attendance_date === y);
-      if (!mgt && tr && (tr.first_punch || (tr.punch_count || 0) > 0) && tr.status !== 'absent' && _isLateMR(tr)) {
+      if (!mgt && tr && !tr.noShiftAssigned && (tr.first_punch || (tr.punch_count || 0) > 0) && tr.status !== 'absent' && _isLateMR(tr)) {
         const i = _toSecMR(tr.first_punch), st = _toSecMR(tr.expected_start);
         const lateMin = Number(tr.late_minutes) || (i != null && st != null ? Math.max(0, Math.round((i - st) / 60)) : 0);
         late.push({ emp: s.emp, in: fmtTime(tr.first_punch), exp: fmtTime(tr.expected_start), late: lateMin });
       }
-      if (!mgt && yr) {
+      if (!mgt && yr && !yr.noShiftAssigned) {
         const hasIn = !!yr.first_punch, hasOut = !!yr.last_punch;
         if (hasIn && !hasOut)      missed.push({ emp: s.emp, label: 'No out-punch', detail: `In ${fmtTime(yr.first_punch) || '—'}` });
         else if (!hasIn && hasOut) missed.push({ emp: s.emp, label: 'No in-punch',  detail: `Out ${fmtTime(yr.last_punch) || '—'}` });
@@ -1406,7 +1445,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
           + dcell(s.emp.location || '')
           + dcell(fmtDate(r.attendance_date))
           + dcell(fmtDayShort(r.attendance_date))
-          + dcell(fmtShiftWindow(r.expected_start, r.expected_end) || '', { center: true })
+          + dcell((r.noShiftAssigned ? '—' : (fmtShiftWindow(r.expected_start, r.expected_end) || '')), { center: true })
           + dcell(fmtTime(r.effective_in) || '', { center: true })
           + dcell(checkOut, { center: true })
           + dcell(fmtHoursMins(r.total_minutes), totalC ? { bg: totalC.bg, fg: totalC.fg, bold: true, center: true } : { center: true })
@@ -1973,7 +2012,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
                                       : r._approvedEarly ? (r._remark || 'Approved early-out')
                                       : detailedStatusLabel(r);
                           const isSilent = !!r._synthetic && !r._mgt;
-                          const shift = fmtShiftWindow(r.expected_start, r.expected_end);
+                          const shift = r.noShiftAssigned ? '—' : fmtShiftWindow(r.expected_start, r.expected_end);
                           return (
                             <tr key={r.attendance_date}
                                 className="border-t"
@@ -2129,7 +2168,7 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
       sumMin  += Number(r.total_minutes || 0);
       sumLate += lateSec(r);
       const lms = lateMMSS(r);
-      const shift = fmtShiftWindow(r.expected_start, r.expected_end);
+      const shift = r.noShiftAssigned ? '—' : fmtShiftWindow(r.expected_start, r.expected_end);
       const holName = holidays.get(r.attendance_date);
       const worked = (r.punch_count || 0) > 0 || r.first_punch || r.last_punch;
       const statusCell = holName
