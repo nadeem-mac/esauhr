@@ -1494,6 +1494,19 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [compact, load]);
 
+  // Full (non-compact) view: when a daily upload writes new rows to
+  // attendance_daily it dispatches 'esau:attendance-changed'. Re-run the
+  // current search so the open Attendance Report reflects the latest
+  // upload immediately — no manual re-search, no historical re-import.
+  // Read-only refresh; never re-classifies or writes. (Nadeem 2026-06-23)
+  useEffect(() => {
+    if (compact) return;
+    const onChanged = () => { if (from && to) load(from, to); };
+    window.addEventListener('esau:attendance-changed', onChanged);
+    return () => window.removeEventListener('esau:attendance-changed', onChanged);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compact, from, to, load]);
+
   // After a search, remind to upload today's time card when today is in
   // range but has no rows. Fri/Sat are the KSA weekend: no duty, no
   // upload expected, so never remind (or flag) on those days.
