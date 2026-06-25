@@ -1577,7 +1577,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
         {/* Modal — opens the same way the other report previews do. */}
         {mrOpen && (
           <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-6 overflow-y-auto"
-               style={{ background: 'rgba(20,30,25,0.55)', backdropFilter: 'blur(2px)' }}
+               style={{ background: 'rgba(20,30,25,0.6)' }}
                onClick={() => { setMrOpen(false); setMrPreview(null); }}>
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-8" onClick={(e) => e.stopPropagation()}>
               <div className="px-5 sm:px-6 py-4 sticky top-0 z-10 rounded-t-2xl flex items-start justify-between gap-3"
