@@ -109,6 +109,9 @@ function detailedStatusLabel(row) {
   // Shift worker with no entered shift for this date — don't present a
   // late/early verdict computed against the default office window.
   if (row.noShiftAssigned) return 'Shift not assigned';
+  // HR-approved standing early departure (e.g. nursing break) — show the
+  // approval remark, never an "early leave" violation.
+  if (row._approvedEarly && row.status === 'short') return row._remark || 'Approved early-out';
   switch (row.status) {
     case 'present':      return 'Present';
     case 'late': {
@@ -792,9 +795,12 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
       // instead of a false late/early.
       const notAssigned = rows.filter(r => r.noShiftAssigned);
       const evalRows  = rows.filter(r => !r.noShiftAssigned);
+      // HR-approved standing early departures (e.g. nursing break) are NOT
+      // violations — pull them out before counting short/early.
+      const approvedEarly = evalRows.filter(r => r._approvedEarly && r.status === 'short');
       const present   = evalRows.filter(r => r.status === 'present');
       const late      = evalRows.filter(r => r.status === 'late');
-      const shortRows = evalRows.filter(r => r.status === 'short');
+      const shortRows = evalRows.filter(r => r.status === 'short' && !r._approvedEarly);
       const absentReal = evalRows.filter(r => r.status === 'absent' && !r._synthetic);
       const absentSilent = evalRows.filter(r => r.status === 'absent' &&  r._synthetic);
       const leaveD    = evalRows.filter(r => r.status === 'sick_leave' || r.status === 'annual_leave');
@@ -817,7 +823,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
       // manager. Late + short (any sub-kind) + silent absences. Excludes
       // unassigned-shift rows (not a violation — a roster gap).
       const problemRows = evalRows.filter(r =>
-        r.status === 'late' || r.status === 'short' || r.status === 'absent'
+        r.status === 'late' || (r.status === 'short' && !r._approvedEarly) || r.status === 'absent'
       );
 
       // Compliance — across all shift days in window. A "clean" shift
@@ -840,7 +846,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
         emp, rows,
         isShift: shiftIdSet.has(emp.id),
         is84: emp.working_hours_group === 'sup_team',   // 8AM–4PM (SUP) schedule
-        daysPresent: present.length + late.length + shortRows.length,
+        daysPresent: present.length + late.length + shortRows.length + approvedEarly.length,
         daysLate:    late.length,
         daysShort:   shortRows.length,
         missedIn, missedOut, leftEarly,
@@ -1354,7 +1360,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
         const hasIn = !!yr.first_punch, hasOut = !!yr.last_punch;
         if (hasIn && !hasOut)      missed.push({ emp: s.emp, label: 'No out-punch', detail: `In ${fmtTime(yr.first_punch) || '—'}` });
         else if (!hasIn && hasOut) missed.push({ emp: s.emp, label: 'No in-punch',  detail: `Out ${fmtTime(yr.last_punch) || '—'}` });
-        else if (yr.status === 'short' || Number(yr.early_leave_minutes) > 0)
+        else if (!yr._approvedEarly && (yr.status === 'short' || Number(yr.early_leave_minutes) > 0))
           early.push({ emp: s.emp, out: fmtTime(yr.last_punch), exp: fmtTime(yr.expected_end), early: Number(yr.early_leave_minutes) || 0 });
       }
       if (s.isShift) {
