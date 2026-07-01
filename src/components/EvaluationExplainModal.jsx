@@ -109,7 +109,7 @@ export default function EvaluationExplainModal({ entry, kind, onClose }) {
   if (kind === 'late' && firstPunch && sStart) {
     const punchMin = toMin(firstPunch);
     const startMin = toMin(sStart);
-    const cutoffMin = lateCutoff ? toMin(lateCutoff) : (startMin + 15);
+    const cutoffMin = lateCutoff ? toMin(lateCutoff) : startMin; // July 2026: no grace
     const beyondCutoff = punchMin - cutoffMin;
     comparison = {
       label: 'Late check',

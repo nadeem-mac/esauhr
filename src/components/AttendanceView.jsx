@@ -310,8 +310,8 @@ function ZoneHeader({ number, kicker, title, body, accent = '#1F1B16' }) {
    KSA weekend.
 
    Detection per row:
-     1. LATE  (today's data only) — punched in after 08:15
-        (8:00 official start + 15 min grace).
+     1. LATE  (today's data only) — punched in after 08:00
+        (8:00 official start, no grace — July 2026 policy).
         Cross-referenced against approved late_arrival permissions:
           • LATE_PERMITTED   — permission on file, within window
           • LATE_BEYOND      — permission on file, but came in even later
@@ -648,16 +648,16 @@ function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, schedul
   // 8:00 AM office time. Bullet 3 (3 permissions/month entitlement)
   // applies to everyone uniformly.
   const startStr12h = scheduledStart ? fmtTime12h(scheduledStart) : '8:00 AM';
-  const cutoffStr12h = lateCutoff ? fmtTime12h(lateCutoff) : '8:15 AM';
+  const cutoffStr12h = lateCutoff ? fmtTime12h(lateCutoff) : '8:00 AM';
   const policyBullets = isCustomShift
     ? [
         '\u2022 Your scheduled shift start is ' + startStr12h + (isNightShiftStart ? ' (overnight shift to next morning)' : '') + '.',
-        '\u2022 A 15-minute grace period is allowed; arrivals after ' + cutoffStr12h + ' are recorded as late.',
+        '\u2022 Per company policy effective July 2026, arrivals after ' + cutoffStr12h + ' are recorded as late (no grace period).',
         '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
       ]
     : [
         '\u2022 The official clock-in time is 8:00 AM on regular working days.',
-        '\u2022 A 15-minute grace period is allowed; arrivals after 8:15 AM are recorded as late.',
+        '\u2022 Per company policy effective July 2026, arrivals after 8:00 AM are recorded as late (no grace period).',
         '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
       ];
 
@@ -704,7 +704,7 @@ function lateEmailContent({ employee, dateLong, punchInStr, minutesLate, schedul
     : '';
   const body =
     'Dear ' + greetName + ',\n\n' +
-    'HR\u2019s daily attendance review for ' + dateLong + ' shows your ' + punchPhrase + ' at ' + punchInStr + ', ' + minutesLate + ' minutes past the 15-minute grace period and with no approved permission on file. This is recorded as a late-arrival violation.' + shiftContext + '\n\n' +
+    'HR\u2019s daily attendance review for ' + dateLong + ' shows your ' + punchPhrase + ' at ' + punchInStr + ', ' + minutesLate + ' minutes after the 8:00 AM start time and with no approved permission on file. This is recorded as a late-arrival violation.' + shiftContext + '\n\n' +
     assignmentPara +
     noAssignmentNote +
     buildAssignedShiftsBlock(assignedShifts, violationDate, divider) +
@@ -1012,16 +1012,16 @@ function lateEmailContentTemp({ employee, dateLong, punchInStr, minutesLate, sch
     : 'colleague';
 
   const startStr12h = scheduledStart ? fmtTime12h(scheduledStart) : '8:00 AM';
-  const cutoffStr12h = lateCutoff ? fmtTime12h(lateCutoff) : '8:15 AM';
+  const cutoffStr12h = lateCutoff ? fmtTime12h(lateCutoff) : '8:00 AM';
   const policyBullets = isCustomShift
     ? [
         '\u2022 Your scheduled shift start is ' + startStr12h + (isNightShiftStart ? ' (overnight shift to next morning)' : '') + '.',
-        '\u2022 A 15-minute grace period is allowed; arrivals after ' + cutoffStr12h + ' are recorded as late.',
+        '\u2022 Per company policy effective July 2026, arrivals after ' + cutoffStr12h + ' are recorded as late (no grace period).',
         '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
       ]
     : [
         '\u2022 The official clock-in time is 8:00 AM on regular working days.',
-        '\u2022 A 15-minute grace period is allowed; arrivals after 8:15 AM are recorded as late.',
+        '\u2022 Per company policy effective July 2026, arrivals after 8:00 AM are recorded as late (no grace period).',
         '\u2022 Each staff is entitled to 3 permissions per month (late or early), 1 hour each, 3 times only.',
       ];
 
@@ -1060,7 +1060,7 @@ function lateEmailContentTemp({ employee, dateLong, punchInStr, minutesLate, sch
     : '';
   const body =
     'Dear ' + greetName + ',\n\n' +
-    'HR\u2019s daily attendance review for ' + dateLong + ' shows your ' + punchPhrase + ' at ' + punchInStr + ', ' + minutesLate + ' minutes past the 15-minute grace period and with no approved permission on file. This is recorded as a late-arrival violation.' + shiftContext + '\n\n' +
+    'HR\u2019s daily attendance review for ' + dateLong + ' shows your ' + punchPhrase + ' at ' + punchInStr + ', ' + minutesLate + ' minutes after the 8:00 AM start time and with no approved permission on file. This is recorded as a late-arrival violation.' + shiftContext + '\n\n' +
     assignmentPara +
     noAssignmentNote +
     buildAssignedShiftsBlock(assignedShifts, violationDate, divider) +
@@ -2881,7 +2881,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         ? {
             startStr: effectiveOverride.startStr,
             endStr:   effectiveOverride.endStr,
-            lateCutoffStr:  addMinutesToTime(effectiveOverride.startStr,  +15),
+            lateCutoffStr:  addMinutesToTime(effectiveOverride.startStr,  +0),
             // Early departure on shifts: strict, no grace. Per Nadeem
             // 2026-05-10 — same rule for office and shift staff. If the
             // shift ends at 17:00, leaving at 16:59 is early. The
@@ -2938,7 +2938,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             punchInStr, punchOutStr,
             scheduledStart: bridgeFromPrev.startStr,
             scheduledEnd:   endStr,
-            lateCutoff: addMinutesToTime(bridgeFromPrev.startStr, +15),
+            lateCutoff: addMinutesToTime(bridgeFromPrev.startStr, +0),
             scheduleLabel: 'Night shift (' + bridgeFromPrev.startStr + ' → ' + endStr + ' next day, completed today)',
             isCustomShift: true,
             staffHasShifts: shiftStaffThisMonth.has(empKey),
@@ -2970,7 +2970,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             punchOutStr: outStr, punchOutMin: outMin,
             scheduledStart: bridgeFromPrev.startStr,
             scheduledEnd:   endStr,
-            lateCutoff: addMinutesToTime(bridgeFromPrev.startStr, +15),
+            lateCutoff: addMinutesToTime(bridgeFromPrev.startStr, +0),
             earlyCutoff: endCutoffStr,
             scheduleLabel: 'Night shift (' + bridgeFromPrev.startStr + ' → ' + endStr + ' next day, completed today)',
             isCustomShift: true,

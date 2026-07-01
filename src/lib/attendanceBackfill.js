@@ -163,7 +163,7 @@ function policyFromShift(shift) {
     const hh = Math.floor(((m - mm + 1440 * 4) / 60)) % 24; // wrap safe
     return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:00`;
   };
-  const lateCutoff  = minToHm(startMin + 15);
+  const lateCutoff  = minToHm(startMin); // July 2026 policy: no grace — strict shift start
   const earlyCutoff = minToHm(endMin); // strict — equals shift end
   return {
     startTime:   start,

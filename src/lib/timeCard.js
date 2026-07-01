@@ -48,17 +48,17 @@ import { applyPsnAlias } from './psnAliases.js';
 export const ATTENDANCE_POLICY = {
   // Late if first punch is strictly after this. 8:00 AM is the
   // canonical start; the old CSV ingestion had a 15-min grace
-  // window (LATE_CUTOFF = '08:15') which we keep as the default
-  // grace. Bashaier asked for the cutoff to be 08:00 in the
+  // window (08:15) is removed as of July 2026 — strict 08:00, no
+  // grace. (Late = strictly after 08:00.)
   // requirements discussion, so the grace becomes a separate knob.
   startTime:  '08:00',
-  graceLate:  15, // minutes — lateness ignored if first punch ≤ 08:15
+  graceLate:  0, // July 2026 policy: no grace — after 08:00 = late
 
   // Early-leave thresholds. SUP department has a 16:00 end; everyone
-  // else is 17:00. Same 15-min grace applies on the other end.
+  // else is 17:00. No grace on the early side either (July 2026).
   endTimeStandard: '17:00',
   endTimeSup:      '16:00',
-  graceEarly:      15,
+  graceEarly:      0,
 
   // Below this many seconds between consecutive raw punches, we treat
   // the second as a device duplicate of the first and drop it.

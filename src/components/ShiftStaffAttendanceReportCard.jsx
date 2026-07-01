@@ -640,7 +640,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
           const _toSec = (t) => { const m = String(t || '').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/); return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0)) : null; };
           if (r.status === 'late' && !e2.isOvernight) {
             const fS = _toSec(r.first_punch), sS = _toSec(r.expected_start);
-            if (fS != null && sS != null && Math.floor(fS / 60) <= Math.floor(sS / 60) + 15) {
+            if (fS != null && sS != null && Math.floor(fS / 60) <= Math.floor(sS / 60)) {
               e2.status = 'present';
               e2.late_minutes = 0;
               e2._gracedLate = true;
@@ -945,7 +945,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
       // Lateness is judged from the check-in alone (whole-minute 15-min
       // grace), independent of status — so a late arrival with no out-punch
       // yet still shows. On time up to start+15 min; late from +16.
-      if (d <= 0 || Math.floor(inS / 60) <= Math.floor(st / 60) + 15 || r._mgt) return '';
+      if (d <= 0 || Math.floor(inS / 60) <= Math.floor(st / 60) || r._mgt) return '';
       const mm = Math.floor(d / 60); const ss = d % 60;
       return `${mm}:${String(ss).padStart(2, '0')}`;
     };
@@ -954,7 +954,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
       const inS = toSec(r.effective_in || r.first_punch); const st = toSec(r.expected_start);
       if (inS == null || st == null) return 0;
       const d = inS - st;
-      return (d > 0 && Math.floor(inS / 60) > Math.floor(st / 60) + 15) ? d : 0;
+      return (d > 0 && Math.floor(inS / 60) > Math.floor(st / 60)) ? d : 0;
     };
     const fmtLateSec = (sec) => { if (!sec) return ''; const m = Math.floor(sec / 60); const s = sec % 60; return `${m}:${String(s).padStart(2, '0')}`; };
     // Assigned shift length in minutes (overnight-aware). Falls back to a
@@ -1293,7 +1293,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
       // Lateness is judged from the check-in (whole-minute 15-min grace),
       // not the stored status — so late arrivals with no out-punch yet count.
       const _toSecL = (x) => { const m = String(x || '').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/); return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0)) : null; };
-      const _isLateIn = (r) => { const i = _toSecL(r.first_punch), st = _toSecL(r.expected_start); return i != null && st != null && Math.floor(i / 60) > Math.floor(st / 60) + 15; };
+      const _isLateIn = (r) => { const i = _toSecL(r.first_punch), st = _toSecL(r.expected_start); return i != null && st != null && Math.floor(i / 60) > Math.floor(st / 60); };
       reportSummaries.forEach(s => {
         if (managementNoAttendance(s.emp.id)) return;   // CEO/management — not counted
         const tr = s.rows.find(r => r.attendance_date === t);
@@ -1405,7 +1405,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
       const inS = _secMR(r.effective_in || r.first_punch), st = _secMR(r.expected_start);
       if (inS == null || st == null) return '';
       const d = inS - st;
-      if (d <= 0 || Math.floor(inS / 60) <= Math.floor(st / 60) + 15 || r._mgt) return '';
+      if (d <= 0 || Math.floor(inS / 60) <= Math.floor(st / 60) || r._mgt) return '';
       return `${Math.floor(d / 60)}:${String(d % 60).padStart(2, '0')}`;
     };
     const isShortfall = (r) => r.status === 'short' && !r._approvedEarly;
@@ -2118,7 +2118,7 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
     const inS = toSec(r.effective_in || r.first_punch); const st = toSec(r.expected_start);
     if (inS == null || st == null) return '';
     const d = inS - st;
-    if (d <= 0 || Math.floor(inS / 60) <= Math.floor(st / 60) + 15 || r._mgt) return '';
+    if (d <= 0 || Math.floor(inS / 60) <= Math.floor(st / 60) || r._mgt) return '';
     return `${Math.floor(d / 60)}:${String(d % 60).padStart(2, '0')}`;
   };
 
@@ -2151,7 +2151,7 @@ function renderReportHtml({ summaries, from, to, me, holidays = new Map() }) {
     const inS = toSec(r.effective_in || r.first_punch); const st = toSec(r.expected_start);
     if (inS == null || st == null) return 0;
     const d = inS - st;
-    return (d > 0 && Math.floor(inS / 60) > Math.floor(st / 60) + 15) ? d : 0;
+    return (d > 0 && Math.floor(inS / 60) > Math.floor(st / 60)) ? d : 0;
   };
   const fmtLateSec = (sec) => { if (!sec) return ''; return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`; };
   const assignedMin = (r) => {

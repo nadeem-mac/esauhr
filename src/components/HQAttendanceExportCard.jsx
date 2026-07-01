@@ -106,7 +106,7 @@ const CONFIG = {
   //  status / late_minutes (which the daily pipeline derived with a
   //  different, 17:00 standard end). This keeps the HQ definition fixed
   //  and independent of how each row was originally classified.
-  //    • Late      = clock-in strictly AFTER 08:15. Minutes measured
+  //    • Late      = clock-in strictly AFTER 08:00 (no grace). Minutes measured
   //                  from the scheduled start (08:00), mirroring the
   //                  app's own late-minute convention.
   //    • Early     = clock-out strictly BEFORE the applicable end.
@@ -116,7 +116,7 @@ const CONFIG = {
   //          16:00 departure is NOT early for them.
   hq: {
     scheduledStart: '08:00:00',
-    lateCutoff:     '08:15:00',
+    lateCutoff:     '08:00:00',
     endStandard:    '16:15:00',
     endSupFourPm:   '16:00:00',
     // The device exports a raw punch stream with no in/out labels, so a
@@ -327,7 +327,7 @@ export default function HQAttendanceExportCard({ me, employees = [] }) {
         (st.includes('leave') || st === 'off_day' || st === 'off_roster');
 
       const startMin    = toMin(C.hq.scheduledStart);   // 08:00
-      const lateCutMin   = toMin(C.hq.lateCutoff);       // 08:15
+      const lateCutMin   = toMin(C.hq.lateCutoff);       // 08:00
       const endStdMin    = toMin(C.hq.endStandard);      // 16:15
       const endFourPmMin  = toMin(C.hq.endSupFourPm);    // 16:00
       const middayMin     = toMin(C.hq.middayCutoff);    // 12:00
@@ -463,7 +463,7 @@ export default function HQAttendanceExportCard({ me, employees = [] }) {
         ['NOTES'],
         [`\u2022 Reporting period: 01 Sep ${fromYear} \u2013 31 Aug ${fromYear + 1} (${yearLabel}).`],
         ['\u2022 Working days only \u2014 excludes Ramadan, weekends (Fri & Sat), and public holidays.'],
-        ['\u2022 Late: clock-in after 08:15 (minutes from 08:00).'],
+        ['\u2022 Late: clock-in after 08:00 (no grace).'],
         ['\u2022 Early leave: clock-out before 16:15 \u2014 before 16:00 for SUP / 4 PM staff (16:00 departure not counted early).'],
         ['\u2022 Forgot sign-on / sign-off: a worked day missing the clock-in or clock-out.'],
         ['\u2022 Single-punch day: a morning punch counts as sign-in (missing sign-off); a midday/afternoon punch as sign-out (missing sign-on).'],
