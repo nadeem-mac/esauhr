@@ -45,17 +45,15 @@ export default function ShiftPlanReminder({ me, directReports = [], onOpenPlanne
   const { inWindow, target } = useMemo(() => {
     const now = new Date();
     const day = now.getDate();
-    if (day >= 25) {
-      // Late-month nudge for next month
-      const t = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-      return { inWindow: true, target: t };
-    }
-    if (day <= 3) {
-      // Early-month grace nudge for the now-current month
-      const t = new Date(now.getFullYear(), now.getMonth(), 1);
-      return { inWindow: true, target: t };
-    }
-    return { inWindow: false, target: null };
+    // Fire whenever a plan is missing — any day, not only month-end.
+    // From day 25 onward we nudge the NEXT month (plan ahead); earlier
+    // in the month we nudge the CURRENT month so gaps are chased down
+    // as soon as they exist. The banner still only renders when the
+    // tracker shows a report with no saved plan (missing.length > 0).
+    const t = day >= 25
+      ? new Date(now.getFullYear(), now.getMonth() + 1, 1)
+      : new Date(now.getFullYear(), now.getMonth(), 1);
+    return { inWindow: true, target: t };
   }, []);
 
   const targetKey   = target ? ymd(target) : null;
@@ -172,7 +170,7 @@ export default function ShiftPlanReminder({ me, directReports = [], onOpenPlanne
           )}
         </div>
         <div style={{ fontSize: 11, color: '#1F1B16', opacity: 0.65, marginTop: 4 }}>
-          Plans saved before the month begins give staff time to acknowledge their shifts and avoid surprise on day one.
+          Enter shifts in the system so attendance is captured against the correct schedule. Staff must attend the shift you assign; no acknowledgment is required.
         </div>
       </div>
 

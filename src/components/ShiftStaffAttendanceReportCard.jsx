@@ -1478,11 +1478,14 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
 
     // Gather DEFAULTERS only (same logic as the on-screen summary): today's
     // late arrivals, yesterday's early departures, yesterday's missed punches.
-    const todayLate = [], yEarly = [], yMissed = [];
+    const todayLate = [], yEarly = [], yMissed = [], noSchedule = [];
     reportSummaries.forEach(s => {
       if (managementNoAttendance(s.emp.id)) return;
       const tr = s.rows.find(r => r.attendance_date === t);
       const yr = s.rows.find(r => r.attendance_date === y);
+      // Shift staff who punched today but have no shift entered in the
+      // system → manager roster gap. Surfaced as a reminder in the email.
+      if (tr && tr.noShiftAssigned && (tr.first_punch || (tr.punch_count || 0) > 0)) noSchedule.push({ s, r: tr });
       if (tr && !tr._carryOnly && !tr.noShiftAssigned && (tr.first_punch || (tr.punch_count || 0) > 0) && tr.status !== 'absent' && _isLateMR(tr)) todayLate.push({ s, r: tr });
       if (yr && !yr.noShiftAssigned && !yr._carryOnly) {
         // Overnight OUT is on the next day's row → treat the paired
@@ -1501,6 +1504,9 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
   <p style="margin:0">Please find today's morning attendance for check-in time as of ${escapeHtml(clock)} (${escapeHtml(dayDate(t))}). Sign-outs and total hours finalise at end of day, so this report shows arrivals only.</p>
   <p style="margin:0">&nbsp;</p>
   <p style="margin:0">Today so far: ${inCount} signed in (${lateCount} late shift staff), ${notIn} not yet in, ${leaveCount} on leave.</p>
+  ${noSchedule.length ? `<p style="margin:0">&nbsp;</p>
+  <p style="margin:0;font-weight:700;color:#854F0B">Shifts to be updated by managers &mdash; ${noSchedule.length} shift ${noSchedule.length === 1 ? 'member' : 'members'} with no schedule on file</p>
+  <p style="margin:0;color:#1F1B16">The following shift staff punched today but have no shift entered in the system, so their attendance cannot be evaluated against a schedule. Department managers are requested to enter the shift timings in the system: ${escapeHtml(noSchedule.map(x => x.s.emp.name || x.s.emp.id).join(', '))}.</p>` : ''}
   <p style="margin:0">&nbsp;</p>
   <p style="margin:0">Please see the attached Excel file which has two sheets: "${escapeHtml(sheet1)}" (arrivals) and "${escapeHtml(sheet2)}", the complete report for ${escapeHtml(dayDate(y))} (in/out, total hours, late and early departures). A short summary is below.</p>
   <p style="margin:0">&nbsp;</p>
