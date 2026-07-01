@@ -102,6 +102,13 @@ function classifyShort(row) {
   return                       { kind: 'early',      label: 'Left early',    short: 'Early'  };
 }
 
+// Local YYYY-MM-DD (KSA/browser local), used to detect "today, in
+// progress" so a not-yet-happened check-out isn't flagged as missing.
+function _localTodayIso() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 // Build a human label for the Status column. Adds minute counts where
 // available so 'Late' becomes 'Late · 47 min' and 'Short' becomes
 // 'No out-punch' / 'No in-punch' / 'Left early · 32 min'.
@@ -112,6 +119,15 @@ function detailedStatusLabel(row) {
   // HR-approved standing early departure (e.g. nursing break) — show the
   // approval remark, never an "early leave" violation.
   if (row._approvedEarly && row.status === 'short') return row._remark || 'Approved early-out';
+  // TODAY, still in progress: the check-out hasn't happened yet, so a
+  // missing out-punch is NOT a violation — show the arrival verdict
+  // (Present / Late) instead of "No out-punch". Past days are unaffected.
+  if (row.first_punch && !row.last_punch && String(row.attendance_date || '').slice(0, 10) === _localTodayIso()) {
+    const inMin = timeToMinutes(row.first_punch);
+    const stMin = timeToMinutes(row.expected_start);
+    const lateM = (inMin != null && stMin != null) ? Math.max(0, inMin - stMin) : 0;
+    return lateM > 0 ? `Late · ${lateM} min` : 'Present';
+  }
   switch (row.status) {
     case 'present':      return 'Present';
     case 'late': {
