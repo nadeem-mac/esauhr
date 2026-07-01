@@ -67,7 +67,7 @@ function isoDate(ddmmyyyy) {
 // historical dates.
 const STD_START_TIME      = '08:00:00';
 const STD_END_TIME        = '17:00:00';
-const STD_LATE_CUTOFF     = '08:15:00';  // 15-min arrival grace (preserved)
+const STD_LATE_CUTOFF     = '08:00:00';  // July 2026 policy: no grace — after 08:00 = late
 const STD_EARLY_CUTOFF    = '17:00:00';  // strict — equals END_TIME, no grace
 
 // SUP-team policy — same start, earlier end (no lunch break).

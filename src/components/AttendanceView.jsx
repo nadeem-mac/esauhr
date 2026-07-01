@@ -340,7 +340,7 @@ function ZoneHeader({ number, kicker, title, body, accent = '#1F1B16' }) {
 
 // ESAU policy constants
 const OFFICIAL_START   = '08:00';
-const LATE_CUTOFF      = '08:15';   // after this = late (15-min arrival grace preserved)
+const LATE_CUTOFF      = '08:00';   // July 2026 policy: no grace — after 08:00 = late
 const SUP_END          = '16:00';   // SUP team scheduled end (4 PM)
 const SUP_EARLY_CUTOFF = '16:00';   // strict — any departure before 16:00 = early
 const STD_END          = '17:00';   // other depts scheduled end (5 PM)
