@@ -1693,7 +1693,7 @@ export default function BashaierTasksCard({ me, employees, requests, permissions
       {disputeAction && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: 'rgba(20,30,25,0.55)', backdropFilter: 'blur(2px)' }}
+          style={{ background: 'rgba(20,30,25,0.6)' }}
           onClick={() => !disputeBusy && setDisputeAction(null)}
         >
           <div
@@ -1886,7 +1886,7 @@ function TaskPreviewModal({ task, onClose, onCompose, onCopyHtml, onCopyPlain, c
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-6 overflow-y-auto"
-         style={{ background: 'rgba(20,30,25,0.55)', backdropFilter: 'blur(2px)' }}
+         style={{ background: 'rgba(20,30,25,0.6)' }}
          onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-8" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
@@ -1976,7 +1976,7 @@ function DeptHeadReportModal({ title, managers, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-6 overflow-y-auto"
-         style={{ background: 'rgba(20,30,25,0.55)', backdropFilter: 'blur(2px)' }}
+         style={{ background: 'rgba(20,30,25,0.6)' }}
          onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-8" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 sm:px-6 py-4 sticky top-0 z-10 rounded-t-2xl flex items-start justify-between gap-3"
