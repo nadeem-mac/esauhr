@@ -770,7 +770,9 @@ export default function ManagerMonthlyPlanner({ me, employees }) {
             start_time:  cell.start || start,
             end_time:    cell.end   || end,
             set_by:      me.id,
-            status:      isHistorical ? 'accepted' : 'pending',
+            // Manager assignment is final — no staff/HR approval needed.
+            status:      'accepted',
+            accepted_at: new Date().toISOString(),
           });
         }
       }

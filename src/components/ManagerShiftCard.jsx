@@ -325,8 +325,12 @@ export default function ManagerShiftCard({ me, employees }) {
           start_time:  s.start,
           end_time:    s.end,
           set_by:      me.id,
-          status:      'pending',
-          accepted_at: null,
+          // Manager assignment is final: the staff must attend, no staff
+          // acceptance or HR approval needed. Write as 'accepted' so the
+          // shift is active immediately and attendance is captured against
+          // it. (Nadeem 2026-06-25)
+          status:      'accepted',
+          accepted_at: new Date().toISOString(),
           declined_at: null,
           decline_reason: null,
           notified_hr_at: null,
