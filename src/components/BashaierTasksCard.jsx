@@ -754,26 +754,56 @@ function buildLeaveAvailability({ requests, employees, year, month, today, lastP
 // Task 4: Monthly shift-staff timing reminder. Reminds dept managers to verify
 // or update shift-based working hours for any of their team members. Bashaier
 // sees this in her tasks card and clicks to send the reminder email.
-function buildShiftStaffReminder({ year, month }) {
+function buildShiftStaffReminder({ employees, year, month, jamesEmail }) {
   const monthName = MONTH_FULL[month - 1] + ' ' + year;
-  const subject = 'Monthly Reminder \u2014 Please update shift-staff timing in HR system (' + monthName + ')';
-  const bodyPlain =
-    'Dear team,\n\n' +
-    'I hope you are well. This is the monthly reminder from HR to please review and update the shift-based working hours for any team member who works on a non-standard schedule.\n\n' +
-    'Why this matters: Our daily attendance check applies the standard 08:00 \u2013 17:00 schedule (or 08:00 \u2013 16:00 for the SUP/HR team) to detect late arrivals and early departures. If a team member is on a different shift and we do not have it on file, the system will incorrectly flag them as late or early, and they will receive an email they should not have.\n\n' +
-    'What I am asking: Please open the HR portal, find any team member whose schedule is not the standard 08:00 \u2013 17:00, and either confirm their existing shift entry is still correct, or update it. Once you save it, the team member will be asked to acknowledge the schedule, and HR will be notified once they accept.\n\n' +
-    'If you have no shift staff or all schedules are already correct, a quick reply confirming that is all I need.\n\n' +
-    'Thank you for keeping the records accurate \u2014 it makes a real difference for fair attendance handling and payroll.\n\n' +
-    HR_SIGNATURE;
-  const bodyHtml = emailBody([
-    `<p style="margin:0">Dear team,</p>`,
-    `<p style="margin:0">I hope you are well. This is the monthly reminder from HR to please review and update the shift-based working hours for any team member who works on a non-standard schedule.</p>`,
-    `<p style="margin:0"><strong>Why this matters:</strong> Our daily attendance check applies the standard 08:00 \u2013 17:00 schedule (or 08:00 \u2013 16:00 for the SUP/HR team) to detect late arrivals and early departures. If a team member is on a different shift and we do not have it on file, the system will incorrectly flag them as late or early.</p>`,
-    `<p style="margin:0"><strong>What I am asking:</strong> Please open the HR portal, find any team member whose schedule is not the standard 08:00 \u2013 17:00, and either confirm their existing shift entry is still correct, or update it. Once saved, the team member will acknowledge the schedule, and HR will be notified.</p>`,
-    `<p style="margin:0">If you have no shift staff or all schedules are already correct, a quick reply confirming that is all I need.</p>`,
-    `<p style="margin:0">Thank you for keeping the records accurate \u2014 it makes a real difference for fair attendance handling and payroll.</p>`,
-  ]);
-  return { subject, bodyPlain, bodyHtml, count: 0 };
+  const active = (employees || []).filter(isActiveEmployee);
+  const byId = {}; (employees || []).forEach(e => { byId[e.id] = e; });
+  const managerIds = [...new Set(active.map(e => e.manager_id).filter(Boolean))];
+  const ccBase = [TO_JOHN, ...CC_LIST, jamesEmail].filter(Boolean);
+
+  const managers = managerIds.map(mid => {
+    const manager = byId[mid];
+    if (!manager) return null;
+    // Only managers who actually have shift-based team members.
+    const shiftReports = active.filter(e => e.manager_id === mid && e.is_shift_staff === true);
+    if (shiftReports.length === 0) return null;
+
+    const listPlain = shiftReports.map(s => '  \u2022 ' + s.name + ' (' + s.id + ')').join('\n');
+    const listHtml = '<ul style="margin:4px 0 0 0;padding-left:18px">'
+      + shiftReports.map(s => `<li>${escapeHtml(s.name)} (${escapeHtml(s.id)})</li>`).join('') + '</ul>';
+
+    const introP = `This is a reminder from HR to assign the working shifts for ${monthName} for your shift-based team members in the system.`;
+    const whyP = 'Attendance is captured against the shift you assign. If a shift is not entered, the system evaluates the person against the standard 08:00 \u2013 17:00 window and may flag them incorrectly, or show them as "Shift not assigned" on the daily report to management.';
+    const howP = 'Please open the HR portal, go to Shifts, and assign each person\u2019s shift for the month. Your assignment is final: the staff member does not need to accept it and HR approval is not required. Once you assign it, the system starts capturing their check-in and check-out against that shift, and the staff member must attend accordingly.';
+    const subject = `Action needed \u2014 Assign ${monthName} shifts for your shift staff`;
+
+    const bodyPlain =
+      `Dear ${salutationFor(manager)},\n\n` +
+      introP + '\n\n' + whyP + '\n\n' + howP + '\n\n' +
+      'Your shift-based team members:\n' + listPlain + '\n\n' +
+      'If all shifts for the month are already assigned and correct, a quick reply confirming that is all I need.\n\n' +
+      SIGNATURE_PLAIN;
+
+    const bodyHtml = emailBody([
+      `<p style="margin:0">Dear ${escapeHtml(salutationFor(manager))},</p>`,
+      `<p style="margin:0">${escapeHtml(introP)}</p>`,
+      `<p style="margin:0"><strong>Why this matters:</strong> ${escapeHtml(whyP)}</p>`,
+      `<p style="margin:0"><strong>What to do:</strong> ${escapeHtml(howP)}</p>`,
+      `<p style="margin:0;font-weight:600">Your shift-based team members</p>`,
+      listHtml,
+      `<p style="margin:0">If all shifts for the month are already assigned and correct, a quick reply confirming that is all I need.</p>`,
+    ]);
+
+    const cc = ccBase.filter(addr => addr && addr.toLowerCase() !== String(manager.email || '').toLowerCase());
+    return {
+      id: manager.id, name: manager.name, dept: manager.department || '',
+      to: manager.email || '', cc,
+      teamSize: shiftReports.length, appCount: shiftReports.length,
+      subject, bodyPlain, bodyHtml,
+    };
+  }).filter(Boolean).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  return { fanout: true, managers, count: managers.length };
 }
 
 // =============================================================================
@@ -1185,10 +1215,11 @@ export default function BashaierTasksCard({ me, employees, requests, permissions
     {
       key: 'shift_staff_reminder',
       title: 'Shift staff timing reminder',
-      subtitle: 'Remind department managers to update shift-based schedules in the system',
+      subtitle: 'Remind department managers to assign their team’s shifts in the system',
       icon: <Clock className="w-4 h-4" />,
       tone: '#7E22CE',
-      build: () => buildShiftStaffReminder({ year, month }),
+      fanout: true,
+      build: () => buildShiftStaffReminder({ employees, year, month, jamesEmail }),
     },
   ], [perms, employees, requests, month, year, prevMonth, prevYear, today, leavePunch, hdr, balances, leaveTypes, jamesEmail]);
 
