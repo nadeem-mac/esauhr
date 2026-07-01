@@ -1343,7 +1343,12 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
   //   • shift-staff roll-call for today
   // Reused by both the on-screen preview and copyMorningHtml().
   const _toSecMR = (x) => { const m = String(x || '').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/); return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0)) : null; };
-  const _isLateMR = (r) => { const i = _toSecMR(r.first_punch), st = _toSecMR(r.expected_start); return i != null && st != null && Math.floor(i / 60) > Math.floor(st / 60) + 15; };
+  // July 2026 policy: no grace. Late = check-in after the scheduled start
+  // (whole minute, so 08:00:59 is on time, 08:01 is late). Early = check-out
+  // before the scheduled end. Both compare to the employee's own window, so
+  // regular staff (08:00–17:00) and SUP (08:00–16:00) are handled the same.
+  const _isLateMR  = (r) => { const i = _toSecMR(r.first_punch), st = _toSecMR(r.expected_start); return i != null && st != null && Math.floor(i / 60) > Math.floor(st / 60); };
+  const _isEarlyMR = (r) => { const o = _toSecMR(r.last_punch),  en = _toSecMR(r.expected_end);   return o != null && en != null && Math.floor(o / 60) < Math.floor(en / 60); };
   const morningData = useMemo(() => {
     const t = to, y = from;
     const late = [], early = [], missed = [], shift = [];
@@ -1360,8 +1365,8 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
         const hasIn = !!yr.first_punch, hasOut = !!yr.last_punch;
         if (hasIn && !hasOut)      missed.push({ emp: s.emp, label: 'No out-punch', detail: `In ${fmtTime(yr.first_punch) || '—'}` });
         else if (!hasIn && hasOut) missed.push({ emp: s.emp, label: 'No in-punch',  detail: `Out ${fmtTime(yr.last_punch) || '—'}` });
-        else if (!yr._approvedEarly && (yr.status === 'short' || Number(yr.early_leave_minutes) > 0))
-          early.push({ emp: s.emp, out: fmtTime(yr.last_punch), exp: fmtTime(yr.expected_end), early: Number(yr.early_leave_minutes) || 0 });
+        else if (yr.last_punch && !yr._approvedEarly && _isEarlyMR(yr))
+          early.push({ emp: s.emp, out: fmtTime(yr.last_punch), exp: fmtTime(yr.expected_end), early: Number(yr.early_leave_minutes) || Math.max(0, Math.round(((_toSecMR(yr.expected_end) || 0) - (_toSecMR(yr.last_punch) || 0)) / 60)) });
       }
       if (s.isShift) {
         shift.push({ emp: s.emp, in: tr ? (fmtTime(tr.first_punch) || '—') : '—', out: tr ? (fmtTime(tr.last_punch) || '—') : '—', status: tr ? detailedStatusLabel(tr) : 'No data' });
