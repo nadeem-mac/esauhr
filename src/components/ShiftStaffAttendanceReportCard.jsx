@@ -174,7 +174,7 @@ function statusPill(status) {
 // time leaves a few minutes' gap against the assigned window (e.g. an
 // 08:00–17:00 = 9h window with an 08:06 in / 17:02 out = 8h56m presence),
 // which must NOT be flagged red. (Nadeem 2026-06-05)
-const SHORTFALL_GRACE_MIN = 15;
+const SHORTFALL_GRACE_MIN = 0; // July 2026: no grace
 
 function eachWeekday(fromIso, toIso) {
   const out = [];
@@ -257,7 +257,7 @@ function shiftEndMinutes(t) {
 //   • status is a leave variant or off_day / off_roster
 //   • row is a synthetic absence (no record at all)
 
-const GRACE_MIN = 15;
+const GRACE_MIN = 0; // July 2026: no grace — shift punctuality is strict
 
 function isNextCalendarDay(aDate, bDate) {
   if (!aDate || !bDate) return false;
@@ -630,7 +630,10 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
           // rather than a fabricated violation. (Nadeem 2026-06-24)
           if (assignSet !== null && shiftIdSet.has(r.employee_id)) {
             const key = `${r.employee_id}|${String(r.attendance_date).slice(0, 10)}`;
-            if (!assignSet.has(key)) e2.noShiftAssigned = true;
+            // Overnight shifts carry their assignment on the CHECK-IN day;
+            // the next-day tail (_carryOnly = the prior shift's clock-out)
+            // has no assignment of its own, so don't flag it "not assigned".
+            if (!assignSet.has(key) && !e2._carryOnly) e2.noShiftAssigned = true;
           }
           // Whole-minute late grace (as agreed): an arrival is on time up to
           // shift-start + 15 min counted in WHOLE minutes — so 08:15:xx is on
@@ -1356,15 +1359,21 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
       const mgt = !!managementNoAttendance(s.emp.id);
       const tr = s.rows.find(r => r.attendance_date === t);
       const yr = s.rows.find(r => r.attendance_date === y);
-      if (!mgt && tr && !tr.noShiftAssigned && (tr.first_punch || (tr.punch_count || 0) > 0) && tr.status !== 'absent' && _isLateMR(tr)) {
+      if (!mgt && tr && !tr.noShiftAssigned && !tr._carryOnly && (tr.first_punch || (tr.punch_count || 0) > 0) && tr.status !== 'absent' && _isLateMR(tr)) {
         const i = _toSecMR(tr.first_punch), st = _toSecMR(tr.expected_start);
         const lateMin = Number(tr.late_minutes) || (i != null && st != null ? Math.max(0, Math.round((i - st) / 60)) : 0);
         late.push({ emp: s.emp, in: fmtTime(tr.first_punch), exp: fmtTime(tr.expected_start), late: lateMin });
       }
-      if (!mgt && yr && !yr.noShiftAssigned) {
-        const hasIn = !!yr.first_punch, hasOut = !!yr.last_punch;
+      if (!mgt && yr && !yr.noShiftAssigned && !yr._carryOnly) {
+        // An overnight shift's OUT lands on the NEXT day's row, so the
+        // check-in day has a null raw last_punch. Treat the paired
+        // next-day out (effective_out) as a real out, else we'd falsely
+        // flag the attended overnight shift as "No out-punch".
+        const hasIn = !!yr.first_punch, hasOut = !!yr.last_punch || (yr.isOvernight && !!yr.effective_out);
         if (hasIn && !hasOut)      missed.push({ emp: s.emp, label: 'No out-punch', detail: `In ${fmtTime(yr.first_punch) || '—'}` });
         else if (!hasIn && hasOut) missed.push({ emp: s.emp, label: 'No in-punch',  detail: `Out ${fmtTime(yr.last_punch) || '—'}` });
+        else if (yr.isOvernight && yr.status === 'short')
+          early.push({ emp: s.emp, out: fmtTime(yr.effective_out), exp: fmtTime(yr.expected_end), early: Number(yr.early_leave_minutes) || 0 });
         else if (yr.last_punch && !yr._approvedEarly && _isEarlyMR(yr))
           early.push({ emp: s.emp, out: fmtTime(yr.last_punch), exp: fmtTime(yr.expected_end), early: Number(yr.early_leave_minutes) || Math.max(0, Math.round(((_toSecMR(yr.expected_end) || 0) - (_toSecMR(yr.last_punch) || 0)) / 60)) });
       }
@@ -1392,8 +1401,8 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
     reportSummaries.forEach(s => {
       if (managementNoAttendance(s.emp.id)) return;
       const tr = s.rows.find(r => r.attendance_date === t);
-      const worked = tr && (tr.first_punch || (tr.punch_count || 0) > 0) && tr.status !== 'absent';
-      if (worked) { inCount += 1; if (_isLateMR(tr)) lateCount += 1; }
+      const worked = tr && !tr._carryOnly && (tr.first_punch || (tr.punch_count || 0) > 0) && tr.status !== 'absent';
+      if (worked) { inCount += 1; if (!tr.noShiftAssigned && _isLateMR(tr)) lateCount += 1; }
       else if (tr && /_leave$/.test(tr.status || '')) leaveCount += 1;
       else if (!holidays.has(t)) notIn += 1;
     });
@@ -1474,9 +1483,12 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
       if (managementNoAttendance(s.emp.id)) return;
       const tr = s.rows.find(r => r.attendance_date === t);
       const yr = s.rows.find(r => r.attendance_date === y);
-      if (tr && (tr.first_punch || (tr.punch_count || 0) > 0) && tr.status !== 'absent' && _isLateMR(tr)) todayLate.push({ s, r: tr });
-      if (yr) {
-        const hasIn = !!yr.first_punch, hasOut = !!yr.last_punch;
+      if (tr && !tr._carryOnly && !tr.noShiftAssigned && (tr.first_punch || (tr.punch_count || 0) > 0) && tr.status !== 'absent' && _isLateMR(tr)) todayLate.push({ s, r: tr });
+      if (yr && !yr.noShiftAssigned && !yr._carryOnly) {
+        // Overnight OUT is on the next day's row → treat the paired
+        // effective_out as a real out so an attended overnight shift is
+        // not flagged "No out-punch".
+        const hasIn = !!yr.first_punch, hasOut = !!yr.last_punch || (yr.isOvernight && !!yr.effective_out);
         if (hasIn && !hasOut) yMissed.push({ s, r: yr });
         else if (!hasIn && hasOut) yMissed.push({ s, r: yr });
         else if (!yr._approvedEarly && (yr.status === 'short' || Number(yr.early_leave_minutes) > 0)) yEarly.push({ s, r: yr });
