@@ -2,8 +2,9 @@ import React, { useMemo, useState, useEffect } from 'react';
 import {
   CalendarDays, Coffee, Plane, Mail, Copy, ClipboardCheck,
   AlertCircle, CheckCircle2, ChevronRight, Clock, Check, ChevronDown, AlertTriangle,
-  TrendingUp, ShieldCheck, X, MessageSquare, Loader2,
+  TrendingUp, ShieldCheck, X, MessageSquare, Loader2, Download,
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { directGet, directPatch, supabase } from '../supabaseClient.js';
 import EvaluationReviewModal from './EvaluationReviewModal.jsx';
 import ManageIncidentsModal from './ManageIncidentsModal.jsx';
@@ -754,12 +755,14 @@ function buildLeaveAvailability({ requests, employees, year, month, today, lastP
 // Task 4: Monthly shift-staff timing reminder. Reminds dept managers to verify
 // or update shift-based working hours for any of their team members. Bashaier
 // sees this in her tasks card and clicks to send the reminder email.
-function buildShiftStaffReminder({ employees, year, month, jamesEmail }) {
+function buildShiftStaffReminder({ employees, year, month, prevMonth, prevYear, lastMonthShifts, jamesEmail }) {
   const monthName = MONTH_FULL[month - 1] + ' ' + year;
+  const lastMonthName = MONTH_FULL[(prevMonth || 1) - 1] + ' ' + (prevYear || year);
   const active = (employees || []).filter(isActiveEmployee);
   const byId = {}; (employees || []).forEach(e => { byId[e.id] = e; });
   const managerIds = [...new Set(active.map(e => e.manager_id).filter(Boolean))];
   const ccBase = [TO_JOHN, ...CC_LIST, jamesEmail].filter(Boolean);
+  const hm = (t) => String(t || '').slice(0, 5);
 
   const managers = managerIds.map(mid => {
     const manager = byId[mid];
@@ -772,26 +775,50 @@ function buildShiftStaffReminder({ employees, year, month, jamesEmail }) {
     const listHtml = '<ul style="margin:4px 0 0 0;padding-left:18px">'
       + shiftReports.map(s => `<li>${escapeHtml(s.name)} (${escapeHtml(s.id)})</li>`).join('') + '</ul>';
 
-    const introP = `This is a reminder from HR to assign the working shifts for ${monthName} for your shift-based team members in the system.`;
-    const whyP = 'Attendance is captured against the shift you assign. If a shift is not entered, the system evaluates the person against the standard 08:00 \u2013 17:00 window and may flag them incorrectly, or show them as "Shift not assigned" on the daily report to management.';
-    const howP = 'Please open the HR portal, go to Shifts, and assign each person\u2019s shift for the month. Your assignment is final: the staff member does not need to accept it and HR approval is not required. Once you assign it, the system starts capturing their check-in and check-out against that shift, and the staff member must attend accordingly.';
-    const subject = `Action needed \u2014 Assign ${monthName} shifts for your shift staff`;
+    // Last month's assigned shifts for this manager's shift staff → Excel
+    // so they can see the previous pattern and confirm/adjust for the month.
+    const teamIds = new Set(shiftReports.map(s => s.id));
+    const nameOf = {}; shiftReports.forEach(s => { nameOf[s.id] = s.name; });
+    const lmRows = (lastMonthShifts || [])
+      .filter(r => teamIds.has(r.employee_id) && r.shift_date)
+      .sort((a, b) => String(a.employee_id).localeCompare(String(b.employee_id))
+                   || String(a.shift_date).localeCompare(String(b.shift_date)));
+    let xlsxB64 = '', xlsxName = '';
+    if (lmRows.length) {
+      const aoa = [['Employee', 'PSN', 'Date', 'Day', 'Shift start', 'Shift end']];
+      lmRows.forEach(r => {
+        const iso = String(r.shift_date).slice(0, 10);
+        const dt = new Date(iso + 'T00:00:00');
+        const day = isNaN(dt) ? '' : dt.toLocaleDateString('en-GB', { weekday: 'short' });
+        aoa.push([nameOf[r.employee_id] || r.employee_id, r.employee_id, iso, day, hm(r.start_time), hm(r.end_time)]);
+      });
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = [{ wch: 28 }, { wch: 10 }, { wch: 12 }, { wch: 6 }, { wch: 12 }, { wch: 12 }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, ('Shifts ' + lastMonthName).slice(0, 31));
+      xlsxB64 = XLSX.write(wb, { bookType: 'xlsx', type: 'base64' });
+      xlsxName = `Shifts_${String(manager.name || manager.id).replace(/[^A-Za-z0-9]+/g, '_')}_${lastMonthName.replace(/\s+/g, '_')}.xlsx`;
+    }
+
+    const introP = `Please assign the ${monthName} shifts for your shift-based team members in the system.`;
+    const refP = xlsxB64
+      ? `For reference, attached is their assigned shift schedule from ${lastMonthName}. Please let me know if you would like to continue the same for ${monthName}, or share the updated shifts.`
+      : `Please let me know the shift timings you would like for ${monthName}, or confirm they should follow the standard hours.`;
+    const subject = `Assign ${monthName} shifts for your shift staff`;
 
     const bodyPlain =
       `Dear ${salutationFor(manager)},\n\n` +
-      introP + '\n\n' + whyP + '\n\n' + howP + '\n\n' +
+      introP + '\n\n' +
       'Your shift-based team members:\n' + listPlain + '\n\n' +
-      'If all shifts for the month are already assigned and correct, a quick reply confirming that is all I need.\n\n' +
+      refP + '\n\n' +
       SIGNATURE_PLAIN;
 
     const bodyHtml = emailBody([
       `<p style="margin:0">Dear ${escapeHtml(salutationFor(manager))},</p>`,
       `<p style="margin:0">${escapeHtml(introP)}</p>`,
-      `<p style="margin:0"><strong>Why this matters:</strong> ${escapeHtml(whyP)}</p>`,
-      `<p style="margin:0"><strong>What to do:</strong> ${escapeHtml(howP)}</p>`,
       `<p style="margin:0;font-weight:600">Your shift-based team members</p>`,
       listHtml,
-      `<p style="margin:0">If all shifts for the month are already assigned and correct, a quick reply confirming that is all I need.</p>`,
+      `<p style="margin:0">${escapeHtml(refP)}</p>`,
     ]);
 
     const cc = ccBase.filter(addr => addr && addr.toLowerCase() !== String(manager.email || '').toLowerCase());
@@ -799,7 +826,7 @@ function buildShiftStaffReminder({ employees, year, month, jamesEmail }) {
       id: manager.id, name: manager.name, dept: manager.department || '',
       to: manager.email || '', cc,
       teamSize: shiftReports.length, appCount: shiftReports.length,
-      subject, bodyPlain, bodyHtml,
+      subject, bodyPlain, bodyHtml, xlsxB64, xlsxName,
     };
   }).filter(Boolean).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
@@ -824,6 +851,28 @@ export default function BashaierTasksCard({ me, employees, requests, permissions
   const [perms, setPerms] = useState(passedPerms || []);
   const [openTask, setOpenTask] = useState(null);
   const [copied, setCopied] = useState('');
+  const [lastMonthShifts, setLastMonthShifts] = useState([]);
+
+  // Last month's assigned shifts — used to attach the previous pattern to
+  // the manager shift reminder so they can confirm or adjust for the month.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const ms = pad2(prevMonth);
+        const monthStart = `${prevYear}-${ms}-01`;
+        const lastDay = new Date(prevYear, prevMonth, 0).getDate();
+        const monthEnd = `${prevYear}-${ms}-${pad2(lastDay)}`;
+        const rows = await directGet('employee_shifts',
+          `select=employee_id,shift_date,start_time,end_time,status`
+          + `&shift_date=gte.${monthStart}&shift_date=lte.${monthEnd}`
+          + `&status=neq.declined&status=neq.cancelled&order=employee_id,shift_date`,
+          { timeoutMs: 12000 });
+        if (!cancelled) setLastMonthShifts(rows || []);
+      } catch { if (!cancelled) setLastMonthShifts([]); }
+    })();
+    return () => { cancelled = true; };
+  }, [prevMonth, prevYear]);
 
   // Lazy-load permissions if parent didn't pass them
   useEffect(() => {
@@ -1219,9 +1268,9 @@ export default function BashaierTasksCard({ me, employees, requests, permissions
       icon: <Clock className="w-4 h-4" />,
       tone: '#7E22CE',
       fanout: true,
-      build: () => buildShiftStaffReminder({ employees, year, month, jamesEmail }),
+      build: () => buildShiftStaffReminder({ employees, year, month, prevMonth, prevYear, lastMonthShifts, jamesEmail }),
     },
-  ], [perms, employees, requests, month, year, prevMonth, prevYear, today, leavePunch, hdr, balances, leaveTypes, jamesEmail]);
+  ], [perms, employees, requests, month, year, prevMonth, prevYear, today, leavePunch, hdr, balances, leaveTypes, jamesEmail, lastMonthShifts]);
 
   const open = (task) => {
     const built = task.build();
@@ -2004,6 +2053,20 @@ function DeptHeadReportModal({ title, managers, onClose }) {
       try { await navigator.clipboard.writeText(m.bodyPlain); setCopiedId(m.id); setTimeout(() => setCopiedId(''), 2000); } catch {}
     }
   };
+  const downloadXlsx = (m) => {
+    if (!m.xlsxB64) return;
+    try {
+      const bin = atob(m.xlsxB64);
+      const buf = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = m.xlsxName || 'shifts.xlsx';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    } catch {}
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-6 overflow-y-auto"
@@ -2042,6 +2105,14 @@ function DeptHeadReportModal({ title, managers, onClose }) {
                         style={{ borderColor: 'var(--border-soft)', color: '#1F1B16' }}>
                   Preview <ChevronDown className="w-3 h-3" style={{ transform: openId === m.id ? 'rotate(180deg)' : 'none' }} />
                 </button>
+                {m.xlsxB64 && (
+                  <button type="button" onClick={() => downloadXlsx(m)}
+                          title={`Download ${m.xlsxName || 'last month shifts'} to attach`}
+                          className="text-[11px] px-2.5 py-1.5 rounded-lg inline-flex items-center gap-1 font-semibold"
+                          style={{ background: 'rgba(29,78,216,0.08)', color: '#1D4ED8', border: '1px solid #BFD3F5' }}>
+                    <Download className="w-3.5 h-3.5" /> Shifts .xlsx
+                  </button>
+                )}
                 <button type="button" onClick={() => copyOne(m)}
                         className="text-[11px] px-2.5 py-1.5 rounded-lg inline-flex items-center gap-1 font-semibold"
                         style={{ background: copiedId === m.id ? '#DCFCE7' : 'rgba(153,53,86,0.08)', color: '#993556', border: '1px solid #F4C0D1' }}>
