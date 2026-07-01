@@ -3994,7 +3994,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     // primary date. Late entries always come from today, but
     // dateLabel is still the source of truth — defensive.
     const dateLong = formatDateLong(entry.dateLabel || csvDate);
-    const contentFn = mode === 'test' ? lateEmailContentTemp : lateEmailContent;
+    const contentFn = lateEmailContentTemp /* pre-launch: no portal, HR-authored */;
     const { subject, body } = contentFn({
       employee: entry.employee,
       dateLong,
@@ -4048,7 +4048,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     // 2-day workflow. Use entry.dateLabel so the email correctly
     // references the day the staff actually left early on.
     const dateLong = formatDateLong(entry.dateLabel || csvDate);
-    const contentFn = mode === 'test' ? earlyLeaveEmailContentTemp : earlyLeaveEmailContent;
+    const contentFn = earlyLeaveEmailContentTemp /* pre-launch: no portal, HR-authored */;
     const { subject, body } = contentFn({
       employee: entry.employee,
       dateLong,
@@ -4100,7 +4100,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
     //   • missedOut → yesterday (no clock-out by EOD)
     // Use entry.dateLabel so the email body references the right date.
     const dateLong = formatDateLong(entry.dateLabel || csvDate);
-    const contentFn = mode === 'test' ? missedPunchEmailContentTemp : missedPunchEmailContent;
+    const contentFn = missedPunchEmailContentTemp /* pre-launch: no portal, HR-authored */;
     const { subject, body } = contentFn({
       employee: entry.employee,
       dateLong,
@@ -4177,7 +4177,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         `Dear ${mgrName},\n\n` +
         `Our daily attendance review for ${dateLong} shows no sign-in on record for ${emp.name} (${emp.id}), ` +
         `and there is no approved leave or permission request on file for this date. The day is therefore recorded as an unexplained absence.\n\n` +
-        `Kindly confirm the reason for the absence with the staff member and advise HR accordingly. If the absence was for an approved reason (medical, emergency, etc.), please ensure the appropriate leave request is submitted through the ESAU HR Portal (esauhr.netlify.app) so the record can be updated. Otherwise it will stand as an unexcused absence on the evaluation record.\n\n` +
+        `Kindly confirm the reason for the absence with the staff member and advise HR accordingly. If the absence was for an approved reason (medical, emergency, etc.), please ensure the appropriate leave request is submitted to HR so the record can be updated. Otherwise it will stand as an unexcused absence on the evaluation record.\n\n` +
         `${emp.name}, you are copied for your awareness and to provide your reason.\n\n` +
         `Thanks and regards,\n` +
         `BASHAIER ALI\n` +
@@ -4227,7 +4227,7 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         `Our daily shift review for ${dateLong} flags an attendance issue for ${emp.name} (${emp.id}) against the assigned shift.\n\n` +
         `Status: ${issue}\n${punchLine}\n` +
         (detailBits.length ? `Details: ${detailBits.join('; ')}.\n` : '') +
-        `\nKindly confirm the reason with the staff member and advise HR accordingly. If it was for an approved reason, please ensure the appropriate request is submitted through the ESAU HR Portal (esauhr.netlify.app) so the record can be updated. Otherwise it will stand on the evaluation record.\n\n` +
+        `\nKindly confirm the reason with the staff member and advise HR accordingly. If it was for an approved reason, please ensure the appropriate request is submitted to HR so the record can be updated. Otherwise it will stand on the evaluation record.\n\n` +
         `${emp.name}, you are copied for your awareness and to provide your reason.\n\n` +
         `Thanks and regards,\nBASHAIER ALI\nESAU - SADMN SUP / HR DEPT`
       );
@@ -8419,7 +8419,7 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, empById, monthly
   let subject = '';
   let summary = '';
   if (kind === 'late') {
-    const fn = mode === 'test' ? lateEmailContentTemp : lateEmailContent;
+    const fn = lateEmailContentTemp /* pre-launch: no portal, HR-authored */;
     const c = fn({
       employee: entry.employee, dateLong,
       punchInStr: entry.punchInStr,
@@ -8444,7 +8444,7 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, empById, monthly
     subject = c.subject;
     summary = `Late arrival on ${dateLong} — punched in ${entry.punchInStr}, ${entry.minutesLate} min after grace.`;
   } else if (kind === 'early') {
-    const fn = mode === 'test' ? earlyLeaveEmailContentTemp : earlyLeaveEmailContent;
+    const fn = earlyLeaveEmailContentTemp /* pre-launch: no portal, HR-authored */;
     const c = fn({
       employee: entry.employee, dateLong,
       punchOutStr: entry.punchOutStr,
@@ -8469,7 +8469,7 @@ function ConfirmEmailModal({ confirm, csvDate, getManagerEmail, empById, monthly
     subject = c.subject;
     summary = `Early departure on ${dateLong} — punched out ${entry.punchOutStr}, ${entry.minutesEarly} min before scheduled ${entry.scheduledEnd}.`;
   } else if (kind === 'missed' || kind === 'missedIn' || kind === 'missedOut' || kind === 'shiftAbsent') {
-    const fn = mode === 'test' ? missedPunchEmailContentTemp : missedPunchEmailContent;
+    const fn = missedPunchEmailContentTemp /* pre-launch: no portal, HR-authored */;
     const c = fn({
       employee: entry.employee, dateLong, missingType: entry.missingType,
       isShiftAbsence: !!entry.isShiftAbsence,
