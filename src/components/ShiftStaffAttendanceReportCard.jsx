@@ -1089,13 +1089,16 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
       const rcRows = reportSummaries.map((s, idx) => {
         const tr = s.rows.find(r => r.attendance_date === t) || null;
         const hol = holidays.get(t);
-        const worked = tr && (tr.first_punch || (tr.punch_count || 0) > 0) && tr.status !== 'absent';
+        // Show the check-in whenever ANY in-punch exists, regardless of the
+        // stored day-status (a morning-only row can be mis-stored as
+        // 'absent'/short before sign-out). Matches the on-screen roll-call.
+        const hasPunch = tr && (tr.effective_in || tr.first_punch || (tr.punch_count || 0) > 0);
         const isLeave = tr && /_leave$/.test(tr.status || '');
         const isMgt = !!managementNoAttendance(s.emp.id);
         let statusText, fam, checkIn = '', lms = '';
         if (isMgt) {
           statusText = 'MGT'; fam = { bg: 'FFDCFCE7', fg: 'FF166534' };
-        } else if (worked) {
+        } else if (hasPunch) {
           checkIn = fmtTime(tr.effective_in || tr.first_punch) || '';
           lms = lateMMSS(tr);
           statusText = detailedStatusLabel(tr);
