@@ -1661,13 +1661,13 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
           <ChevronRight className="w-4 h-4 opacity-30 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all flex-shrink-0" />
         </button>
 
-        {/* Modal — opens the same way the other report previews do. */}
+        {/* Inline panel — expands in place instead of a floating modal
+            (the overlay repainted on mouse-move and flickered). Same page,
+            no backdrop. Nadeem 2026-07-02. */}
         {mrOpen && (
-          <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-6 overflow-y-auto"
-               style={{ background: 'rgba(20,30,25,0.6)' }}
-               onClick={() => { setMrOpen(false); setMrPreview(null); }}>
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-8" onClick={(e) => e.stopPropagation()}>
-              <div className="px-5 sm:px-6 py-4 sticky top-0 z-10 rounded-t-2xl flex items-start justify-between gap-3"
+          <div className="mt-3">
+            <div className="bg-white rounded-2xl shadow-sm border w-full" style={{ borderColor: ACCENT_BD }}>
+              <div className="px-5 sm:px-6 py-4 rounded-t-2xl flex items-start justify-between gap-3"
                    style={{ background: `linear-gradient(135deg, ${ACCENT} 0%, ${ACCENT}DD 100%)`, color: '#fff' }}>
                 <div>
                   <div className="text-[10px] tracking-[0.25em] opacity-80 mb-1">— MORNING REPORT</div>
@@ -1675,13 +1675,13 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
                   <div className="text-[11px] opacity-80 mt-0.5">{fmtDateLong(to)} arrivals · {fmtDateLong(from)} detail</div>
                 </div>
                 <button onClick={() => { setMrOpen(false); setMrPreview(null); }}
-                        className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-white/20 flex-shrink-0"
-                        style={{ color: '#fff' }} aria-label="Close">
-                  <span style={{ fontSize: 18, lineHeight: 1 }}>×</span>
+                        className="text-[11px] font-semibold px-3 py-1.5 rounded-full flex items-center gap-1.5 hover:bg-white/15 flex-shrink-0"
+                        style={{ color: '#fff', border: '1px solid rgba(255,255,255,0.5)' }} aria-label="Collapse">
+                  Hide report
                 </button>
               </div>
 
-              <div className="px-5 sm:px-6 py-4 max-h-[72vh] overflow-y-auto">
+              <div className="px-5 sm:px-6 py-4">
                 {!loading && !todayHas && (
                   <div className="text-[11px] mb-3 p-2.5 rounded-lg"
                        style={{ background: '#FEF3C7', color: '#7C2D12', border: '1px solid #F59E0B' }}>
