@@ -1441,48 +1441,24 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
   // 2026-05-10 (the previous version triggered re-eval but left the
   // page exactly as it was, which was confusing for a button labelled
   // 'Save & Close').
-  const handleSaveAndClose = useCallback(async () => {
-    if (reevalState.running) {
-      // A re-eval is already mid-flight (it will bump the tick itself on
-      // completion). Still honour the close + a refresh so the grid
-      // picks up the just-written rows, and don't trap the user.
-      setCalendarRefreshTick(t => t + 1);
-      setDailyReviewOpen(false);
-      return;
-    }
-    let summary = null;
-    try {
-      summary = await triggerReevaluation({ silent: false });
-    } catch (e) {
-      // A re-eval failure must NOT trap the user — log and still close.
-      console.error('Save & Close re-evaluation failed:', e);
-    }
-    // ALWAYS refresh the calendar grid so the dates that were just
-    // uploaded show up — independent of whether the re-eval returned a
-    // summary or threw. triggerReevaluation only bumps the tick on
-    // success; this guarantees the grid refetches attendance_daily every
-    // time. (Nadeem 2026-05-31: grid wasn't updating after Save & Close.)
+  const handleSaveAndClose = useCallback(() => {
+    // Close the window and refresh the grid IMMEDIATELY — the rows are
+    // already written to attendance_daily (with statuses) at upload time,
+    // so don't make the user wait on the re-evaluation pass. The re-eval
+    // runs in the background and bumps the tick again when it finishes.
+    setDailyReviewOpen(false);
     setCalendarRefreshTick(t => t + 1);
     try {
-      const evt = new CustomEvent('esauhr_toast', { detail: summary ? {
-        kind: 'success',
-        title: 'Upload session closed',
-        body: `Re-evaluated ${summary.scanned || 0} ${summary.scanned === 1 ? 'row' : 'rows'} · ${summary.changed || 0} updated. Calendar refreshed.`,
-      } : {
-        kind: 'success',
-        title: 'Upload session closed',
-        body: 'Calendar refreshed.',
-      }});
-      window.dispatchEvent(evt);
+      window.dispatchEvent(new CustomEvent('esau:attendance-changed'));
+      window.dispatchEvent(new CustomEvent('esauhr_toast', { detail: {
+        kind: 'success', title: 'Upload session closed', body: 'Calendar refreshed.',
+      } }));
     } catch {}
-    // Close the daily-review modal but KEEP the loaded file. We do NOT
-    // reset() here: clearing xlsxFileName hides the '📋 Today's review'
-    // button (gated on hasFile), which is the button Nadeem wants left
-    // available after closing so he can reopen and see the update. The
-    // explicit way to clear for a fresh day is the 'Upload different
-    // file' control. (Nadeem 2026-05-31: 'today's report button does not
-    // come to see the update'.)
-    setDailyReviewOpen(false);
+    if (!reevalState.running) {
+      triggerReevaluation({ silent: true })
+        .then(() => setCalendarRefreshTick(t => t + 1))
+        .catch(e => console.error('Save & Close re-evaluation failed:', e));
+    }
   }, [reevalState.running, triggerReevaluation]);
 
   // Stale-check on mount (Decision #5 / option C — the "B" leg).
@@ -3672,16 +3648,24 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             const newCount   = delta.newRows.length;
             const updCount   = delta.updatedRows.length;
             const unchanged  = delta.unchangedRows.length;
+            const noChange   = (newCount + updCount) === 0 && unchanged > 0;
             const isReupload = (newCount + updCount) > 0 && unchanged > 0;
-            const evt = new CustomEvent('esauhr_toast', { detail: {
-              kind: isReupload ? 'info' : 'success',
-              title: isReupload
-                ? 'Re-upload processed'
-                : 'Attendance recorded',
-              body: isReupload
-                ? `${newCount} new · ${updCount} updated · ${unchanged} unchanged.`
-                : `${delta.total} ${delta.total === 1 ? 'row' : 'rows'} written to attendance master.`,
-            }});
+            const dateLabel  = [csvDate, yesterdayDate].filter(Boolean).join(' / ');
+            const evt = new CustomEvent('esauhr_toast', { detail:
+              noChange ? {
+                kind: 'warning',
+                title: 'No changes — nothing new uploaded',
+                body: `This file matches what is already recorded for ${dateLabel}. All ${unchanged} ${unchanged === 1 ? 'row is' : 'rows are'} unchanged, so nothing was updated. If you expected changes, check you selected the right export file.`,
+              } : isReupload ? {
+                kind: 'info',
+                title: 'Re-upload processed',
+                body: `${newCount} new · ${updCount} updated · ${unchanged} unchanged.`,
+              } : {
+                kind: 'success',
+                title: 'Attendance recorded',
+                body: `${delta.total} ${delta.total === 1 ? 'row' : 'rows'} written to attendance master.`,
+              },
+            });
             window.dispatchEvent(evt);
           } catch {}
         }
