@@ -6689,6 +6689,30 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             >
               ⬆ Upload Time Card
             </button>
+            {/* Today's review — appears right next to Upload Time Card as
+                soon as a time card is imported, so HR can reopen the daily
+                review without hunting for it. Nadeem 2026-07-02. */}
+            {hasFile && (
+              <button
+                type="button"
+                onClick={() => setDailyReviewOpen(true)}
+                className="text-[11px] px-3.5 py-1.5 rounded-full flex items-center gap-1.5 transition-all duration-150 hover:-translate-y-0.5 hover:brightness-110"
+                style={{
+                  background: isPink
+                    ? 'linear-gradient(135deg, #7A2E47 0%, #993556 55%, #C16085 120%)'
+                    : 'linear-gradient(135deg, #B45309 0%, #D97706 55%, #F59E0B 120%)',
+                  color: '#FFFFFF',
+                  border: `1px solid ${isPink ? 'rgba(255,200,220,0.5)' : 'rgba(245,158,11,0.55)'}`,
+                  fontWeight: 700, letterSpacing: '0.02em',
+                  boxShadow: isPink
+                    ? '0 1px 2px rgba(122,46,71,0.35), inset 0 1px 0 rgba(255,255,255,0.18)'
+                    : '0 1px 2px rgba(180,83,9,0.35), inset 0 1px 0 rgba(255,255,255,0.18)',
+                }}
+                title="Reopen the daily review for the loaded time card."
+              >
+                📋 Today's review · {csvDate ? new Date(csvDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : ''}
+              </button>
+            )}
             {/* Shift Staff Attendance — sits next to Upload Time Card.
                 Toggles a panel further down the page (rendered just
                 above the monthly grid) that shows the report for
@@ -6717,27 +6741,6 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
             >
               🕐 ATTENDANCE REPORT {shiftReportOpen ? '·  hide' : ''}
             </button>
-            {hasFile && (
-              <button
-                type="button"
-                onClick={() => setDailyReviewOpen(true)}
-                className="text-[11px] px-3.5 py-1.5 rounded-full flex items-center gap-1.5 transition-all duration-150 hover:-translate-y-0.5 hover:brightness-110"
-                style={{
-                  background: isPink
-                    ? 'linear-gradient(135deg, #7A2E47 0%, #993556 55%, #C16085 120%)'
-                    : 'linear-gradient(135deg, #B45309 0%, #D97706 55%, #F59E0B 120%)',
-                  color: '#FFFFFF',
-                  border: `1px solid ${isPink ? 'rgba(255,200,220,0.5)' : 'rgba(245,158,11,0.55)'}`,
-                  fontWeight: 700, letterSpacing: '0.02em',
-                  boxShadow: isPink
-                    ? '0 1px 2px rgba(122,46,71,0.35), inset 0 1px 0 rgba(255,255,255,0.18)'
-                    : '0 1px 2px rgba(180,83,9,0.35), inset 0 1px 0 rgba(255,255,255,0.18)',
-                }}
-                title="Reopen the daily review for the loaded time card."
-              >
-                📋 Today's review · {csvDate ? new Date(csvDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : ''}
-              </button>
-            )}
             {/* Re-evaluation now runs automatically on every daily and
                 historical upload, so the manual buttons are hidden.
                 Logic kept intact. Nadeem 2026-06-03. */}
