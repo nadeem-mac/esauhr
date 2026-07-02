@@ -3654,6 +3654,12 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
           // Tell the monthly grid to refetch immediately — the rows are
           // now in attendance_daily even before Save & Close. Nadeem.
           try { window.dispatchEvent(new CustomEvent('esau:attendance-changed')); } catch {}
+          // The calendar/month grid refetches on calendarRefreshTick (not
+          // on the event above), so bump it here too — otherwise the grid
+          // only updated after Save & Close or a historical backfill, even
+          // though the uploaded rows (with statuses) are already written.
+          // Nadeem 2026-07-02: grid must reflect yesterday+today on upload.
+          setCalendarRefreshTick(t => t + 1);
           // Store the delta in component state so the UI can render
           // the 'what changed in this upload' banner — Bashaier needs
           // to know if her 4pm re-upload caught new late-arrivals
