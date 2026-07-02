@@ -125,6 +125,11 @@ function detailedStatusLabel(row) {
   if (row.first_punch && !row.last_punch && String(row.attendance_date || '').slice(0, 10) === _localTodayIso()) {
     const inMin = timeToMinutes(row.first_punch);
     const stMin = timeToMinutes(row.expected_start);
+    const enMin = timeToMinutes(row.expected_end);
+    // Check-in at/after the shift end = mis-assigned shift or overnight
+    // check-out, not a late arrival — flag for review instead of a bogus
+    // large "late" figure.
+    if (inMin != null && enMin != null && stMin != null && enMin > stMin && inMin >= enMin) return 'Review shift timing';
     const lateM = (inMin != null && stMin != null) ? Math.max(0, inMin - stMin) : 0;
     return lateM > 0 ? `Late · ${lateM} min` : 'Present';
   }
@@ -1369,7 +1374,17 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
   // (whole minute, so 08:00:59 is on time, 08:01 is late). Early = check-out
   // before the scheduled end. Both compare to the employee's own window, so
   // regular staff (08:00–17:00) and SUP (08:00–16:00) are handled the same.
-  const _isLateMR  = (r) => { const i = _toSecMR(r.first_punch), st = _toSecMR(r.expected_start); return i != null && st != null && Math.floor(i / 60) > Math.floor(st / 60); };
+  const _isLateMR  = (r) => {
+    const i = _toSecMR(r.first_punch), st = _toSecMR(r.expected_start), en = _toSecMR(r.expected_end);
+    if (i == null || st == null) return false;
+    if (Math.floor(i / 60) <= Math.floor(st / 60)) return false;         // on time / before start
+    // A check-in at or after the shift END is not a late arrival — it's a
+    // mis-assigned shift or an overnight check-out (e.g. a night shift
+    // wrongly stored as 00:00-08:00 would flag an 08:04 check-out as
+    // "484 min late"). Only guard normal (same-day) windows.
+    if (en != null && en > st && i >= en) return false;
+    return true;
+  };
   const _isEarlyMR = (r) => { const o = _toSecMR(r.last_punch),  en = _toSecMR(r.expected_end);   return o != null && en != null && Math.floor(o / 60) < Math.floor(en / 60); };
   const morningData = useMemo(() => {
     const t = to, y = from;
@@ -1497,7 +1512,7 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
 
     // Gather DEFAULTERS only (same logic as the on-screen summary): today's
     // late arrivals, yesterday's early departures, yesterday's missed punches.
-    const todayLate = [], yEarly = [], yMissed = [], noSchedule = [];
+    const todayLate = [], yLate = [], yEarly = [], yMissed = [], noSchedule = [];
     reportSummaries.forEach(s => {
       if (managementNoAttendance(s.emp.id)) return;
       const tr = s.rows.find(r => r.attendance_date === t);
@@ -1506,6 +1521,9 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
       // system → manager roster gap. Surfaced as a reminder in the email.
       if (tr && tr.noShiftAssigned && (tr.first_punch || (tr.punch_count || 0) > 0)) noSchedule.push({ s, r: tr });
       if (tr && !tr._carryOnly && !tr.noShiftAssigned && (tr.first_punch || (tr.punch_count || 0) > 0) && tr.status !== 'absent' && _isLateMR(tr)) todayLate.push({ s, r: tr });
+      // Yesterday's LATE arrivals — a full previous day, so late check-ins
+      // belong in the summary alongside early departures and missed punches.
+      if (yr && !yr._carryOnly && !yr.noShiftAssigned && (yr.first_punch || (yr.punch_count || 0) > 0) && yr.status !== 'absent' && _isLateMR(yr)) yLate.push({ s, r: yr });
       if (yr && !yr.noShiftAssigned && !yr._carryOnly) {
         // Overnight OUT is on the next day's row → treat the paired
         // effective_out as a real out so an attended overnight shift is
@@ -1531,6 +1549,9 @@ export default function ShiftStaffAttendanceReportCard({ employees = [], me, com
   <p style="margin:0">&nbsp;</p>
   <p style="margin:0;font-weight:700">Today's late arrivals &mdash; ${escapeHtml(fmtDateLong(t))}</p>
   ${buildDetailTable(todayLate)}
+  <p style="margin:0">&nbsp;</p>
+  <p style="margin:0;font-weight:700">Yesterday's late arrivals &mdash; ${escapeHtml(fmtDateLong(y))}</p>
+  ${buildDetailTable(yLate)}
   <p style="margin:0">&nbsp;</p>
   <p style="margin:0;font-weight:700">Yesterday's early departures &mdash; ${escapeHtml(fmtDateLong(y))}</p>
   ${buildDetailTable(yEarly)}
