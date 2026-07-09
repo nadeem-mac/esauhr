@@ -3716,6 +3716,15 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
       // classification + preview before commit) instead of the daily
       // review. Threshold is deliberately loose so weekend gaps in a
       // normal daily file never trip it.
+      // Populate the review state BEFORE the historical branch returns, so
+      // the "Today's review" button appears for EVERY upload — daily or
+      // historical — and always shows the latest captured data.
+      // (Nadeem 2026-07-02: review must always be available after upload.)
+      setParsedData(result);
+      setXlsxFileName(file.name);
+      setFileSha256(hashHex);
+      setFileSize(file.size || buf.byteLength);
+
       try {
         const fileDates = (result.rows || []).map(r => r.date).filter(Boolean);
         if (fileDates.length) {
@@ -3732,10 +3741,6 @@ function AttendanceViewInner({ me, employees, leaveTypes = [] }) {
         }
       } catch { /* detection is best-effort — fall through to daily */ }
 
-      setParsedData(result);
-      setXlsxFileName(file.name);
-      setFileSha256(hashHex);
-      setFileSize(file.size || buf.byteLength);
       setSentMarkers({});
       setUploadId(null);
       setExistingUpload(null);
